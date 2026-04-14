@@ -1,0 +1,59 @@
+디벨로켓 교안 도우미 v5.2 — 체크포인트 이슈 추적 로그
+================================================================
+최종 수정일: 2026-03-09
+
+[수정 완료] #001 — API 키 하드코딩
+  상태: 해결됨
+  설명: GEMINI_API_KEY가 null로 초기화되어 사용자가 매번 수동 입력해야 했음
+  수정: let GEMINI_API_KEY = 'AIzaSyB7_sKZYkNCsQ17bcRG-ncIqmevTtAxnY0' 으로 고정
+  파일: app.js (line 240), init() 함수에서 자동 설정 로직 추가
+  재발방지: init()에서 하드코딩 키 우선 적용, sessionStorage 폴백 유지
+
+[수정 완료] #002 — buildModuleMarkdown 탭 키 불일치 (레거시 버그)
+  상태: 해결됨
+  설명: buildModuleMarkdown()에서 tabs.practice (레거시 키)를 참조하여
+        기본실습/심화실습 콘텐츠가 Markdown 내보내기에서 누락됨
+  수정: tabs.practice → tabs.basicPractice, tabs.advancedPractice 추가
+  파일: app.js buildModuleMarkdown() 함수
+  재발방지: TAB_CONFIG와 동일한 키 구조를 사용하도록 통일
+
+[수정 완료] #003 — 내보내기 경로 지정 미지원
+  상태: 해결됨
+  설명: 모든 내보내기(MD, PDF, PPTX, 체크포인트 로그)가 브라우저 기본
+        다운로드 위치에 자동 저장되어 경로 선택 불가
+  수정: File System Access API (showSaveFilePicker) 적용
+        - downloadMarkdown(): MD 파일 저장 경로 선택
+        - exportToPDF(): PDF 파일 저장 경로 선택
+        - exportToGoogleSlides(): PPTX 파일 저장 경로 선택
+        - exportCheckpointLog(): 체크포인트 로그 저장 경로 선택
+  파일: app.js — 4개 함수 수정
+  재발방지: 미지원 브라우저용 기본 다운로드 폴백 유지
+
+[수정 완료] #004 — 파일 통합 (단일 HTML)
+  상태: 해결됨
+  설명: app.js, style.css, 디벨로켓 교안 도우미.html이 별도 파일로 분리되어
+        단독 실행 불가
+  수정: style.css를 <style> 태그로 인라인, app.js를 <script> 태그로 인라인
+  파일: 디벨로켓 교안 도우미.html (7,353줄 통합 파일)
+  재발방지: 단일 HTML 파일 구조 유지
+
+[수정 완료] #005 — 데이터 모델 주석 불일치
+  상태: 해결됨
+  설명: 파일 상단 데이터 모델 주석이 구버전(practice) 구조를 설명하고 있었음
+  수정: basicPractice, advancedPractice 포함하도록 주석 갱신
+  파일: app.js 데이터 모델 주석 섹션
+
+[수정 완료] #006 — async/await 누락
+  상태: 해결됨
+  설명: downloadMarkdown()이 async로 변경되었으나 호출 함수들이
+        동기 함수로 남아있어 showSaveFilePicker 작동 불완전
+  수정: exportCurrentModule, exportCurrentModuleByView, exportAllModules를
+        async로 변경하고 await 추가
+  파일: app.js — 3개 함수 수정
+
+================================================================
+알려진 제한사항:
+- File System Access API는 Chromium 기반 브라우저(Chrome, Edge)에서만 지원
+  Firefox/Safari에서는 기존 기본 다운로드 방식으로 동작
+- CDN 의존성(Marked.js, Mermaid.js, html2pdf.js, PptxGenJS)은 외부 유지
+  (오프라인 사용 시 별도 번들링 필요)

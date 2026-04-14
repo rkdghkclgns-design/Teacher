@@ -1,0 +1,7 @@
+node_modules/
+electron-build/node_modules/
+electron-build/dist/
+*.zip
+.DS_Store
+Thumbs.db
+.env

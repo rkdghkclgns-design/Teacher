@@ -1,0 +1,1986 @@
+<!DOCTYPE html>
+
+<html lang="ko">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <meta name="description" content="게임 기획 교안 생성 에이전트 - AI 기반 교안 자동 생성 도구">
+
+    <title>디벨로켓 교안 도우미</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='28' font-size='28'>🎮</text></svg>">
+
+
+
+    <!-- Tailwind CSS -->
+
+    <script src="https://cdn.tailwindcss.com"></script>
+
+
+
+    <!-- Marked.js CDN for Markdown rendering -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" crossorigin="anonymous"></script>
+
+    <!-- Mermaid.js CDN for diagram rendering (버전 고정) -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+    <script>
+        // Mermaid 전역 초기화 — startOnLoad:false로 수동 제어
+        document.addEventListener('DOMContentLoaded', function() {
+            if (window.mermaid) {
+                window.mermaid.initialize({
+                    startOnLoad: false,
+                    theme: 'default',
+                    securityLevel: 'loose',
+                    flowchart: { useMaxWidth: true, htmlLabels: true },
+                    sequence: { useMaxWidth: true },
+                    gantt: { useMaxWidth: true }
+                });
+                console.log('[Mermaid] 초기화 완료 (v10.9.1, startOnLoad: false)');
+            }
+        });
+    </script>
+
+
+
+    <!-- html2pdf.js CDN for PDF Export -->
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"
+        crossorigin="anonymous"></script>
+
+    <!-- JSZip and FileSaver for ZIP Export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
+    <!-- PptxGenJS for PPTX Export (Google Slides / PowerPoint 호환) -->
+    <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+
+
+
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <script>
+        // file:// 프로토콜 감지 — 로컬 서버 없이 직접 열면 JS 로딩 차단됨
+        if (location.protocol === 'file:') {
+            document.addEventListener('DOMContentLoaded', function() {
+                document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:#0f172a;font-family:sans-serif">'
+                    + '<div style="text-align:center;color:#e2e8f0;max-width:500px;padding:2rem">'
+                    + '<div style="font-size:3rem;margin-bottom:1rem">🚀</div>'
+                    + '<h1 style="font-size:1.5rem;font-weight:bold;margin-bottom:1rem;color:#38bdf8">디벨로켓 교안 도우미</h1>'
+                    + '<p style="color:#f87171;font-size:1.1rem;margin-bottom:1.5rem">HTML 파일을 직접 열면 보안 제한으로 동작하지 않습니다.</p>'
+                    + '<div style="background:#1e293b;border-radius:12px;padding:1.5rem;text-align:left;margin-bottom:1.5rem">'
+                    + '<p style="color:#94a3b8;margin-bottom:0.75rem"><strong style="color:#38bdf8">실행 방법:</strong></p>'
+                    + '<p style="color:#e2e8f0;margin-bottom:0.5rem">1. 이 파일과 같은 폴더의 <strong style="color:#4ade80">실행.bat</strong> 을 더블클릭하세요.</p>'
+                    + '<p style="color:#e2e8f0">2. 자동으로 브라우저가 열립니다.</p>'
+                    + '</div>'
+                    + '<p style="color:#64748b;font-size:0.85rem">Node.js가 설치되어 있어야 합니다. → <a href="https://nodejs.org" style="color:#38bdf8">nodejs.org</a></p>'
+                    + '</div></div>';
+            });
+        }
+    </script>
+
+    <script>
+
+        tailwind.config = {
+
+            theme: {
+
+                extend: {
+
+                    colors: {
+
+                        bgHeader: '#0f0f1a',
+
+                        bgSidebar: '#1a1a2e',
+
+                        bgEditor: '#faf9f6',
+
+                        bgBody: '#12121e',
+
+                        accent: '#7c5bf5',
+
+                        accentHover: '#6340d4',
+
+                        textLight: '#e2e0f0',
+
+                        textMuted: '#8888a8',
+
+                        textEditor: '#333340',
+
+                    },
+
+                    fontFamily: {
+
+                        sans: ['Inter', 'Noto Sans KR', 'sans-serif'],
+
+                        editor: ['Noto Sans KR', 'Inter', 'serif'],
+
+                        mono: ['Consolas', 'Fira Code', 'monospace']
+
+                    }
+
+                }
+
+            }
+
+        }
+
+    </script>
+
+
+
+    <style>
+        /* Custom Scrollbar & Utility Classes */
+
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+
+
+        .editor-scroll::-webkit-scrollbar-thumb {
+            background: rgba(0, 0, 0, 0.15);
+        }
+
+
+
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+
+
+        .glass-panel {
+
+            background: rgba(15, 15, 26, 0.8);
+
+            backdrop-filter: blur(20px);
+
+            border-bottom: 1px solid rgba(124, 91, 245, 0.15);
+
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+
+            -webkit-backdrop-filter: blur(16px);
+
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+
+        }
+
+
+
+        .markdown-body {
+
+            font-family: var(--font-editor);
+
+            line-height: 1.8;
+
+            color: #3a3a4a;
+
+            letter-spacing: -0.01em;
+
+        }
+
+        .markdown-body h1 {
+            font-size: 1.8rem;
+            font-weight: 800;
+            border-bottom: 2px solid rgba(124, 91, 245, 0.2);
+            padding-bottom: 0.6rem;
+            margin-bottom: 1.2rem;
+            color: #1a1a2e;
+            letter-spacing: -0.02em;
+        }
+
+        .markdown-body h2 {
+            font-size: 1.4rem;
+            font-weight: 600;
+            margin-top: 2rem;
+            margin-bottom: 0.75rem;
+            color: #1a1a2e;
+        }
+
+        .markdown-body h3 {
+            font-size: 1.15rem;
+            font-weight: 600;
+            margin-top: 1.5rem;
+            margin-bottom: 0.5rem;
+            color: #2c2c3a;
+        }
+
+        .markdown-body p {
+            margin-bottom: 1rem;
+        }
+
+        .markdown-body ul,
+        .markdown-body ol {
+            padding-left: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        .markdown-body ul {
+            list-style-type: disc;
+        }
+        .markdown-body ul ul {
+            list-style-type: circle;
+        }
+        .markdown-body ul ul ul {
+            list-style-type: square;
+        }
+
+        /* 중첩 리스트 들여쓰기 강화 */
+        .markdown-body li > ul,
+        .markdown-body li > ol {
+            padding-left: 1.8rem;
+            margin-top: 0.25rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .markdown-body li > ul > li > ul,
+        .markdown-body li > ol > li > ol,
+        .markdown-body li > ul > li > ol,
+        .markdown-body li > ol > li > ul {
+            padding-left: 1.8rem;
+        }
+
+        .markdown-body ol {
+            list-style-type: decimal;
+        }
+
+        .markdown-body ol ol {
+            list-style-type: lower-alpha;
+        }
+
+        .markdown-body ol ol ol {
+            list-style-type: lower-roman;
+        }
+
+        .markdown-body li {
+            margin-bottom: 0.25rem;
+        }
+
+        .markdown-body code {
+            background: #eee8f8;
+            padding: 0.1rem 0.3rem;
+            border-radius: 4px;
+            color: #7c5bf5;
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+
+        .markdown-body pre {
+            background: #1e1e2e;
+            color: #e2e0f0;
+            padding: 1rem;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin-bottom: 1rem;
+            font-family: monospace;
+        }
+
+        .markdown-body pre code {
+            background: none;
+            color: inherit;
+            padding: 0;
+        }
+
+        .markdown-body blockquote {
+            border-left: 3px solid #7c5bf5;
+            padding: 0.75rem 1.2rem;
+            margin: 1.2rem 0;
+            background: linear-gradient(135deg, rgba(124, 91, 245, 0.06), rgba(124, 91, 245, 0.02));
+            border-radius: 0 8px 8px 0;
+            color: #6060a0;
+            font-style: italic;
+        }
+
+
+
+        /* v7.2: 이미지, 도표, 관계도 중앙 정렬 */
+        .markdown-body img {
+            display: block;
+            margin: 1.5rem auto;
+            max-width: 100%;
+            border-radius: 8px;
+        }
+        .markdown-body .image-wrapper,
+        .markdown-body .image-placeholder {
+            display: flex;
+            justify-content: center;
+            margin: 1.5rem auto;
+        }
+        .markdown-body .mermaid {
+            display: flex;
+            justify-content: center;
+            margin: 1.5rem auto;
+        }
+        .markdown-body table {
+            margin: 1rem auto;
+        }
+        .markdown-body svg {
+            display: block;
+            margin: 0 auto;
+        }
+
+        .module-card {
+            transition: all 0.2s ease;
+        }
+
+        .module-card.dragging {
+            opacity: 0.5;
+            transform: scale(0.98);
+            border: 2px dashed #7c5bf5;
+        }
+
+        .module-card.drag-over {
+            border-top: 4px solid #7c5bf5;
+        }
+
+
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .animate-fade-in {
+            animation: fadeIn 0.3s ease-out forwards;
+        }
+
+
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .spinner {
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-top-color: #a78bfa;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 0.8s linear infinite;
+        }
+
+        .spinner-large {
+            width: 40px;
+            height: 40px;
+        }
+
+
+
+        .image-wrapper {
+            position: relative;
+            display: inline-block;
+            max-width: 100%;
+            margin: 1rem 0;
+        }
+
+        .image-regenerate-btn {
+
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            opacity: 0;
+            transition: opacity 0.2s;
+
+            background: rgba(20, 20, 35, 0.85);
+            backdrop-filter: blur(4px);
+
+        }
+
+        .image-wrapper:hover .image-regenerate-btn {
+            opacity: 1;
+        }
+
+
+
+        /* 다이어그램 패닝용 유틸리티 */
+
+        .cursor-grab {
+            cursor: grab;
+        }
+
+        .cursor-grabbing {
+            cursor: grabbing !important;
+        }
+
+        /* 튜토리얼 시스템 CSS */
+        .tutorial-overlay { position:fixed; inset:0; z-index:2000; background:rgba(0,0,0,0.7); transition:opacity 0.3s; }
+        .tutorial-spotlight { position:fixed; z-index:2001; border-radius:8px; box-shadow:0 0 0 9999px rgba(0,0,0,0.7); transition:all 0.4s cubic-bezier(0.4,0,0.2,1); pointer-events:none; }
+        .tutorial-popover {
+            position:fixed; z-index:2002; background:#1a1a2e; border:1px solid rgba(124,91,245,0.4); border-radius:12px;
+            padding:20px 24px; max-width:440px; box-shadow:0 12px 40px rgba(0,0,0,0.5);
+            max-height:80vh; overflow-y:auto;
+        }
+        .tutorial-popover h4 { font-size:1.05rem; font-weight:700; color:#a78bfa; margin-bottom:10px; }
+        .tutorial-popover p { font-size:0.82rem; color:#d0d0e8; line-height:1.7; margin-bottom:16px; }
+        .tutorial-popover strong { color:#22d3ee; font-weight:600; }
+        .tutorial-step-indicator { font-size:0.72rem; color:#8888a8; margin-bottom:12px; }
+        .tutorial-nav { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+        .tutorial-skip-btn { font-size:0.78rem; color:#8888a8; background:none; border:none; cursor:pointer; padding:6px 10px; }
+        .tutorial-skip-btn:hover { color:#f87171; }
+        .tutorial-next-btn {
+            background:linear-gradient(135deg,#7c5bf5,#6366f1); color:#fff; border:none; border-radius:8px;
+            padding:8px 20px; font-size:0.85rem; font-weight:700; cursor:pointer; transition:all 0.2s;
+        }
+        .tutorial-next-btn:hover { transform:translateY(-1px); box-shadow:0 4px 14px rgba(124,91,245,0.4); }
+        .tutorial-dont-show { display:flex; align-items:center; gap:5px; font-size:0.72rem; color:#8888a8; cursor:pointer; }
+
+        /* ── 강사 스크립트 callout (v8 — 읽기만 해도 수업 가능) ─── */
+        .instructor-callout {
+            background: linear-gradient(135deg, rgba(96,165,250,0.06), rgba(124,91,245,0.03));
+            border: 1px solid rgba(96,165,250,0.2);
+            border-left: 5px solid #60a5fa;
+            border-radius: 10px;
+            padding: 20px 24px;
+            margin: 20px 0;
+            position: relative;
+            font-size: 0.93rem;
+            line-height: 1.8;
+            color: #111827; /* 강사 스크립트 본문 — 검정색 (가독성 최대) */
+        }
+        .instructor-callout::before {
+            content: '🎓 강사 스크립트';
+            display: block;
+            font-size: 0.7rem;
+            font-weight: 800;
+            color: #60a5fa;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(96,165,250,0.15);
+        }
+        .instructor-callout p { margin: 6px 0; white-space: pre-wrap; word-break: break-word; overflow: visible; }
+        .instructor-callout p:first-of-type { margin-top: 0; }
+        /* 강사 callout 내부 볼드: 섹션 헤더 스타일 */
+        .instructor-callout strong {
+            color: #1e40af; /* 진한 블루 — 섹션 헤더 강조 (어두운 배경에서도 검정 계열) */
+            display: inline-block;
+            margin-top: 10px;
+        }
+        /* 첫 번째 strong (⏱️ 예상 소요)은 margin-top 없음 */
+        .instructor-callout p:first-of-type strong { margin-top: 0; }
+        .instructor-callout br { display: block; content: ''; margin: 4px 0; }
+        .instructor-callout > * { max-width: 100%; overflow-wrap: break-word; overflow: visible; }
+        .instructor-callout { overflow: visible; max-height: none; }
+        /* 강사 callout 내부 불릿 스타일 */
+        .instructor-callout ul { margin: 6px 0 6px 16px; padding: 0; }
+        .instructor-callout ul li {
+            list-style-type: disc;
+            color: #111827; /* 검정색 — 가독성 최대 */
+            margin: 3px 0;
+            line-height: 1.7;
+        }
+        .instructor-callout ul li::marker { color: #60a5fa; }
+
+        /* ── 강사 callout 하위 섹션별 아이콘 강조 ── */
+        /* 🎬 도입 멘트 — 파랑 */
+        .instructor-callout strong:has(+ br):first-line { }
+        /* 🗣️ 핵심 설명 — 보라 */
+        /* 💡 핵심 강조 — 노랑 */
+        /* ⚠️ 주의 — 빨강 */
+        /* 🗣️ 질문 — 초록 */
+        /* 🔗 전환 — 회색 */
+
+        /* callout 타입별 변형 (호환성 유지) */
+        .instructor-callout.callout-script { border-left-color: #60a5fa; }
+        .instructor-callout.callout-script::before { content: '🎬 강사 스크립트'; color: #60a5fa; }
+        .instructor-callout.callout-emphasis { border-left-color: #f59e0b; }
+        .instructor-callout.callout-emphasis::before { content: '💡 핵심 강조'; color: #f59e0b; }
+        .instructor-callout.callout-warning { border-left-color: #f87171; }
+        .instructor-callout.callout-warning::before { content: '⚠️ 주의사항'; color: #f87171; }
+        .instructor-callout.callout-question { border-left-color: #34d399; }
+        .instructor-callout.callout-question::before { content: '🗣️ 질문 유도'; color: #34d399; }
+        .instructor-callout.callout-closing { border-left-color: #818cf8; }
+        .instructor-callout.callout-closing::before { content: '🏁 마무리'; color: #818cf8; }
+
+        /* v5.9: 학생 뷰 — 강사 callout 숨김 */
+        .student-view .instructor-callout,
+        .student-view .instructor-only,
+        .student-view [class*="교강사"] {
+            display: none !important;
+        }
+
+        /* v8: 분할 뷰 (좌: 수강생, 우: 강사) */
+        .split-view-container {
+            display: flex;
+            gap: 0;
+            height: calc(100vh - 180px);
+            overflow: hidden;
+            position: relative;
+        }
+        .split-view-pane {
+            flex: 1;
+            overflow-y: auto;
+            position: relative;
+        }
+        .split-view-pane:first-child {
+            border-right: 3px solid #d1d5db;
+        }
+        .split-view-pane .split-pane-content {
+            padding: 1rem 2rem 4rem 2rem;
+        }
+        /* 라벨: 상단 완전 고정 */
+        .split-view-label {
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            padding: 8px 16px;
+            font-size: 0.7rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            text-align: center;
+        }
+        .split-view-label.student {
+            background: linear-gradient(135deg, #dbeafe, #ede9fe);
+            color: #4338ca;
+            border-bottom: 2px solid #818cf8;
+        }
+        .split-view-label.instructor {
+            background: linear-gradient(135deg, #fef3c7, #fce7f3);
+            color: #b45309;
+            border-bottom: 2px solid #f59e0b;
+        }
+        /* 수강생뷰: 강사 callout → 투명 스페이서 (높이 유지, 라인 정렬) */
+        .split-student-pane .instructor-callout,
+        .split-student-pane .instructor-only,
+        .split-student-pane [class*="교강사"] {
+            visibility: hidden !important;
+            pointer-events: none !important;
+            opacity: 0 !important;
+            /* display: none 대신 visibility: hidden → 공간 유지 = 라인 정렬 */
+        }
+        /* 수강생뷰 스페이서에 라인 정렬 가이드 표시 */
+        .split-student-pane .instructor-callout {
+            position: relative;
+            border: none !important;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 19px,
+                rgba(124,91,245,0.08) 19px,
+                rgba(124,91,245,0.08) 20px
+            ) !important;
+            border-left: 3px dashed rgba(124,91,245,0.15) !important;
+            border-radius: 0 !important;
+            padding: 20px 24px !important;
+        }
+        .split-student-pane .instructor-callout::before {
+            content: '📙 강사 스크립트 영역' !important;
+            visibility: visible !important;
+            opacity: 0.3 !important;
+            color: #7c5bf5 !important;
+            font-size: 0.6rem !important;
+        }
+    </style>
+
+</head>
+
+<body class="bg-bgBody text-textLight flex flex-col h-screen overflow-hidden font-sans">
+
+
+
+    <!-- Header -->
+
+    <header class="glass-panel h-[56px] flex items-center px-5 z-50 shrink-0 w-full gap-3">
+        <!-- 좌측 고정 -->
+        <div class="flex items-center gap-2.5 shrink-0 cursor-pointer" onclick="saveAndGoHome()" title="과정 개요로 돌아가기">
+            <i class="ph-fill ph-game-controller text-xl text-accent drop-shadow-[0_0_8px_rgba(124,91,245,0.5)]"></i>
+            <h1
+                class="text-base font-bold bg-gradient-to-r from-[#c4b5fd] via-[#a78bfa] to-[#7c5bf5] bg-clip-text text-transparent tracking-tight whitespace-nowrap hidden sm:block drop-shadow-sm hover:from-white hover:to-white transition-all">
+                교안 에이전트</h1>
+            <span
+                class="text-[0.5rem] font-bold text-accent/40 tracking-[0.2em] mt-0.5 whitespace-nowrap hidden sm:block">V7.0.0</span>
+        </div>
+
+        <!-- 중앙 스크롤 툴바 -->
+        <div id="toolbar-scroll"
+            class="flex-1 flex items-center gap-2 overflow-x-auto overflow-y-hidden hide-scrollbar cursor-grab min-w-0">
+            <span
+                class="text-[0.6rem] font-semibold text-white/40 px-1.5 pointer-events-none select-none whitespace-nowrap shrink-0">내보내기</span>
+
+            <div class="relative flex items-center shrink-0">
+                <button id="data-manage-btn" onclick="toggleDataManageDropdown(event)"
+                    class="flex items-center gap-1 px-2.5 py-1.5 text-[0.7rem] font-semibold text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-lg hover:bg-emerald-500/20 transition-all whitespace-nowrap">
+                    <i class="ph-bold ph-database text-sm"></i> 데이터 연동 <i
+                        class="ph-bold ph-caret-down text-[0.5rem] ml-0.5 opacity-70"></i>
+                </button>
+            </div>
+
+            <!-- 데이터 관리 드롭다운 (fixed, body 레벨) -->
+            <div id="data-manage-dropdown"
+                class="hidden fixed w-48 bg-[#1a1a2e] border border-white/10 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.6)] flex-col py-1.5 z-[9999]"
+                style="pointer-events: auto;">
+                <input type="file" id="import-zip-input" accept=".zip" class="hidden"
+                    onchange="importProjectZip(event)">
+
+                <button onclick="document.getElementById('import-zip-input').click(); toggleDataManageDropdown();"
+                    class="flex items-center gap-2 w-full px-3 py-2.5 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
+                    <i class="ph-fill ph-file-zip text-emerald-400 text-sm"></i> zip 파일 불러오기
+                </button>
+
+                <button onclick="exportAllModules(); toggleDataManageDropdown();"
+                    class="flex items-center gap-2 w-full px-3 py-2.5 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
+                    <i class="ph-bold ph-export text-emerald-400 text-sm"></i> zip으로 내보내기
+                </button>
+
+                <div class="h-px bg-white/10 my-1 mx-3"></div>
+
+                <button onclick="connectProjectFolder(); toggleDataManageDropdown();"
+                    class="flex items-center gap-2 w-full px-3 py-2.5 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
+                    <i class="ph-fill ph-folder-plus text-cyan-400 text-sm"></i> 빈 폴더에 연결
+                </button>
+
+                <button onclick="loadFromProjectFolder(); toggleDataManageDropdown();"
+                    class="flex items-center gap-2 w-full px-3 py-2.5 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
+                    <i class="ph-fill ph-folder-open text-cyan-400 text-sm"></i> 기존 작업 폴더에 연결
+                </button>
+            </div>
+            <div class="w-px h-5 bg-white/15 shrink-0 mx-1"></div>
+
+            <div class="relative flex items-center shrink-0">
+                <button id="export-dropdown-btn" onclick="toggleExportDropdown(event)"
+                    class="flex items-center gap-1 px-2.5 py-1.5 text-[0.7rem] font-semibold text-white bg-gradient-to-br from-accent/40 to-accentHover/40 border border-accent/50 rounded-lg hover:from-accent/60 hover:to-accentHover/60 transition-all whitespace-nowrap">
+                    <i class="ph ph-export text-sm"></i> 내보내기 <i
+                        class="ph-bold ph-caret-down text-[0.5rem] ml-0.5 opacity-70"></i>
+                </button>
+                <button onclick="smartZipExport()"
+                    class="flex items-center gap-1 px-2.5 py-1.5 text-[0.7rem] font-semibold text-white bg-gradient-to-br from-emerald-500/40 to-teal-500/40 border border-emerald-500/50 rounded-lg hover:from-emerald-500/60 hover:to-teal-500/60 transition-all whitespace-nowrap ml-1"
+                    title="선택한 교과 또는 전체를 ZIP 다운로드">
+                    <i class="ph ph-file-zip text-sm"></i> ZIP
+                </button>
+            </div>
+
+            <!-- 내보내기 드롭다운 (fixed) -->
+            <div id="export-dropdown-menu"
+                class="hidden fixed w-52 bg-[#1a1a2e] border border-white/10 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.6)] flex-col py-1.5 z-[9999]"
+                style="pointer-events: auto;">
+
+                <div class="px-3 py-1.5 text-[0.6rem] font-bold text-white/40 uppercase tracking-wider">범위 선택</div>
+
+                <button onclick="setExportScope('current'); showExportFormatMenu()"
+                    class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
+                    <i class="ph-fill ph-file text-amber-400 text-sm"></i> 현재 차시
+                </button>
+
+                <button onclick="setExportScope('subject'); showExportFormatMenu()"
+                    class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
+                    <i class="ph-fill ph-books text-rose-400 text-sm"></i> 현재 교과 (전체 차시)
+                </button>
+
+                <div class="h-px bg-white/10 my-1 mx-3"></div>
+                <div id="export-format-section" class="hidden">
+                    <div class="px-3 py-1.5 text-[0.6rem] font-bold text-white/40 uppercase tracking-wider">형식 선택</div>
+
+                    <button onclick="executeDropdownExport('md')"
+                        class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
+                        <i class="ph-fill ph-file-text text-sky-400 text-sm"></i> 마크다운 (.md)
+                    </button>
+                    <button onclick="executeDropdownExport('pdf')"
+                        class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
+                        <i class="ph-fill ph-file-pdf text-red-400 text-sm"></i> PDF (.pdf)
+                    </button>
+                    <button onclick="executeDropdownExport('slide')"
+                        class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
+                        <i class="ph-fill ph-presentation-chart text-purple-400 text-sm"></i> 슬라이드 (.html)
+                    </button>
+                    <button onclick="executeDropdownExport('html')"
+                        class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
+                        <i class="ph-fill ph-code text-emerald-400 text-sm"></i> HTML (.html)
+                    </button>
+                </div>
+            </div>
+            <div class="w-px h-5 bg-white/15 shrink-0 mx-1"></div>
+            <button onclick="toggleHistoryPanel()"
+                class="flex items-center gap-1 px-2.5 py-1.5 text-[0.7rem] font-semibold text-white bg-gradient-to-br from-blue-600 to-indigo-600 rounded-lg hover:from-blue-500 hover:to-indigo-500 transition-all shrink-0 whitespace-nowrap"><i
+                    class="ph ph-clock-counter-clockwise text-sm"></i> 히스토리</button>
+
+            <!-- [Phase F10] 캐시 보관함 메뉴 -->
+            <div class="w-px h-5 bg-white/15 shrink-0 mx-1"></div>
+            <button onclick="toggleCachePanel()"
+                class="flex items-center gap-1 px-2.5 py-1.5 text-[0.7rem] font-semibold text-white bg-gradient-to-br from-emerald-600 to-teal-600 rounded-lg hover:from-emerald-500 hover:to-teal-500 transition-all shrink-0 whitespace-nowrap"><i
+                    class="ph ph-images text-sm"></i> 캐시 보관함</button>
+
+            <div class="w-px h-5 bg-white/15 shrink-0 mx-1"></div>
+            <button onclick="showConventionModal()"
+                class="flex items-center gap-1 px-2.5 py-1.5 text-[0.7rem] font-semibold text-yellow-300 bg-yellow-500/10 border border-yellow-500/30 rounded-lg hover:bg-yellow-500/20 transition-all shrink-0 whitespace-nowrap"><i
+                    class="ph ph-book-open text-sm"></i> 컨벤션</button>
+        </div>
+
+        <!-- 우측 고정: 폴더 상태 + 설정 -->
+        <div class="flex items-center gap-3 shrink-0 relative">
+            <div id="folder-connection-indicator"
+                class="flex items-center gap-1.5 px-2 py-1 text-[0.6rem] cursor-pointer rounded-lg hover:bg-white/5 transition-colors"
+                title="프로젝트 폴더 연결하기" onclick="connectProjectFolder()">
+                <i class="ph ph-folder-dashed text-sm text-white/40"></i>
+                <span class="text-white/40">미연결</span>
+            </div>
+
+            <!-- 폴더 연결 드롭다운 (fixed) -->
+            <div id="folder-dropdown-menu"
+                class="hidden absolute top-full right-12 mt-2 w-48 bg-[#1a1a2e] border border-white/10 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.6)] flex-col py-1.5 z-[9999]"
+                style="pointer-events: auto;">
+
+                <button onclick="connectProjectFolder(); toggleFolderDropdown();"
+                    class="flex items-center gap-2 w-full px-3 py-2.5 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
+                    <i class="ph-fill ph-folder-plus text-cyan-400 text-sm"></i> 다른 폴더에 연결
+                </button>
+
+                <div class="h-px bg-white/10 my-1 mx-3"></div>
+
+                <button onclick="disconnectProjectFolder(); toggleFolderDropdown();"
+                    class="flex items-center gap-2 w-full px-3 py-2.5 text-left text-[0.7rem] font-medium text-rose-400 hover:bg-white/10 transition-colors">
+                    <i class="ph-fill ph-plug-x text-rose-400 text-sm"></i> 연동 해제
+                </button>
+            </div>
+            <button onclick="openSettingsPanel()" id="btn-settings"
+                class="relative flex items-center justify-center w-9 h-9 rounded-full bg-white/5 border border-white/10 hover:bg-accent/20 hover:border-accent/50 text-textMuted hover:text-accent transition-all"
+                title="설정">
+                <i class="ph-fill ph-gear-six text-lg"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- Settings Panel -->
+    <div id="settings-panel"
+        class="hidden fixed top-[60px] right-4 w-[340px] bg-[#1a1a2e] border border-white/10 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.7)] z-[200] animate-fade-in overflow-hidden">
+        <div class="flex items-center justify-between p-4 border-b border-white/10 bg-black/20">
+            <div class="flex items-center gap-2"><i class="ph-fill ph-gear-six text-accent text-lg"></i>
+                <h3 class="text-sm font-bold text-white">설정</h3>
+            </div>
+            <button onclick="closeSettingsPanel()"
+                class="w-7 h-7 flex items-center justify-center rounded-full hover:bg-white/10 text-textMuted hover:text-white transition-colors"><i
+                    class="ph-bold ph-x"></i></button>
+        </div>
+        <div class="p-4 flex flex-col gap-4 overflow-y-auto max-h-[75vh] editor-scroll">
+            <div style="display:none;">
+                <label class="flex items-center gap-1.5 text-xs font-bold text-textMuted mb-2"><i
+                        class="ph-fill ph-key text-accent/70"></i> Gemini API Key</label>
+                <div class="flex gap-2">
+                    <div class="relative flex-1">
+                        <input type="password" id="settings-api-key-input" disabled
+                            class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-accent transition-all pr-8 disabled:opacity-60 disabled:cursor-not-allowed"
+                            placeholder="🔒 수정하려면 클릭하세요" onclick="unlockApiKeyInput()">
+                        <button
+                            onclick="const i=document.getElementById('settings-api-key-input');if(!i.disabled)i.type=i.type==='password'?'text':'password'"
+                            class="absolute right-2 top-1/2 -translate-y-1/2 text-textMuted hover:text-white transition-colors"><i
+                                class="ph-bold ph-eye text-xs"></i></button>
+                    </div>
+                    <button onclick="saveApiKeySetting()"
+                        class="px-3 py-2 text-xs font-bold text-white bg-accent hover:bg-accentHover rounded-lg transition-colors shrink-0">저장</button>
+                </div>
+                <div class="flex items-center gap-1 mt-1.5">
+                    <div id="api-key-status-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-400"></div><span
+                        id="api-key-status-text" class="text-[0.6rem] text-textMuted">Key 등록됨</span>
+                </div>
+            </div>
+
+            <!-- [Phase F10] 구글 검색 이미지 연동 (다중 키 롤링) -->
+            <div>
+                <label class="flex items-center gap-1.5 text-xs font-bold text-textMuted mb-2"><i
+                        class="ph-fill ph-google-logo text-accent/70"></i> Google Custom Search 설정 (선택)</label>
+
+                <div class="space-y-2">
+                    <input type="text" id="settings-google-cx-input"
+                        class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-accent transition-all"
+                        placeholder="Search Engine ID (CX)">
+
+                    <textarea id="settings-google-keys-input"
+                        class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-accent transition-all resize-none"
+                        rows="2" placeholder="API Key들을 콤마(,)로 구분하여 입력하세요&#10;예: AIzaSy...A, AIzaSy...B"></textarea>
+                </div>
+
+                <div class="flex justify-between items-center mt-2">
+                    <p class="text-[0.55rem] text-textMuted/50 leading-relaxed">딥 리서치 검색 에이전트 이미지 수집에 사용 (할당량 초과 시 자동
+                        롤링)</p>
+                    <button onclick="saveGoogleSearchSetting()"
+                        class="px-3 py-1.5 text-xs font-bold text-white bg-accent/20 hover:bg-accent hover:text-white rounded-lg transition-colors border border-accent/30 shrink-0">적용</button>
+                </div>
+            </div>
+
+            <div class="h-px bg-white/5"></div>
+
+            <!-- [Phase F10] 무료 스톡 이미지(Pixabay) 연동 (Fallback) -->
+            <div>
+                <label class="flex items-center gap-1.5 text-xs font-bold text-textMuted mb-2"><i
+                        class="ph-fill ph-camera text-accent/70"></i> 무료 스톡 검색 설정 (선택)</label>
+
+                <div class="space-y-2">
+                    <input type="text" id="settings-pixabay-key-input"
+                        class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-accent transition-all"
+                        placeholder="Pixabay API Key (예: 12345678-abcdef...)">
+                </div>
+
+                <div class="flex justify-between items-center mt-2">
+                    <p class="text-[0.55rem] text-textMuted/50 leading-relaxed">구글 검색 쿼터 만료 및 실패 시 대체 검색원으로 사용됩니다.</p>
+                    <button onclick="savePixabaySetting()"
+                        class="px-3 py-1.5 text-xs font-bold text-white bg-accent/20 hover:bg-accent hover:text-white rounded-lg transition-colors border border-accent/30 shrink-0">적용</button>
+                </div>
+            </div>
+
+            <div class="h-px bg-white/5"></div>
+
+            <div>
+                <label class="flex items-center gap-1.5 text-xs font-bold text-textMuted mb-2"><i
+                        class="ph-fill ph-brain text-accent/70"></i> LLM 모델</label>
+                <select id="settings-text-model" onchange="updateTextModel(this.value)"
+                    class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent transition-all appearance-none cursor-pointer"
+                    style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22%238a8ab5%22><path d=%22M7 10l5 5 5-5z%22/></svg>');background-repeat:no-repeat;background-position:right 10px center;">
+                </select>
+                <p class="text-[0.55rem] text-textMuted/50 mt-1">교안·퀴즈·문체 변환 등 텍스트 생성에 사용</p>
+            </div>
+            <div>
+                <label class="flex items-center gap-1.5 text-xs font-bold text-textMuted mb-2"><i
+                        class="ph-fill ph-image text-accent/70"></i> 이미지 생성 모델</label>
+                <select id="settings-image-model" onchange="updateImageModel(this.value)"
+                    class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent transition-all appearance-none cursor-pointer"
+                    style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22%238a8ab5%22><path d=%22M7 10l5 5 5-5z%22/></svg>');background-repeat:no-repeat;background-position:right 10px center;">
+                </select>
+                <p class="text-[0.55rem] text-textMuted/50 mt-1">교안 내 삽입 이미지 생성에 사용</p>
+            </div>
+            <div class="h-px bg-white/5"></div>
+            <div>
+                <button onclick="restartTutorial(); closeSettingsPanel();"
+                    class="w-full px-3 py-2 text-[0.7rem] font-bold text-accent bg-accent/10 border border-accent/30 rounded-lg hover:bg-accent/20 transition-colors flex items-center gap-2 justify-center">
+                    <i class="ph-fill ph-graduation-cap"></i> 튜토리얼 다시보기
+                </button>
+            </div>
+            <div class="h-px bg-white/5"></div>
+            <div class="text-[0.55rem] text-textMuted/50 leading-relaxed">
+                <p>• API Key와 모델 설정은 브라우저 로컬에만 저장됩니다.</p>
+            </div>
+        </div>
+    </div>
+
+
+
+    <!-- Overview Container -->
+
+    <main id="overview-container" class="flex-1 flex overflow-hidden">
+
+        <!-- History Panel -->
+        <aside id="history-panel"
+            class="hidden absolute right-0 top-0 w-80 h-full bg-[#1a1a2e]/95 backdrop-blur-xl border-l border-white/10 flex flex-col z-40 transition-transform shadow-[-8px_0_30px_rgba(0,0,0,0.5)]">
+            <div class="flex items-center justify-between p-4 border-b border-white/5 bg-black/20 shrink-0">
+                <div class="flex items-center gap-2">
+                    <i class="ph-fill ph-clock-counter-clockwise text-blue-400 text-lg"></i>
+                    <h3 class="text-sm font-bold text-white">작업 히스토리</h3>
+                </div>
+                <!-- ... 생략 ... -->
+                <div class="flex items-center gap-2">
+                    <button onclick="clearHistory()"
+                        class="px-2 py-1 text-[0.6rem] font-medium text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
+                        title="전체 히스토리 삭제">전체 삭제</button>
+                    <button onclick="toggleHistoryPanel()"
+                        class="w-7 h-7 flex items-center justify-center rounded-full hover:bg-white/10 text-textMuted hover:text-white transition-colors"><i
+                            class="ph-bold ph-x"></i></button>
+                </div>
+            </div>
+            <div class="p-3 border-b border-white/5 shrink-0 bg-black/10">
+                <div class="flex justify-between items-center text-[0.7rem] text-textMuted/70">
+                    <span>저장 개수</span>
+                    <span id="history-count-badge"
+                        class="bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded font-mono">0</span>
+                </div>
+                <!-- 용량 표기 (MB) -->
+                <div class="flex justify-between items-center text-[0.7rem] text-textMuted/70 mt-1">
+                    <span>사용 용량</span>
+                    <span id="history-storage-badge" class="text-emerald-400/80 px-1.5 py-0.5 rounded font-mono">0.0
+                        MB</span>
+                </div>
+            </div>
+            <div id="history-list" class="flex-1 overflow-y-auto p-2 flex flex-col gap-1 editor-scroll">
+                <!-- History items will be injected here -->
+            </div>
+        </aside>
+
+        <!-- [Phase F10] 캐시 보관함 패널 -->
+        <aside id="cache-panel"
+            class="hidden absolute right-0 top-0 w-80 h-full bg-[#1a1a2e]/95 backdrop-blur-xl border-l border-white/10 flex flex-col z-40 transition-transform shadow-[-8px_0_30px_rgba(0,0,0,0.5)]">
+            <div class="flex items-center justify-between p-4 border-b border-white/5 bg-black/20 shrink-0">
+                <div class="flex items-center gap-2">
+                    <i class="ph-fill ph-images text-emerald-400 text-lg"></i>
+                    <h3 class="text-sm font-bold text-white">로컬 이미지 캐시</h3>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="clearAllImageCaches()"
+                        class="px-2 py-1 text-[0.6rem] font-medium text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
+                        title="모든 캐시 삭제">전체 삭제</button>
+                    <button onclick="toggleCachePanel()"
+                        class="w-7 h-7 flex items-center justify-center rounded-full hover:bg-white/10 text-textMuted hover:text-white transition-colors"><i
+                            class="ph-bold ph-x"></i></button>
+                </div>
+            </div>
+            <div class="p-3 border-b border-white/5 shrink-0 bg-black/10">
+                <div class="text-[0.7rem] text-textMuted/70 mb-2 leading-relaxed">
+                    구글 검색을 통해 한 번 불러온 이미지는 IndexedDB에 저장되어, 동일 검색어 호출 시 API 할당량 소모 없이 즉시 재사용됩니다.
+                </div>
+                <div class="flex justify-between items-center text-[0.7rem] text-textMuted/70">
+                    <span>캐시 항목 수</span>
+                    <span id="cache-count-badge"
+                        class="bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-mono">0</span>
+                </div>
+            </div>
+            <!-- 카드 형태 레이아웃 적용 -->
+            <div id="cache-list" class="flex-1 overflow-y-auto p-3 flex flex-col gap-3 editor-scroll">
+                <!-- Cache items will be injected here -->
+            </div>
+        </aside>
+
+
+
+        <!-- LNB (과정 목차) -->
+
+        <aside
+            class="w-1/4 min-w-[280px] max-w-[350px] bg-bgSidebar border-r border-white/[0.07] flex flex-col h-full relative z-10 shadow-[4px_0_20px_rgba(0,0,0,0.2)]">
+
+            <div class="p-5 border-b border-white/5 shrink-0 flex justify-between items-center bg-black/10">
+
+                <div class="flex items-center gap-2">
+
+                    <i class="ph-fill ph-books text-lg text-accent"></i>
+
+                    <h2 class="text-sm font-bold text-textLight">과정 목차 (교과 리스트)</h2>
+
+                </div>
+
+                <button onclick="createNewSubject()"
+                    class="w-8 h-8 flex items-center justify-center rounded bg-white/5 hover:bg-accent text-white transition-colors"
+                    title="새 교과 추가">
+
+                    <i class="ph-bold ph-plus"></i>
+
+                </button>
+
+            </div>
+
+
+
+            <div class="p-4 shrink-0 border-b border-white/5">
+
+                <div class="flex items-center justify-between mb-1">
+                    <div class="text-xs font-bold text-textMuted">과정명</div>
+                    <button onclick="exportSelectedToZip()" id="zip-selected-btn"
+                        class="hidden items-center gap-1 px-2 py-0.5 text-[0.6rem] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded hover:bg-emerald-500/20 transition-colors"
+                        title="선택한 항목을 ZIP으로 내보내기">
+                        <i class="ph ph-file-zip"></i> ZIP 내보내기
+                    </button>
+                </div>
+
+                <label class="flex items-center gap-2 text-sm font-bold text-white bg-white/5 p-2 rounded border border-white/10 cursor-pointer hover:bg-white/10 transition-colors">
+                    <input type="checkbox" id="select-all-subjects" onchange="toggleSelectAllSubjects(this.checked)"
+                        class="w-4 h-4 accent-accent rounded cursor-pointer">
+                    <span id="overview-course-title">게임 기획 전문가 양성 과정</span>
+                </label>
+
+            </div>
+
+
+
+            <div id="overview-lnb-list" class="flex-1 overflow-y-auto p-4 flex flex-col gap-3 editor-scroll">
+
+                <!-- Subjects will be injected here -->
+
+            </div>
+
+        </aside>
+
+
+
+        <!-- Main Diagram Area & Detail Panel -->
+
+        <section class="flex-1 relative flex flex-col h-full overflow-hidden bg-bgBody">
+
+
+
+            <!-- Infinite Viewport for Diagram -->
+
+            <div id="diagram-viewport" class="w-full h-full relative overflow-hidden cursor-grab"
+                style="background-image: radial-gradient(rgba(255,255,255,0.05) 1px, transparent 1px); background-size: 24px 24px; background-position: 0px 0px;">
+
+
+
+                <!-- Transform Layer (Huge Canvas) -->
+
+                <div id="diagram-transform-layer" class="absolute top-0 left-0 origin-top-left"
+                    style="width: 10000px; height: 10000px; transform: translate(0px, 0px) scale(1);">
+
+                    <!-- SVG for connecting lines -->
+
+                    <svg id="diagram-lines" class="absolute top-0 left-0 w-full h-full pointer-events-none z-0"></svg>
+
+
+
+                    <!-- Dynamic Diagram Nodes -->
+
+                    <div id="diagram-dynamic-content"
+                        class="absolute top-0 left-0 p-16 flex items-center justify-start min-h-max min-w-max z-10">
+
+                        <!-- Diagram will be injected here -->
+
+                    </div>
+
+                </div>
+
+
+
+                <!-- Minimap Container -->
+
+                <div id="minimap-container"
+                    class="absolute bottom-6 left-6 w-56 h-36 bg-bgSidebar border border-white/10 rounded-xl overflow-hidden shadow-[0_10px_30px_rgba(0,0,0,0.5)] z-30 cursor-crosshair hover:border-accent/50 transition-colors"
+                    title="미니맵으로 위치 이동">
+
+                    <div class="absolute top-0 left-0 w-full h-full bg-black/40 z-0 pointer-events-none"></div>
+
+                    <!-- Cloned Minimap Content -->
+
+                    <div id="minimap-content"
+                        class="absolute top-0 left-0 origin-top-left pointer-events-none opacity-60 z-10"></div>
+
+                    <!-- Viewport Indicator -->
+
+                    <div id="minimap-indicator"
+                        class="absolute border-2 border-accent bg-accent/20 rounded pointer-events-none z-20 shadow-[0_0_10px_rgba(124,91,245,0.3)]">
+                    </div>
+
+                </div>
+
+
+
+                <!-- Zoom Controls -->
+
+                <div class="absolute bottom-6 right-6 flex flex-col gap-2 z-30">
+
+                    <button onclick="zoomDiagram(0.2)"
+                        class="w-10 h-10 bg-bgSidebar border border-white/10 rounded-full flex items-center justify-center text-white hover:bg-white/10 hover:border-accent/50 transition-all shadow-lg"><i
+                            class="ph-bold ph-plus"></i></button>
+
+                    <button onclick="resetDiagramView()"
+                        class="w-10 h-10 bg-bgSidebar border border-white/10 rounded-full flex items-center justify-center text-accent font-bold text-xs hover:bg-white/10 hover:border-accent/50 transition-all shadow-lg">1:1</button>
+
+                    <button onclick="zoomDiagram(-0.2)"
+                        class="w-10 h-10 bg-bgSidebar border border-white/10 rounded-full flex items-center justify-center text-white hover:bg-white/10 hover:border-accent/50 transition-all shadow-lg"><i
+                            class="ph-bold ph-minus"></i></button>
+
+                </div>
+
+            </div>
+
+
+
+            <!-- Detail Panel (Slide-in) -->
+
+            <aside id="overview-detail-panel"
+                class="absolute top-0 right-0 h-full w-[400px] bg-bgSidebar border-l border-white/10 shadow-[-10px_0_30px_rgba(0,0,0,0.5)] transform translate-x-full transition-transform duration-300 ease-in-out z-40 flex flex-col">
+
+                <!-- Detail content will be injected here -->
+
+            </aside>
+
+        </section>
+
+    </main>
+
+
+
+    <!-- Editor Container -->
+
+    <main id="editor-container" class="flex-1 flex overflow-hidden hidden">
+
+
+
+        <!-- Sidebar (Blueprint Panel) -->
+
+        <aside
+            class="w-1/3 min-w-[300px] max-w-[400px] bg-bgSidebar border-r border-white/[0.07] flex flex-col h-full relative z-10 shadow-[4px_0_20px_rgba(0,0,0,0.2)]">
+
+            <div class="p-5 border-b border-white/5 shrink-0">
+
+                <div class="flex items-center justify-between mb-4">
+
+                    <div class="flex items-center gap-2">
+
+                        <i class="ph ph-list-dashes text-lg text-textMuted"></i>
+
+                        <h2 class="text-sm font-bold uppercase tracking-wider text-textMuted">커리큘럼 목차</h2>
+
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                        <!-- 차시 수 조절 -->
+                        <div class="flex items-center gap-0.5 bg-white/5 border border-white/10 rounded px-1 py-0.5" title="생성할 차시 수 (AI 목차 생성 시 적용)">
+                            <button onclick="adjustBatchCount(-1)" class="w-5 h-5 flex items-center justify-center text-textMuted hover:text-white hover:bg-white/10 rounded transition-colors text-xs font-bold">−</button>
+                            <input type="number" id="sidebar-batch-count" min="1" max="30" value="5" class="w-8 text-center text-xs font-bold text-accent bg-transparent border-none focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" onchange="syncBatchCount(this.value)">
+                            <button onclick="adjustBatchCount(1)" class="w-5 h-5 flex items-center justify-center text-textMuted hover:text-white hover:bg-white/10 rounded transition-colors text-xs font-bold">+</button>
+                            <span class="text-[0.6rem] text-textMuted ml-0.5">차시</span>
+                        </div>
+                        <button onclick="openBatchModal()"
+                            class="flex items-center gap-1.5 px-2.5 py-1.5 text-[0.7rem] font-bold text-accent bg-accent/10 border border-accent/20 rounded hover:bg-accent/20 transition-all shadow-sm">
+                            <i class="ph-bold ph-stack"></i> AI 목차 생성
+                        </button>
+                    </div>
+
+                </div>
+
+                <!-- v5.9: 사이드바 탭 (주제/커리큘럼/참고자료) -->
+                <div class="flex border-b border-white/10 mb-2">
+                    <button class="sidebar-input-tab flex-1 py-1.5 text-xs font-bold text-center transition-colors border-b-2 border-accent text-accent" data-sidebar-tab="topic" onclick="switchSidebarTab('topic')">📝 주제</button>
+                    <button class="sidebar-input-tab flex-1 py-1.5 text-xs font-bold text-center transition-colors border-b-2 border-transparent text-textMuted hover:text-white" data-sidebar-tab="curriculum" onclick="switchSidebarTab('curriculum')">📋 커리큘럼</button>
+                    <button class="sidebar-input-tab flex-1 py-1.5 text-xs font-bold text-center transition-colors border-b-2 border-transparent text-textMuted hover:text-white" data-sidebar-tab="reference" onclick="switchSidebarTab('reference')">📎 참고자료</button>
+                </div>
+
+                <div class="flex flex-col gap-2">
+
+                    <!-- 주제 탭 -->
+                    <div id="sidebar-tab-topic">
+                        <input type="text" id="topic-input" placeholder="교육 주제 입력 (예: Unity 2D 액션 게임 기획)"
+                            class="w-full px-3 py-2.5 text-sm bg-white/5 border border-white/10 rounded-lg text-white placeholder-textMuted focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
+                            onblur="updateSubjectMeta('title', this.value)">
+                    </div>
+
+                    <!-- 커리큘럼 탭 -->
+                    <div id="sidebar-tab-curriculum" class="hidden">
+                        <textarea id="curriculum-input" rows="5" placeholder="단원명과 내용을 입력하세요.&#10;예)&#10;1단원: 게임 기획 기초&#10;- 게임 기획이란?&#10;- MDA 프레임워크"
+                            class="w-full px-3 py-2 text-xs bg-white/5 border border-white/10 rounded-lg text-white placeholder-textMuted focus:outline-none focus:border-accent resize-y editor-scroll"></textarea>
+                        <button onclick="downloadCurriculumSample()" class="text-[0.65rem] text-textMuted hover:text-accent transition-colors mt-1">📥 샘플 MD 다운로드</button>
+                    </div>
+
+                    <!-- 참고자료 탭 -->
+                    <div id="sidebar-tab-reference" class="hidden">
+                        <div class="px-2 py-1.5 mb-2 text-[0.6rem] text-textMuted bg-white/5 rounded-lg border border-white/5 leading-relaxed">
+                            <strong class="text-accent">💡 사용법</strong><br>
+                            • <strong>참고 URL:</strong> NotebookLM 공유 링크 또는 참고 웹페이지 URL을 입력 후 [추가] 클릭<br>
+                            • <strong>참고 텍스트:</strong> NotebookLM 요약, 강의 원고, 참고 문서 등을 아래 텍스트 영역에 붙여넣기<br>
+                            • 등록된 자료는 AI가 교안 생성 시 <strong class="text-accent">자동 참조</strong>합니다.
+                        </div>
+                        <div class="flex gap-1 mb-1">
+                            <input type="text" id="reference-url-input" placeholder="NotebookLM 또는 참고 URL을 입력하세요"
+                                class="flex-1 px-2 py-1.5 text-xs bg-white/5 border border-white/10 rounded text-white placeholder-textMuted focus:outline-none focus:border-accent"
+                                title="NotebookLM 공유 링크 또는 참고 URL을 입력 후 추가 버튼을 누르세요">
+                            <button onclick="addReferenceUrl()" class="px-2 py-1.5 text-xs font-bold bg-accent/20 text-accent border border-accent/30 rounded hover:bg-accent/30 transition-colors" title="URL을 목록에 추가합니다">추가</button>
+                        </div>
+                        <div id="reference-url-list" class="max-h-60 overflow-y-auto editor-scroll mb-1"></div>
+                        <textarea id="reference-text-input" rows="3" placeholder="참고 텍스트를 붙여넣으세요&#10;예: NotebookLM 요약, 강의 원고, 참고 문서 텍스트"
+                            class="w-full px-2 py-1.5 text-xs bg-white/5 border border-white/10 rounded text-white placeholder-textMuted focus:outline-none focus:border-accent resize-y editor-scroll"
+                            oninput="onReferenceTextChange()"></textarea>
+                        <div class="flex justify-between items-center mt-0.5">
+                            <span id="reference-char-count" class="text-[0.6rem] text-textMuted">0자</span>
+                            <span id="reference-status-badge" class="text-[0.6rem] px-1.5 py-0.5 rounded bg-white/5 text-textMuted">미등록</span>
+                        </div>
+                    </div>
+
+                    <!-- 단원 수 + 어투 선택 -->
+                    <div class="flex items-center gap-2 mt-1">
+                        <label class="text-[0.65rem] text-textMuted whitespace-nowrap">단원 수:</label>
+                        <input type="number" id="unit-count-input" min="1" max="10" value="1"
+                            class="w-12 px-1 py-1 text-xs text-center bg-white/5 border border-white/10 rounded text-white focus:outline-none focus:border-accent">
+                        <div class="flex gap-1 ml-auto" id="tone-selector">
+                            <button onclick="setInstructorTone('formal')" class="tone-btn px-1.5 py-0.5 text-[0.6rem] font-bold rounded border transition-colors bg-accent/20 text-accent border-accent/40" data-tone="formal">합쇼체</button>
+                            <button onclick="setInstructorTone('friendly')" class="tone-btn px-1.5 py-0.5 text-[0.6rem] font-bold rounded border transition-colors bg-white/5 text-textMuted border-white/10" data-tone="friendly">해요체</button>
+                            <button onclick="setInstructorTone('coaching')" class="tone-btn px-1.5 py-0.5 text-[0.6rem] font-bold rounded border transition-colors bg-white/5 text-textMuted border-white/10" data-tone="coaching">코치형</button>
+                        </div>
+                    </div>
+
+                    <button id="generate-btn" onclick="handleGenerate()"
+                        class="flex items-center justify-center gap-2 w-full py-2.5 text-sm font-bold text-white bg-gradient-to-r from-accent to-accentHover rounded-lg hover:shadow-[0_4px_15px_rgba(124,91,245,0.4)] transition-all hover:-translate-y-px disabled:opacity-50 disabled:hover:transform-none disabled:hover:shadow-none cursor-pointer">
+
+                        <i class="ph-fill ph-lightning"></i> AI 차시 목차 생성
+
+                    </button>
+
+                </div>
+
+            </div>
+
+
+
+            <!-- Module List -->
+
+            <div id="module-list" class="flex-1 overflow-y-auto p-5 pb-20 editor-scroll">
+
+                <div class="text-center pt-10 text-textMuted/60 text-sm leading-relaxed">
+
+                    <i class="ph ph-book-open text-3xl mb-2 opacity-50 block"></i>
+
+                    주제를 입력하고 AI 목차 생성을 눌러주세요.
+
+                </div>
+
+            </div>
+
+
+
+            <!-- Loading Overlay for Sidebar -->
+
+            <div id="sidebar-loading"
+                class="absolute inset-0 bg-bgSidebar/90 backdrop-blur-sm hidden flex-col items-center justify-center gap-4 z-20">
+
+                <div class="spinner spinner-large"></div>
+
+                <p class="text-sm text-accent animate-pulse font-medium">AI가 최적의 커리큘럼을 설계 중입니다...</p>
+
+            </div>
+
+        </aside>
+
+
+
+        <!-- Editor Panel -->
+
+        <section class="flex-1 bg-bgEditor relative flex flex-col h-full">
+
+            <!-- Loading Overlay for Editor -->
+
+            <div id="editor-loading"
+                class="absolute inset-0 bg-bgEditor/90 backdrop-blur-sm hidden flex-col items-center justify-center gap-4 z-50">
+
+                <div class="flex gap-1.5">
+
+                    <div class="w-3 h-3 bg-accent rounded-full animate-bounce"></div>
+
+                    <div class="w-3 h-3 bg-accent rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+
+                    <div class="w-3 h-3 bg-accent rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+
+                </div>
+
+                <p id="editor-loading-text" class="text-sm font-bold text-textMuted/60">AI가 상세 교안을 작성하고 있습니다...</p>
+
+            </div>
+
+
+
+            <!-- Editor View Area -->
+
+            <div id="editor-content-area" class="flex-1 overflow-y-auto editor-scroll relative">
+
+                <div
+                    class="max-w-[800px] mx-auto p-12 flex flex-col items-center justify-center h-full text-center text-textMuted/50">
+
+                    <i class="ph ph-file-text text-6xl mb-4 opacity-20"></i>
+
+                    <h2 class="text-lg font-bold text-textMuted/60 mb-2">교안 편집 영역</h2>
+
+                    <p class="text-sm leading-relaxed">좌측 목차에서 항목을 선택하거나 생성하면<br>이곳에 상세 내용이 렌더링됩니다.</p>
+
+                </div>
+
+            </div>
+
+            <!-- v5.9: 스크롤-투-탑 버튼 -->
+            <button id="scroll-to-top-btn" onclick="document.getElementById('editor-content-area').scrollTo({top:0,behavior:'smooth'})"
+                class="absolute bottom-20 right-6 z-30 w-10 h-10 rounded-full bg-accent text-white shadow-lg flex items-center justify-center opacity-0 pointer-events-none transition-all duration-300 hover:scale-110"
+                title="맨 위로">
+                <i class="ph-bold ph-arrow-up"></i>
+            </button>
+
+            <!-- AI Command Bar (Bottom) -->
+
+            <div id="ai-command-bar"
+                class="hidden absolute bottom-0 left-0 right-0 p-3 bg-[#0f0f1a]/95 backdrop-blur-xl border-t border-accent/20 z-40 shadow-[0_-4px_20px_rgba(0,0,0,0.3)]">
+
+                <div class="max-w-[800px] mx-auto flex flex-col gap-2">
+
+                    <!-- 신규: 선택 텍스트 표시 뷰 -->
+                    <div id="ai-selected-text-display"
+                        class="hidden w-full px-3 py-1.5 bg-accent/5 border border-accent/20 rounded-lg text-xs text-textMuted flex items-center justify-between animate-fade-in shadow-inner">
+                        <div class="flex items-center gap-2 overflow-hidden w-full">
+                            <i class="ph-fill ph-quotes text-accent shrink-0"></i>
+                            <span class="truncate text-white/80" id="ai-selected-text-content"></span>
+                        </div>
+                        <button onclick="clearAISelection()"
+                            class="shrink-0 ml-3 text-white/40 hover:text-red-400 transition-colors" title="선택 취소">
+                            <i class="ph-bold ph-x"></i>
+                        </button>
+                    </div>
+
+                    <div class="flex items-center gap-3 w-full">
+
+                        <div class="flex bg-white/5 rounded-lg p-0.5 border border-white/10 shrink-0">
+
+                            <button onclick="switchAIMode('edit')" id="mode-btn-edit"
+                                class="px-3 py-1.5 text-xs font-bold rounded-md transition-all bg-accent text-white">텍스트
+                                수정</button>
+
+                            <button onclick="switchAIMode('image')" id="mode-btn-image"
+                                class="px-3 py-1.5 text-xs font-bold rounded-md transition-all text-gray-400 hover:text-white">이미지
+                                생성</button>
+
+                        </div>
+
+                        <input type="text" id="ai-command-input" placeholder="텍스트를 드래그 선택 후 요청사항을 입력하세요..."
+                            class="flex-1 bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-accent transition-colors"
+                            onkeydown="if(event.key==='Enter') executeAICommand()">
+
+                        <button id="ai-command-send" onclick="executeAICommand()"
+                            class="px-5 py-2 bg-gradient-to-r from-accent to-accentHover text-white text-sm font-bold rounded-lg hover:shadow-lg transition-all shrink-0">
+
+                            ✨ 실행
+
+                        </button>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </section>
+
+    </main>
+
+
+
+    <!-- Batch Generation Modal (Step 1) -->
+
+    <div id="batch-modal"
+        class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center z-[100] opacity-0 transition-opacity duration-300">
+
+        <div class="bg-bgSidebar border border-white/10 rounded-2xl w-full max-w-[650px] max-h-[85vh] flex flex-col shadow-2xl transform scale-95 transition-transform duration-300"
+            id="batch-modal-content">
+
+            <!-- Header -->
+
+            <div class="p-5 border-b border-white/10 flex justify-between items-center shrink-0">
+
+                <div class="flex items-center gap-2">
+
+                    <i class="ph-duotone ph-stack text-2xl text-accent"></i>
+
+                    <div>
+
+                        <h2 class="font-bold text-lg text-white">교과 단위 일괄 생성</h2>
+
+                        <p class="text-[0.7rem] text-textMuted mt-0.5">단원 전체의 교안을 AI가 한 번에 설계하고 작성합니다.</p>
+
+                    </div>
+
+                </div>
+
+                <button onclick="closeBatchModal()"
+                    class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 text-textMuted hover:text-white transition-colors">
+
+                    <i class="ph-bold ph-x text-lg"></i>
+
+                </button>
+
+            </div>
+
+
+
+            <!-- Body (Scrollable) -->
+
+            <div class="p-6 overflow-y-auto editor-scroll flex-1 flex flex-col gap-6">
+
+                <!-- Dropzone -->
+
+                <div>
+
+                    <label class="text-xs font-bold text-textMuted mb-2 block">참조 자료 (선택 사항)</label>
+
+                    <div id="batch-dropzone"
+                        class="border-2 border-dashed border-white/10 rounded-xl p-8 flex flex-col items-center justify-center text-center hover:border-accent/50 hover:bg-accent/5 transition-colors cursor-pointer relative group">
+
+                        <div
+                            class="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
+
+                            <i class="ph-duotone ph-upload-simple text-2xl text-textMuted group-hover:text-accent"></i>
+
+                        </div>
+
+                        <div class="text-sm font-bold text-white mb-1">클릭하거나 파일을 이곳에 드롭하세요</div>
+
+                        <div class="text-[0.7rem] text-textMuted">지원 포맷: .md, .txt (최대 1개 파일)</div>
+
+                        <input type="file" id="batch-file-input"
+                            class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept=".md,.txt">
+
+
+
+                        <!-- File Preview Info (Hidden by default) -->
+
+                        <div id="batch-file-preview"
+                            class="hidden absolute inset-0 bg-bgSidebar rounded-xl border-2 border-accent/50 p-4 flex flex-col items-center justify-center z-10">
+
+                            <i class="ph-fill ph-file-text text-3xl text-accent mb-2"></i>
+
+                            <div id="batch-file-name-display"
+                                class="text-sm font-bold text-white truncate w-full max-w-[200px] text-center">
+                                document.md</div>
+
+                            <div id="batch-file-size" class="text-xs text-textMuted mb-3">12 KB</div>
+
+                            <button type="button" onclick="clearBatchFile(event)"
+                                class="px-3 py-1 bg-red-500/20 text-red-400 text-xs font-bold rounded hover:bg-red-500 hover:text-white transition-colors">파일
+                                삭제</button>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+                <!-- 등록된 참고자료 선택 -->
+                <div id="batch-ref-section" class="hidden">
+                    <label class="text-xs font-bold text-textMuted mb-2 block">📚 등록된 참고자료 (선택하면 AI 생성 시 참조)</label>
+                    <div id="batch-ref-list" class="max-h-[120px] overflow-y-auto editor-scroll space-y-1 bg-black/20 rounded-lg p-3 border border-white/5">
+                        <!-- JS에서 동적 렌더링 -->
+                    </div>
+                </div>
+
+                <!-- Input Grid -->
+
+                <div class="grid grid-cols-2 gap-5 bg-black/20 p-5 rounded-xl border border-white/5">
+
+                    <div class="col-span-2">
+
+                        <label class="text-xs font-bold text-textMuted mb-1.5 block">교과 제목 <span
+                                class="text-accent">*</span></label>
+
+                        <input type="text" id="batch-title"
+                            class="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-accent focus:bg-white/10 transition-colors"
+                            placeholder="예: Unity 2D 액션 게임 기획 기초">
+
+                    </div>
+
+                    <div>
+
+                        <label class="text-xs font-bold text-textMuted mb-1.5 block">생성할 차시 수 <span
+                                class="text-accent">*</span></label>
+
+                        <div class="relative">
+
+                            <input type="number" id="batch-count" min="1" max="15" value="5"
+                                class="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-accent focus:bg-white/10 transition-colors pr-10">
+
+                            <span
+                                class="absolute right-4 top-1/2 -translate-y-1/2 text-xs text-textMuted pointer-events-none">차시</span>
+
+                        </div>
+
+                    </div>
+
+                    <div>
+
+                        <label class="text-xs font-bold text-textMuted mb-1.5 block">최종 결과물 (레벨테스트)</label>
+
+                        <input type="text" id="batch-goal"
+                            class="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-accent focus:bg-white/10 transition-colors"
+                            placeholder="예: 플레이 가능한 프로토타입 완성">
+
+                    </div>
+
+                </div>
+
+
+
+                <!-- Core Concepts -->
+
+                <div>
+
+                    <div class="flex justify-between items-end mb-3">
+
+                        <div>
+
+                            <label class="text-xs font-bold text-textMuted block">핵심 개념 (권장)</label>
+
+                            <span class="text-[0.6rem] text-textMuted/60">AI가 교안을 작성할 때 반드시 포함할 핵심 키워드나 문장을 한 줄씩
+                                입력하세요.</span>
+
+                        </div>
+
+                        <button type="button" onclick="addConceptField()"
+                            class="text-[0.7rem] font-bold text-accent bg-accent/10 px-2.5 py-1.5 rounded hover:bg-accent hover:text-white flex items-center gap-1 transition-colors shrink-0 border border-accent/20">
+
+                            <i class="ph-bold ph-plus"></i> 개념 추가
+
+                        </button>
+
+                    </div>
+
+                    <div id="batch-concept-list" class="flex flex-col gap-2">
+
+                        <div class="flex gap-2 items-center concept-item group">
+
+                            <div
+                                class="w-6 h-6 rounded bg-white/5 flex items-center justify-center text-textMuted text-xs font-bold shrink-0">
+                                1</div>
+
+                            <input type="text"
+                                class="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-accent transition-colors"
+                                placeholder="예: 코어 루프(Core Loop)의 개념과 중요성 파악" onkeydown="handleConceptEnter(event)">
+
+                            <button type="button" onclick="removeConceptField(this)"
+                                class="w-8 h-8 flex items-center justify-center rounded bg-white/5 hover:bg-red-500/20 text-textMuted hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100">
+
+                                <i class="ph-bold ph-trash"></i>
+
+                            </button>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+
+
+            <!-- Footer -->
+
+            <div
+                class="p-5 border-t border-white/10 shrink-0 flex justify-end items-center gap-3 bg-black/20 rounded-b-2xl">
+
+                <span id="batch-progress-text" class="text-xs font-bold text-accent hidden flex items-center gap-1.5"><i
+                        class="ph-bold ph-spinner animate-spin"></i> <span>생성 중...</span></span>
+
+                <button id="batch-cancel-btn" onclick="closeBatchModal()"
+                    class="px-5 py-2.5 text-sm font-bold text-textLight bg-white/5 hover:bg-white/10 rounded-xl transition-colors">취소</button>
+
+                <button id="batch-submit-btn" onclick="startBatchGeneration()"
+                    class="px-6 py-2.5 text-sm font-bold text-white bg-gradient-to-r from-accent to-accentHover rounded-xl shadow-[0_4px_15px_rgba(124,91,245,0.3)] hover:shadow-[0_6px_20px_rgba(124,91,245,0.5)] hover:-translate-y-0.5 transition-all flex items-center gap-2">
+
+                    <i class="ph-bold ph-magic-wand"></i> 교안 일괄 생성 시작
+
+                </button>
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+
+
+    <!-- Settings Panel Logic -->
+    <script>
+        // 설정 패널 열기/닫기
+        window.openSettingsPanel = function () {
+            const panel = document.getElementById('settings-panel');
+            if (!panel) return;
+            const wasHidden = panel.classList.contains('hidden');
+            panel.classList.toggle('hidden');
+            if (wasHidden) {
+                const input = document.getElementById('settings-api-key-input');
+                if (input) input.value = typeof apiKey !== 'undefined' ? apiKey : '';
+                const dot = document.getElementById('api-key-status-dot');
+                const txt = document.getElementById('api-key-status-text');
+                if (typeof apiKey !== 'undefined' && apiKey) {
+                    if (dot) dot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-400';
+                    if (txt) txt.textContent = 'Key 등록됨';
+                } else {
+                    if (dot) dot.className = 'w-1.5 h-1.5 rounded-full bg-red-400';
+                    if (txt) txt.textContent = 'Key 미등록';
+                }
+
+                // 모델 콤보박스 초기화
+                populateModelSelect('settings-text-model', typeof TEXT_MODEL_OPTIONS !== 'undefined' ? TEXT_MODEL_OPTIONS : [], typeof TEXT_MODEL !== 'undefined' ? TEXT_MODEL : '');
+                populateModelSelect('settings-image-model', typeof IMAGE_MODEL_OPTIONS !== 'undefined' ? IMAGE_MODEL_OPTIONS : [], typeof IMAGE_MODEL !== 'undefined' ? IMAGE_MODEL : '');
+
+                // [Phase F10] 구글 검색 이미지 설정 초기화
+                const cxInput = document.getElementById('settings-google-cx-input');
+                const keysInput = document.getElementById('settings-google-keys-input');
+                if (cxInput && typeof googleSearchCx !== 'undefined') cxInput.value = googleSearchCx;
+                if (keysInput && typeof googleSearchApiKeys !== 'undefined') keysInput.value = googleSearchApiKeys.join(', ');
+
+                // [Phase F10] 무료 스톡(Pixabay) 이미지 설정 초기화
+                const pixabayInput = document.getElementById('settings-pixabay-key-input');
+                if (pixabayInput && typeof pixabayApiKey !== 'undefined') pixabayInput.value = pixabayApiKey;
+
+                // 파일명 컨벤션 UI 렌더링
+                if (typeof renderFilenameConventionUI === 'function') renderFilenameConventionUI();
+            }
+        };
+        window.closeSettingsPanel = function () {
+            const panel = document.getElementById('settings-panel');
+            if (panel) panel.classList.add('hidden');
+        };
+        // API 키 비밀번호 보호 (112400)
+        let _apiKeyUnlockAttempts = 0;
+        let _apiKeyBlocked = false;
+        window.unlockApiKeyInput = function () {
+            const input = document.getElementById('settings-api-key-input');
+            if (!input || !input.disabled) return;
+            if (_apiKeyBlocked) {
+                window.showAlert('⛔ API 키 수정이 차단되었습니다. 페이지를 새로고침해주세요.');
+                return;
+            }
+            const pw = prompt('API 키를 수정하려면 비밀번호를 입력하세요:');
+            if (pw === null) return; // 취소
+            if (pw === '112400') {
+                input.disabled = false;
+                input.placeholder = 'AIzaSy...';
+                input.value = typeof apiKey !== 'undefined' ? apiKey : '';
+                _apiKeyUnlockAttempts = 0;
+                window.showToast('🔓 API 키 수정이 허용되었습니다.', 'success');
+            } else {
+                _apiKeyUnlockAttempts++;
+                if (_apiKeyUnlockAttempts >= 3) {
+                    _apiKeyBlocked = true;
+                    window.showAlert('⛔ 비밀번호를 3회 틀렸습니다. API 키 수정이 차단되었습니다.');
+                } else {
+                    window.showAlert(`❌ 비밀번호가 틀렸습니다. (${_apiKeyUnlockAttempts}/3)`);
+                }
+            }
+        };
+        window.saveApiKeySetting = function () {
+            const input = document.getElementById('settings-api-key-input');
+            if (input && typeof updateApiKey === 'function' && updateApiKey(input.value)) {
+                window.showAlert('API Key가 저장되었습니다.');
+                closeSettingsPanel();
+            } else {
+                window.showAlert('유효한 API Key를 입력해 주세요.');
+            }
+        };
+
+        // [Phase F10] 구글 검색 이미지 설정 저장 핸들러
+        window.saveGoogleSearchSetting = function () {
+            const cxInput = document.getElementById('settings-google-cx-input');
+            const keysInput = document.getElementById('settings-google-keys-input');
+
+            if (cxInput && keysInput && typeof updateGoogleSearchSettings === 'function') {
+                const isSuccess = updateGoogleSearchSettings(cxInput.value, keysInput.value);
+                if (isSuccess) {
+                    window.showAlert('Google 검색 API 설정이 저장되었습니다.');
+                    closeSettingsPanel();
+                } else {
+                    window.showAlert('설정 저장 중 오류가 발생했습니다.');
+                }
+            }
+        };
+
+        // [Phase F10] Pixabay API 설정 저장 핸들러
+        window.savePixabaySetting = function () {
+            const pixabayInput = document.getElementById('settings-pixabay-key-input');
+            if (pixabayInput && typeof updatePixabaySetting === 'function') {
+                const isSuccess = updatePixabaySetting(pixabayInput.value);
+                if (isSuccess) {
+                    window.showAlert('Pixabay API 설정이 저장되었습니다.');
+                    closeSettingsPanel();
+                } else {
+                    window.showAlert('설정 저장 중 오류가 발생했습니다.');
+                }
+            }
+        };
+
+        function populateModelSelect(selectId, options, currentValue) {
+            const sel = document.getElementById(selectId);
+            if (!sel || !options) return;
+            if (sel.options.length === 0) {
+                options.forEach(o => {
+                    const opt = document.createElement('option');
+                    opt.value = o.value;
+                    opt.textContent = o.label;
+                    sel.appendChild(opt);
+                });
+            }
+            sel.value = currentValue;
+        }
+
+        // 패널 바깥 클릭 시 닫기
+        document.addEventListener('click', function (e) {
+            const panel = document.getElementById('settings-panel');
+            const btn = document.getElementById('btn-settings');
+            if (panel && !panel.classList.contains('hidden') && !panel.contains(e.target) && btn && !btn.contains(e.target)) {
+                panel.classList.add('hidden');
+            }
+        });
+    </script>
+
+
+
+    <!-- Text Selection Floating Toolbar (AI Edit Hover) -->
+    <div id="ai-floating-toolbar"
+        class="fixed z-[9999] hidden flex items-center justify-center pointer-events-auto transform -translate-x-1/2 -translate-y-full pb-2 transition-opacity duration-200 opacity-0"
+        style="left: 0; top: 0;">
+        <button onclick="activateHoverAIEdit()"
+            class="px-3 py-1.5 flex items-center gap-1.5 bg-accent hover:bg-accentHover text-white text-xs font-bold rounded-lg shadow-[0_4px_15px_rgba(124,91,245,0.4)] border border-white/20 hover:-translate-y-0.5 transition-all">
+            <i class="ph-fill ph-sparkle text-yellow-300"></i> AI로 수정
+        </button>
+        <!-- 화살표 꼬리 -->
+        <div class="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-accent rotate-45"></div>
+    </div>
+
+    <!-- Application Logic Modules -->
+
+    <!-- Split Logic Modules -->
+    <script src="./js/panel-manager.js?v=100"></script>
+    <script src="./js/filename-convention.js?v=100"></script>
+    <script src="./js/data.js?v=100"></script>
+    <script src="./js/state.js?v=100"></script>
+    <script src="./js/api.js?v=100"></script>
+    <script src="./js/diagram.js?v=100"></script>
+    <script src="./js/ui.js?v=100"></script>
+    <script src="./js/convention.js?v=100"></script>
+    <script src="./js/tutorial.js?v=100"></script>
+    <script src="./js/merge.js?v=100"></script>
+    <script src="./js/tabs.js?v=100"></script>
+    <script src="./js/slide-export.js?v=100"></script>
+    <script src="./js/export-modal.js?v=100"></script>
+    <script>
+        // 튜토리얼 자동 시작 (공지 팝업 → 튜토리얼 순서)
+        window.addEventListener('load', () => {
+            if (!localStorage.getItem('kyoan_tutorial_done_v7')) {
+                setTimeout(() => showNoticePopup(() => startTutorial()), 800);
+            }
+        });
+    </script>
+
+    <!-- Main Initialization -->
+    <script>
+
+        // Initialization (안정화 적용)
+
+        // ------------------------------------------------------------------------
+
+        document.addEventListener('DOMContentLoaded', async () => {
+
+            try {
+
+                // Initialize IndexedDB first
+                if (typeof DBManager !== 'undefined') {
+                    await DBManager.init();
+                }
+
+                await restoreState();
+
+                // 새로고침 시 기존 폴더 연결 자동 복원
+                if (typeof restoreProjectFolderConnection === 'function') {
+                    await restoreProjectFolderConnection();
+                }
+
+                // Render UI
+                renderOverview();
+
+                // [UX 개선] 초기 접속 시(데이터 없을 때) 빈 화면 방지를 위해 자동 생성 및 입력 패널 노출
+                if (!globalState.subjects || globalState.subjects.length === 0) {
+                    setTimeout(() => {
+                        if (typeof createNewSubject === 'function') createNewSubject();
+                    }, 100);
+                } else {
+                    setTimeout(() => {
+                        if (!window.location.hash || window.location.hash === '' || window.location.hash === '#') {
+                            if (typeof openSubjectDetail === 'function') openSubjectDetail(globalState.subjects[0].id);
+                        }
+                    }, 100);
+                }
+
+                const viewport = document.getElementById('diagram-viewport');
+                if (viewport) diagramY = viewport.clientHeight / 2 - 150;
+
+                handleRoute();
+                initImageInsertionHandlers();
+
+                initDiagramInteractions();
+                initMinimapInteractions();
+                initHeaderScroll();
+
+                initBatchFileDropzone();
+
+            } catch (error) {
+                console.error("앱 초기화 중 오류 발생:", error);
+                window.showAlert("초기화 중 치명적인 오류가 발생했습니다.\n\n[상세 에러 원인]\n" + (error.stack || error.message));
+            }
+        });
+    </script>
+
+    <!-- Ctrl+F 교안 내 검색 기능 -->
+    <div id="search-bar" style="display:none;position:fixed;top:12px;right:12px;z-index:9999;background:#1e1e2e;border:1px solid rgba(124,91,245,0.5);border-radius:12px;padding:8px 12px;box-shadow:0 8px 32px rgba(0,0,0,0.5);display:none;align-items:center;gap:8px;">
+        <i class="ph-bold ph-magnifying-glass" style="color:#a0a0b8;font-size:14px;"></i>
+        <input id="search-input" type="text" placeholder="교안 내 검색..." style="background:transparent;border:none;outline:none;color:#e0e0f0;font-size:13px;width:220px;" />
+        <span id="search-count" style="color:#888;font-size:11px;white-space:nowrap;">0/0</span>
+        <button onclick="searchNav(-1)" style="background:none;border:none;color:#a0a0b8;cursor:pointer;font-size:16px;padding:2px 4px;" title="이전">▲</button>
+        <button onclick="searchNav(1)" style="background:none;border:none;color:#a0a0b8;cursor:pointer;font-size:16px;padding:2px 4px;" title="다음">▼</button>
+        <button onclick="closeSearch()" style="background:none;border:none;color:#a0a0b8;cursor:pointer;font-size:16px;padding:2px 4px;" title="닫기">✕</button>
+    </div>
+    <script>
+    (function() {
+        const bar = document.getElementById('search-bar');
+        const input = document.getElementById('search-input');
+        const countEl = document.getElementById('search-count');
+        let marks = [];
+        let currentIdx = -1;
+        let textareaMode = false;
+        let taMatches = [];
+        let activeTextarea = null;
+
+        function getSearchTarget() {
+            // 수정 모드: textarea가 보이면 textarea 검색
+            const ta = document.querySelector('#editor-container textarea:not([id^="settings"])');
+            if (ta && ta.offsetParent !== null) {
+                textareaMode = true;
+                activeTextarea = ta;
+                return null;
+            }
+            textareaMode = false;
+            activeTextarea = null;
+            return document.getElementById('render-view') || document.querySelector('.markdown-body');
+        }
+
+        function clearHighlights() {
+            marks.forEach(m => {
+                const parent = m.parentNode;
+                if (parent) { parent.replaceChild(document.createTextNode(m.textContent), m); parent.normalize(); }
+            });
+            marks = [];
+            taMatches = [];
+            currentIdx = -1;
+            countEl.textContent = '0/0';
+        }
+
+        function doSearch() {
+            clearHighlights();
+            const query = input.value.trim();
+            if (!query) return;
+
+            const target = getSearchTarget();
+
+            // ★ textarea 모드 (수정 모드)
+            if (textareaMode && activeTextarea) {
+                const text = activeTextarea.value;
+                const lowerQ = query.toLowerCase();
+                const lowerText = text.toLowerCase();
+                let idx = lowerText.indexOf(lowerQ);
+                while (idx !== -1) {
+                    taMatches.push(idx);
+                    idx = lowerText.indexOf(lowerQ, idx + 1);
+                }
+                if (taMatches.length > 0) {
+                    currentIdx = 0;
+                    highlightTextarea();
+                }
+                countEl.textContent = taMatches.length > 0 ? `1/${taMatches.length}` : '0/0';
+                return;
+            }
+
+            // ★ 보기 모드 (DOM 하이라이트)
+            if (!target) return;
+            const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT, null);
+            const textNodes = [];
+            while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+            const lowerQ = query.toLowerCase();
+            textNodes.forEach(node => {
+                const text = node.textContent;
+                const lower = text.toLowerCase();
+                let idx = lower.indexOf(lowerQ);
+                if (idx === -1) return;
+                const frag = document.createDocumentFragment();
+                let lastIdx = 0;
+                while (idx !== -1) {
+                    frag.appendChild(document.createTextNode(text.substring(lastIdx, idx)));
+                    const mark = document.createElement('mark');
+                    mark.style.cssText = 'background:#7c5bf5;color:white;padding:1px 2px;border-radius:3px;';
+                    mark.textContent = text.substring(idx, idx + query.length);
+                    frag.appendChild(mark);
+                    marks.push(mark);
+                    lastIdx = idx + query.length;
+                    idx = lower.indexOf(lowerQ, lastIdx);
+                }
+                frag.appendChild(document.createTextNode(text.substring(lastIdx)));
+                node.parentNode.replaceChild(frag, node);
+            });
+
+            if (marks.length > 0) {
+                currentIdx = 0;
+                highlightCurrent();
+            }
+            countEl.textContent = marks.length > 0 ? `1/${marks.length}` : '0/0';
+        }
+
+        function highlightTextarea() {
+            if (!activeTextarea || taMatches.length === 0) return;
+            const pos = taMatches[currentIdx];
+            const qLen = input.value.trim().length;
+            activeTextarea.focus();
+            activeTextarea.setSelectionRange(pos, pos + qLen);
+            // 선택 위치로 스크롤
+            const lineHeight = parseInt(getComputedStyle(activeTextarea).lineHeight) || 20;
+            const textBefore = activeTextarea.value.substring(0, pos);
+            const lineNum = (textBefore.match(/\n/g) || []).length;
+            activeTextarea.scrollTop = Math.max(0, lineNum * lineHeight - activeTextarea.clientHeight / 2);
+            countEl.textContent = `${currentIdx + 1}/${taMatches.length}`;
+        }
+
+        function highlightCurrent() {
+            marks.forEach((m, i) => {
+                m.style.background = i === currentIdx ? '#ff6b35' : '#7c5bf5';
+            });
+            if (marks[currentIdx]) marks[currentIdx].scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        window.searchNav = function(dir) {
+            if (textareaMode) {
+                if (taMatches.length === 0) return;
+                currentIdx = (currentIdx + dir + taMatches.length) % taMatches.length;
+                highlightTextarea();
+                return;
+            }
+            if (marks.length === 0) return;
+            currentIdx = (currentIdx + dir + marks.length) % marks.length;
+            highlightCurrent();
+            countEl.textContent = `${currentIdx + 1}/${marks.length}`;
+        };
+
+        window.closeSearch = function() {
+            bar.style.display = 'none';
+            clearHighlights();
+            input.value = '';
+        };
+
+        document.addEventListener('keydown', function(e) {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+                e.preventDefault();
+                bar.style.display = 'flex';
+                input.focus();
+                input.select();
+            }
+            if (e.key === 'Escape' && bar.style.display === 'flex') {
+                window.closeSearch();
+            }
+            if (e.key === 'Enter' && document.activeElement === input) {
+                e.preventDefault();
+                if (e.shiftKey) window.searchNav(-1);
+                else window.searchNav(1);
+            }
+        });
+
+        input.addEventListener('input', doSearch);
+    })();
+    </script>
+</body>
+
+</html>

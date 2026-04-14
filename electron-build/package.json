@@ -1,0 +1,45 @@
+{
+  "name": "develoket-lesson-helper",
+  "version": "1.0.0",
+  "description": "디벨로켓 교안 도우미 - AI 기반 게임 기획 교안 자동 생성 도구",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win portable",
+    "build-installer": "electron-builder --win nsis"
+  },
+  "author": "딸각 스튜디오",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.develoket.lesson-helper",
+    "productName": "디벨로켓 교안 도우미",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "app/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": null
+    },
+    "portable": {
+      "artifactName": "디벨로켓 교안 도우미.exe"
+    }
+  },
+  "dependencies": {
+    "marked": "^17.0.5"
+  }
+}
