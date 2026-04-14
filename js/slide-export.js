@@ -643,10 +643,7 @@ window.regenerateSlideView = async function (moduleId) {
             systemInstruction: { parts: [{ text: '당신은 교육 슬라이드 전문가입니다. 교안을 발표용 슬라이드 마크다운으로 변환합니다.' }] }
         };
 
-        const data = await fetchWithRetry(
-            `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent?key=${apiKey}`,
-            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
-        );
+        const data = await callGemini(TEXT_MODEL, payload);
 
         const resultText = extractText(data);
         if (!resultText) return window.showAlert('슬라이드 재생성 실패: 응답 없음');

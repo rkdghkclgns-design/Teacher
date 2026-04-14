@@ -297,6 +297,15 @@ async function fetchWithRetry(url, options, retries = 5) {
     }
 }
 
+// Edge Function 프록시를 통한 Gemini API 호출 헬퍼
+function callGemini(modelName, payload) {
+    const proxyPayload = { model: modelName, ...payload };
+    return fetchWithRetry(
+        GEMINI_PROXY_URL,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) }
+    );
+}
+
 
 
 // ------------------------------------------------------------------------
@@ -390,13 +399,7 @@ window.generateQuiz = async function () {
 
     try {
 
-        const data = await fetchWithRetry(
-
-            `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent?key=${apiKey}`,
-
-            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
-
-        );
+        const data = await callGemini(TEXT_MODEL, payload);
 
         const quizMd = extractText(data);
 
@@ -454,13 +457,7 @@ async function handleGenerate() {
 
     try {
 
-        const data = await fetchWithRetry(
-
-            `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent?key=${apiKey}`,
-
-            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
-
-        );
+        const data = await callGemini(TEXT_MODEL, payload);
 
 
 
@@ -533,11 +530,7 @@ async function handleGenerate() {
 
 
 async function generateModuleContent(moduleId, keyConcepts) {
-    // API 키 미설정 방어
-    if (!apiKey) {
-        window.showAlert('API 키가 설정되지 않았습니다.\n좌측 하단 설정 버튼에서 Gemini API 키를 먼저 입력해주세요.');
-        return;
-    }
+    // API 키: Edge Function 프록시가 서버 측에서 관리
 
     const mod = getEditingModule(moduleId);
 
@@ -631,10 +624,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
 
         loadingText.textContent = '교안 작성 중... (1단계: 초안 생성)';
 
-        const firstData = await fetchWithRetry(
-            `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent?key=${apiKey}`,
-            {
-                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        const firstData = await callGemini(TEXT_MODEL, {
                     safetySettings: [
                         { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
                         { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
@@ -643,9 +633,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
                     ],
                     contents: [{ parts: [{ text: userPrompt }] }],
                     systemInstruction: { parts: [{ text: systemInstruction }] }
-                })
-            }
-        );
+        });
 
         let chunkText = extractText(firstData);
         chunkText = chunkText.replace(/^```\w*\n?/i, '').replace(/\n?```$/i, '').trim();
@@ -675,10 +663,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
             // API 쿨다운
             await new Promise(r => setTimeout(r, 1500));
 
-            const contData = await fetchWithRetry(
-                `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent?key=${apiKey}`,
-                {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+            const contData = await callGemini(TEXT_MODEL, {
                         safetySettings: [
                             { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
                             { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
@@ -687,9 +672,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
                         ],
                         contents: [{ parts: [{ text: contPrompt }] }],
                         systemInstruction: { parts: [{ text: contSys }] }
-                    })
-                }
-            );
+            });
 
             let contText = extractText(contData);
             contText = contText.replace(/^```\w*\n?/i, '').replace(/\n?```$/i, '').trim();
@@ -846,13 +829,7 @@ async function generateMainQuest() {
 
     try {
 
-        const data = await fetchWithRetry(
-
-            `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent?key=${apiKey}`,
-
-            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
-
-        );
+        const data = await callGemini(TEXT_MODEL, payload);
 
 
 
@@ -939,10 +916,7 @@ async function extractSearchIntent(keyword, context) {
     };
 
     try {
-        const response = await fetchWithRetry(
-            `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent?key=${apiKey}`,
-            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
-        );
+        const response = await callGemini(TEXT_MODEL, payload);
         const textResp = extractText(response);
         // v7.3: JSON 파싱 전 제어 문자 제거 (Gemini가 줄바꿈/탭을 문자열 내부에 삽입하는 문제)
         const sanitized = textResp
@@ -1040,10 +1014,7 @@ async function validateImageWithVLM(base64Image, searchIntent, context) {
     try {
         console.log(`[VLM Validator] 이미지 검열 시작...`);
         // 이미지 검열용 모델은 안전장치가 강한 모델 사용 권장. 설정된 모델(TEXT_MODEL) 재활용
-        const response = await fetchWithRetry(
-            `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent?key=${apiKey}`,
-            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
-        );
+        const response = await callGemini(TEXT_MODEL, payload);
         const textResp = extractText(response);
         const result = JSON.parse(textResp);
         console.log(`[VLM Validator] 검열 결과:`, result);
@@ -1346,10 +1317,7 @@ async function generateImageAPI(prompt) {
         for (let retry = 0; retry < 3; retry++) {
             try {
                 console.log(`[Image Gen] 모델 ${model}로 이미지 생성 시도 (${retry > 0 ? '재시도 ' + retry : '최초'}): ${prompt.substring(0, 60)}...`);
-                const data = await fetchWithRetry(
-                    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-                    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
-                );
+                const data = await callGemini(model, payload);
 
                 // Gemini Image 응답에서 이미지 파트 추출
                 const parts = data?.candidates?.[0]?.content?.parts;
@@ -2768,17 +2736,10 @@ window.executeAICommand = async function () {
 
             const { systemInstruction, userPrompt } = buildTaskContext('edit', { context, selectedText, command });
 
-            const res = await fetchWithRetry(
-                `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent?key=${apiKey}`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
+            const res = await callGemini(TEXT_MODEL, {
                         contents: [{ parts: [{ text: userPrompt }] }],
                         systemInstruction: { parts: [{ text: systemInstruction }] }
-                    })
-                }
-            );
+            });
 
             let newText = extractText(res);
             newText = newText.replace(/^```\w*\n?/i, '').replace(/\n?```$/i, '').trim();
@@ -2857,10 +2818,7 @@ window.applyToneConversion = async function (toneId) {
                     systemInstruction: { parts: [{ text: systemInstruction }] }
                 };
 
-                const data = await fetchWithRetry(
-                    `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent?key=${apiKey}`,
-                    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
-                );
+                const data = await callGemini(TEXT_MODEL, payload);
 
                 let resultText = extractText(data);
                 if (resultText && resultText.trim().length > 50) {
@@ -2919,10 +2877,7 @@ window.applyVolumeControl = async function (direction) {
                     systemInstruction: { parts: [{ text: systemInstruction }] }
                 };
 
-                const data = await fetchWithRetry(
-                    `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent?key=${apiKey}`,
-                    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
-                );
+                const data = await callGemini(TEXT_MODEL, payload);
 
                 let resultText = extractText(data);
                 if (resultText && resultText.trim().length > 30) {
@@ -3080,10 +3035,7 @@ window.regenerateImage = async function (imgId, btnEl) {
             generationConfig: { temperature: 0.8 }
         };
 
-        const data = await fetchWithRetry(
-            `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent?key=${apiKey}`,
-            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
-        );
+        const data = await callGemini(TEXT_MODEL, payload);
 
         let imagePrompt = extractText(data).trim();
         if (!imagePrompt) throw new Error("프롬프트 획득 실패");

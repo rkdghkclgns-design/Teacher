@@ -194,7 +194,8 @@ function safeJSONParse(text) {
 }
 
 // 1. API 설정 및 애플리케이션 상수
-// API 키는 사용자가 직접 설정 화면에서 입력해야 합니다 (하드코딩 금지)
+// Supabase Edge Function 프록시를 통해 Gemini API 호출 (서버 측 키 관리)
+const GEMINI_PROXY_URL = 'https://pkwbqbxuujpcvndpacsc.supabase.co/functions/v1/gemini-proxy';
 let apiKey = '';
 try {
     apiKey = localStorage.getItem('gemini_api_key') || '';

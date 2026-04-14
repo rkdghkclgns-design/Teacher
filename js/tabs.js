@@ -92,10 +92,7 @@ async function generateTabContent(moduleId, tabId) {
             systemInstruction: { parts: [{ text: systemInstruction }] }
         };
 
-        const data = await fetchWithRetry(
-            `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent?key=${apiKey}`,
-            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
-        );
+        const data = await callGemini(TEXT_MODEL, payload);
 
         const resultText = extractText(data);
         if (!mod.tabContents) mod.tabContents = { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null };
@@ -223,10 +220,7 @@ async function reinforceCurrentTab(moduleId) {
             systemInstruction: { parts: [{ text: systemInstruction }] }
         };
 
-        const data = await fetchWithRetry(
-            `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent?key=${apiKey}`,
-            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
-        );
+        const data = await callGemini(TEXT_MODEL, payload);
 
         const resultText = extractText(data);
         mod.tabContents[tabId] = resultText;

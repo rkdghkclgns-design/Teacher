@@ -1524,13 +1524,7 @@ window.startBatchGeneration = async function () {
 
 
 
-        const bpData = await fetchWithRetry(
-
-            `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent?key=${apiKey}`,
-
-            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bpPayload) }
-
-        );
+        const bpData = await callGemini(TEXT_MODEL, bpPayload);
 
 
 
@@ -1594,13 +1588,7 @@ window.startBatchGeneration = async function () {
 
 
 
-                const lessonData = await fetchWithRetry(
-
-                    `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent?key=${apiKey}`,
-
-                    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(lessonPayload) }
-
-                );
+                const lessonData = await callGemini(TEXT_MODEL, lessonPayload);
 
 
 
@@ -1739,10 +1727,7 @@ window.startBatchGeneration = async function () {
                         systemInstruction: { parts: [{ text: systemInstruction }] }
                     };
 
-                    const mqData = await fetchWithRetry(
-                        `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent?key=${apiKey}`,
-                        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(mqPayload) }
-                    );
+                    const mqData = await callGemini(TEXT_MODEL, mqPayload);
 
                     let mqMarkdown = extractText(mqData);
                     mqMarkdown = await processImageTags(subj.mainQuest, mqMarkdown);

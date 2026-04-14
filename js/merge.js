@@ -76,10 +76,7 @@ async function executeMerge() {
             systemInstruction: { parts: [{ text: systemInstruction }] }
         };
 
-        const data = await fetchWithRetry(
-            `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent?key=${apiKey}`,
-            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
-        );
+        const data = await callGemini(TEXT_MODEL, payload);
 
         const resultText = extractText(data);
         newLesson.content = resultText;
