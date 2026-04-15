@@ -89,7 +89,8 @@ async function generateTabContent(moduleId, tabId) {
 
         const payload = {
             contents: [{ parts: [{ text: userPrompt }] }],
-            systemInstruction: { parts: [{ text: systemInstruction }] }
+            systemInstruction: { parts: [{ text: systemInstruction }] },
+            generationConfig: { maxOutputTokens: 65536 }
         };
 
         const data = await callGemini(TEXT_MODEL, payload);
