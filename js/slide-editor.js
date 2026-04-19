@@ -30,25 +30,63 @@
         return /^#{2,3}\s*문제\s*\d/m.test(md) && !/^##\s+(?!문제)/m.test(md);
     }
 
+    // 강사 callout 전용 패턴 (convention.js 기반)
+    const INSTRUCTOR_MARKERS = [
+        /⏱️?\s*\*{0,2}\s*예상\s*소요/,
+        /🎚️?\s*\*{0,2}\s*난이도/,
+        /🎬\s*\*{0,2}\s*도입\s*멘트/,
+        /🗣️?\s*\*{0,2}\s*(?:핵심\s*설명|질문\s*\/?\s*참여|참여\s*유도)/,
+        /💡\s*\*{0,2}\s*(?:꼭\s*짚어야|꼭\s*알아야)/,
+        /⚠️?\s*\*{0,2}\s*(?:자주\s*헷갈|주의)/,
+        /🔗\s*\*{0,2}\s*전환\s*멘트/,
+    ];
+
     function stripInstructorCallouts(body) {
-        // <div class="instructor-callout">…</div> 블록 제거, 강사 텍스트 반환
+        // 1) <div class="instructor-callout">…</div> 블록 (어떤 순서의 속성도 허용)
         const instructor = [];
-        const calloutRe = /<div\s+class=["']?instructor-callout[^"']*["']?[^>]*>([\s\S]*?)<\/div>/gi;
-        let m;
-        while ((m = calloutRe.exec(body)) !== null) {
-            // 내부 HTML 태그를 일반 텍스트로 정리
-            const plain = m[1]
+        const htmlRe = /<div\b[^>]*\bclass\s*=\s*["'][^"']*instructor-callout[^"']*["'][^>]*>([\s\S]*?)<\/div>/gi;
+        let student = body.replace(htmlRe, (match, inner) => {
+            const plain = inner
                 .replace(/<br\s*\/?>/gi, '\n')
                 .replace(/<[^>]+>/g, '')
                 .replace(/&nbsp;/g, ' ')
-                .replace(/&amp;/g, '&')
-                .replace(/&lt;/g, '<')
-                .replace(/&gt;/g, '>')
-                .replace(/\n{3,}/g, '\n\n')
-                .trim();
+                .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+                .replace(/\n{3,}/g, '\n\n').trim();
             if (plain) instructor.push(plain);
+            return '';
+        });
+
+        // 2) 상태 기반 블록 감지
+        // 강사 블록에 진입하면 (명확한 학생 콘텐츠 문단이 나올 때까지) 이후 빈줄로 구분된 단락도 강사로 취급
+        const paragraphs = student.split(/\n\s*\n/);
+        const studentParas = [];
+        let inInstructorBlock = false;
+
+        const hasMarker = (p) => INSTRUCTOR_MARKERS.some((re) => re.test(p));
+        // 명확한 학생 콘텐츠 신호: 불릿/번호/헤딩/표/코드/이미지 시작
+        const studentStartRe = /^\s*(?:[-*•]\s|\d+\.\s|#{1,4}\s|\|.*\||```|!\[|<img\b|<table\b)/;
+
+        for (const para of paragraphs) {
+            if (!para.trim()) continue;
+            const marker = hasMarker(para);
+            const studentStart = studentStartRe.test(para.trim());
+            if (marker) {
+                inInstructorBlock = true;
+                const clean = para.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
+                if (clean) instructor.push(clean);
+            } else if (studentStart) {
+                inInstructorBlock = false;
+                studentParas.push(para);
+            } else if (inInstructorBlock) {
+                // 강사 블록 연속 단락
+                const clean = para.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
+                if (clean) instructor.push(clean);
+            } else {
+                studentParas.push(para);
+            }
         }
-        const student = body.replace(calloutRe, '').trim();
+        student = studentParas.join('\n\n').trim();
+
         return { student, instructor: instructor.join('\n\n─── 다음 강사 가이드 ───\n\n') };
     }
 
@@ -119,6 +157,45 @@
         });
     }
 
+    // 긴 본문 단락을 핵심 문장 불릿으로 자동 변환 (학습자가 PPT로 이해할 수 있는 요약)
+    function condenseBodyToBullets(body, existingBullets) {
+        if (!body || !body.trim()) return { bullets: existingBullets || [], body: '' };
+        // 이미 충분한 불릿이 있으면 본문은 간단한 보충으로 유지
+        if (existingBullets && existingBullets.length >= 3) return { bullets: existingBullets, body: body };
+
+        // 표/코드블록/이미지/Mermaid 블록은 보존 (body로 남김)
+        const preserveRe = /(```[\s\S]*?```|<!--\s*\[IMG:[\s\S]*?-->|<img[\s\S]*?>|<table[\s\S]*?<\/table>|(?:^\s*\|[^\n]*\n)+\s*\|?\s*[:\-\s|]+\|?[^\n]*(?:\n\s*\|[^\n]*)*)/gm;
+        const blocks = [];
+        const textOnly = body.replace(preserveRe, (m) => { blocks.push(m); return `\n__BLOCK_${blocks.length - 1}__\n`; });
+
+        // 텍스트 구간에서 문장 추출 (한글/영문 . ! ? 기준)
+        const sentences = [];
+        textOnly.split(/\n+/).forEach((para) => {
+            const clean = para.replace(/__BLOCK_\d+__/g, '').replace(/<[^>]+>/g, '').trim();
+            if (!clean) return;
+            // 문장 분리
+            const parts = clean.split(/(?<=[.!?。?！？])\s+(?=[가-힣A-Z])/);
+            for (const p of parts) {
+                const t = p.trim().replace(/^\*\*|\*\*$/g, '').replace(/^[\-\*•]\s+/, '');
+                if (t.length >= 8) sentences.push(t);
+            }
+        });
+
+        // 기존 불릿 + 추출 문장 → 최대 5개 불릿
+        const maxTotal = 5;
+        const bullets = [...(existingBullets || [])];
+        for (const s of sentences) {
+            if (bullets.length >= maxTotal) break;
+            // 너무 긴 문장은 80자로 trim
+            const trimmed = s.length > 90 ? s.slice(0, 87) + '...' : s;
+            if (!bullets.some((b) => b.slice(0, 20) === trimmed.slice(0, 20))) bullets.push(trimmed);
+        }
+
+        // 남은 body는 블록(표/코드)만 보존
+        const preservedBody = blocks.length > 0 ? blocks.join('\n\n').trim() : '';
+        return { bullets, body: preservedBody };
+    }
+
     function rawParseDeck(markdown) {
         const md = String(markdown || '').replace(/\r\n/g, '\n');
         if (!md.trim()) return [];
@@ -148,7 +225,9 @@
             const rawBody = restoreFences(b.bodyLines.join('\n')).trim();
             // 학생뷰 / 강사뷰 분리
             const { student, instructor } = stripInstructorCallouts(rawBody);
-            const { bullets, body } = extractBulletsAndBody(student);
+            const { bullets: rawBullets, body: rawStudentBody } = extractBulletsAndBody(student);
+            // 긴 본문 단락을 핵심 문장 불릿으로 자동 변환 (강의 PPT처럼 요약)
+            const { bullets, body } = condenseBodyToBullets(rawStudentBody, rawBullets);
             const s = {
                 id: genId(),
                 level: b.level,
