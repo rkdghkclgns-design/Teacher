@@ -23,9 +23,33 @@
 
     // ────────────────────────────────────────────────────────────
     // 파서: 교안 마크다운 → SlideData[]
+    // 학생뷰: instructor-callout 블록 제거한 본문
+    // 강사뷰(notes): instructor-callout 블록의 내용 → 발표자 노트
     // ────────────────────────────────────────────────────────────
     function isQuizDoc(md) {
         return /^#{2,3}\s*문제\s*\d/m.test(md) && !/^##\s+(?!문제)/m.test(md);
+    }
+
+    function stripInstructorCallouts(body) {
+        // <div class="instructor-callout">…</div> 블록 제거, 강사 텍스트 반환
+        const instructor = [];
+        const calloutRe = /<div\s+class=["']?instructor-callout[^"']*["']?[^>]*>([\s\S]*?)<\/div>/gi;
+        let m;
+        while ((m = calloutRe.exec(body)) !== null) {
+            // 내부 HTML 태그를 일반 텍스트로 정리
+            const plain = m[1]
+                .replace(/<br\s*\/?>/gi, '\n')
+                .replace(/<[^>]+>/g, '')
+                .replace(/&nbsp;/g, ' ')
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
+            if (plain) instructor.push(plain);
+        }
+        const student = body.replace(calloutRe, '').trim();
+        return { student, instructor: instructor.join('\n\n─── 다음 강사 가이드 ───\n\n') };
     }
 
     function extractImagesFromBody(body) {
@@ -44,7 +68,13 @@
         for (const line of lines) {
             const bm = line.match(/^\s*[-*•]\s+(.+)/);
             const nm = line.match(/^\s*\d+\.\s+(.+)/);
-            if (stillBullet && (bm || nm)) { bullets.push((bm ? bm[1] : nm[1]).trim()); continue; }
+            if (stillBullet && (bm || nm)) {
+                // 볼드 마커(**text**), HTML 태그 잔재 정리
+                const raw = (bm ? bm[1] : nm[1]).trim();
+                const clean = raw.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/<[^>]+>/g, '').trim();
+                if (clean) bullets.push(clean);
+                continue;
+            }
             if (stillBullet && line.trim() === '' && bullets.length > 0 && bodyLines.length === 0) { stillBullet = false; continue; }
             stillBullet = false;
             bodyLines.push(line);
@@ -52,11 +82,27 @@
         return { bullets, body: bodyLines.join('\n').trim() };
     }
 
-    function detectKind(level, title, body) {
-        if (/^문제\s*\d/.test(title) || /###?\s*문제\s*\d/.test(body)) return 'quiz';
-        if (body && (body.includes('<table') || (body.includes('|') && /\n\s*\|?\s*-{3,}/.test(body)))) return 'data-table';
-        if (level === 1) return 'title';
-        if (level === 2) return 'section-h2';
+    function hasTable(body) {
+        return body && (body.includes('<table') || (body.includes('|') && /\n\s*\|?\s*-{3,}/.test(body)));
+    }
+
+    function isObjectivesTitle(t) {
+        return /학습\s*목표|학습목표|목표|Objectives?/i.test(t || '');
+    }
+    function isClosingTitle(t) {
+        return /요약|마무리|정리|결론|Q\s*&?\s*A|Thank\s*you|감사합니다/i.test(t || '');
+    }
+
+    // 슬라이드의 최종 종류 결정 (콘텐츠 존재 여부 우선)
+    function detectKind(s, isFirst) {
+        const title = s.title || '';
+        const hasContent = (s.bullets && s.bullets.length) || (s.body && s.body.trim());
+        if (/^문제\s*\d/.test(title) || /###?\s*문제\s*\d/.test(s.body || '')) return 'quiz';
+        if (hasTable(s.body)) return 'data-table';
+        if (isObjectivesTitle(title)) return 'objectives';
+        if (isClosingTitle(title)) return 'closing';
+        if (isFirst && s.level === 1) return 'cover';
+        if (!hasContent) return 'section-divider';
         return 'content';
     }
 
@@ -73,7 +119,7 @@
         });
     }
 
-    function parseDeck(markdown) {
+    function rawParseDeck(markdown) {
         const md = String(markdown || '').replace(/\r\n/g, '\n');
         if (!md.trim()) return [];
         if (isQuizDoc(md)) return parseQuizDoc(md);
@@ -97,21 +143,111 @@
         }
         push();
 
-        return buckets.map((b) => {
+        const raw = [];
+        buckets.forEach((b, idx) => {
             const rawBody = restoreFences(b.bodyLines.join('\n')).trim();
-            const { bullets, body } = extractBulletsAndBody(rawBody);
-            return {
+            // 학생뷰 / 강사뷰 분리
+            const { student, instructor } = stripInstructorCallouts(rawBody);
+            const { bullets, body } = extractBulletsAndBody(student);
+            const s = {
                 id: genId(),
-                kind: detectKind(b.level, b.title, rawBody),
                 level: b.level,
                 title: b.title,
                 bullets, body,
-                images: extractImagesFromBody(rawBody),
+                images: extractImagesFromBody(student),
                 imageLayouts: [],
                 textStyle: {},
-                notes: '',
+                notes: instructor,
             };
-        }).filter((s) => (s.title && s.title.trim()) || s.bullets.length || (s.body && s.body.trim()));
+            s.kind = detectKind(s, idx === 0);
+            raw.push(s);
+        });
+        // 완전 빈 슬라이드 제거
+        return raw.filter((s) => (s.title && s.title.trim()) || s.bullets.length || (s.body && s.body.trim()) || (s.notes && s.notes.trim()));
+    }
+
+    // 밀집 슬라이드 자동 분할: 불릿이 MAX_BULLETS보다 많으면 여러 장으로
+    function splitDenseSlides(slides) {
+        const MAX = 6;
+        const out = [];
+        for (const s of slides) {
+            if (s.bullets.length <= MAX || s.kind === 'cover' || s.kind === 'closing' || s.kind === 'quiz') {
+                out.push(s);
+                continue;
+            }
+            const total = Math.ceil(s.bullets.length / MAX);
+            for (let i = 0; i < total; i++) {
+                const chunk = s.bullets.slice(i * MAX, (i + 1) * MAX);
+                const titleSuffix = total > 1 ? ` (${i + 1}/${total})` : '';
+                out.push({
+                    ...s, id: genId(),
+                    title: s.title + titleSuffix,
+                    bullets: chunk,
+                    body: i === 0 ? s.body : '',
+                    images: i === 0 ? s.images : [],
+                    imageLayouts: i === 0 ? s.imageLayouts : [],
+                    notes: i === 0 ? s.notes : '', // 노트는 첫 조각에만 연결
+                });
+            }
+        }
+        return out;
+    }
+
+    // 순서 재정렬 + 표지/마무리 자동 보강
+    function reorderAndAugment(slides, courseTitle, tabLabel) {
+        const cover = slides.find((s) => s.kind === 'cover') || null;
+        const objectives = slides.find((s) => s.kind === 'objectives') || null;
+        const closingExisting = [...slides].reverse().find((s) => s.kind === 'closing') || null;
+        const others = slides.filter((s) => s !== cover && s !== objectives && s !== closingExisting);
+
+        const result = [];
+
+        // 1) 표지
+        if (cover) {
+            result.push(cover);
+        } else {
+            result.push({
+                id: genId(), kind: 'cover', level: 1,
+                title: courseTitle || '슬라이드',
+                bullets: tabLabel ? [tabLabel] : [],
+                body: '',
+                images: [], imageLayouts: [], textStyle: {}, notes: '',
+            });
+        }
+
+        // 2) 학습 목표
+        if (objectives) result.push(objectives);
+
+        // 3) 본문
+        result.push(...others);
+
+        // 4) 마무리
+        if (closingExisting) {
+            result.push(closingExisting);
+        } else {
+            const keyPoints = others
+                .filter((s) => s.kind === 'content' && s.title)
+                .slice(0, 5)
+                .map((s) => s.title);
+            result.push({
+                id: genId(), kind: 'closing', level: 1,
+                title: '마무리',
+                bullets: keyPoints.length
+                    ? ['오늘 학습한 내용을 요약합니다', ...keyPoints.map((t) => '핵심: ' + t)]
+                    : ['오늘 학습한 내용을 정리합니다', '궁금한 점은 질문해주세요', '다음 시간에 이어서 학습하겠습니다'],
+                body: '',
+                images: [], imageLayouts: [], textStyle: {}, notes: '',
+            });
+        }
+
+        return result;
+    }
+
+    function parseDeck(markdown, courseTitle, tabLabel) {
+        const raw = rawParseDeck(markdown);
+        if (!raw.length) return [];
+        const split = splitDenseSlides(raw);
+        return reorderAndAugment(split, courseTitle, tabLabel);
     }
 
     // ────────────────────────────────────────────────────────────
@@ -173,10 +309,14 @@
     // 프리뷰 HTML 빌드 (자동 스케일 + 텍스트 스타일 + 이미지 오버레이)
     // ────────────────────────────────────────────────────────────
     function legacyKindOf(sl) {
+        // 콘텐츠 존재 시 항상 content 렌더링으로 (섹션 divider는 콘텐츠 없을 때만)
+        const hasContent = (sl.bullets && sl.bullets.length) || (sl.body && sl.body.trim());
         if (sl.kind === 'quiz') return 'quiz';
         if (sl.kind === 'data-table') return 'data-table';
-        if (sl.kind === 'title' || sl.level === 1) return 'title';
-        if (sl.kind === 'section-h2') return 'section';
+        if (sl.kind === 'cover') return 'title';           // 표지: section-slide 중앙정렬
+        if (sl.kind === 'closing') return 'title';          // 마무리: section-slide 중앙정렬
+        if (sl.kind === 'section-divider' && !hasContent) return 'section';
+        if (sl.kind === 'objectives') return 'content';
         return 'content';
     }
     function legacyBodyOf(sl) {
@@ -311,8 +451,16 @@ try {
     };
 
     const KIND_LABEL = {
-        title: '표지', 'section-h2': '섹션', section: '섹션',
-        content: '본문', quiz: '퀴즈', 'data-table': '표',
+        cover: '표지',
+        objectives: '학습 목표',
+        'section-divider': '섹션',
+        section: '섹션',
+        content: '본문',
+        quiz: '퀴즈',
+        'data-table': '표',
+        closing: '마무리',
+        // 구버전 호환
+        title: '표지', 'section-h2': '섹션',
     };
 
     function esc(s) {
@@ -446,7 +594,8 @@ try {
         if (!sl) { pane.innerHTML = `<div style="color:${C.muted};padding:40px;text-align:center;">슬라이드가 없습니다.</div>`; return; }
 
         const kindOpts = [
-            ['title', '표지'], ['section-h2', '섹션'], ['content', '본문'], ['quiz', '퀴즈'], ['data-table', '표'],
+            ['cover', '표지'], ['objectives', '학습 목표'], ['section-divider', '섹션 구분'],
+            ['content', '본문'], ['data-table', '표'], ['quiz', '퀴즈'], ['closing', '마무리'],
         ].map(([v, l]) => `<option value="${v}" ${sl.kind === v ? 'selected' : ''}>${l}</option>`).join('');
 
         const ts = sl.textStyle = sl.textStyle || {};
@@ -551,8 +700,8 @@ try {
         document.getElementById('sed-body').addEventListener('input', (e) => { sl.body = e.target.value; markDirty(); schedulePreview(); debounce('thumbs', renderThumbs, 350); });
         document.getElementById('sed-kind').addEventListener('change', (e) => {
             sl.kind = e.target.value;
-            if (sl.kind === 'title') sl.level = 1;
-            else if (sl.kind === 'section-h2') sl.level = 2;
+            if (sl.kind === 'cover' || sl.kind === 'closing') sl.level = 1;
+            else if (sl.kind === 'section-divider') sl.level = 2;
             else if (!sl.level || sl.level < 2) sl.level = 3;
             markDirty(); schedulePreview(); renderThumbs(); updateNavInfo();
         });
@@ -802,39 +951,261 @@ try {
         if (window.showToast) window.showToast('📥 HTML 다운로드', 'success');
     }
 
-    function downloadPPTX() {
-        if (typeof PptxGenJS === 'undefined') { if (window.showAlert) window.showAlert('PptxGenJS 로딩 중입니다.'); return; }
-        const mod = typeof getEditingModule === 'function' ? getEditingModule(state.moduleId) : null;
-        if (!mod) { if (window.showAlert) window.showAlert('교안 모듈 없음'); return; }
-        const tabKey = typeof currentLessonTab !== 'undefined' ? currentLessonTab : null;
-        const newMd = deckToMarkdown();
-        // 업로드된 신규 이미지(data URL)는 mod.images에 등록하여 PPTX에서 렌더 가능하게 함
-        const mergedImages = { ...(mod.images || {}) };
-        state.slides.forEach((sl) => {
-            (sl.images || []).forEach((url, i) => {
-                if (typeof url === 'string' && url.startsWith('data:')) {
-                    const id = `sed_${sl.id}_${i}`;
-                    mergedImages[id] = url;
-                }
+    // ────────────────────────────────────────────────────────────
+    // 전용 PPTX 엔진 — 구조화된 슬라이드 데이터 → PPTX
+    // 학생뷰(title/bullets/body)만 슬라이드에 렌더, 강사뷰(notes)는 speaker notes로
+    // ────────────────────────────────────────────────────────────
+    function pptxFontFace(textStyle) {
+        if (!textStyle) return 'Malgun Gothic';
+        if (textStyle.fontFamily === 'serif') return 'Noto Serif KR';
+        return 'Malgun Gothic';
+    }
+
+    function cleanForPptx(text) {
+        return String(text || '')
+            .replace(/<[^>]+>/g, '')
+            .replace(/&nbsp;/g, ' ')
+            .replace(/\*\*([^*]+)\*\*/g, '$1')
+            .replace(/`([^`]+)`/g, '$1')
+            .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+            .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+            .replace(ICON_RE, '')
+            .replace(/[■▣●]/g, '')
+            .trim();
+    }
+
+    function renderCoverSlide(pptx, s, sl, T) {
+        s.background = { color: T.bg };
+        const ts = sl.textStyle || {};
+        const titleScale = ts.titleScale ?? 1;
+        const bulletScale = ts.bulletScale ?? 1;
+        const fontFace = pptxFontFace(ts);
+        const bold = ts.titleWeight !== 'semibold';
+
+        // 중앙 배치 타이틀 (section-slide 느낌)
+        s.addText(cleanForPptx(sl.title), {
+            x: 0.5, y: 2.4, w: 12.33, h: 1.8,
+            fontSize: Math.round(48 * titleScale), fontFace, color: T.h,
+            bold, align: 'center', valign: 'middle',
+        });
+        // 서브타이틀 (첫 불릿 or 본문 50자)
+        const sub = (sl.bullets && sl.bullets[0]) || (sl.body || '').slice(0, 80);
+        if (sub) {
+            s.addText(cleanForPptx(sub), {
+                x: 0.5, y: 4.3, w: 12.33, h: 0.8,
+                fontSize: Math.round(20 * bulletScale), fontFace, color: T.sub, align: 'center',
+            });
+        }
+        // 장식 바
+        s.addShape(pptx.ShapeType.rect, { x: 5.55, y: 5.3, w: 2.2, h: 0.04, fill: { color: T.accent } });
+    }
+
+    function renderSectionDividerSlide(pptx, s, sl, T) {
+        s.background = { color: T.bg };
+        const ts = sl.textStyle || {};
+        const titleScale = ts.titleScale ?? 1;
+        const fontFace = pptxFontFace(ts);
+        s.addShape(pptx.ShapeType.rect, { x: 5.6, y: 2.6, w: 2.1, h: 0.04, fill: { color: T.accent } });
+        s.addText(cleanForPptx(sl.title), {
+            x: 0.5, y: 2.9, w: 12.33, h: 1.4,
+            fontSize: Math.round(36 * titleScale), fontFace, color: T.h,
+            bold: true, align: 'center',
+        });
+    }
+
+    function renderContentSlide(pptx, s, sl, T) {
+        s.background = { color: T.bg };
+        const ts = sl.textStyle || {};
+        const titleScale = ts.titleScale ?? 1;
+        const bulletScale = ts.bulletScale ?? 1;
+        const fontFace = pptxFontFace(ts);
+        const bold = ts.titleWeight !== 'semibold';
+
+        // 타이틀
+        const titleText = cleanForPptx(sl.title) || '';
+        s.addText(titleText.length > 80 ? titleText.slice(0, 77) + '...' : titleText, {
+            x: 0.6, y: 0.3, w: 12.13, h: 0.85,
+            fontSize: Math.round(26 * titleScale), fontFace, color: T.accent, bold,
+        });
+        // 구분선
+        s.addShape(pptx.ShapeType.rect, { x: 0.6, y: 1.2, w: 12.13, h: 0.02, fill: { color: T.border } });
+
+        // 이미지 배치
+        const hasImg = sl.images && sl.images.length > 0;
+        let contentW = 12.13;
+        let contentX = 0.6;
+        if (hasImg) {
+            const src = resolveImageUrl(sl.images[0]);
+            const layout = (sl.imageLayouts && sl.imageLayouts[0]) || { x: 0.56, y: 0.18, w: 0.4, h: 0.72 };
+            const ix = layout.x * 13.33;
+            const iy = layout.y * 7.5;
+            const iw = layout.w * 13.33;
+            const ih = layout.h * 7.5;
+            try { s.addImage({ data: src, x: ix, y: iy, w: iw, h: ih, sizing: { type: 'contain', w: iw, h: ih } }); }
+            catch (e) { /* 상대 경로 이미지 등 — 무시 */ }
+            // 텍스트 영역은 이미지 반대편
+            if (layout.x < 0.5) {
+                contentX = (layout.x + layout.w) * 13.33 + 0.3;
+                contentW = 13.33 - contentX - 0.5;
+            } else {
+                contentW = layout.x * 13.33 - 0.6 - 0.3;
+            }
+            if (contentW < 4) contentW = 4; // 최소폭 보장
+        }
+
+        // 불릿 + 본문 → 단일 텍스트 블록으로 구성
+        const parts = [];
+        (sl.bullets || []).forEach((b) => {
+            const cleaned = cleanForPptx(b);
+            if (!cleaned) return;
+            parts.push({
+                text: cleaned,
+                options: {
+                    fontSize: Math.round(16 * bulletScale), fontFace, color: T.txt,
+                    bullet: { color: T.accent }, breakLine: true, paraSpaceAfter: 6,
+                },
             });
         });
-        const origTab = tabKey && mod.tabContents ? mod.tabContents[tabKey] : undefined;
-        const origContent = mod.content;
-        const origImages = mod.images;
-        try {
-            if (tabKey && mod.tabContents) mod.tabContents[tabKey] = newMd;
-            mod.content = newMd;
-            mod.images = mergedImages;
-            if (typeof window.exportToPptx === 'function') {
-                window.exportToPptx();
-                if (window.showToast) window.showToast('📊 PPTX 생성 완료', 'success');
-            } else { if (window.showAlert) window.showAlert('exportToPptx 없음'); }
-        } finally {
-            if (tabKey && mod.tabContents) mod.tabContents[tabKey] = origTab;
-            mod.content = origContent;
-            mod.images = origImages;
+        // body 요약 (2줄 이내)
+        if (sl.body && sl.body.trim()) {
+            const bodySummary = cleanForPptx(sl.body).split(/\n+/).filter(Boolean).slice(0, 3).join(' ').slice(0, 300);
+            if (bodySummary) {
+                parts.push({
+                    text: bodySummary,
+                    options: { fontSize: Math.round(14 * bulletScale), fontFace, color: T.muted, breakLine: true, paraSpaceBefore: 8 },
+                });
+            }
+        }
+        if (parts.length > 0) {
+            s.addText(parts, {
+                x: contentX, y: 1.45, w: contentW, h: 5.7, valign: 'top',
+                shrinkText: true, paraSpaceBefore: 4,
+            });
         }
     }
+
+    function renderDataTableSlide(pptx, s, sl, T) {
+        s.background = { color: T.bg };
+        const ts = sl.textStyle || {};
+        const titleScale = ts.titleScale ?? 1;
+        const fontFace = pptxFontFace(ts);
+        s.addText(cleanForPptx(sl.title), {
+            x: 0.6, y: 0.3, w: 12.13, h: 0.85,
+            fontSize: Math.round(26 * titleScale), fontFace, color: T.accent, bold: true,
+        });
+        s.addShape(pptx.ShapeType.rect, { x: 0.6, y: 1.2, w: 12.13, h: 0.02, fill: { color: T.border } });
+        // 간단 변환: body의 마크다운 표를 행렬로 파싱
+        const rows = [];
+        const bodyLines = (sl.body || '').split('\n');
+        for (const line of bodyLines) {
+            if (!line.trim().startsWith('|')) continue;
+            if (/^\s*\|\s*[:\-\s|]+\|\s*$/.test(line)) continue;
+            const cells = line.split('|').map((c) => c.trim()).filter((c, i, arr) => !(c === '' && (i === 0 || i === arr.length - 1)));
+            if (cells.length) rows.push(cells.map(cleanForPptx));
+        }
+        if (rows.length >= 2) {
+            const header = rows[0];
+            const data = rows.slice(1, 9);
+            const colW = header.map(() => 12 / header.length);
+            const tblRows = [
+                header.map((h) => ({ text: h, options: { fontSize: 14, fontFace, color: T.accent, bold: true, fill: { color: T.card }, border: { pt: 1, color: T.border } } })),
+                ...data.map((row) => row.map((cell) => ({ text: cell, options: { fontSize: 13, fontFace, color: T.h, fill: { color: T.bg }, border: { pt: 1, color: T.border } } }))),
+            ];
+            s.addTable(tblRows, { x: 0.6, y: 1.45, w: 12.13, colW, rowH: 0.5 });
+        } else {
+            // 표 아니면 content로 폴백
+            renderContentSlide(pptx, s, sl, T);
+        }
+    }
+
+    function renderQuizSlide(pptx, s, sl, T) {
+        s.background = { color: T.bg };
+        const ts = sl.textStyle || {};
+        const titleScale = ts.titleScale ?? 1;
+        const bulletScale = ts.bulletScale ?? 1;
+        const fontFace = pptxFontFace(ts);
+        s.addText(cleanForPptx(sl.title), {
+            x: 0.6, y: 0.3, w: 12.13, h: 0.85,
+            fontSize: Math.round(24 * titleScale), fontFace, color: T.accent, bold: true,
+        });
+        s.addShape(pptx.ShapeType.rect, { x: 0.6, y: 1.2, w: 12.13, h: 0.02, fill: { color: T.border } });
+        // 본문에서 보기 추출 (①②③④⑤)
+        const body = (sl.body || '').replace(/<[^>]+>/g, '');
+        const prompt = body.split(/[①②③④⑤]/)[0].trim();
+        const choices = body.match(/[①②③④⑤][^①②③④⑤]+/g) || [];
+        if (prompt) {
+            s.addText(cleanForPptx(prompt), {
+                x: 0.6, y: 1.45, w: 12.13, h: 2.3,
+                fontSize: Math.round(18 * bulletScale), fontFace, color: T.h, valign: 'top', shrinkText: true,
+            });
+        }
+        if (choices.length) {
+            const bullets = choices.map((c) => ({
+                text: cleanForPptx(c),
+                options: { fontSize: Math.round(16 * bulletScale), fontFace, color: T.txt, breakLine: true, paraSpaceAfter: 6 },
+            }));
+            s.addText(bullets, { x: 0.8, y: 3.8, w: 11.7, h: 3.5, valign: 'top' });
+        }
+    }
+
+    async function exportDeckAsPptx() {
+        if (typeof PptxGenJS === 'undefined') {
+            if (window.showAlert) window.showAlert('PptxGenJS 라이브러리를 불러오는 중입니다.');
+            return;
+        }
+        try {
+            const pptx = new PptxGenJS();
+            pptx.defineLayout({ name: 'WIDE', width: 13.333, height: 7.5 });
+            pptx.layout = 'WIDE';
+            pptx.title = state.title || '슬라이드';
+            pptx.author = '디벨로켓 교안 도우미';
+
+            const T = {
+                bg: '0F172A', accent: '22d3ee', sub: 'a78bfa',
+                h: 'f1f5f9', txt: 'd1d5db', muted: '94a3b8',
+                border: '334155', card: '1e293b',
+            };
+
+            for (const sl of state.slides) {
+                const s = pptx.addSlide();
+                try {
+                    if (sl.kind === 'cover' || sl.kind === 'closing') {
+                        renderCoverSlide(pptx, s, sl, T);
+                    } else if (sl.kind === 'section-divider') {
+                        renderSectionDividerSlide(pptx, s, sl, T);
+                    } else if (sl.kind === 'data-table') {
+                        renderDataTableSlide(pptx, s, sl, T);
+                    } else if (sl.kind === 'quiz') {
+                        renderQuizSlide(pptx, s, sl, T);
+                    } else {
+                        // content, objectives 등
+                        renderContentSlide(pptx, s, sl, T);
+                    }
+                } catch (e) {
+                    console.warn('[PPTX] 슬라이드 렌더 실패:', sl.title, e);
+                    // 폴백: 최소 타이틀만 표기
+                    s.background = { color: T.bg };
+                    s.addText(cleanForPptx(sl.title || '슬라이드'), { x: 0.6, y: 3, w: 12.13, h: 1.5, fontSize: 32, color: T.h, align: 'center' });
+                }
+                // 강사뷰 → speaker notes
+                if (sl.notes && sl.notes.trim()) {
+                    try {
+                        const plain = cleanForPptx(sl.notes).slice(0, 4000);
+                        if (plain) s.addNotes(plain);
+                    } catch (e) { /* notes 실패는 무시 */ }
+                }
+            }
+
+            const fname = (state.title || 'slide').replace(/[^\w가-힣]/g, '_') + '_슬라이드.pptx';
+            await pptx.writeFile({ fileName: fname });
+            if (window.showToast) window.showToast('📊 PPTX 다운로드 완료 (강사 노트 포함)', 'success');
+        } catch (e) {
+            console.error('[SlideEditor PPTX]', e);
+            if (window.showAlert) window.showAlert('PPTX 생성 오류: ' + (e.message || e));
+        }
+    }
+
+    function downloadPPTX() { exportDeckAsPptx(); }
 
     function saveToModule() {
         const mod = typeof getEditingModule === 'function' ? getEditingModule(state.moduleId) : null;
@@ -889,9 +1260,14 @@ try {
         const content = (tabKey && mod.tabContents ? mod.tabContents[tabKey] : null) || mod.content || '';
         if (!content) { if (window.showAlert) window.showAlert('교안 내용이 없습니다.'); return; }
 
-        state.slides = parseDeck(content);
+        // 탭 라벨 (LESSON_TABS에서 조회)
+        const tabLabel = (typeof LESSON_TABS !== 'undefined' && tabKey)
+            ? (LESSON_TABS.find((t) => t.id === tabKey) || {}).label || ''
+            : '';
+
+        state.slides = parseDeck(content, mod.title || '슬라이드', tabLabel);
         if (state.slides.length === 0) {
-            state.slides = [{ id: genId(), kind: 'title', level: 1, title: mod.title || '새 슬라이드', bullets: [], body: '', images: [], imageLayouts: [], textStyle: {}, notes: '' }];
+            state.slides = [{ id: genId(), kind: 'cover', level: 1, title: mod.title || '새 슬라이드', bullets: [], body: '', images: [], imageLayouts: [], textStyle: {}, notes: '' }];
         }
         state.active = 0;
         state.moduleId = moduleId;
