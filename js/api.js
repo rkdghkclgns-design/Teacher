@@ -2273,8 +2273,9 @@ function renderEditor(mod) {
                         class="px-2.5 py-1.5 text-[0.65rem] font-bold text-white bg-accent rounded hover:bg-accentHover transition-colors flex items-center gap-1 shrink-0 ml-1">
                         <i class="ph-bold ph-lightning"></i> 전체 탭
                     </button>
-                    <button onclick="openSlideView('${mod.id}')"
-                        class="px-2.5 py-1.5 text-[0.65rem] font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 rounded hover:bg-indigo-100 transition-colors flex items-center gap-1 shrink-0 ml-1">
+                    <button onclick="openSlideEditor('${mod.id}')"
+                        class="px-2.5 py-1.5 text-[0.65rem] font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 rounded hover:bg-indigo-100 transition-colors flex items-center gap-1 shrink-0 ml-1"
+                        title="교안을 바탕으로 편집 가능한 슬라이드 생성">
                         <i class="ph-bold ph-presentation-chart"></i> 슬라이드
                     </button>
                     <button onclick="downloadSlideTemplate()"

@@ -1108,3 +1108,11 @@ window.downloadSlideTemplate = async function () {
     URL.revokeObjectURL(a.href);
     if (window.showToast) window.showToast('📋 슬라이드 양식 템플릿이 다운로드되었습니다.', 'success');
 };
+
+// ═══════════════════════════════════════════════════════════════
+// Expose internals for slide-editor.js
+// ═══════════════════════════════════════════════════════════════
+window._SLIDE_CSS = SLIDE_CSS;
+window._parseSlidesFromMD = parseMarkdownToSlides;
+window._slideToHTML = slideToHTML;
+window._buildSlideHTML = buildSlideHTML;
