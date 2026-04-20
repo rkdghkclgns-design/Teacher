@@ -98,6 +98,23 @@
         return out;
     }
 
+    // 본문에서 이미지 태그/래퍼 제거 (이미지는 슬라이드 이미지 슬롯으로 분리)
+    function stripImagesFromBody(body) {
+        return String(body || '')
+            // image-wrapper div 전체 제거 (버튼·스팬 포함)
+            .replace(/<div\b[^>]*\bclass\s*=\s*["'][^"']*image-wrapper[^"']*["'][^>]*>[\s\S]*?<\/div>/gi, '')
+            // 단독 img 태그
+            .replace(/<img\b[^>]*>/gi, '')
+            // 마크다운 이미지
+            .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+            // HTML 주석 이미지 지시자 <!-- [IMG: "..."] -->
+            .replace(/<!--\s*\[IMG:[\s\S]*?-->/gi, '')
+            // 다시 생성 버튼 잔재
+            .replace(/<button[^>]*>[\s\S]*?<\/button>/gi, '')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+    }
+
     function extractBulletsAndBody(body) {
         const lines = (body || '').split('\n');
         const bullets = [];
@@ -107,9 +124,13 @@
             const bm = line.match(/^\s*[-*•]\s+(.+)/);
             const nm = line.match(/^\s*\d+\.\s+(.+)/);
             if (stillBullet && (bm || nm)) {
-                // 볼드 마커(**text**), HTML 태그 잔재 정리
+                // 볼드/이탤릭·HTML 태그 잔재 정리 (닫히지 않은 **도 처리)
                 const raw = (bm ? bm[1] : nm[1]).trim();
-                const clean = raw.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/<[^>]+>/g, '').trim();
+                const clean = raw
+                    .replace(/\*{1,2}([^*\n]+)\*{0,2}/g, '$1')
+                    .replace(/<[^>]+>/g, '')
+                    .replace(/\s+/g, ' ')
+                    .trim();
                 if (clean) bullets.push(clean);
                 continue;
             }
@@ -225,7 +246,10 @@
             const rawBody = restoreFences(b.bodyLines.join('\n')).trim();
             // 학생뷰 / 강사뷰 분리
             const { student, instructor } = stripInstructorCallouts(rawBody);
-            const { bullets: rawBullets, body: rawStudentBody } = extractBulletsAndBody(student);
+            // 이미지 URL은 수집, 본문에서 이미지 마크업은 제거 (중복 렌더 방지)
+            const images = extractImagesFromBody(student);
+            const bodyNoImg = stripImagesFromBody(student);
+            const { bullets: rawBullets, body: rawStudentBody } = extractBulletsAndBody(bodyNoImg);
             // 긴 본문 단락을 핵심 문장 불릿으로 자동 변환 (강의 PPT처럼 요약)
             const { bullets, body } = condenseBodyToBullets(rawStudentBody, rawBullets);
             const s = {
@@ -233,7 +257,7 @@
                 level: b.level,
                 title: b.title,
                 bullets, body,
-                images: extractImagesFromBody(student),
+                images,
                 imageLayouts: [],
                 textStyle: {},
                 notes: instructor,
@@ -405,15 +429,26 @@
         return parts.join('\n');
     }
 
+    // 이미지가 있는 content 슬라이드의 기본 레이아웃 (이미지 오른쪽 45%, 본문 왼쪽)
+    function defaultImageLayoutFor(kind, index) {
+        if (kind === 'cover' || kind === 'closing' || kind === 'section-divider') {
+            return { x: 0, y: 0, w: 1, h: 1 }; // 전체 배경
+        }
+        if (index === 0) return { x: 0.55, y: 0.18, w: 0.42, h: 0.72 }; // 오른쪽 절반
+        // 추가 이미지는 하단 작게 배치
+        const tileW = 0.22, tileH = 0.26;
+        return { x: 0.05 + (index - 1) * (tileW + 0.02), y: 0.65, w: tileW, h: tileH };
+    }
+
     function buildImageOverlays(sl) {
-        // sl.imageLayouts가 지정된 이미지는 절대 위치 오버레이로 렌더
-        if (!hasLayoutOverride(sl)) return '';
+        // 이미지가 있으면 항상 오버레이로 렌더 (imageLayouts가 없으면 기본 레이아웃 사용)
+        const imgs = sl.images || [];
+        if (imgs.length === 0) return '';
         const items = [];
-        (sl.images || []).forEach((url, i) => {
-            const layout = sl.imageLayouts?.[i];
-            if (!layout || typeof layout.x !== 'number') return;
+        imgs.forEach((url, i) => {
+            const layout = (sl.imageLayouts && sl.imageLayouts[i]) || defaultImageLayoutFor(sl.kind, i);
             const src = resolveImageUrl(url);
-            items.push(`<img class="img-overlay" src="${src}" style="position:absolute;left:${(layout.x * 100).toFixed(2)}%;top:${(layout.y * 100).toFixed(2)}%;width:${(layout.w * 100).toFixed(2)}%;height:${(layout.h * 100).toFixed(2)}%;object-fit:cover;border-radius:8px;z-index:5;">`);
+            items.push(`<img class="img-overlay" src="${src}" style="position:absolute;left:${(layout.x * 100).toFixed(2)}%;top:${(layout.y * 100).toFixed(2)}%;width:${(layout.w * 100).toFixed(2)}%;height:${(layout.h * 100).toFixed(2)}%;object-fit:contain;border-radius:8px;z-index:5;background:rgba(0,0,0,0.2);">`);
         });
         return items.join('');
     }
@@ -457,21 +492,43 @@
             serif: "'Noto Serif KR', 'Nanum Myeongjo', serif",
         };
 
+        // 이미지 레이아웃에 따라 본문 컬럼 폭 조정 (이미지와 겹치지 않도록)
+        const hasImg = sl.images && sl.images.length > 0 && sl.kind !== 'cover' && sl.kind !== 'closing' && sl.kind !== 'section-divider';
+        let bodyWidthPct = 100, bodyMarginLeftPct = 0;
+        if (hasImg) {
+            const l0 = (sl.imageLayouts && sl.imageLayouts[0]) || defaultImageLayoutFor(sl.kind, 0);
+            if (l0.x >= 0.45) { // 이미지 오른쪽
+                bodyWidthPct = Math.floor(l0.x * 100) - 3;
+            } else if (l0.x + l0.w <= 0.55) { // 이미지 왼쪽
+                bodyMarginLeftPct = Math.floor((l0.x + l0.w) * 100) + 3;
+                bodyWidthPct = 100 - bodyMarginLeftPct;
+            }
+            // 전체 배경(full)은 바디 그대로
+        }
+
         return `<!DOCTYPE html><html><head><meta charset="UTF-8">
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"><\/script>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"><\/script>
 <style>${SLIDE_CSS}
-html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0a0e1a; }
+html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden !important; background: #0a0e1a; }
 body { display: flex; align-items: center; justify-content: center; font-family: ${fontMap[fontFamily]}; }
-.slide-container { transform-origin: center center; flex-shrink: 0; font-family: ${fontMap[fontFamily]}; }
+.slide-container { transform-origin: center center; flex-shrink: 0; font-family: ${fontMap[fontFamily]}; overflow: hidden !important; }
 .slide-container h1, .slide-container h2, .slide-container h3, .slide-container h4, .slide-container .slide-title { font-family: ${fontMap[fontFamily]}; }
 .slide-container h1 { font-size: ${Math.round(56 * titleScale)}px !important; font-weight: ${titleWeight === 'bold' ? 700 : 600} !important; }
 .slide-container .slide-title { font-size: ${Math.round(36 * titleScale)}px !important; font-weight: ${titleWeight === 'bold' ? 700 : 600} !important; }
 .slide-container h3 { font-size: ${Math.round(24 * bulletScale)}px !important; }
 .slide-container p, .slide-container li { font-size: ${Math.round(18 * bulletScale)}px !important; }
 .slide-container .subtitle { font-size: ${Math.round(22 * bulletScale)}px !important; }
-.mermaid { background: transparent; text-align: center; margin: 20px 0; }
-.mermaid svg { max-width: 100%; height: auto; }
+/* 중요: 슬라이드 스크롤 차단 — 넘치는 콘텐츠는 잘림 */
+.slide-body { overflow: hidden !important; max-height: 100% !important; width: ${bodyWidthPct}% !important; margin-left: ${bodyMarginLeftPct}% !important; }
+.slide-container ul, .slide-container ol { width: ${bodyWidthPct}% !important; margin-left: ${bodyMarginLeftPct}% !important; }
+.slide-body img, .slide-container img { max-height: 360px !important; max-width: 100% !important; object-fit: contain !important; }
+.slide-body .image-wrapper { max-height: 360px; overflow: hidden; }
+.slide-body ul, .slide-body ol { margin: 4px 0 !important; padding-left: 20px !important; }
+.slide-body li { margin: 2px 0 !important; line-height: 1.5 !important; }
+.slide-body p { margin: 4px 0 !important; line-height: 1.5 !important; }
+.mermaid { background: transparent; text-align: center; margin: 10px 0; max-height: 300px; overflow: hidden; }
+.mermaid svg { max-width: 100%; max-height: 300px; height: auto; }
 .img-overlay { pointer-events: none; }
 </style></head><body>${inner}
 <script>
