@@ -115,6 +115,23 @@
             .trim();
     }
 
+    function cleanBulletText(raw) {
+        let t = String(raw || '');
+        // 1) HTML 태그 제거
+        t = t.replace(/<[^>]+>/g, '');
+        // 2) 마크다운 볼드/이탤릭 마커 제거 (닫히지 않은 `**` 포함)
+        t = t.replace(/\*{1,3}/g, '');
+        // 3) 인라인 코드 백틱 제거
+        t = t.replace(/`([^`]+)`/g, '$1');
+        // 4) 링크 문법 [text](url) → text
+        t = t.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+        // 5) 공백 정리
+        t = t.replace(/\s+/g, ' ').trim();
+        // 6) 길이 제한: 80자 초과 시 ... 처리
+        if (t.length > 80) t = t.slice(0, 77) + '...';
+        return t;
+    }
+
     function extractBulletsAndBody(body) {
         const lines = (body || '').split('\n');
         const bullets = [];
@@ -124,13 +141,7 @@
             const bm = line.match(/^\s*[-*•]\s+(.+)/);
             const nm = line.match(/^\s*\d+\.\s+(.+)/);
             if (stillBullet && (bm || nm)) {
-                // 볼드/이탤릭·HTML 태그 잔재 정리 (닫히지 않은 **도 처리)
-                const raw = (bm ? bm[1] : nm[1]).trim();
-                const clean = raw
-                    .replace(/\*{1,2}([^*\n]+)\*{0,2}/g, '$1')
-                    .replace(/<[^>]+>/g, '')
-                    .replace(/\s+/g, ' ')
-                    .trim();
+                const clean = cleanBulletText(bm ? bm[1] : nm[1]);
                 if (clean) bullets.push(clean);
                 continue;
             }
@@ -139,6 +150,60 @@
             bodyLines.push(line);
         }
         return { bullets, body: bodyLines.join('\n').trim() };
+    }
+
+    // 본문에서 **소제목** 패러그래프를 기준으로 서브 슬라이드 분할
+    function splitByBoldSubheadings(slides) {
+        const out = [];
+        const subRe = /^\s*\*{2,3}\s*([^*\n]{2,50}?)\s*\*{0,3}\s*:?\s*$/;
+        for (const s of slides) {
+            if (!s.body || !s.body.trim()) { out.push(s); continue; }
+            const lines = s.body.split('\n');
+            // 본문 내 소제목 위치 수집
+            const subs = [];
+            let cur = { title: null, startLine: 0, lines: [] };
+            lines.forEach((line, idx) => {
+                const m = line.match(subRe);
+                // 표의 구분선·코드블록은 제외
+                const looksTable = /\|.*\|/.test(line);
+                const looksFence = /^```/.test(line.trim());
+                if (m && !looksTable && !looksFence && m[1].length >= 2) {
+                    if (cur.title !== null || cur.lines.length) subs.push(cur);
+                    cur = { title: m[1].trim(), startLine: idx, lines: [] };
+                } else {
+                    cur.lines.push(line);
+                }
+            });
+            if (cur.title !== null || cur.lines.length) subs.push(cur);
+
+            // 소제목이 1개 이하면 분할 불필요
+            const subCount = subs.filter((x) => x.title !== null).length;
+            if (subCount === 0) { out.push(s); continue; }
+
+            // 첫 블록(소제목 없음)은 원본 슬라이드 유지
+            subs.forEach((sub, idx) => {
+                const subBody = sub.lines.join('\n').trim();
+                if (idx === 0 && sub.title === null) {
+                    out.push({ ...s, body: subBody });
+                } else if (sub.title === null) {
+                    // 타이틀 없는 후속 블록 — 이전 슬라이드에 합치기
+                    const prev = out[out.length - 1];
+                    if (prev) prev.body = (prev.body + '\n\n' + subBody).trim();
+                } else {
+                    const { bullets: subBullets, body: subRest } = extractBulletsAndBody(subBody);
+                    out.push({
+                        id: genId(),
+                        level: (s.level || 2) + 1,
+                        title: sub.title,
+                        bullets: subBullets,
+                        body: subRest,
+                        images: [], imageLayouts: [], textStyle: {}, notes: '',
+                        kind: hasTable(subRest) ? 'data-table' : 'content',
+                    });
+                }
+            });
+        }
+        return out;
     }
 
     function hasTable(body) {
@@ -202,14 +267,17 @@
             }
         });
 
-        // 기존 불릿 + 추출 문장 → 최대 5개 불릿
+        // 기존 불릿 + 추출 문장 → 최대 5개 불릿 (각 70자 이하)
         const maxTotal = 5;
         const bullets = [...(existingBullets || [])];
         for (const s of sentences) {
             if (bullets.length >= maxTotal) break;
-            // 너무 긴 문장은 80자로 trim
-            const trimmed = s.length > 90 ? s.slice(0, 87) + '...' : s;
-            if (!bullets.some((b) => b.slice(0, 20) === trimmed.slice(0, 20))) bullets.push(trimmed);
+            const cleaned = cleanBulletText(s); // 볼드/HTML/공백/길이 정리
+            if (!cleaned) continue;
+            // 너무 짧거나(8자 미만) 중복이면 건너뜀
+            if (cleaned.length < 8) continue;
+            if (bullets.some((b) => b.slice(0, 15) === cleaned.slice(0, 15))) continue;
+            bullets.push(cleaned);
         }
 
         // 남은 body는 블록(표/코드)만 보존
@@ -246,12 +314,11 @@
             const rawBody = restoreFences(b.bodyLines.join('\n')).trim();
             // 학생뷰 / 강사뷰 분리
             const { student, instructor } = stripInstructorCallouts(rawBody);
-            // 이미지 URL은 수집, 본문에서 이미지 마크업은 제거 (중복 렌더 방지)
+            // 이미지 URL은 수집, 본문에서 이미지 마크업은 제거
             const images = extractImagesFromBody(student);
             const bodyNoImg = stripImagesFromBody(student);
-            const { bullets: rawBullets, body: rawStudentBody } = extractBulletsAndBody(bodyNoImg);
-            // 긴 본문 단락을 핵심 문장 불릿으로 자동 변환 (강의 PPT처럼 요약)
-            const { bullets, body } = condenseBodyToBullets(rawStudentBody, rawBullets);
+            const { bullets, body } = extractBulletsAndBody(bodyNoImg);
+            // 본문 압축은 서브 슬라이드 분할 이후에 수행 (볼드 소제목 보존 위해)
             const s = {
                 id: genId(),
                 level: b.level,
@@ -346,11 +413,51 @@
         return result;
     }
 
+    // 모든 슬라이드에 본문 압축 적용 (서브 슬라이드 분할 이후)
+    function condenseAllSlides(slides) {
+        return slides.map((s) => {
+            if (s.kind === 'data-table' || s.kind === 'quiz') return s; // 표/퀴즈 원본 보존
+            const { bullets, body } = condenseBodyToBullets(s.body, s.bullets);
+            return { ...s, bullets, body };
+        });
+    }
+
+    // 불릿과 표가 한 슬라이드에 있으면 별도 슬라이드로 분리
+    function splitTablesOut(slides) {
+        const out = [];
+        for (const s of slides) {
+            if (s.bullets.length > 0 && hasTable(s.body)) {
+                // 불릿 슬라이드와 표 슬라이드 분리
+                out.push({ ...s, body: '', kind: 'content' });
+                out.push({
+                    id: genId(),
+                    level: s.level,
+                    title: s.title + ' (요약 표)',
+                    bullets: [],
+                    body: s.body,
+                    images: [], imageLayouts: [], textStyle: {}, notes: '',
+                    kind: 'data-table',
+                });
+            } else {
+                out.push(s);
+            }
+        }
+        return out;
+    }
+
     function parseDeck(markdown, courseTitle, tabLabel) {
         const raw = rawParseDeck(markdown);
         if (!raw.length) return [];
-        const split = splitDenseSlides(raw);
-        return reorderAndAugment(split, courseTitle, tabLabel);
+        // 1) 본문 내 **소제목** 기준 서브 슬라이드 분할
+        const byBold = splitByBoldSubheadings(raw);
+        // 2) 불릿+표 혼재 슬라이드는 별도 슬라이드로 분리
+        const tablesOut = splitTablesOut(byBold);
+        // 3) 각 슬라이드의 긴 본문을 불릿으로 압축 (최대 5개, 80자 이하)
+        const condensed = condenseAllSlides(tablesOut);
+        // 4) 불릿 >6개는 여러 장으로 분할
+        const dense = splitDenseSlides(condensed);
+        // 5) 표지/학습목표/본문/마무리 순서 재정렬 + 자동 보강
+        return reorderAndAugment(dense, courseTitle, tabLabel);
     }
 
     // ────────────────────────────────────────────────────────────
