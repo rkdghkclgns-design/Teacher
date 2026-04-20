@@ -152,52 +152,77 @@
         return { bullets, body: bodyLines.join('\n').trim() };
     }
 
-    // 본문에서 **소제목** 패러그래프를 기준으로 서브 슬라이드 분할
+    // 인라인 **소제목:** 을 별도 줄로 정규화 (같은 줄에 여러 소제목 섞여있는 경우 대응)
+    function normalizeBoldBreaks(body) {
+        if (!body) return body;
+        let out = body;
+        // "앞 텍스트 🕵 **비즈니스 기획:** 새로운..." → 앞에 \n\n 삽입
+        const ICONS = '[🕵🎯💡⚠️📌📝🎬🗣🔗⏱🎚🔬🏆🚀🧠🎓🖥🧩]';
+        const re = new RegExp('([^\\n])\\s*(' + ICONS + '+\\s+)?(\\*{2,3}[^*\\n]{2,60}?\\*{2,3}\\s*[:：])', 'g');
+        out = out.replace(re, '$1\n\n$2$3');
+        // 보너스: "**label:**" 이 본문 중간에 있을 때도 줄바꿈
+        const re2 = /([^\n])\s*(\*{2,3}[^*\n]{2,60}?\*{2,3}\s*[:：])/g;
+        out = out.replace(re2, '$1\n\n$2');
+        return out;
+    }
+
+    // 본문에서 **소제목** 패러그래프 또는 인라인 `🕵 **사례: ...**` 패턴을 기준으로 서브 슬라이드 분할
     function splitByBoldSubheadings(slides) {
         const out = [];
-        const subRe = /^\s*\*{2,3}\s*([^*\n]{2,50}?)\s*\*{0,3}\s*:?\s*$/;
+        // 줄 시작에서 (옵션 이모지/기호) + **text** 또는 **text:** + (선택) 같은 줄 본문
+        // 예: "**커뮤니케이션 능력**"    /  "🕵 **비즈니스 기획:** 새로운 상품을..."
+        const subRe = /^(?:\s*[^\w가-힣\n]{0,4}\s*)?\*{2,3}\s*([^*\n]{2,60}?)\s*\*{2,3}\s*[:：]?\s*(.*)$/;
         for (const s of slides) {
             if (!s.body || !s.body.trim()) { out.push(s); continue; }
-            const lines = s.body.split('\n');
-            // 본문 내 소제목 위치 수집
+            // 인라인 소제목을 줄 단위로 정규화
+            const normalizedBody = normalizeBoldBreaks(s.body);
+            const lines = normalizedBody.split('\n');
             const subs = [];
-            let cur = { title: null, startLine: 0, lines: [] };
-            lines.forEach((line, idx) => {
+            let cur = { title: null, lines: [] };
+
+            for (const line of lines) {
+                // 표/펜스는 제외
+                const looksTable = /^\s*\|.*\|\s*$/.test(line);
+                const looksFence = /^\s*```/.test(line);
+                if (looksTable || looksFence) { cur.lines.push(line); continue; }
                 const m = line.match(subRe);
-                // 표의 구분선·코드블록은 제외
-                const looksTable = /\|.*\|/.test(line);
-                const looksFence = /^```/.test(line.trim());
-                if (m && !looksTable && !looksFence && m[1].length >= 2) {
+                // title 내부에 다시 **가 있으면 매칭 무효화 (중첩 볼드)
+                if (m && m[1].length >= 2 && !m[1].includes('**')) {
                     if (cur.title !== null || cur.lines.length) subs.push(cur);
-                    cur = { title: m[1].trim(), startLine: idx, lines: [] };
+                    cur = { title: m[1].replace(/[:：]\s*$/, '').trim(), lines: [] };
+                    if (m[2] && m[2].trim()) cur.lines.push(m[2].trim());
                 } else {
                     cur.lines.push(line);
                 }
-            });
+            }
             if (cur.title !== null || cur.lines.length) subs.push(cur);
 
-            // 소제목이 1개 이하면 분할 불필요
             const subCount = subs.filter((x) => x.title !== null).length;
             if (subCount === 0) { out.push(s); continue; }
 
-            // 첫 블록(소제목 없음)은 원본 슬라이드 유지
             subs.forEach((sub, idx) => {
                 const subBody = sub.lines.join('\n').trim();
                 if (idx === 0 && sub.title === null) {
+                    // 첫 블록(소제목 없음)은 원본 슬라이드 유지
                     out.push({ ...s, body: subBody });
                 } else if (sub.title === null) {
-                    // 타이틀 없는 후속 블록 — 이전 슬라이드에 합치기
+                    // 타이틀 없는 후속 블록 — 이전 서브 슬라이드에 귀속
                     const prev = out[out.length - 1];
-                    if (prev) prev.body = (prev.body + '\n\n' + subBody).trim();
+                    if (prev) prev.body = (prev.body ? prev.body + '\n\n' + subBody : subBody);
                 } else {
-                    const { bullets: subBullets, body: subRest } = extractBulletsAndBody(subBody);
+                    // 서브 슬라이드 이미지 분리 + 본문 정제
+                    const subImages = extractImagesFromBody(subBody);
+                    const subNoImg = stripImagesFromBody(subBody);
+                    const { bullets: subBullets, body: subRest } = extractBulletsAndBody(subNoImg);
                     out.push({
                         id: genId(),
                         level: (s.level || 2) + 1,
                         title: sub.title,
                         bullets: subBullets,
                         body: subRest,
-                        images: [], imageLayouts: [], textStyle: {}, notes: '',
+                        // 서브에 이미지가 없으면 원본의 이미지를 물려받음 (동일 주제 공유)
+                        images: subImages.length ? subImages : (s.images || []).slice(0, 1),
+                        imageLayouts: [], textStyle: {}, notes: '',
                         kind: hasTable(subRest) ? 'data-table' : 'content',
                     });
                 }
@@ -575,15 +600,17 @@
         try { inner = slideToHTMLFn(legacy); } catch (e) { inner = `<div style="color:#f87171;padding:20px;">렌더 오류: ${e.message}</div>`; }
         inner = resolveImages(inner);
 
-        // 이미지 오버레이 추가 (imageLayouts 있을 때만)
-        if (hasLayoutOverride(sl)) {
-            // slide-container 내부에 오버레이 주입
+        // 이미지 오버레이 삽입 (이미지 있으면 항상)
+        if (sl.images && sl.images.length > 0) {
             const overlays = buildImageOverlays(sl);
-            inner = inner.replace('<div class="slide-container">', '<div class="slide-container" style="position:relative;">')
-                         .replace('</div>\n</div>', overlays + '</div>\n</div>');
-            // 단순 폴백: inner 닫는 태그 직전에 삽입
-            if (!inner.includes('img-overlay')) {
-                inner = inner.replace(/(<\/div>\s*)$/, overlays + '$1');
+            if (overlays) {
+                // slide-container의 마지막 </div> 직전에 오버레이 삽입
+                const lastClose = inner.lastIndexOf('</div>');
+                if (lastClose >= 0) {
+                    inner = inner.substring(0, lastClose) + overlays + inner.substring(lastClose);
+                } else {
+                    inner = inner + overlays;
+                }
             }
         }
 
@@ -656,17 +683,33 @@ body { display: flex; align-items: center; justify-content: center; font-family:
   setTimeout(fit, 50);
   setTimeout(fit, 200);
 })();
-// Mermaid
+// Mermaid 렌더 + 에러 시 fallback (다이어그램을 텍스트 박스로 치환)
 try {
   if (typeof mermaid !== 'undefined') {
-    mermaid.initialize({ startOnLoad: false, theme: 'dark', themeVariables: { primaryColor: '#1f2937', primaryTextColor: '#f3f4f6', lineColor: '#22d3ee' } });
+    mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose', themeVariables: { primaryColor: '#1f2937', primaryTextColor: '#f3f4f6', lineColor: '#22d3ee' } });
+    // 코드블록을 mermaid div로 변환 (Mermaid가 허용하지 않는 () 괄호는 제거)
     document.querySelectorAll('pre code.language-mermaid, code.language-mermaid').forEach(el => {
       const div = document.createElement('div');
       div.className = 'mermaid';
-      div.textContent = el.textContent;
+      // 노드명 내 괄호를 안전 처리 (Mermaid 파서가 싫어함)
+      let code = el.textContent || '';
+      // 라인별로 "[...(...)...]" 안의 괄호 제거
+      code = code.replace(/\[([^\]]*)\]/g, (m, inner) => '[' + inner.replace(/[()]/g, '') + ']');
+      div.textContent = code;
       (el.closest('pre') || el).replaceWith(div);
     });
-    setTimeout(() => { try { mermaid.run(); } catch(e) {} }, 200);
+    // 렌더 + 에러 시 영역을 조용히 숨김
+    setTimeout(() => {
+      try { mermaid.run({ suppressErrors: true }); }
+      catch (e) { console.warn('mermaid run', e); }
+      setTimeout(() => {
+        document.querySelectorAll('.mermaid').forEach((el) => {
+          if (el.querySelector('.error-text, .error-icon') || /Syntax error/i.test(el.textContent || '')) {
+            el.style.display = 'none';
+          }
+        });
+      }, 400);
+    }, 150);
   }
 } catch (e) { console.warn('preview mermaid', e); }
 <\/script></body></html>`;
