@@ -117,18 +117,26 @@
 
     function cleanBulletText(raw) {
         let t = String(raw || '');
-        // 1) HTML 태그 제거
+        // HTML 태그·볼드 마커·백틱·링크 문법 정리
         t = t.replace(/<[^>]+>/g, '');
-        // 2) 마크다운 볼드/이탤릭 마커 제거 (닫히지 않은 `**` 포함)
         t = t.replace(/\*{1,3}/g, '');
-        // 3) 인라인 코드 백틱 제거
         t = t.replace(/`([^`]+)`/g, '$1');
-        // 4) 링크 문법 [text](url) → text
         t = t.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
-        // 5) 공백 정리
+        // 공백 정리
         t = t.replace(/\s+/g, ' ').trim();
-        // 6) 길이 제한: 80자 초과 시 ... 처리
-        if (t.length > 80) t = t.slice(0, 77) + '...';
+        // 스타강사 스타일: 짧고 강렬한 핵심 포인트
+        // 너무 긴 문장은 첫 번째 쉼표/마침표까지만 사용하거나 60자 말줄임
+        if (t.length > 60) {
+            // 자연 경계(쉼표·세미콜론)에서 끊을 수 있으면 그쪽 우선
+            const breakpoint = t.slice(0, 60).search(/[,;—]\s[^,;—]+$/);
+            if (breakpoint > 20) {
+                t = t.slice(0, breakpoint).trim();
+            } else {
+                t = t.slice(0, 57).trim() + '...';
+            }
+        }
+        // 꼬리 마침표·쉼표 제거 (스타강사는 깔끔한 끊어치기)
+        t = t.replace(/[,.、·]+$/, '').trim();
         return t;
     }
 
@@ -292,16 +300,27 @@
             }
         });
 
-        // 기존 불릿 + 추출 문장 → 최대 5개 불릿 (각 70자 이하)
-        const maxTotal = 5;
-        const bullets = [...(existingBullets || [])];
-        for (const s of sentences) {
+        // 스타강사 스타일: 최대 4개 불릿, 짧은 문장 우선
+        const maxTotal = 4;
+        // 기존 불릿을 먼저 정리 (중복 제거, 길이 기준 정리)
+        const bullets = [...(existingBullets || [])].map(cleanBulletText).filter(Boolean);
+        // 짧은 문장을 우선 채택 (25~55자 구간이 프레젠테이션에 이상적)
+        const ranked = sentences
+            .map(cleanBulletText)
+            .filter((s) => s && s.length >= 8)
+            .sort((a, b) => {
+                const score = (t) => {
+                    const len = t.length;
+                    if (len >= 25 && len <= 55) return 0;       // 이상적 구간
+                    if (len >= 15 && len < 25) return 1;         // 짧아도 OK
+                    if (len > 55 && len <= 70) return 2;         // 약간 긺
+                    return 3;                                      // 너무 짧거나 긺
+                };
+                return score(a) - score(b);
+            });
+        for (const cleaned of ranked) {
             if (bullets.length >= maxTotal) break;
-            const cleaned = cleanBulletText(s); // 볼드/HTML/공백/길이 정리
-            if (!cleaned) continue;
-            // 너무 짧거나(8자 미만) 중복이면 건너뜀
-            if (cleaned.length < 8) continue;
-            if (bullets.some((b) => b.slice(0, 15) === cleaned.slice(0, 15))) continue;
+            if (bullets.some((b) => b.slice(0, 12) === cleaned.slice(0, 12))) continue;
             bullets.push(cleaned);
         }
 
@@ -363,7 +382,7 @@
 
     // 밀집 슬라이드 자동 분할: 불릿이 MAX_BULLETS보다 많으면 여러 장으로
     function splitDenseSlides(slides) {
-        const MAX = 6;
+        const MAX = 4; // 스타강사 스타일: 슬라이드당 4개 이하
         const out = [];
         for (const s of slides) {
             if (s.bullets.length <= MAX || s.kind === 'cover' || s.kind === 'closing' || s.kind === 'quiz') {
@@ -599,6 +618,12 @@
         let inner;
         try { inner = slideToHTMLFn(legacy); } catch (e) { inner = `<div style="color:#f87171;padding:20px;">렌더 오류: ${e.message}</div>`; }
         inner = resolveImages(inner);
+        // Mermaid 코드 정제: [...] 노드명 내부의 () 괄호를 제거 (Mermaid 파서 호환)
+        // 부모 컨텍스트에서 수행해야 정규식이 안전하게 처리됨
+        inner = inner.replace(/<code\s+class="language-mermaid">([\s\S]*?)<\/code>/gi, (match, code) => {
+            const sanitized = code.replace(/\[([^\]]*)\]/g, (m, inside) => '[' + inside.replace(/[()]/g, '') + ']');
+            return '<code class="language-mermaid">' + sanitized + '</code>';
+        });
 
         // 이미지 오버레이 삽입 (이미지 있으면 항상)
         if (sl.images && sl.images.length > 0) {
@@ -683,22 +708,16 @@ body { display: flex; align-items: center; justify-content: center; font-family:
   setTimeout(fit, 50);
   setTimeout(fit, 200);
 })();
-// Mermaid 렌더 + 에러 시 fallback (다이어그램을 텍스트 박스로 치환)
+// Mermaid 렌더 + 에러 시 fallback
 try {
   if (typeof mermaid !== 'undefined') {
     mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose', themeVariables: { primaryColor: '#1f2937', primaryTextColor: '#f3f4f6', lineColor: '#22d3ee' } });
-    // 코드블록을 mermaid div로 변환 (Mermaid가 허용하지 않는 () 괄호는 제거)
     document.querySelectorAll('pre code.language-mermaid, code.language-mermaid').forEach(el => {
       const div = document.createElement('div');
       div.className = 'mermaid';
-      // 노드명 내 괄호를 안전 처리 (Mermaid 파서가 싫어함)
-      let code = el.textContent || '';
-      // 라인별로 "[...(...)...]" 안의 괄호 제거
-      code = code.replace(/\[([^\]]*)\]/g, (m, inner) => '[' + inner.replace(/[()]/g, '') + ']');
-      div.textContent = code;
+      div.textContent = el.textContent || '';
       (el.closest('pre') || el).replaceWith(div);
     });
-    // 렌더 + 에러 시 영역을 조용히 숨김
     setTimeout(() => {
       try { mermaid.run({ suppressErrors: true }); }
       catch (e) { console.warn('mermaid run', e); }
