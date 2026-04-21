@@ -125,9 +125,7 @@
         // 공백 정리
         t = t.replace(/\s+/g, ' ').trim();
         // 스타강사 스타일: 짧고 강렬한 핵심 포인트
-        // 너무 긴 문장은 첫 번째 쉼표/마침표까지만 사용하거나 60자 말줄임
         if (t.length > 60) {
-            // 자연 경계(쉼표·세미콜론)에서 끊을 수 있으면 그쪽 우선
             const breakpoint = t.slice(0, 60).search(/[,;—]\s[^,;—]+$/);
             if (breakpoint > 20) {
                 t = t.slice(0, breakpoint).trim();
@@ -135,8 +133,21 @@
                 t = t.slice(0, 57).trim() + '...';
             }
         }
-        // 꼬리 마침표·쉼표 제거 (스타강사는 깔끔한 끊어치기)
+        // 꼬리 구두점 제거
         t = t.replace(/[,.、·]+$/, '').trim();
+        // 불완전 연결어미로 끝나면 어미만 제거 (기본) 또는 마지막 쉼표까지 되돌림
+        // 한국어 연결어미: ~하고 ~되며 ~으며 ~면서 ~하기 ~되기 ~해서 ~하여 ~하고자 ~되어 ~이나 ~거나 ~지만 ~에도
+        const incompleteRe = /\s?(?:하고|되며|으며|면서|하기|되기|해서|하여|하고자|되어|이나|거나|지만|에도)\s*$/;
+        if (incompleteRe.test(t)) {
+            const removed = t.replace(incompleteRe, '').trim();
+            const lastBreak = Math.max(t.lastIndexOf(', '), t.lastIndexOf('; '));
+            // 어미 제거 후 30자 이상 남거나 구두점 경계가 없으면 어미만 제거, 그렇지 않으면 쉼표까지 되돌림
+            if (removed.length >= 30 || lastBreak <= 10) {
+                t = removed;
+            } else {
+                t = t.slice(0, lastBreak).trim();
+            }
+        }
         return t;
     }
 
@@ -681,6 +692,12 @@ body { display: flex; align-items: center; justify-content: center; font-family:
 /* 중요: 슬라이드 스크롤 차단 — 넘치는 콘텐츠는 잘림 */
 .slide-body { overflow: hidden !important; max-height: 100% !important; width: ${bodyWidthPct}% !important; margin-left: ${bodyMarginLeftPct}% !important; }
 .slide-container ul, .slide-container ol { width: ${bodyWidthPct}% !important; margin-left: ${bodyMarginLeftPct}% !important; }
+/* 한국어 단어 중간 끊김 방지 — 공백 경계에서만 줄바꿈 */
+.slide-container, .slide-container *, .slide-body, .slide-body *, .slide-body li, .slide-body p, .slide-body h1, .slide-body h2, .slide-body h3 {
+  word-break: keep-all !important;
+  overflow-wrap: break-word !important;
+  line-break: strict !important;
+}
 .slide-body img, .slide-container img { max-height: 360px !important; max-width: 100% !important; object-fit: contain !important; }
 .slide-body .image-wrapper { max-height: 360px; overflow: hidden; }
 .slide-body ul, .slide-body ol { margin: 4px 0 !important; padding-left: 20px !important; }
