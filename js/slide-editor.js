@@ -591,27 +591,39 @@
         return parts.join('\n');
     }
 
-    // 이미지가 있는 content 슬라이드의 기본 레이아웃 (이미지 오른쪽 45%, 본문 왼쪽)
+    // 이미지가 있는 슬라이드의 기본 레이아웃
     function defaultImageLayoutFor(kind, index) {
-        if (kind === 'cover' || kind === 'closing' || kind === 'section-divider') {
-            return { x: 0, y: 0, w: 1, h: 1 }; // 전체 배경
+        if (kind === 'cover' || kind === 'closing') {
+            // 표지/마무리: 우측 하단 데코레이션 (제목 겹침 방지)
+            return { x: 0.70, y: 0.56, w: 0.27, h: 0.40 };
         }
-        if (index === 0) return { x: 0.55, y: 0.18, w: 0.42, h: 0.72 }; // 오른쪽 절반
-        // 추가 이미지는 하단 작게 배치
+        if (kind === 'section-divider') {
+            // 섹션 구분: 우측 하단 작은 장식
+            return { x: 0.75, y: 0.62, w: 0.22, h: 0.32 };
+        }
+        // content/objectives
+        if (index === 0) return { x: 0.55, y: 0.18, w: 0.42, h: 0.72 };
         const tileW = 0.22, tileH = 0.26;
         return { x: 0.05 + (index - 1) * (tileW + 0.02), y: 0.65, w: tileW, h: tileH };
     }
 
     function buildImageOverlays(sl) {
-        // 이미지가 있으면 항상 오버레이로 렌더 (imageLayouts가 없으면 기본 레이아웃 사용)
         const imgs = sl.images || [];
         if (imgs.length === 0) return '';
         const items = [];
         imgs.forEach((url, i) => {
             const layout = (sl.imageLayouts && sl.imageLayouts[i]) || defaultImageLayoutFor(sl.kind, i);
             const src = resolveImageUrl(url);
-            items.push(`<img class="img-overlay" src="${src}" style="position:absolute;left:${(layout.x * 100).toFixed(2)}%;top:${(layout.y * 100).toFixed(2)}%;width:${(layout.w * 100).toFixed(2)}%;height:${(layout.h * 100).toFixed(2)}%;object-fit:contain;border-radius:8px;z-index:5;background:rgba(0,0,0,0.2);">`);
+            // 전체 배경(w>=0.95 && h>=0.95) 이면 z-index를 낮추고 반투명 처리
+            const isFullBg = layout.w >= 0.95 && layout.h >= 0.95;
+            const zIndex = isFullBg ? 0 : 5;
+            const opacity = isFullBg ? 0.35 : 1;
+            const fit = isFullBg ? 'cover' : 'contain';
+            const shadow = isFullBg ? '' : 'box-shadow:0 8px 32px rgba(0,0,0,0.4);';
+            items.push(`<img class="img-overlay" src="${src}" style="position:absolute;left:${(layout.x * 100).toFixed(2)}%;top:${(layout.y * 100).toFixed(2)}%;width:${(layout.w * 100).toFixed(2)}%;height:${(layout.h * 100).toFixed(2)}%;object-fit:${fit};border-radius:10px;z-index:${zIndex};opacity:${opacity};${shadow}">`);
         });
+        // 텍스트가 이미지 위에 확실히 보이도록: slide-container 직접 자식의 z-index를 올림
+        items.push(`<style>.slide-container > h1, .slide-container > h2, .slide-container > h3, .slide-container > p, .slide-container > div:not(.img-overlay):not(img), .slide-container > .slide-title, .slide-container > .slide-body, .slide-container > hr, .slide-container > .subtitle { position: relative; z-index: 10; }</style>`);
         return items.join('');
     }
 
