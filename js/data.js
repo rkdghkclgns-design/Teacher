@@ -196,9 +196,19 @@ function sanitizeMarkdownContent(md) {
     t = t.replace(/&lt;br\s*\/?&gt;/gi, '<br>').replace(/&lt;\/?(div|span|strong|em|img|code|pre|table|tr|td|th|ul|ol|li|p|h[1-6])([^&]*?)&gt;/gi, (m) =>
         m.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&#39;/g, "'"));
 
-    // 2) 코드블록 보호 (``` ~~~ 내부는 건드리지 않음)
+    // 2) 코드블록 보호 (``` ~~~ 내부는 건드리지 않음) + Mermaid 블록은 sanitize 후 보호
     const fences = [];
-    t = t.replace(/```[\s\S]*?```/g, (b) => { fences.push(b); return `\u0000FENCE${fences.length - 1}\u0000`; });
+    t = t.replace(/```[\s\S]*?```/g, (block) => {
+        // Mermaid 블록은 sanitize 적용 (노드 라벨 괄호 제거 등)
+        if (/^```\s*mermaid/i.test(block) && typeof window !== 'undefined' && typeof window.sanitizeMermaidCode === 'function') {
+            const sanitizedBlock = block.replace(/```\s*mermaid\s*\n([\s\S]*?)\n```/i,
+                (_, code) => '```mermaid\n' + window.sanitizeMermaidCode(code) + '\n```');
+            fences.push(sanitizedBlock);
+        } else {
+            fences.push(block);
+        }
+        return `\u0000FENCE${fences.length - 1}\u0000`;
+    });
 
     // 3) 닫히지 않은 **볼드 수리: 한 줄 내에 ** 개수가 홀수면 마지막 ** 제거
     t = t.split('\n').map((line) => {

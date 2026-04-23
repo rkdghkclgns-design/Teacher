@@ -309,6 +309,58 @@ function callGemini(modelName, payload) {
 
 
 // ------------------------------------------------------------------------
+// Mermaid 코드 sanitize — AI가 노드 라벨에 괄호/따옴표를 넣어 파서가 실패하는 문제 방지
+// 예시 에러: Parse error on line 5: E[문서화 (GDD, 기획서 등)]
+//   → Mermaid는 [...] 안에 ( ) 를 허용하지 않음
+// 전략: 노드 라벨(브래킷 내부) 안의 ( ), 따옴표, 중첩 [] 제거 · 치환
+// ------------------------------------------------------------------------
+function sanitizeMermaidCode(code) {
+    if (!code || typeof code !== 'string') return code || '';
+    let out = String(code);
+
+    // 1) 중복 괄호/따옴표/대괄호를 한국어 대시로 변환
+    //    [라벨 (보조설명)]   → [라벨 - 보조설명]
+    //    [라벨 (보조1, 보조2)] → [라벨 - 보조1, 보조2]
+    //    (...)               → - ...
+    //    {라벨 (보조설명)}   → {라벨 - 보조설명}
+    //    ((라벨))            → ((라벨))  (원형 노드는 허용)
+    const fixInside = (s) => s
+        .replace(/\s*\(\s*([^()]*?)\s*\)\s*/g, ' - $1')   // (X) → - X
+        .replace(/"/g, "'")                                  // 따옴표 단일화
+        .replace(/\[([^\[\]]*?)\]/g, '$1')                  // 내부 [] 제거
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    // [label] 노드
+    out = out.replace(/\[([^\[\]\n]{1,200})\]/g, (m, inner) => {
+        if (!/[()\[\]"]/.test(inner)) return m;
+        return '[' + fixInside(inner) + ']';
+    });
+    // {label} (마름모) 노드
+    out = out.replace(/\{([^{}\n]{1,200})\}/g, (m, inner) => {
+        if (!/[()\[\]"]/.test(inner)) return m;
+        return '{' + fixInside(inner) + '}';
+    });
+    // ((label)) (원형) 노드는 이중괄호 구조만 보존하고 내부만 정제
+    out = out.replace(/\(\(([^()\n]{1,200})\)\)/g, (m, inner) => {
+        if (!/[()\[\]"]/.test(inner)) return m;
+        return '((' + fixInside(inner) + '))';
+    });
+
+    // 2) 연결선 텍스트: A -->|라벨 (보조)| B  내부 괄호 제거
+    out = out.replace(/\|([^|\n]{1,200})\|/g, (m, inner) => {
+        if (!/[()\[\]"]/.test(inner)) return m;
+        return '|' + fixInside(inner) + '|';
+    });
+
+    // 3) stateDiagram-v2는 convention 상 금지이므로 flowchart로 치환
+    out = out.replace(/^\s*stateDiagram-v2/m, 'flowchart TD');
+
+    return out;
+}
+window.sanitizeMermaidCode = sanitizeMermaidCode;
+
+// ------------------------------------------------------------------------
 // Marked.js 커스텀 렌더러 설정 (이미지 호버 재생성 UI 주입)
 // ------------------------------------------------------------------------
 if (typeof marked !== 'undefined') {
@@ -319,7 +371,7 @@ if (typeof marked !== 'undefined') {
             let infostring = typeof codeArg === 'object' ? codeArg.lang : infostringArg;
 
             if (infostring === 'mermaid') {
-                return `<div class="mermaid">\n${codeText}\n</div>`;
+                return `<div class="mermaid">\n${sanitizeMermaidCode(codeText)}\n</div>`;
             }
             // mermaid가 아닌 일반 코드 블록 폴백 처리
             const lang = (infostring || '').match(/\S*/)?.[0] || '';
@@ -1383,9 +1435,18 @@ window.sanitizeAllContent = async function () {
 };
 
 async function generateImageAPI(prompt) {
-    // 이미지 생성 모델 폴백 체인: 현재 설정 → gemini-2.5-flash-image (안정)
-    const modelsToTry = [IMAGE_MODEL];
-    if (IMAGE_MODEL !== 'gemini-2.5-flash-image') modelsToTry.push('gemini-2.5-flash-image');
+    // 이미지 생성 모델 폴백 체인 (안정성 순)
+    // 1) 사용자가 설정한 모델
+    // 2) gemini-2.5-flash-image (공식 안정 모델)
+    // 3) gemini-2.0-flash-exp-image-generation (구버전 실험 모델 · 일부 서버에서만 지원)
+    const preferredOrder = [
+        IMAGE_MODEL,
+        'gemini-2.5-flash-image',
+        'gemini-2.0-flash-exp-image-generation',
+    ];
+    // 중복 제거 + null/undefined 제거
+    const modelsToTry = [...new Set(preferredOrder.filter(Boolean))];
+    const errorHistory = []; // 사용자 피드백용
 
     for (const model of modelsToTry) {
         const payload = {
@@ -1411,10 +1472,16 @@ async function generateImageAPI(prompt) {
                     }
                 }
 
-                console.warn(`[Image Gen] ${model} 응답에 이미지 없음`);
+                const blockReason = data?.promptFeedback?.blockReason
+                    || data?.candidates?.[0]?.finishReason
+                    || '이미지 파트 없음';
+                console.warn(`[Image Gen] ${model} 응답에 이미지 없음 — ${blockReason}`);
+                errorHistory.push(`${model}: ${blockReason}`);
                 break; // 응답은 왔지만 이미지 없음 → 다음 모델로
             } catch (e) {
-                const is429 = e.message && e.message.includes('429');
+                const msg = e.message || String(e);
+                const is429 = msg.includes('429');
+                const is404 = msg.includes('404') || /not\s*found|unsupported/i.test(msg);
                 if (is429 && retry < 2) {
                     const waitSec = (retry + 1) * 15; // 15초, 30초 대기
                     console.warn(`[Image Gen] 429 Rate Limit — ${waitSec}초 후 재시도...`);
@@ -1422,13 +1489,19 @@ async function generateImageAPI(prompt) {
                     await new Promise(r => setTimeout(r, waitSec * 1000));
                     continue;
                 }
-                console.error(`[Image Gen] ${model} 에러:`, e.message || e);
-                break; // 429 아닌 에러 또는 재시도 소진 → 다음 모델로
+                console.error(`[Image Gen] ${model} 에러:`, msg);
+                errorHistory.push(`${model}: ${is404 ? '모델 미지원' : msg.slice(0, 80)}`);
+                break; // 다음 모델로
             }
         }
     }
 
-    console.error("[Image Gen] 모든 모델 실패");
+    console.error("[Image Gen] 모든 모델 실패:", errorHistory);
+    // 사용자에게 실패 사유 알림 (조용히 실패하지 않도록)
+    if (window.showToast && errorHistory.length) {
+        const first = errorHistory[0];
+        window.showToast(`⚠️ 이미지 생성 실패 (${first})`, 'error');
+    }
     return null;
 }
 
@@ -2621,19 +2694,35 @@ window.toggleEditorMode = function (mode) {
                         // 각 다이어그램을 개별적으로 렌더링 (하나 실패해도 나머지 계속)
                         for (let i = 0; i < unrendered.length; i++) {
                             const el = unrendered[i];
-                            const code = el.textContent.trim();
+                            let code = el.textContent.trim();
+                            // 안전망: 렌더 직전에도 한 번 더 sanitize (저장된 원본 콘텐츠 호환)
+                            if (typeof sanitizeMermaidCode === 'function') {
+                                code = sanitizeMermaidCode(code);
+                            }
                             const id = 'mermaid-svg-' + Date.now() + '-' + i;
                             try {
                                 const { svg } = await window.mermaid.render(id, code);
                                 el.innerHTML = svg;
                                 console.log(`[Mermaid] 다이어그램 ${i + 1}/${unrendered.length} 렌더링 성공`);
                             } catch (err) {
-                                console.warn(`[Mermaid] 다이어그램 ${i + 1} 실패:`, err.message);
-                                el.innerHTML = `<div style="padding:12px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:8px;color:#f87171;font-size:13px;">
-                                    <strong>⚠️ Mermaid 렌더링 실패</strong><br>
-                                    <code style="font-size:11px;opacity:0.7;">${err.message}</code><br>
-                                    <pre style="margin-top:8px;font-size:11px;opacity:0.5;white-space:pre-wrap;">${code.substring(0, 200)}</pre>
-                                </div>`;
+                                // 1차 실패 → 더 aggressive sanitize 후 재시도 (괄호/특수문자 일괄 제거)
+                                console.warn(`[Mermaid] 다이어그램 ${i + 1} 1차 실패:`, err.message);
+                                try {
+                                    const stripped = code
+                                        .replace(/\[([^\[\]\n]{1,200})\]/g, (m, inner) => '[' + inner.replace(/[()"\[\]{}]/g, '').trim() + ']')
+                                        .replace(/\{([^{}\n]{1,200})\}/g, (m, inner) => '{' + inner.replace(/[()"\[\]{}]/g, '').trim() + '}')
+                                        .replace(/\|([^|\n]{1,200})\|/g, (m, inner) => '|' + inner.replace(/[()"]/g, '').trim() + '|');
+                                    const { svg } = await window.mermaid.render(id + '_retry', stripped);
+                                    el.innerHTML = svg;
+                                    console.log(`[Mermaid] 다이어그램 ${i + 1} 재시도 성공`);
+                                } catch (err2) {
+                                    console.warn(`[Mermaid] 다이어그램 ${i + 1} 최종 실패:`, err2.message);
+                                    el.innerHTML = `<div style="padding:12px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:8px;color:#f87171;font-size:13px;">
+                                        <strong>⚠️ Mermaid 렌더링 실패</strong><br>
+                                        <code style="font-size:11px;opacity:0.7;">${err2.message}</code><br>
+                                        <pre style="margin-top:8px;font-size:11px;opacity:0.5;white-space:pre-wrap;">${code.substring(0, 200)}</pre>
+                                    </div>`;
+                                }
                             }
                         }
                     }, 200);
