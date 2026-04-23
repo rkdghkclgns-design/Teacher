@@ -1124,9 +1124,26 @@ window.exportAllToZip = async function () {
 
 // ------------------------------------------------------------------------
 
-let batchUploadedFileContent = null;
+// 다중 파일 지원: { name, size, content, type } 배열
+let batchUploadedFiles = [];
+const BATCH_MAX_FILES = 30;
+const BATCH_MAX_FILE_SIZE = 20 * 1024 * 1024; // 파일당 20MB
 
+// 하위호환: 다중 파일의 내용을 파일명 라벨과 함께 하나의 문자열로 합쳐 반환
+let batchUploadedFileContent = null;
 let batchUploadedFileName = null;
+
+function syncBatchLegacyVars() {
+    if (batchUploadedFiles.length === 0) {
+        batchUploadedFileContent = null;
+        batchUploadedFileName = null;
+    } else {
+        batchUploadedFileContent = batchUploadedFiles
+            .map(f => `[${f.name}]\n${f.content}`)
+            .join('\n\n---\n\n');
+        batchUploadedFileName = batchUploadedFiles.map(f => f.name).join(', ');
+    }
+}
 
 
 
@@ -1135,6 +1152,13 @@ window.openBatchModal = function () {
     const modal = document.getElementById('batch-modal');
 
     const content = document.getElementById('batch-modal-content');
+
+
+
+    // 파일 목록 초기화 (모달 재오픈 시 이전 상태 유지 원치 않음)
+    batchUploadedFiles = [];
+    syncBatchLegacyVars();
+    if (typeof renderBatchFileList === 'function') renderBatchFileList();
 
 
 
@@ -1341,8 +1365,6 @@ function initBatchFileDropzone() {
 
 
 
-    // 드래그가 영역을 벗어나면 하이라이트 제거
-
     dropzone.addEventListener('dragleave', (e) => {
 
         e.preventDefault();
@@ -1361,7 +1383,7 @@ function initBatchFileDropzone() {
 
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
 
-            handleBatchFile(e.dataTransfer.files[0]);
+            handleBatchFiles(Array.from(e.dataTransfer.files));
 
         }
 
@@ -1373,7 +1395,7 @@ function initBatchFileDropzone() {
 
         if (e.target.files && e.target.files.length > 0) {
 
-            handleBatchFile(e.target.files[0]);
+            handleBatchFiles(Array.from(e.target.files));
 
         }
 
@@ -1383,63 +1405,345 @@ function initBatchFileDropzone() {
 
 
 
-function handleBatchFile(file) {
+function humanSize(bytes) {
 
-    if (!file.name.endsWith('.md') && !file.name.endsWith('.txt')) {
+    if (bytes < 1024) return bytes + ' B';
 
-        window.showAlert('지원하지 않는 파일 형식입니다. (.md, .txt 만 가능)');
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
 
-        return;
-
-    }
-
-
-
-    const reader = new FileReader();
-
-    reader.onload = (e) => {
-
-        batchUploadedFileContent = e.target.result;
-
-        batchUploadedFileName = file.name;
-
-
-
-        // UI Update
-
-        document.getElementById('batch-file-name-display').innerText = file.name;
-
-        document.getElementById('batch-file-size').innerText = (file.size / 1024).toFixed(1) + ' KB';
-
-        document.getElementById('batch-file-preview').classList.remove('hidden');
-
-
-
-        // input 값 초기화 (같은 파일 재업로드 지원)
-
-        document.getElementById('batch-file-input').value = '';
-
-    };
-
-    reader.readAsText(file);
+    return (bytes / 1024 / 1024).toFixed(2) + ' MB';
 
 }
 
 
 
-window.clearBatchFile = function (e) {
+async function extractTextFromFile(file) {
 
-    if (e) e.stopPropagation(); // 방해 방지
+    const lower = file.name.toLowerCase();
 
-    document.getElementById('batch-file-input').value = '';
 
-    document.getElementById('batch-file-preview').classList.add('hidden');
 
-    batchUploadedFileContent = null;
+    // .md, .txt — 텍스트 그대로
 
-    batchUploadedFileName = null;
+    if (lower.endsWith('.md') || lower.endsWith('.txt')) {
+
+        return await file.text();
+
+    }
+
+
+
+    // .pdf — pdf.js로 텍스트 추출
+
+    if (lower.endsWith('.pdf')) {
+
+        if (!window.pdfjsLib) throw new Error('PDF 파서(pdf.js)를 로드하지 못했습니다. 페이지를 새로고침 후 다시 시도하세요.');
+
+        const buf = await file.arrayBuffer();
+
+        const pdf = await window.pdfjsLib.getDocument({ data: buf }).promise;
+
+        const pageTexts = [];
+
+        const maxPages = Math.min(pdf.numPages, 100); // 페이지 수 상한
+
+        for (let p = 1; p <= maxPages; p++) {
+
+            const page = await pdf.getPage(p);
+
+            const content = await page.getTextContent();
+
+            const txt = content.items.map((it) => it.str).join(' ');
+
+            if (txt.trim()) pageTexts.push(`[p.${p}] ${txt}`);
+
+        }
+
+        return pageTexts.join('\n\n');
+
+    }
+
+
+
+    // .pptx — JSZip으로 슬라이드 XML에서 텍스트 추출
+
+    if (lower.endsWith('.pptx')) {
+
+        if (typeof JSZip === 'undefined') throw new Error('PPTX 파서(JSZip)를 로드하지 못했습니다.');
+
+        const buf = await file.arrayBuffer();
+
+        const zip = await JSZip.loadAsync(buf);
+
+        const slideFiles = Object.keys(zip.files)
+
+            .filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))
+
+            .sort((a, b) => {
+
+                const na = parseInt(a.match(/slide(\d+)\.xml/)[1], 10);
+
+                const nb = parseInt(b.match(/slide(\d+)\.xml/)[1], 10);
+
+                return na - nb;
+
+            });
+
+        const parts = [];
+
+        for (let i = 0; i < slideFiles.length; i++) {
+
+            const xml = await zip.files[slideFiles[i]].async('string');
+
+            // <a:t>…</a:t> 에서 텍스트 추출
+
+            const matches = xml.match(/<a:t[^>]*>([\s\S]*?)<\/a:t>/g) || [];
+
+            const text = matches
+
+                .map((m) => m.replace(/<[^>]+>/g, ''))
+
+                .map((t) => t.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'"))
+
+                .filter(Boolean)
+
+                .join(' ');
+
+            if (text.trim()) parts.push(`[Slide ${i + 1}] ${text}`);
+
+        }
+
+        return parts.join('\n\n');
+
+    }
+
+
+
+    // .ppt (레거시 바이너리) — 경고만
+
+    if (lower.endsWith('.ppt')) {
+
+        throw new Error('레거시 .ppt 형식은 지원되지 않습니다. .pptx로 저장 후 업로드하세요.');
+
+    }
+
+
+
+    throw new Error('지원하지 않는 파일 형식입니다.');
+
+}
+
+
+
+async function handleBatchFiles(files) {
+
+    const supported = ['.md', '.txt', '.pdf', '.ppt', '.pptx'];
+
+    const rejected = [];
+
+    const accepted = [];
+
+    for (const f of files) {
+
+        const ok = supported.some((ext) => f.name.toLowerCase().endsWith(ext));
+
+        if (!ok) { rejected.push(`${f.name} (형식)`); continue; }
+
+        if (f.size > BATCH_MAX_FILE_SIZE) { rejected.push(`${f.name} (용량 20MB 초과)`); continue; }
+
+        accepted.push(f);
+
+    }
+
+    if (batchUploadedFiles.length + accepted.length > BATCH_MAX_FILES) {
+
+        const allowed = Math.max(0, BATCH_MAX_FILES - batchUploadedFiles.length);
+
+        window.showAlert(`최대 ${BATCH_MAX_FILES}개까지 업로드할 수 있습니다. 이번 업로드에서 ${allowed}개만 추가합니다.`);
+
+        accepted.splice(allowed);
+
+    }
+
+    if (rejected.length) window.showAlert('일부 파일을 건너뜁니다:\n' + rejected.join('\n'));
+
+
+
+    // 파일 파싱 (진행 표시)
+
+    const fileList = document.getElementById('batch-file-list-items');
+
+    const fileListWrap = document.getElementById('batch-file-list');
+
+    if (fileListWrap) fileListWrap.classList.remove('hidden');
+
+
+
+    for (const file of accepted) {
+
+        const item = {
+
+            name: file.name,
+
+            size: file.size,
+
+            content: '',
+
+            type: (file.name.match(/\.([^.]+)$/) || [])[1] || 'unknown',
+
+            status: 'parsing',
+
+        };
+
+        batchUploadedFiles.push(item);
+
+        renderBatchFileList();
+
+        try {
+
+            item.content = await extractTextFromFile(file);
+
+            item.status = 'ok';
+
+        } catch (e) {
+
+            item.status = 'error';
+
+            item.error = e.message;
+
+            console.warn('[batch file parse]', file.name, e);
+
+        }
+
+        renderBatchFileList();
+
+    }
+
+    syncBatchLegacyVars();
+
+
+
+    // input 초기화 (같은 파일 재업로드 지원)
+
+    const input = document.getElementById('batch-file-input');
+
+    if (input) input.value = '';
+
+}
+
+
+
+function renderBatchFileList() {
+
+    const list = document.getElementById('batch-file-list-items');
+
+    const wrap = document.getElementById('batch-file-list');
+
+    const count = document.getElementById('batch-file-count');
+
+    if (!list || !wrap) return;
+
+    if (batchUploadedFiles.length === 0) {
+
+        wrap.classList.add('hidden');
+
+        list.innerHTML = '';
+
+        if (count) count.innerText = '0개 파일';
+
+        return;
+
+    }
+
+    const iconFor = (type) => ({
+
+        md: 'ph-file-md', txt: 'ph-file-text', pdf: 'ph-file-pdf',
+
+        ppt: 'ph-file-ppt', pptx: 'ph-file-ppt',
+
+    })[type] || 'ph-file';
+
+    list.innerHTML = batchUploadedFiles.map((f, i) => {
+
+        const iconClass = iconFor(f.type);
+
+        const statusBadge = f.status === 'parsing'
+
+            ? '<span class="text-[0.6rem] text-amber-400 ml-1">파싱 중...</span>'
+
+            : f.status === 'error'
+
+                ? `<span class="text-[0.6rem] text-red-400 ml-1" title="${(f.error || '').replace(/"/g, '&quot;')}">오류</span>`
+
+                : `<span class="text-[0.6rem] text-emerald-400 ml-1">${(f.content || '').length}자</span>`;
+
+        return `
+
+            <div class="flex items-center gap-2 bg-white/[0.02] hover:bg-white/5 rounded-md px-2.5 py-1.5 transition-colors">
+
+                <i class="ph-fill ${iconClass} text-base text-accent"></i>
+
+                <div class="flex-1 min-w-0">
+
+                    <div class="text-[0.7rem] font-semibold text-white truncate">${f.name}${statusBadge}</div>
+
+                    <div class="text-[0.6rem] text-textMuted">${humanSize(f.size)}</div>
+
+                </div>
+
+                <button type="button" onclick="removeBatchFile(${i})"
+
+                    class="w-6 h-6 flex items-center justify-center rounded text-red-400 hover:bg-red-500/20 transition-colors flex-shrink-0"
+
+                    title="삭제"><i class="ph-bold ph-x text-xs"></i></button>
+
+            </div>
+
+        `;
+
+    }).join('');
+
+    if (count) count.innerText = `${batchUploadedFiles.length}개 파일 · ${humanSize(batchUploadedFiles.reduce((s, f) => s + f.size, 0))}`;
+
+}
+
+
+
+window.removeBatchFile = function (index) {
+
+    if (index < 0 || index >= batchUploadedFiles.length) return;
+
+    batchUploadedFiles.splice(index, 1);
+
+    syncBatchLegacyVars();
+
+    renderBatchFileList();
 
 };
+
+
+
+window.clearAllBatchFiles = function (e) {
+
+    if (e) e.stopPropagation();
+
+    batchUploadedFiles = [];
+
+    syncBatchLegacyVars();
+
+    renderBatchFileList();
+
+    const input = document.getElementById('batch-file-input');
+
+    if (input) input.value = '';
+
+};
+
+
+
+// 하위호환 — 기존 clearBatchFile 호출이 남아있을 경우 대비
+
+window.clearBatchFile = function (e) { window.clearAllBatchFiles(e); };
 
 
 

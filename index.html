@@ -57,6 +57,14 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
 
+    <!-- pdf.js for PDF text extraction -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        if (window.pdfjsLib) {
+            window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        }
+    </script>
+
     <!-- PptxGenJS for PPTX Export (Google Slides / PowerPoint 호환) -->
     <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
 
@@ -1413,7 +1421,7 @@
                     <label class="text-xs font-bold text-textMuted mb-2 block">참조 자료 (선택 사항)</label>
 
                     <div id="batch-dropzone"
-                        class="border-2 border-dashed border-white/10 rounded-xl p-8 flex flex-col items-center justify-center text-center hover:border-accent/50 hover:bg-accent/5 transition-colors cursor-pointer relative group">
+                        class="border-2 border-dashed border-white/10 rounded-xl p-6 flex flex-col items-center justify-center text-center hover:border-accent/50 hover:bg-accent/5 transition-colors cursor-pointer relative group">
 
                         <div
                             class="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
@@ -1424,32 +1432,23 @@
 
                         <div class="text-sm font-bold text-white mb-1">클릭하거나 파일을 이곳에 드롭하세요</div>
 
-                        <div class="text-[0.7rem] text-textMuted">지원 포맷: .md, .txt (최대 1개 파일)</div>
+                        <div class="text-[0.7rem] text-textMuted">지원 포맷: .md, .txt, .pdf, .ppt, .pptx (최대 30개 파일)</div>
 
                         <input type="file" id="batch-file-input"
-                            class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept=".md,.txt">
+                            class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept=".md,.txt,.pdf,.ppt,.pptx" multiple>
 
+                    </div>
 
-
-                        <!-- File Preview Info (Hidden by default) -->
-
-                        <div id="batch-file-preview"
-                            class="hidden absolute inset-0 bg-bgSidebar rounded-xl border-2 border-accent/50 p-4 flex flex-col items-center justify-center z-10">
-
-                            <i class="ph-fill ph-file-text text-3xl text-accent mb-2"></i>
-
-                            <div id="batch-file-name-display"
-                                class="text-sm font-bold text-white truncate w-full max-w-[200px] text-center">
-                                document.md</div>
-
-                            <div id="batch-file-size" class="text-xs text-textMuted mb-3">12 KB</div>
-
-                            <button type="button" onclick="clearBatchFile(event)"
-                                class="px-3 py-1 bg-red-500/20 text-red-400 text-xs font-bold rounded hover:bg-red-500 hover:text-white transition-colors">파일
-                                삭제</button>
-
+                    <!-- Multi-file list (shown when files added) -->
+                    <div id="batch-file-list" class="hidden mt-3 space-y-1.5 max-h-[180px] overflow-y-auto editor-scroll bg-black/20 rounded-lg p-3 border border-white/5">
+                        <div id="batch-file-list-items"></div>
+                        <div id="batch-file-list-summary" class="flex items-center justify-between pt-2 mt-2 border-t border-white/5 text-[0.65rem] text-textMuted">
+                            <span id="batch-file-count">0개 파일</span>
+                            <button type="button" onclick="clearAllBatchFiles(event)"
+                                class="px-2 py-0.5 text-[0.65rem] font-bold text-red-400 hover:bg-red-500/20 rounded transition-colors">
+                                모두 삭제
+                            </button>
                         </div>
-
                     </div>
 
                 </div>
@@ -1740,20 +1739,20 @@
     <!-- Application Logic Modules -->
 
     <!-- Split Logic Modules -->
-    <script src="./js/panel-manager.js?v=104"></script>
-    <script src="./js/filename-convention.js?v=104"></script>
-    <script src="./js/data.js?v=104"></script>
-    <script src="./js/state.js?v=104"></script>
-    <script src="./js/api.js?v=104"></script>
-    <script src="./js/diagram.js?v=104"></script>
-    <script src="./js/ui.js?v=104"></script>
-    <script src="./js/convention.js?v=104"></script>
-    <script src="./js/tutorial.js?v=104"></script>
-    <script src="./js/merge.js?v=104"></script>
-    <script src="./js/tabs.js?v=104"></script>
-    <script src="./js/slide-export.js?v=104"></script>
-    <script src="./js/slide-editor.js?v=104"></script>
-    <script src="./js/export-modal.js?v=104"></script>
+    <script src="./js/panel-manager.js?v=105"></script>
+    <script src="./js/filename-convention.js?v=105"></script>
+    <script src="./js/data.js?v=105"></script>
+    <script src="./js/state.js?v=105"></script>
+    <script src="./js/api.js?v=105"></script>
+    <script src="./js/diagram.js?v=105"></script>
+    <script src="./js/ui.js?v=105"></script>
+    <script src="./js/convention.js?v=105"></script>
+    <script src="./js/tutorial.js?v=105"></script>
+    <script src="./js/merge.js?v=105"></script>
+    <script src="./js/tabs.js?v=105"></script>
+    <script src="./js/slide-export.js?v=105"></script>
+    <script src="./js/slide-editor.js?v=105"></script>
+    <script src="./js/export-modal.js?v=105"></script>
     <script>
         // 튜토리얼 자동 시작 (공지 팝업 → 튜토리얼 순서)
         window.addEventListener('load', () => {
