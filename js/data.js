@@ -184,13 +184,65 @@ function extractText(data) {
 }
 function safeJSONParse(text) {
     if (!text) return null;
+    // 코드펜스 제거 + 공백 정리
+    let cleaned = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?\s*```$/i, '').trim();
     try {
-        let cleaned = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?\s*```$/i, '').trim();
         return JSON.parse(cleaned);
-    } catch (e) {
-        console.error("JSON 파싱 실패:", e, "\n원본:", text.substring(0, 200));
-        return null;
+    } catch (e1) {
+        // 1차 실패 → 문자열 리터럴 내 제어문자(개행/탭) 이스케이프 후 재시도
+        try {
+            const escaped = escapeControlCharsInJSONStrings(cleaned);
+            return JSON.parse(escaped);
+        } catch (e2) {
+            // 2차 실패 → 트레일링 쉼표 제거 후 재시도
+            try {
+                const noTrailing = cleaned.replace(/,(\s*[\]}])/g, '$1');
+                const escaped2 = escapeControlCharsInJSONStrings(noTrailing);
+                return JSON.parse(escaped2);
+            } catch (e3) {
+                console.error("JSON 파싱 실패:", e3, "\n원본:", cleaned.substring(0, 300));
+                return null;
+            }
+        }
     }
+}
+
+// JSON 문자열 리터럴 내부의 리터럴 개행/탭/캐리지리턴을 \\n 등으로 이스케이프
+// 문자열 바깥의 공백·개행은 유지
+function escapeControlCharsInJSONStrings(src) {
+    let out = '';
+    let inString = false;
+    let escape = false;
+    for (let i = 0; i < src.length; i++) {
+        const c = src[i];
+        if (escape) {
+            out += c;
+            escape = false;
+            continue;
+        }
+        if (c === '\\') {
+            out += c;
+            escape = true;
+            continue;
+        }
+        if (c === '"') {
+            inString = !inString;
+            out += c;
+            continue;
+        }
+        if (inString) {
+            if (c === '\n') out += '\\n';
+            else if (c === '\r') out += '\\r';
+            else if (c === '\t') out += '\\t';
+            else if (c === '\b') out += '\\b';
+            else if (c === '\f') out += '\\f';
+            else if (c.charCodeAt(0) < 0x20) out += '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0');
+            else out += c;
+        } else {
+            out += c;
+        }
+    }
+    return out;
 }
 
 // 1. API 설정 및 애플리케이션 상수
