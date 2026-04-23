@@ -182,6 +182,63 @@ function extractText(data) {
         return "";
     }
 }
+// 마크다운 문법 정리 — AI 출력물이나 붙여넣기에서 자주 깨지는 패턴을 수정
+// 1) 닫히지 않은 ** 볼드 자동 복구
+// 2) 인라인 **소제목:** 앞뒤 빈 줄 보정
+// 3) HTML 엔티티 디코드 (&lt; → <)
+// 4) 헤딩 앞뒤 공백 정리
+// 5) 깨진 이미지 태그 복원 (<!-- [IMG: "..."] -->)
+function sanitizeMarkdownContent(md) {
+    if (!md || typeof md !== 'string') return md;
+    let t = md.replace(/\r\n/g, '\n');
+
+    // 1) HTML 엔티티 디코드 (&lt;br&gt; 같은 AI 출력 오류 복구)
+    t = t.replace(/&lt;br\s*\/?&gt;/gi, '<br>').replace(/&lt;\/?(div|span|strong|em|img|code|pre|table|tr|td|th|ul|ol|li|p|h[1-6])([^&]*?)&gt;/gi, (m) =>
+        m.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&#39;/g, "'"));
+
+    // 2) 코드블록 보호 (``` ~~~ 내부는 건드리지 않음)
+    const fences = [];
+    t = t.replace(/```[\s\S]*?```/g, (b) => { fences.push(b); return `\u0000FENCE${fences.length - 1}\u0000`; });
+
+    // 3) 닫히지 않은 **볼드 수리: 한 줄 내에 ** 개수가 홀수면 마지막 ** 제거
+    t = t.split('\n').map((line) => {
+        if (line.trim().startsWith('```')) return line; // fence 마커 보존
+        const count = (line.match(/\*\*/g) || []).length;
+        if (count % 2 === 1) {
+            // 마지막 남은 ** 제거 (마크다운 깨짐 방지)
+            const lastIdx = line.lastIndexOf('**');
+            return line.slice(0, lastIdx) + line.slice(lastIdx + 2);
+        }
+        return line;
+    }).join('\n');
+
+    // 4) 인라인 **소제목:** 에 앞뒤 빈 줄 추가 (리스트 사이에 끼어있으면 줄바꿈 확보)
+    t = t.replace(/([^\n])\n?(\s*\*{2,3}[^*\n]{2,60}\*{2,3}\s*[:：])/g, '$1\n\n$2');
+    t = t.replace(/(\*{2,3}[^*\n]{2,60}\*{2,3}\s*[:：][^\n]*)(?=\n\S)/g, '$1\n');
+
+    // 5) 헤딩 앞뒤 빈 줄 보정 (# ~ #### 기준)
+    t = t.replace(/([^\n])\n(#{1,4}\s)/g, '$1\n\n$2');
+    t = t.replace(/(^#{1,4}\s[^\n]+)\n(?![\n#])/gm, '$1\n\n');
+
+    // 6) 리스트 마커 정규화 (탭/전각 공백 → 표준 공백)
+    t = t.replace(/^\s*[•●▪]\s+/gm, '- ');
+    t = t.replace(/^\s*[-*]\u3000+/gm, '- ');
+
+    // 7) 연속 공백/빈 줄 정리 (3개 이상 → 2개)
+    t = t.replace(/\n{3,}/g, '\n\n');
+    // 줄 끝 공백 제거
+    t = t.replace(/[ \t]+$/gm, '');
+
+    // 8) 깨진 이미지 태그 복원 — "<!- [IMG: ... ] -->", "<-- [IMG" 등
+    t = t.replace(/<!?-{1,3}\s*\[IMG\s*:\s*"?([^"\]>]+?)"?\s*\]\s*-{1,3}>?/gi, '<!-- [IMG: "$1"] -->');
+
+    // fence 복원
+    t = t.replace(/\u0000FENCE(\d+)\u0000/g, (_, i) => fences[parseInt(i, 10)] || '');
+
+    return t.trim();
+}
+window.sanitizeMarkdownContent = sanitizeMarkdownContent;
+
 function safeJSONParse(text) {
     if (!text) return null;
     // 코드펜스 제거 + 공백 정리
@@ -256,7 +313,8 @@ try {
 }
 const STORAGE_KEY = 'agent_curriculum_v4_7';
 let TEXT_MODEL = 'gemini-2.5-flash';
-let IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
+// 안정 모델을 기본값으로 (preview 모델은 자주 404를 내며 실패함)
+let IMAGE_MODEL = 'gemini-2.5-flash-image';
 
 
 // [Phase F10] Google Custom Search API 설정 (다중 키 롤링용)
@@ -275,9 +333,9 @@ const TEXT_MODEL_OPTIONS = [
     { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
 ];
 const IMAGE_MODEL_OPTIONS = [
-    { value: 'gemini-3.1-flash-image-preview', label: 'Gemini 3.1 Flash Image (Preview, 권장)' },
+    { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image (권장 · 안정)' },
+    { value: 'gemini-3.1-flash-image-preview', label: 'Gemini 3.1 Flash Image (Preview)' },
     { value: 'gemini-3-pro-image-preview', label: 'Gemini 3 Pro Image (Preview)' },
-    { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image' },
 ];
 
 // 모델 런타임 변경 + localStorage 저장
@@ -288,12 +346,22 @@ function updateImageModel(val) {
     if (val) { IMAGE_MODEL = val; try { localStorage.setItem('gemini_image_model', val); } catch (e) { } }
 }
 
-// 저장된 모델 복원
+// 저장된 모델 복원 + preview 모델 자동 마이그레이션
 try {
     const savedText = localStorage.getItem('gemini_text_model');
     const savedImage = localStorage.getItem('gemini_image_model');
     if (savedText && TEXT_MODEL_OPTIONS.some(o => o.value === savedText)) TEXT_MODEL = savedText;
-    if (savedImage && IMAGE_MODEL_OPTIONS.some(o => o.value === savedImage)) IMAGE_MODEL = savedImage;
+    // Preview 계열 모델은 자주 404를 내므로 안정 모델로 자동 마이그레이션
+    const UNRELIABLE_IMAGE_MODELS = ['gemini-3.1-flash-image-preview', 'gemini-3-pro-image-preview'];
+    if (savedImage) {
+        if (UNRELIABLE_IMAGE_MODELS.includes(savedImage)) {
+            console.warn('[Image Model] 저장된 preview 모델(' + savedImage + ')을 안정 모델로 자동 마이그레이션');
+            IMAGE_MODEL = 'gemini-2.5-flash-image';
+            try { localStorage.setItem('gemini_image_model', IMAGE_MODEL); } catch (_) { }
+        } else if (IMAGE_MODEL_OPTIONS.some(o => o.value === savedImage)) {
+            IMAGE_MODEL = savedImage;
+        }
+    }
 
     // [Phase F10] 구글 검색 상태 복원
     googleSearchCx = localStorage.getItem('google_search_cx') || '';

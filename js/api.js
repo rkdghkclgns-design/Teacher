@@ -1300,6 +1300,88 @@ async function generateAllImagesInModule(moduleId) {
 
 
 
+// 현재 교과의 모든 차시를 정리: 마크다운 sanitize + 누락 이미지 일괄 생성
+window.sanitizeAllContent = async function () {
+    if (!confirm('현재 교과의 모든 차시에 마크다운 정리와 누락 이미지 생성을 수행합니다.\n시간이 오래 걸릴 수 있습니다. 계속하시겠습니까?')) return;
+
+    const subj = globalState.subjects.find(s => s.id === currentSubjectId);
+    if (!subj) { window.showAlert('교과를 먼저 선택하세요.'); return; }
+
+    const btn = document.getElementById('sanitize-btn');
+    const originalHTML = btn ? btn.innerHTML : '';
+    if (btn) { btn.innerHTML = '<i class="ph-bold ph-spinner animate-spin"></i> 정리 중...'; btn.disabled = true; }
+
+    const loading = document.getElementById('editor-loading');
+    const loadingText = document.getElementById('editor-loading-text');
+    if (loading) loading.style.display = 'flex';
+
+    let sanitized = 0;
+    let imagesDone = 0;
+    const targets = [...(subj.lessons || []), subj.mainQuest].filter(Boolean);
+
+    try {
+        // Pass 1: 마크다운 정리 (모든 탭·메인 컨텐츠)
+        for (let i = 0; i < targets.length; i++) {
+            const mod = targets[i];
+            if (loadingText) loadingText.textContent = `마크다운 정리 (${i + 1}/${targets.length}): ${mod.title || ''}`;
+            if (mod.content && typeof sanitizeMarkdownContent === 'function') {
+                const before = mod.content;
+                mod.content = sanitizeMarkdownContent(before);
+                if (before !== mod.content) sanitized++;
+            }
+            if (mod.tabContents) {
+                for (const tab of Object.keys(mod.tabContents)) {
+                    if (mod.tabContents[tab]) {
+                        const before = mod.tabContents[tab];
+                        mod.tabContents[tab] = sanitizeMarkdownContent(before);
+                        if (before !== mod.tabContents[tab]) sanitized++;
+                    }
+                }
+            }
+        }
+
+        // Pass 2: 누락 이미지 처리 (<!-- [IMG: ... ] --> 가 남아있는 차시)
+        for (let i = 0; i < targets.length; i++) {
+            const mod = targets[i];
+            const hasTag = (mod.content && mod.content.includes('<!-- [IMG:'))
+                || (mod.tabContents && Object.values(mod.tabContents).some(c => c && c.includes('<!-- [IMG:')));
+            if (!hasTag) continue;
+            if (loadingText) loadingText.textContent = `이미지 처리 (${i + 1}/${targets.length}): ${mod.title || ''}`;
+            try {
+                // 메인 content
+                if (mod.content && mod.content.includes('<!-- [IMG:')) {
+                    mod.content = await processImageTags(mod, mod.content);
+                    imagesDone++;
+                }
+                // 탭별 content
+                if (mod.tabContents) {
+                    for (const tab of Object.keys(mod.tabContents)) {
+                        if (mod.tabContents[tab] && mod.tabContents[tab].includes('<!-- [IMG:')) {
+                            mod.tabContents[tab] = await processImageTags(mod, mod.tabContents[tab]);
+                            imagesDone++;
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('[sanitizeAllContent] 이미지 처리 실패:', mod.title, e);
+            }
+        }
+
+        await saveState();
+        // 현재 열린 에디터가 있으면 리렌더
+        const editing = typeof getEditingModule === 'function' ? getEditingModule() : null;
+        if (editing) renderEditor(editing);
+
+        window.showToast(`✅ 정리 완료 — 마크다운 ${sanitized}건, 이미지 ${imagesDone}건`, 'success');
+    } catch (e) {
+        console.error('[sanitizeAllContent]', e);
+        window.showAlert('정리 중 오류: ' + (e.message || e));
+    } finally {
+        if (loading) loading.style.display = 'none';
+        if (btn) { btn.innerHTML = originalHTML; btn.disabled = false; }
+    }
+};
+
 async function generateImageAPI(prompt) {
     // 이미지 생성 모델 폴백 체인: 현재 설정 → gemini-2.5-flash-image (안정)
     const modelsToTry = [IMAGE_MODEL];
@@ -2216,6 +2298,7 @@ function renderEditor(mod) {
 
                             <button onclick="generateQuiz()" id="quiz-btn" class="px-3 py-1.5 text-xs font-bold bg-emerald-50 text-emerald-600 border border-emerald-200 rounded hover:bg-emerald-100 flex items-center gap-1 transition-colors"><i class="ph-fill ph-question"></i> 퀴즈 생성</button>
                             <button onclick="generateAllImagesInModule('${mod.id}')" id="img-batch-btn" class="px-3 py-1.5 text-xs font-bold bg-purple-50 text-purple-600 border border-purple-200 rounded hover:bg-purple-100 flex items-center gap-1 transition-colors hover:-translate-y-0.5"><i class="ph-bold ph-image-square"></i> 일괄 이미지 찾기</button>
+                            <button onclick="sanitizeAllContent()" id="sanitize-btn" class="px-3 py-1.5 text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 flex items-center gap-1 transition-colors hover:-translate-y-0.5" title="마크다운 문법 오류 일괄 정리 + 누락 이미지 일괄 생성"><i class="ph-bold ph-sparkle"></i> 콘텐츠 정리</button>
                             
                             <label class="cursor-pointer px-3 py-1.5 text-xs font-bold bg-blue-50 text-blue-600 border border-blue-200 rounded hover:bg-blue-100 flex items-center gap-1 transition-colors" title="에디터에 이미지 삽입">
                                 <i class="ph-bold ph-image"></i> 이미지 삽입
