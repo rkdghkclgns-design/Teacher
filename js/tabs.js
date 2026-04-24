@@ -108,6 +108,12 @@ async function generateTabContent(moduleId, tabId) {
 
         // 이미지 태그 자동 처리 (딥리서치 파이프라인 활용)
         if (typeof processImageTags === 'function') {
+            // LLM 응답의 이미지 태그 개수 진단 로깅 — 왜 이미지가 안 나오는지 원인 파악
+            const tagCount = (resultText.match(/<!--\s*\[IMG:/g) || []).length;
+            console.log(`[TabGen] ${tabMeta.label} 생성 완료 — LLM이 생성한 이미지 태그: ${tagCount}개`);
+            if (tagCount === 0 && tabId !== 'assessment') {
+                console.warn(`[TabGen] ⚠️ ${tabMeta.label} 에 이미지 태그가 없음. 자동 주입 로직이 활성화됩니다.`);
+            }
             try {
                 const processed = await processImageTags(mod, resultText);
                 if (processed !== resultText) {

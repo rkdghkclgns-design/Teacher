@@ -1169,7 +1169,33 @@ async function searchPixabayAPI(query) {
 // --------------------------------------------------------
 
 
+// 이미지 태그가 누락된 경우 ## 헤딩마다 자동 주입 (LLM이 태그를 빠뜨려도 이미지 생성 보장)
+function autoInjectImageTags(markdown) {
+    if (!markdown || typeof markdown !== 'string') return markdown;
+    // 이미 이미지 태그가 하나라도 있으면 그대로 반환 (LLM이 배치한 위치 신뢰)
+    if (/<!--\s*\[IMG:/.test(markdown)) return markdown;
+
+    const ICON_RE = /[■▣📝⚙️🎮💡✅⚠️🧠🏆🚀🔬🎓📘📗📙📕🖥️🧩🎯🔍]/g;
+    let injected = 0;
+    const out = markdown.replace(/^(##\s+[^\n]+)$/gm, (m, heading) => {
+        const title = heading.replace(/^##\s+/, '').replace(ICON_RE, '').replace(/^\[|\]$/g, '').trim();
+        // 학습 목표 섹션은 이미지 태그 제외
+        if (/학습\s*목표|Objectives?/i.test(title)) return m;
+        if (!title) return m;
+        injected++;
+        return `${m}\n\n<!-- [IMG: "${title}"] -->\n`;
+    });
+    if (injected > 0) {
+        console.log(`[autoInjectImageTags] LLM이 이미지 태그를 누락함 → ${injected}개 자동 주입`);
+    }
+    return out;
+}
+window.autoInjectImageTags = autoInjectImageTags;
+
 async function processImageTags(mod, markdown) {
+
+    // LLM이 태그를 누락했을 경우 자동 주입 (이미지 0장 방지)
+    markdown = autoInjectImageTags(markdown);
 
     const regex = /<!--\s*\[IMG:\s*"?([^"]+)"?\]\s*-->/g;
 
