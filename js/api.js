@@ -938,25 +938,36 @@ function getContextWindow(text, matchStr, windowSize = 300) {
 }
 
 async function extractSearchIntent(keyword, context) {
-    const systemPrompt = `당신은 게임 기획 및 시장 분석 전문 데이터 리서처 에이전트입니다.
-주어진 이미지 키워드와 주변 교안 문맥을 분석하여, 해당 맥락에 가장 완벽하게 부합하는 시각 자료를 검색 엔진(구글 이미지 등)에서 찾기 위한 '최적화된 검색 쿼리'를 생성하십시오.
+    const systemPrompt = `당신은 게임 기획 및 시장 분석 전문 데이터 리서처이자 이미지 프롬프트 엔지니어입니다.
+주어진 이미지 키워드와 주변 교안 문맥을 분석하여 두 종류의 출력을 생성합니다:
+(A) 웹 검색용 쿼리 — 구글 이미지 등 검색 엔진에서 실제 자료를 찾기 위한 쿼리
+(B) AI 이미지 생성용 프롬프트 — Gemini/Imagen 모델이 문맥에 맞는 고품질 일러스트를 생성하도록 하는 프롬프트
 
-[중요 지시사항]
-1. 텍스트 내의 고유명사(게임명, 캐릭터명, 시스템명, 회사명 등)를 추출하여 쿼리의 핵심으로 배치하십시오.
-2. 이미지의 종류(일러스트, 인게임 스크린샷, UI 목업, 매출 그래프 등)를 식별하여 영어 검색어(Modifiers)를 추가하십시오. (예: "official art", "gameplay UI", "revenue chart")
-3. 한글보다는 고품질 결과가 많이 나오는 **영어 쿼리** 위주로 조립하되, 한글 게임명이나 한국 게임 관련 내용은 한글 쿼리도 병행하십시오.
-4. 가비지 데이터 배제를 위해 부정어 연산자를 반드시 포함하십시오. (예: "-fanart -cosplay -reddit")
-5. 게임 스크린샷이 필요한 경우, "official screenshot", "gameplay", "in-game" 등의 한정자를 추가하여 공식 스크린샷을 우선 검색하십시오.
-6. 출력은 파싱이 용이하도록 반드시 지정된 JSON 규격을 따르십시오.
+[검색 쿼리(A) 지시사항]
+1. 고유명사(게임명, 캐릭터명, 시스템명, 회사명 등)를 쿼리의 핵심에 배치
+2. 이미지 종류(일러스트/스크린샷/UI/차트)에 맞는 영어 한정자 추가 ("official art", "gameplay UI", "revenue chart" 등)
+3. 영어 쿼리 위주로, 한국 게임은 한글 쿼리 병행
+4. 부정어 연산자로 가비지 배제 ("-fanart -cosplay -reddit")
+5. 공식 스크린샷이 필요하면 "official screenshot", "in-game" 한정자 사용
 
-[출력 포맷 JSON]
+[AI 이미지 생성 프롬프트(B) 지시사항 — 매우 중요]
+1. **구체적 장면 묘사**: 추상 개념을 시각적 요소로 변환. 예: "게임 기획" → "A diverse team of four game designers collaborating around a large design document on a glass table, holographic game concept sketches floating above"
+2. **영어로 작성** (이미지 모델 성능 극대화)
+3. **교안 문맥 반영**: 주변 텍스트에서 핵심 개념을 시각화. 예: "재미의 본질" 섹션 → "players laughing and celebrating while playing a multiplayer game, golden hour lighting, emotional storytelling moment"
+4. **스타일 일관성**: "clean flat educational illustration, cohesive blue-purple gradient palette, soft shadows, isometric or front-view perspective, modern digital art"
+5. **텍스트 최소화**: "minimal text", "no typography" 또는 꼭 필요하면 간단한 한국어 라벨 1~2개만
+6. **구도 지정**: "16:9 aspect ratio, centered composition, professional editorial illustration quality"
+7. **금지 사항**: 특정 저작권 캐릭터 이름 직접 언급 금지 (대신 "fantasy warrior", "anime-style adventurer" 등 일반 묘사)
+
+[출력 포맷 JSON — 반드시 준수]
 {
-  "intent_type": "data_representation (데이터/표/차트인 경우) 또는 visual_asset (일러스트/UI/스크린샷인 경우)",
-  "search_query": "최적화된 영문 검색어 (예: Genshin Impact global revenue chart 2023 -fanart)",
-  "reasoning": "이 검색어로 결정한 이유 (한국어 짧게)"
+  "intent_type": "data_representation | visual_asset | concept_illustration | screenshot | diagram",
+  "search_query": "최적화된 검색 쿼리",
+  "image_gen_prompt": "AI 이미지 생성 전용 영문 프롬프트 (위 지시사항 전부 반영, 80~200 단어)",
+  "reasoning": "이 결정 이유 (한국어 짧게, 40자 이내)"
 }`;
 
-    const userPrompt = `[문맥 추출 대상]\n키워드: ${keyword}\n\n[주변 문맥]\n${context}`;
+    const userPrompt = `[문맥 추출 대상]\n키워드: ${keyword}\n\n[주변 교안 문맥]\n${context}`;
 
     const payload = {
         contents: [{ role: "user", parts: [{ text: userPrompt }] }],
@@ -1302,10 +1313,21 @@ async function processImageTags(mod, markdown) {
 
             // [Phase F10] 4. Fallback 체인 최종: AI 이미지 생성 (모든 외부 검색/통과 실패 시)
             if (!b64Image) {
-                console.log(`[Fallback] 검색 엔진 결과가 없어 AI 생성으로 최종 대처: ${searchQuery}`);
-                const generatePrompt = (intent && intent.reasoning)
-                    ? `[Context: ${intent.reasoning}]\nQuery: ${searchQuery}`
-                    : tag.keyword;
+                // 우선순위:
+                // 1) extractSearchIntent가 생성한 image_gen_prompt (문맥 기반 고품질)
+                // 2) 레거시 방식 (Context + Query) - 이전 응답 호환
+                // 3) 키워드 단독 - 최후 수단
+                let generatePrompt;
+                if (intent && intent.image_gen_prompt && intent.image_gen_prompt.length > 30) {
+                    generatePrompt = intent.image_gen_prompt;
+                    console.log(`[AI Gen] 문맥 기반 전용 프롬프트 사용 (${generatePrompt.length}자): ${tag.keyword}`);
+                } else if (intent && intent.reasoning) {
+                    generatePrompt = `[Context: ${intent.reasoning}]\nSubject: ${tag.keyword}\nStyle: clean flat educational illustration, cohesive blue-purple palette, no text, 16:9, professional editorial quality`;
+                    console.log(`[AI Gen] 레거시 프롬프트 사용: ${tag.keyword}`);
+                } else {
+                    generatePrompt = `${tag.keyword}. Clean flat educational illustration, cohesive blue-purple color palette, minimal text, 16:9 aspect ratio, professional editorial style for a game design course`;
+                    console.log(`[AI Gen] 기본 프롬프트 사용: ${tag.keyword}`);
+                }
                 b64Image = await generateImageAPI(generatePrompt);
                 vendorLabel = "AI 생성 이미지";
             }
@@ -1513,7 +1535,13 @@ async function generateImageAPI(prompt) {
     const imagenModels = ['imagen-3.0-generate-002'];
     const errorHistory = [];
 
-    const enhancedPrompt = prompt + ". RULES: 1) If Korean text is included, it MUST be grammatically correct standard Korean (대한민국 표준어). Double-check all Korean characters before rendering. 2) Avoid unnecessary text - prefer visual storytelling. 3) If text labels are needed, use minimal and accurate Korean only. 4) Clean professional digital illustration, game design education style. 5) 16:9 aspect ratio.";
+    // 스타일 가이드: 교안 일관성 확보 (과거 고품질 출력 복원)
+    // - 호출부에서 이미 스타일 힌트가 들어왔으면 중복 RULES 추가하지 않음
+    const hasStyleHints = /\b(illustration|editorial|palette|aspect|16:9|flat|educational)\b/i.test(prompt);
+    const styleSuffix = hasStyleHints
+        ? " RULES: Korean text (if any) must be grammatically correct 대한민국 표준어. Prefer visual storytelling over text. 16:9 aspect ratio, no watermark, no signature."
+        : " STYLE GUIDE: Clean flat educational illustration, cohesive blue-purple gradient color palette (base colors: #3b82f6 cobalt, #a78bfa lavender, #0f172a deep indigo background), soft ambient lighting, isometric or front-view composition, modern digital art quality suitable for a professional game design curriculum. Minimal text (if Korean text is absolutely required, ensure it is grammatically correct 대한민국 표준어). 16:9 aspect ratio, centered composition, editorial-quality illustration. No watermarks, no signatures, no stock-photo feel.";
+    const enhancedPrompt = prompt + styleSuffix;
 
     // Stage 1: Gemini 이미지 모델 (generateContent)
     for (const model of geminiModels) {
