@@ -1204,7 +1204,15 @@ async function processImageTags(mod, markdown) {
 
     if (filteredTags.length === 0) return result;
 
+    // 시작 알림 — 사용자가 진행 상황을 인지할 수 있도록 toast 표시
+    console.log(`[Image Pipeline] 이미지 태그 ${filteredTags.length}개 처리 시작`);
+    if (window.showToast) {
+        window.showToast(`🎨 이미지 ${filteredTags.length}개 생성 시작 (약 ${Math.ceil(filteredTags.length * 10)}초 소요)`, 'info');
+    }
+
     // Rate Limit(429) 방지: 순차 처리 + 요청 간 7초 간격
+    let successCount = 0;
+    let failCount = 0;
     const replacements = [];
     for (let index = 0; index < filteredTags.length; index++) {
         const tag = filteredTags[index];
@@ -1292,12 +1300,17 @@ async function processImageTags(mod, markdown) {
 
                 const imgHTML = `\n<div class="image-wrapper"><img src="local:${imgId}" alt="${safeKoreanDesc}" class="rounded-lg border-2 border-accent/30 shadow-md max-w-full"><button class="image-regenerate-btn px-3 py-1.5 text-xs text-white font-bold rounded flex items-center gap-1 border border-accent/50 hover:bg-accent transition-colors" onclick="promptRegenerateImage(this, '${tag.keyword}', '${imgId}')"><i class="ph-bold ph-arrows-clockwise"></i> 다시 찾기</button></div>\n`;
 
+                successCount++;
+                console.log(`[Image Pipeline] (${index + 1}/${filteredTags.length}) ✅ ${tag.keyword} → ${vendorLabel}`);
                 return { fullMatch: tag.fullMatch, html: imgHTML };
             } else {
+                failCount++;
+                console.warn(`[Image Pipeline] (${index + 1}/${filteredTags.length}) ⚠️ 이미지 미확보: ${tag.keyword}`);
                 return { fullMatch: tag.fullMatch, html: `\n<div class="image-placeholder" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:24px;margin:12px 0;border:2px dashed rgba(156,163,175,0.4);border-radius:8px;background:rgba(31,41,55,0.3);color:#9ca3af;font-size:0.85rem;"><i class="ph-bold ph-image" style="font-size:1.4rem;opacity:0.6;"></i> <span>이미지 영역: ${safeKoreanDesc}</span> <button onclick="promptRegenerateImage(this,'${tag.keyword.replace(/'/g, "\\'")}',null)" class="ml-2 px-2 py-1 text-xs bg-accent/20 text-accent border border-accent/40 rounded hover:bg-accent/30 transition-colors" style="cursor:pointer;">🔄 다시 검색</button></div>\n` };
             }
 
         } catch (e) {
+            failCount++;
             console.error(`이미지 처리 실패 (${tag.keyword}):`, e);
             return { fullMatch: tag.fullMatch, html: `\n<div class="image-placeholder" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:24px;margin:12px 0;border:2px dashed rgba(156,163,175,0.4);border-radius:8px;background:rgba(31,41,55,0.3);color:#9ca3af;font-size:0.85rem;"><i class="ph-bold ph-image" style="font-size:1.4rem;opacity:0.6;"></i> <span>이미지 확보 실패: ${tag.keyword}</span></div>\n` };
         }
@@ -1307,6 +1320,18 @@ async function processImageTags(mod, markdown) {
 
     for (const rep of replacements) {
         if (rep) result = result.replace(rep.fullMatch, rep.html);
+    }
+
+    // 완료 토스트 — 성공/실패 카운트 표시
+    console.log(`[Image Pipeline] 완료: 성공 ${successCount}건, 실패 ${failCount}건`);
+    if (window.showToast) {
+        if (successCount > 0 && failCount === 0) {
+            window.showToast(`✅ 이미지 ${successCount}건 생성 완료`, 'success');
+        } else if (successCount > 0 && failCount > 0) {
+            window.showToast(`⚠️ 이미지 ${successCount}건 성공 · ${failCount}건 실패 (실패한 이미지는 '다시 찾기' 버튼으로 재시도)`, 'warning');
+        } else if (failCount > 0) {
+            window.showToast(`❌ 이미지 ${failCount}건 모두 실패 — Gemini 이미지 모델이 응답하지 않습니다`, 'error');
+        }
     }
 
     return result;
@@ -1434,73 +1459,105 @@ window.sanitizeAllContent = async function () {
     }
 };
 
+// Imagen 3.0 전용 호출 헬퍼 (프록시의 imagen 분기 사용)
+async function callImagen(modelName, prompt) {
+    const proxyPayload = {
+        model: modelName,
+        instances: [{ prompt: String(prompt || '') }],
+        parameters: { sampleCount: 1, aspectRatio: '16:9' },
+    };
+    return fetchWithRetry(
+        GEMINI_PROXY_URL,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) }
+    );
+}
+
 async function generateImageAPI(prompt) {
-    // 이미지 생성 모델 폴백 체인 (안정성 순)
-    // 1) 사용자가 설정한 모델
-    // 2) gemini-2.5-flash-image (공식 안정 모델)
-    // 3) gemini-2.0-flash-exp-image-generation (구버전 실험 모델 · 일부 서버에서만 지원)
-    const preferredOrder = [
+    // 이미지 생성 폴백 체인 (안정성 + 대체 엔드포인트)
+    // 1) IMAGE_MODEL (사용자 설정)
+    // 2) gemini-2.5-flash-image (Gemini 네이티브 이미지, generateContent)
+    // 3) gemini-2.0-flash-exp-image-generation (레거시)
+    // 4) imagen-3.0-generate-002 (Imagen 전용 predict 엔드포인트 — 별도 API)
+    const geminiOrder = [
         IMAGE_MODEL,
         'gemini-2.5-flash-image',
         'gemini-2.0-flash-exp-image-generation',
     ];
-    // 중복 제거 + null/undefined 제거
-    const modelsToTry = [...new Set(preferredOrder.filter(Boolean))];
-    const errorHistory = []; // 사용자 피드백용
+    const geminiModels = [...new Set(geminiOrder.filter(Boolean))];
+    const imagenModels = ['imagen-3.0-generate-002'];
+    const errorHistory = [];
 
-    for (const model of modelsToTry) {
+    const enhancedPrompt = prompt + ". RULES: 1) If Korean text is included, it MUST be grammatically correct standard Korean (대한민국 표준어). Double-check all Korean characters before rendering. 2) Avoid unnecessary text - prefer visual storytelling. 3) If text labels are needed, use minimal and accurate Korean only. 4) Clean professional digital illustration, game design education style. 5) 16:9 aspect ratio.";
+
+    // Stage 1: Gemini 이미지 모델 (generateContent)
+    for (const model of geminiModels) {
         const payload = {
-            contents: [{ parts: [{ text: prompt + ". RULES: 1) If Korean text is included, it MUST be grammatically correct standard Korean (대한민국 표준어). Double-check all Korean characters before rendering. 2) Avoid unnecessary text - prefer visual storytelling. 3) If text labels are needed, use minimal and accurate Korean only. 4) Clean professional digital illustration, game design education style. 5) 16:9 aspect ratio." }] }],
-            generationConfig: {
-                responseModalities: ["TEXT", "IMAGE"]
-            }
+            contents: [{ parts: [{ text: enhancedPrompt }] }],
+            generationConfig: { responseModalities: ["TEXT", "IMAGE"] }
         };
 
-        // 429 Rate Limit 시 최대 2회 재시도 (대기 후)
         for (let retry = 0; retry < 3; retry++) {
             try {
-                console.log(`[Image Gen] 모델 ${model}로 이미지 생성 시도 (${retry > 0 ? '재시도 ' + retry : '최초'}): ${prompt.substring(0, 60)}...`);
+                console.log(`[Image Gen] Gemini ${model} 시도 (${retry > 0 ? '재시도 ' + retry : '최초'}): ${prompt.substring(0, 60)}...`);
                 const data = await callGemini(model, payload);
 
-                // Gemini Image 응답에서 이미지 파트 추출
                 const parts = data?.candidates?.[0]?.content?.parts;
                 if (parts) {
                     const imgPart = parts.find(p => p.inlineData && p.inlineData.mimeType && p.inlineData.mimeType.startsWith('image/'));
                     if (imgPart) {
-                        console.log(`[Image Gen] ✅ ${model}로 이미지 생성 성공`);
+                        console.log(`[Image Gen] ✅ Gemini ${model} 성공`);
                         return `data:${imgPart.inlineData.mimeType};base64,${imgPart.inlineData.data}`;
                     }
                 }
-
                 const blockReason = data?.promptFeedback?.blockReason
                     || data?.candidates?.[0]?.finishReason
                     || '이미지 파트 없음';
-                console.warn(`[Image Gen] ${model} 응답에 이미지 없음 — ${blockReason}`);
+                console.warn(`[Image Gen] Gemini ${model} 응답에 이미지 없음 — ${blockReason}`, data);
                 errorHistory.push(`${model}: ${blockReason}`);
-                break; // 응답은 왔지만 이미지 없음 → 다음 모델로
+                break;
             } catch (e) {
                 const msg = e.message || String(e);
                 const is429 = msg.includes('429');
                 const is404 = msg.includes('404') || /not\s*found|unsupported/i.test(msg);
                 if (is429 && retry < 2) {
-                    const waitSec = (retry + 1) * 15; // 15초, 30초 대기
-                    console.warn(`[Image Gen] 429 Rate Limit — ${waitSec}초 후 재시도...`);
-                    if (window.showToast) window.showToast(`이미지 생성 대기 중... (${waitSec}초 후 재시도)`, 'warning');
+                    const waitSec = (retry + 1) * 15;
+                    console.warn(`[Image Gen] 429 Rate Limit — ${waitSec}초 대기`);
+                    if (window.showToast) window.showToast(`이미지 생성 대기 중... (${waitSec}초)`, 'warning');
                     await new Promise(r => setTimeout(r, waitSec * 1000));
                     continue;
                 }
-                console.error(`[Image Gen] ${model} 에러:`, msg);
+                console.error(`[Image Gen] Gemini ${model} 에러:`, msg);
                 errorHistory.push(`${model}: ${is404 ? '모델 미지원' : msg.slice(0, 80)}`);
-                break; // 다음 모델로
+                break;
             }
         }
     }
 
+    // Stage 2: Imagen 3.0 (predict 엔드포인트) — Gemini 네이티브 실패 시 최후 폴백
+    for (const model of imagenModels) {
+        try {
+            console.log(`[Image Gen] Imagen ${model} 시도: ${prompt.substring(0, 60)}...`);
+            const data = await callImagen(model, enhancedPrompt);
+
+            // Imagen 응답 구조: { predictions: [{ bytesBase64Encoded, mimeType }] }
+            const pred = data?.predictions?.[0];
+            if (pred && pred.bytesBase64Encoded) {
+                const mime = pred.mimeType || 'image/png';
+                console.log(`[Image Gen] ✅ Imagen ${model} 성공`);
+                return `data:${mime};base64,${pred.bytesBase64Encoded}`;
+            }
+            console.warn(`[Image Gen] Imagen ${model} 응답에 이미지 없음`, data);
+            errorHistory.push(`${model}: 이미지 파트 없음`);
+        } catch (e) {
+            const msg = e.message || String(e);
+            console.error(`[Image Gen] Imagen ${model} 에러:`, msg);
+            errorHistory.push(`${model}: ${msg.slice(0, 80)}`);
+        }
+    }
+
     console.error("[Image Gen] 모든 모델 실패:", errorHistory);
-    // 사용자에게 실패 사유 알림 (조용히 실패하지 않도록)
     if (window.showToast && errorHistory.length) {
-        const first = errorHistory[0];
-        window.showToast(`⚠️ 이미지 생성 실패 (${first})`, 'error');
+        window.showToast(`⚠️ 이미지 생성 실패 (${errorHistory[0]})`, 'error');
     }
     return null;
 }
