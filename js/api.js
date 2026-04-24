@@ -951,13 +951,13 @@ async function extractSearchIntent(keyword, context) {
 5. 공식 스크린샷이 필요하면 "official screenshot", "in-game" 한정자 사용
 
 [AI 이미지 생성 프롬프트(B) 지시사항 — 매우 중요]
-1. **구체적 장면 묘사**: 추상 개념을 시각적 요소로 변환. 예: "게임 기획" → "A diverse team of four game designers collaborating around a large design document on a glass table, holographic game concept sketches floating above"
-2. **영어로 작성** (이미지 모델 성능 극대화)
-3. **교안 문맥 반영**: 주변 텍스트에서 핵심 개념을 시각화. 예: "재미의 본질" 섹션 → "players laughing and celebrating while playing a multiplayer game, golden hour lighting, emotional storytelling moment"
+1. **순수 영어로만 작성** — 프롬프트에 한국어 단어·고유명사 절대 포함 금지. 한국 게임이면 영어 설명으로 변환 ("Genshin Impact" 대신 "a fantasy open-world adventure RPG").
+2. **구체적 장면 묘사**: 추상 개념을 시각적 요소로 변환. 예: "게임 기획" → "A diverse team of four game designers collaborating around a large glass table with holographic concept sketches floating above"
+3. **교안 문맥 반영**: 주변 텍스트의 핵심 개념을 시각화 (등장 인물/소품/행위). 예: "재미의 본질" → "players laughing and celebrating during multiplayer gameplay, golden hour lighting, emotional moment"
 4. **스타일 일관성**: "clean flat educational illustration, cohesive blue-purple gradient palette, soft shadows, isometric or front-view perspective, modern digital art"
-5. **텍스트 최소화**: "minimal text", "no typography" 또는 꼭 필요하면 간단한 한국어 라벨 1~2개만
-6. **구도 지정 — 반드시 준수**: 프롬프트 말미에 반드시 다음 문구 포함: "WIDE HORIZONTAL LANDSCAPE composition, strictly 16:9 cinematic aspect ratio (1792x1024), subject fills the frame horizontally, balanced left-right composition". 정사각형·세로 비율 절대 금지.
-7. **금지 사항**: 특정 저작권 캐릭터 이름 직접 언급 금지 (대신 "fantasy warrior", "anime-style adventurer" 등 일반 묘사)
+5. **텍스트·글자 절대 금지** (매우 중요): 프롬프트에 반드시 다음 문구 포함: "absolutely no text, no letters, no Korean characters, no hangul, no numbers, no typography, no labels, no book titles, no signs. Any screens/papers/signs must appear empty or show only abstract shapes." AI 이미지 모델이 한국어를 그리려다 깨진 오타를 내는 것을 방지.
+6. **구도 지정 — 반드시 준수**: 프롬프트 말미에 다음 문구 포함: "wide horizontal landscape composition, strictly 16:9 cinematic aspect ratio (1408x768), subject fills the frame horizontally, balanced left-right composition". 정사각형·세로 비율 절대 금지.
+7. **저작권 금지**: 특정 게임·캐릭터 이름 직접 언급 금지 (대신 "fantasy warrior", "anime-style adventurer" 등 일반 묘사)
 
 [출력 포맷 JSON — 반드시 준수]
 {
@@ -1539,15 +1539,21 @@ async function generateImageAPI(prompt) {
     const geminiModels = [...new Set(geminiOrder.filter(Boolean))];
     const errorHistory = [];
 
-    // 16:9 비율 강제 + 스타일 가이드 (교안 일관성)
-    // 1) Gemini 2.5 Flash Image는 명시적 치수·aspect 표현을 따름
-    // 2) 프롬프트 말미에 반드시 가로형 비율 지시 삽입 (정사각형·세로 방지)
+    // 16:9 비율 강제 + 한국어 오타 방지 + 스타일 가이드
+    //
+    // 중요 배경: Imagen/Gemini 이미지 모델은 한국어 텍스트를 정확히 렌더링하지 못함.
+    // "게임 기획자" → "개엠 괴위저" 같은 환각 오타가 발생.
+    // 해결: 이미지 내 모든 텍스트를 강력히 금지 (영어 포함).
+    // 원본 키워드의 한국어 단어도 프롬프트에서 제거하여 글자 환각 유도 방지.
     const hasStyleHints = /\b(illustration|editorial|palette|flat|educational|isometric)\b/i.test(prompt);
-    const ASPECT_SPEC = " CRITICAL ASPECT RATIO: Generate as a WIDE HORIZONTAL LANDSCAPE image, strictly 16:9 aspect ratio (1792x1024 pixels, cinematic widescreen format). DO NOT produce square, portrait, or vertical images. The composition MUST fill the full horizontal frame with balanced left-right visual weight.";
-    const QUALITY_SPEC = " Quality: high-detail digital illustration, editorial-grade composition, sharp focus on subject, suitable for a professional presentation slide.";
+    const ASPECT_SPEC = " CRITICAL ASPECT RATIO: Wide horizontal landscape, strictly 16:9 cinematic widescreen (1408x768 or 1792x1024). NEVER square, portrait, or vertical. Balanced left-right composition.";
+    const NO_TEXT_SPEC = " ABSOLUTELY NO TEXT, NO LETTERS, NO WORDS, NO KOREAN CHARACTERS, NO HANGUL, NO NUMBERS, NO TYPOGRAPHY, NO LABELS, NO SIGNS, NO BOOK TITLES, NO WATERMARKS, NO SIGNATURES. Pure visual storytelling using only icons, shapes, figures, objects, and symbols. If a sign or label is conceptually needed, show a blank/unreadable mark instead of text. Any computer screens, papers, or signs must appear EMPTY or show only abstract shapes — never letters.";
+    const QUALITY_SPEC = " Quality: high-detail digital illustration, editorial-grade composition, sharp focus, vibrant yet professional color grading, suitable for a premium presentation slide.";
     const styleSuffix = hasStyleHints
-        ? " Korean text (if any) must be grammatically correct 대한민국 표준어. Prefer visual storytelling over text. No watermark, no signature, no stock-photo feel." + QUALITY_SPEC + ASPECT_SPEC
-        : " STYLE GUIDE: Clean flat educational illustration, cohesive blue-purple gradient color palette (base colors: #3b82f6 cobalt, #a78bfa lavender, #0f172a deep indigo background), soft ambient lighting, isometric or dynamic front-view composition, modern digital art quality suitable for a professional game design curriculum. Minimal text (if Korean text is absolutely required, ensure it is grammatically correct 대한민국 표준어)." + QUALITY_SPEC + ASPECT_SPEC;
+        ? NO_TEXT_SPEC + QUALITY_SPEC + ASPECT_SPEC
+        : " STYLE GUIDE: Clean flat educational illustration, cohesive blue-purple gradient palette (cobalt #3b82f6, lavender #a78bfa, deep indigo #0f172a), soft ambient lighting, isometric or dynamic front-view composition, modern digital art for a professional game design curriculum." + NO_TEXT_SPEC + QUALITY_SPEC + ASPECT_SPEC;
+    // 키워드에 한국어가 포함된 경우 → 이미지 모델이 한국어를 그리려다 오타를 내므로,
+    // 프롬프트 본문의 한국어는 최소화 (extractSearchIntent가 영어 프롬프트를 생성하지만 폴백 안전망)
     const enhancedPrompt = prompt + styleSuffix;
 
     // Stage 1: Imagen 4.0 (predict 엔드포인트) — 16:9 aspectRatio 공식 파라미터 준수
