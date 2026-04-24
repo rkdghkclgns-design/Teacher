@@ -956,7 +956,7 @@ async function extractSearchIntent(keyword, context) {
 3. **교안 문맥 반영**: 주변 텍스트에서 핵심 개념을 시각화. 예: "재미의 본질" 섹션 → "players laughing and celebrating while playing a multiplayer game, golden hour lighting, emotional storytelling moment"
 4. **스타일 일관성**: "clean flat educational illustration, cohesive blue-purple gradient palette, soft shadows, isometric or front-view perspective, modern digital art"
 5. **텍스트 최소화**: "minimal text", "no typography" 또는 꼭 필요하면 간단한 한국어 라벨 1~2개만
-6. **구도 지정**: "16:9 aspect ratio, centered composition, professional editorial illustration quality"
+6. **구도 지정 — 반드시 준수**: 프롬프트 말미에 반드시 다음 문구 포함: "WIDE HORIZONTAL LANDSCAPE composition, strictly 16:9 cinematic aspect ratio (1792x1024), subject fills the frame horizontally, balanced left-right composition". 정사각형·세로 비율 절대 금지.
 7. **금지 사항**: 특정 저작권 캐릭터 이름 직접 언급 금지 (대신 "fantasy warrior", "anime-style adventurer" 등 일반 묘사)
 
 [출력 포맷 JSON — 반드시 준수]
@@ -1521,29 +1521,66 @@ async function callImagen(modelName, prompt) {
 }
 
 async function generateImageAPI(prompt) {
-    // 이미지 생성 폴백 체인 (안정성 + 대체 엔드포인트)
-    // 1) IMAGE_MODEL (사용자 설정)
-    // 2) gemini-2.5-flash-image (Gemini 네이티브 이미지, generateContent)
-    // 3) gemini-2.0-flash-exp-image-generation (레거시)
-    // 4) imagen-3.0-generate-002 (Imagen 전용 predict 엔드포인트 — 별도 API)
+    // 이미지 생성 폴백 체인 (16:9 정확도 우선)
+    //
+    // 검증 결과:
+    // - gemini-2.5-flash-image: 항상 1024x1024 정사각형 반환 (aspectRatio 지시 무시)
+    // - imagen-4.0-generate-001: aspectRatio="16:9" 파라미터 준수 → 1408x768 반환 ✅
+    //
+    // 따라서 Imagen 4.0을 Stage 1로 우선 호출하여 16:9 준수를 보장.
+    // Gemini는 Imagen 실패 시 폴백으로만 사용 (정사각형이라도 이미지 확보).
+    const imagenModels = ['imagen-4.0-generate-001'];
     const geminiOrder = [
         IMAGE_MODEL,
         'gemini-2.5-flash-image',
+        'gemini-2.5-flash-image-preview',
         'gemini-2.0-flash-exp-image-generation',
     ];
     const geminiModels = [...new Set(geminiOrder.filter(Boolean))];
-    const imagenModels = ['imagen-3.0-generate-002'];
     const errorHistory = [];
 
-    // 스타일 가이드: 교안 일관성 확보 (과거 고품질 출력 복원)
-    // - 호출부에서 이미 스타일 힌트가 들어왔으면 중복 RULES 추가하지 않음
-    const hasStyleHints = /\b(illustration|editorial|palette|aspect|16:9|flat|educational)\b/i.test(prompt);
+    // 16:9 비율 강제 + 스타일 가이드 (교안 일관성)
+    // 1) Gemini 2.5 Flash Image는 명시적 치수·aspect 표현을 따름
+    // 2) 프롬프트 말미에 반드시 가로형 비율 지시 삽입 (정사각형·세로 방지)
+    const hasStyleHints = /\b(illustration|editorial|palette|flat|educational|isometric)\b/i.test(prompt);
+    const ASPECT_SPEC = " CRITICAL ASPECT RATIO: Generate as a WIDE HORIZONTAL LANDSCAPE image, strictly 16:9 aspect ratio (1792x1024 pixels, cinematic widescreen format). DO NOT produce square, portrait, or vertical images. The composition MUST fill the full horizontal frame with balanced left-right visual weight.";
+    const QUALITY_SPEC = " Quality: high-detail digital illustration, editorial-grade composition, sharp focus on subject, suitable for a professional presentation slide.";
     const styleSuffix = hasStyleHints
-        ? " RULES: Korean text (if any) must be grammatically correct 대한민국 표준어. Prefer visual storytelling over text. 16:9 aspect ratio, no watermark, no signature."
-        : " STYLE GUIDE: Clean flat educational illustration, cohesive blue-purple gradient color palette (base colors: #3b82f6 cobalt, #a78bfa lavender, #0f172a deep indigo background), soft ambient lighting, isometric or front-view composition, modern digital art quality suitable for a professional game design curriculum. Minimal text (if Korean text is absolutely required, ensure it is grammatically correct 대한민국 표준어). 16:9 aspect ratio, centered composition, editorial-quality illustration. No watermarks, no signatures, no stock-photo feel.";
+        ? " Korean text (if any) must be grammatically correct 대한민국 표준어. Prefer visual storytelling over text. No watermark, no signature, no stock-photo feel." + QUALITY_SPEC + ASPECT_SPEC
+        : " STYLE GUIDE: Clean flat educational illustration, cohesive blue-purple gradient color palette (base colors: #3b82f6 cobalt, #a78bfa lavender, #0f172a deep indigo background), soft ambient lighting, isometric or dynamic front-view composition, modern digital art quality suitable for a professional game design curriculum. Minimal text (if Korean text is absolutely required, ensure it is grammatically correct 대한민국 표준어)." + QUALITY_SPEC + ASPECT_SPEC;
     const enhancedPrompt = prompt + styleSuffix;
 
-    // Stage 1: Gemini 이미지 모델 (generateContent)
+    // Stage 1: Imagen 4.0 (predict 엔드포인트) — 16:9 aspectRatio 공식 파라미터 준수
+    //          실제 테스트 결과: 1408x768 정확히 16:9 반환
+    for (const model of imagenModels) {
+        try {
+            console.log(`[Image Gen] Imagen ${model} 시도 (16:9 공식 파라미터): ${prompt.substring(0, 60)}...`);
+            const data = await callImagen(model, enhancedPrompt);
+
+            const pred = data?.predictions?.[0];
+            if (pred && pred.bytesBase64Encoded) {
+                const mime = pred.mimeType || 'image/png';
+                console.log(`[Image Gen] ✅ Imagen ${model} 성공 (16:9 보장)`);
+                return `data:${mime};base64,${pred.bytesBase64Encoded}`;
+            }
+            console.warn(`[Image Gen] Imagen ${model} 응답에 이미지 없음`, data);
+            errorHistory.push(`${model}: 이미지 파트 없음`);
+        } catch (e) {
+            const msg = e.message || String(e);
+            const is429 = msg.includes('429');
+            if (is429) {
+                console.warn(`[Image Gen] Imagen ${model} 429 — 15초 대기 후 다음 모델로`);
+                if (window.showToast) window.showToast(`이미지 생성 대기 중... (15초)`, 'warning');
+                await new Promise(r => setTimeout(r, 15000));
+            }
+            console.error(`[Image Gen] Imagen ${model} 에러:`, msg);
+            errorHistory.push(`${model}: ${msg.slice(0, 80)}`);
+        }
+    }
+
+    // Stage 2: Gemini 이미지 모델 (generateContent) — Imagen 실패 시 폴백
+    //          주의: Gemini 2.5 Flash Image는 1024x1024 정사각형만 반환 (aspectRatio 무시)
+    //          → 폴백이므로 정사각형이라도 이미지 확보 우선
     for (const model of geminiModels) {
         const payload = {
             contents: [{ parts: [{ text: enhancedPrompt }] }],
@@ -1552,14 +1589,14 @@ async function generateImageAPI(prompt) {
 
         for (let retry = 0; retry < 3; retry++) {
             try {
-                console.log(`[Image Gen] Gemini ${model} 시도 (${retry > 0 ? '재시도 ' + retry : '최초'}): ${prompt.substring(0, 60)}...`);
+                console.log(`[Image Gen] Gemini ${model} 폴백 시도 (${retry > 0 ? '재시도 ' + retry : '최초'}): ${prompt.substring(0, 60)}...`);
                 const data = await callGemini(model, payload);
 
                 const parts = data?.candidates?.[0]?.content?.parts;
                 if (parts) {
                     const imgPart = parts.find(p => p.inlineData && p.inlineData.mimeType && p.inlineData.mimeType.startsWith('image/'));
                     if (imgPart) {
-                        console.log(`[Image Gen] ✅ Gemini ${model} 성공`);
+                        console.log(`[Image Gen] ✅ Gemini ${model} 폴백 성공 (정사각형)`);
                         return `data:${imgPart.inlineData.mimeType};base64,${imgPart.inlineData.data}`;
                     }
                 }
@@ -1584,28 +1621,6 @@ async function generateImageAPI(prompt) {
                 errorHistory.push(`${model}: ${is404 ? '모델 미지원' : msg.slice(0, 80)}`);
                 break;
             }
-        }
-    }
-
-    // Stage 2: Imagen 3.0 (predict 엔드포인트) — Gemini 네이티브 실패 시 최후 폴백
-    for (const model of imagenModels) {
-        try {
-            console.log(`[Image Gen] Imagen ${model} 시도: ${prompt.substring(0, 60)}...`);
-            const data = await callImagen(model, enhancedPrompt);
-
-            // Imagen 응답 구조: { predictions: [{ bytesBase64Encoded, mimeType }] }
-            const pred = data?.predictions?.[0];
-            if (pred && pred.bytesBase64Encoded) {
-                const mime = pred.mimeType || 'image/png';
-                console.log(`[Image Gen] ✅ Imagen ${model} 성공`);
-                return `data:${mime};base64,${pred.bytesBase64Encoded}`;
-            }
-            console.warn(`[Image Gen] Imagen ${model} 응답에 이미지 없음`, data);
-            errorHistory.push(`${model}: 이미지 파트 없음`);
-        } catch (e) {
-            const msg = e.message || String(e);
-            console.error(`[Image Gen] Imagen ${model} 에러:`, msg);
-            errorHistory.push(`${model}: ${msg.slice(0, 80)}`);
         }
     }
 

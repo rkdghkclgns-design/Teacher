@@ -323,8 +323,9 @@ try {
 }
 const STORAGE_KEY = 'agent_curriculum_v4_7';
 let TEXT_MODEL = 'gemini-2.5-flash';
-// 안정 모델을 기본값으로 (preview 모델은 자주 404를 내며 실패함)
-let IMAGE_MODEL = 'gemini-2.5-flash-image';
+// 기본 이미지 모델: Imagen 4.0 (16:9 aspectRatio 공식 지원 · 1408x768 고품질)
+// 실측: Gemini 2.5 Flash Image는 1024x1024 정사각형만 반환
+let IMAGE_MODEL = 'imagen-4.0-generate-001';
 
 
 // [Phase F10] Google Custom Search API 설정 (다중 키 롤링용)
@@ -343,7 +344,8 @@ const TEXT_MODEL_OPTIONS = [
     { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
 ];
 const IMAGE_MODEL_OPTIONS = [
-    { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image (권장 · 안정)' },
+    { value: 'imagen-4.0-generate-001', label: 'Imagen 4.0 (권장 · 16:9 공식 지원)' },
+    { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image (1:1 정사각형만)' },
     { value: 'gemini-3.1-flash-image-preview', label: 'Gemini 3.1 Flash Image (Preview)' },
     { value: 'gemini-3-pro-image-preview', label: 'Gemini 3 Pro Image (Preview)' },
 ];
@@ -361,12 +363,18 @@ try {
     const savedText = localStorage.getItem('gemini_text_model');
     const savedImage = localStorage.getItem('gemini_image_model');
     if (savedText && TEXT_MODEL_OPTIONS.some(o => o.value === savedText)) TEXT_MODEL = savedText;
-    // Preview 계열 모델은 자주 404를 내므로 안정 모델로 자동 마이그레이션
-    const UNRELIABLE_IMAGE_MODELS = ['gemini-3.1-flash-image-preview', 'gemini-3-pro-image-preview'];
+    // 저장된 구 모델은 Imagen 4.0으로 자동 마이그레이션 (16:9 보장)
+    // - preview 모델: 404 자주 발생
+    // - gemini-2.5-flash-image: 정사각형만 반환하여 슬라이드 비율 불일치
+    const UNRELIABLE_IMAGE_MODELS = [
+        'gemini-3.1-flash-image-preview',
+        'gemini-3-pro-image-preview',
+        'gemini-2.5-flash-image', // 정사각형만 생성하여 16:9 슬라이드에 부적합
+    ];
     if (savedImage) {
         if (UNRELIABLE_IMAGE_MODELS.includes(savedImage)) {
-            console.warn('[Image Model] 저장된 preview 모델(' + savedImage + ')을 안정 모델로 자동 마이그레이션');
-            IMAGE_MODEL = 'gemini-2.5-flash-image';
+            console.warn('[Image Model] 저장된 모델(' + savedImage + ')을 Imagen 4.0 (16:9) 으로 자동 마이그레이션');
+            IMAGE_MODEL = 'imagen-4.0-generate-001';
             try { localStorage.setItem('gemini_image_model', IMAGE_MODEL); } catch (_) { }
         } else if (IMAGE_MODEL_OPTIONS.some(o => o.value === savedImage)) {
             IMAGE_MODEL = savedImage;
