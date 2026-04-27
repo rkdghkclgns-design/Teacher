@@ -593,6 +593,17 @@ async function generateModuleContent(moduleId, keyConcepts) {
         mod.keyConcepts = keyConcepts;
     }
 
+    // [재생성 중복 방지] 재생성인 경우 기존 tabContents·images 초기화
+    // 이전엔 status==='done'이면 tabContents가 남아있어 5탭 자동생성이 스킵되고
+    // mod.content와 tabContents가 어긋나 같은 내용이 2회 이상 보이는 문제 발생.
+    if (mod.status === 'done' || (mod.tabContents && Object.values(mod.tabContents).some(v => v))) {
+        console.log('[Regeneration] tabContents·images 초기화하여 중복 생성 방지');
+        mod.tabContents = { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null };
+        // 재생성 시 옛 이미지 캐시도 비움 (새 본문에 맞는 이미지로 갱신)
+        mod.images = {};
+        mod.content = '';
+    }
+
 
     const subj = globalState.subjects.find(s => s.id === currentSubjectId);
 
@@ -747,6 +758,11 @@ async function generateModuleContent(moduleId, keyConcepts) {
         fullContent = fullContent.replace(END_MARKER, '').trimEnd();
         // 잔여 CONTINUE 마커 정리 (MAX_CHUNKS 초과 시)
         fullContent = fullContent.replace(new RegExp(CONTINUE_MARKER, 'g'), '').trimEnd();
+
+        // 마크다운 정리 + 강사 callout 자동 래핑 (이미지 처리 전에 적용)
+        if (typeof sanitizeMarkdownContent === 'function') {
+            fullContent = sanitizeMarkdownContent(fullContent);
+        }
 
         // ── 이미지 태그 처리 ──
         loadingText.textContent = chunkCount > 1
@@ -952,17 +968,21 @@ async function extractSearchIntent(keyword, context) {
 
 [AI 이미지 생성 프롬프트(B) 지시사항 — 매우 중요]
 1. **순수 영어로만 작성** — 한국어 단어·고유명사 절대 포함 금지. 한국 게임이면 영어 일반 묘사로 변환 ("Genshin Impact" → "a fantasy open-world action RPG with anime-style heroes").
-2. **추상 개념 → 다이내믹한 장면**으로 변환. 단순한 물체나 정적 포즈가 아니라 "지금 무언가 일어나고 있는 한 컷"을 만들 것.
-   - 좋은 예: "게임 기획 회의" → "Four game designers in a sleek modern studio mid-discussion, gesturing animatedly at a glowing holographic game world projected above the table. Concept sketches scattered around, neon-lit monitors in background, dynamic angle from below"
+2. **본문 문맥을 1순위로 활용** — [주변 교안 문맥]에서 등장하는 구체적 단어·예시·키워드(예: '코어 루프', 'MDA 프레임워크', '플레이테스트', '레벨 디자인', '밸런싱')를 시각적 은유로 변환. 키워드 자체보다 **본문이 무엇을 설명하고 있는지**를 그림으로 보여주는 것이 핵심.
+   - 본문이 "MDA 프레임워크"를 설명 중 → 'Mechanics(톱니바퀴)→Dynamics(흐르는 빛)→Aesthetics(플레이어 미소)'를 한 화면에 시각화
+   - 본문이 "밸런싱"을 다룸 → 양손에 각기 다른 무기 카드를 들고 저울처럼 비교하는 디자이너
+   - 본문이 "플레이테스트"를 다룸 → 디자이너가 클립보드에 메모하며 플레이어들의 반응을 관찰하는 장면
+3. **단순한 물체나 정적 포즈가 아니라 "지금 무언가 일어나고 있는 한 컷"** 을 만들 것.
+   - 좋은 예: "게임 기획 회의" → "Four game designers in a sleek modern studio mid-discussion, gesturing animatedly at a glowing holographic game world projected above the table. Concept sketches scattered around, neon-lit monitors in background, dynamic low-angle"
    - 나쁜 예: "Four people standing around a table looking at papers" (정적·교과서적)
-3. **교안 문맥에서 핵심 개념을 추출하여 시각적 은유로 표현**. 등장 인물의 표정·행동·소품을 풍부하게 묘사.
+4. **인물의 표정·행동·소품을 풍부하게 묘사** — 본문이 다루는 감정·과정을 표정과 자세로 표현.
    - "재미의 본질" → "Two players leaning forward intensely toward a glowing arcade screen, controllers gripped tightly, faces lit by colorful game light, golden particle effects bursting from the screen"
-4. **스타일 — 반드시 다음 문구 포함**: "Dynamic AAA game studio concept art style, cinematic dramatic lighting with rim light and atmospheric haze, painterly digital illustration with bold brushwork, vibrant saturated palette (cobalt blue, electric purple, neon teal accents on deep indigo). Visual references: Riot Games splash art, Blizzard cinematic key art, Supercell promo illustrations". 절대 'flat illustration', 'clip art', 'isometric corporate diagram', 'educational textbook' 같은 정적·범용 키워드는 사용 금지.
-5. **게임 산업 친화 시각 요소**: 적절히 반영 — 모니터·UI 와이어프레임(빈 화면)·게임 컨트롤러·헤드셋·캐릭터 컨셉 시트·픽셀/네온 효과·HUD 도형·디자인 노트북·VR 헤드셋·홀로그램 디스플레이.
-6. **텍스트·글자 절대 금지**: 프롬프트에 반드시 다음 포함: "STRICTLY NO TEXT, no letters, no Korean characters, no hangul, no numbers, no typography, no labels, no UI text. Any screens/papers/signs must be blank or show only abstract glyphs."
-7. **구도 — 반드시 포함**: "Wide cinematic horizontal landscape composition, strictly 16:9 (1408x768), diagonal energy lines, depth of field, hero subject fills the frame horizontally, dynamic camera angle (low-angle / over-shoulder / dutch tilt 권장), motion sense".
-8. **저작권 금지**: 특정 게임·캐릭터 이름 직접 언급 금지 (대신 "fantasy warrior", "cyberpunk hacker", "anime-style adventurer" 등 일반 장르 묘사).
-9. **품질 키워드 필수**: "4K detail, editorial concept art polish, sharp focus, dramatic atmosphere, professional game industry conference quality".
+5. **스타일 — 반드시 다음 문구 포함**: "Dynamic AAA game studio concept art style, dramatic lighting with rim light and atmospheric haze, painterly digital illustration with bold brushwork, vibrant saturated palette (cobalt blue, electric purple, neon teal accents on deep indigo). Visual references: Riot Games splash art, Blizzard cinematic key art, Supercell promo illustrations". 절대 'flat illustration', 'clip art', 'isometric corporate diagram', 'educational textbook' 같은 정적·범용 키워드는 사용 금지.
+6. **게임 산업 친화 시각 요소**: 적절히 반영 — 모니터·UI 와이어프레임(빈 화면)·게임 컨트롤러·헤드셋·캐릭터 컨셉 시트·픽셀/네온 효과·HUD 도형·디자인 노트북·VR 헤드셋·홀로그램 디스플레이.
+7. **텍스트·글자 절대 금지**: 프롬프트에 반드시 다음 포함: "STRICTLY NO TEXT, no letters, no Korean characters, no hangul, no numbers, no typography, no labels, no UI text. Any screens/papers/signs must be blank or show only abstract glyphs."
+8. **구도 — 반드시 포함 (letterbox 단어 절대 금지)**: "Wide horizontal landscape composition, strictly 16:9 (1408x768), the composition fills the ENTIRE frame edge-to-edge with NO black bars, NO borders, NO film letterbox, diagonal energy lines, depth of field, hero subject fills the frame horizontally, dynamic camera angle (low-angle / over-shoulder / dutch tilt 권장), motion sense". 'letterbox', 'cinematic bars', 'film border' 단어는 절대 사용 금지 — AI가 검은 띠를 그려넣음.
+9. **저작권 금지**: 특정 게임·캐릭터 이름 직접 언급 금지 (대신 "fantasy warrior", "cyberpunk hacker", "anime-style adventurer" 등 일반 장르 묘사).
+10. **품질 키워드 필수**: "4K detail, editorial concept art polish, sharp focus, dramatic atmosphere, professional game industry conference quality".
 
 [출력 포맷 JSON — 반드시 준수]
 {
@@ -1553,7 +1573,8 @@ async function generateImageAPI(prompt) {
     // 변경 후: AAA 게임 스튜디오 컨셉 아트 / 모던 게임 잡지 일러스트 스타일.
     //         프로 강사가 PPT에서 사용할 만한 다이내믹·시네마틱·게임친화 비주얼.
     const hasStyleHints = /\b(cinematic|concept art|game studio|dynamic|AAA|polished)\b/i.test(prompt);
-    const ASPECT_SPEC = " ASPECT RATIO: Wide horizontal landscape, strictly 16:9 cinematic widescreen (1408x768). NEVER square, portrait, or vertical. Cinematic letterbox composition with strong horizontal flow.";
+    // 주의: 'letterbox' 단어는 AI가 이미지에 검은 띠를 그리도록 유도하므로 절대 사용 금지
+    const ASPECT_SPEC = " ASPECT RATIO: Wide horizontal landscape, strictly 16:9 widescreen (1408x768). NEVER square, portrait, or vertical. The composition fills the ENTIRE frame edge-to-edge with NO black bars, NO borders, NO film letterbox, NO matte frames. Subject and background extend fully to all four edges.";
     const NO_TEXT_SPEC = " STRICTLY NO TEXT: no letters, no words, no Korean characters, no hangul, no numbers, no typography, no labels, no UI text, no signs, no book titles, no watermarks, no signatures. If screens/papers/signs appear, they must be blank or show only abstract glyphs and icons — NEVER readable letters.";
     const GAME_STYLE_SPEC = " STYLE: Dynamic AAA game studio concept art quality, modern indie game magazine illustration aesthetic. Cinematic dramatic lighting with rim light and atmospheric haze. Painterly digital art with bold brushwork, vibrant saturated colors but harmonized palette (cobalt blue, electric purple, neon teal accents on deep indigo background). Strong sense of energy, motion, and storytelling. Diagonal compositions, leading lines, depth of field. Characters and objects feel alive and in-action — not stiff or posed. Visual references: Riot Games splash art, Blizzard cinematic key art, Supercell promotional illustrations, contemporary game UI/UX portfolio pieces. AVOID: flat vector art, clip-art look, generic educational textbook illustration, static stock-photo poses, isometric corporate diagrams.";
     const QUALITY_SPEC = " QUALITY: 4K detail, editorial concept art polish, sharp focus on hero subject, dramatic depth and atmosphere, premium presentation slide hero image worthy of a professional game industry conference.";

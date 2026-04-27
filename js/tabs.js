@@ -95,7 +95,12 @@ async function generateTabContent(moduleId, tabId) {
 
         const data = await callGemini(TEXT_MODEL, payload);
 
-        const resultText = extractText(data);
+        let resultText = extractText(data);
+        // 마크다운 정리 + 강사 callout 자동 래핑 (예상 소요 등이 학생뷰에 노출되지 않도록)
+        if (typeof sanitizeMarkdownContent === 'function') {
+            resultText = sanitizeMarkdownContent(resultText);
+        }
+
         if (!mod.tabContents) mod.tabContents = { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null };
         mod.tabContents[tabId] = resultText;
         mod.status = 'done';

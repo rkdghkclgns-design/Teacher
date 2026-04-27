@@ -188,6 +188,62 @@ function extractText(data) {
 // 3) HTML 엔티티 디코드 (&lt; → <)
 // 4) 헤딩 앞뒤 공백 정리
 // 5) 깨진 이미지 태그 복원 (<!-- [IMG: "..."] -->)
+// 강사 전용 마커가 instructor-callout 밖에 나와있을 때 자동으로 감싸기
+// 학생뷰에 '⏱️ 예상 소요' 등이 노출되는 문제 해결
+function wrapOrphanedInstructorMarkers(md) {
+    if (!md || typeof md !== 'string') return md;
+    // 강사 전용 마커 패턴 (이모지로 시작하고 강사 가이드 항목 형태)
+    const INSTRUCTOR_MARKERS = /^[ \t]*(⏱️?|🎚️?|🎬|🗣️?|💡|⚠️?|🔗|🎓)\s*\*{0,2}\s*(예상\s*소요|난이도|도입\s*멘트|핵심\s*설명\s*대본|꼭\s*짚어야|자주\s*헷갈|질문\s*\/?\s*참여|전환\s*멘트)/;
+    const lines = md.split('\n');
+    const out = [];
+    let i = 0;
+    while (i < lines.length) {
+        const line = lines[i];
+        // 이미 instructor-callout 안에 있으면 그대로 통과
+        if (/<div\s+class\s*=\s*["'][^"']*instructor-callout/i.test(line)) {
+            out.push(line);
+            i++;
+            // </div> 만날 때까지 그대로 통과
+            while (i < lines.length && !/<\/div>/i.test(lines[i])) {
+                out.push(lines[i]);
+                i++;
+            }
+            if (i < lines.length) { out.push(lines[i]); i++; }
+            continue;
+        }
+
+        // 강사 마커 발견 → 다음 빈 줄·헤딩·다른 블록까지 모아 instructor-callout으로 감쌈
+        if (INSTRUCTOR_MARKERS.test(line)) {
+            const block = [];
+            // 마커가 있는 첫 줄부터 시작
+            while (i < lines.length) {
+                const cur = lines[i];
+                // 헤딩(##/###/####)이나 코드펜스 시작이면 블록 종료
+                if (/^#{1,4}\s/.test(cur) || /^```/.test(cur.trim())) break;
+                // 두 줄 연속 빈 줄이면 종료 (강사 가이드 끝)
+                if (cur.trim() === '' && i + 1 < lines.length && lines[i + 1].trim() === '') break;
+                block.push(cur);
+                i++;
+            }
+            // 블록을 instructor-callout으로 감싸기
+            const inner = block.join('\n').replace(/^\n+|\n+$/g, '');
+            if (inner.trim()) {
+                out.push('<div class="instructor-callout">');
+                out.push('');
+                out.push(inner);
+                out.push('');
+                out.push('</div>');
+            }
+            continue;
+        }
+
+        out.push(line);
+        i++;
+    }
+    return out.join('\n');
+}
+window.wrapOrphanedInstructorMarkers = wrapOrphanedInstructorMarkers;
+
 function sanitizeMarkdownContent(md) {
     if (!md || typeof md !== 'string') return md;
     let t = md.replace(/\r\n/g, '\n');
@@ -241,6 +297,10 @@ function sanitizeMarkdownContent(md) {
 
     // 8) 깨진 이미지 태그 복원 — "<!- [IMG: ... ] -->", "<-- [IMG" 등
     t = t.replace(/<!?-{1,3}\s*\[IMG\s*:\s*"?([^"\]>]+?)"?\s*\]\s*-{1,3}>?/gi, '<!-- [IMG: "$1"] -->');
+
+    // 9) [강사 전용] 자동 래핑 — AI가 instructor-callout 밖에 출력한 강사 마커를 감지해 래핑
+    //    학생뷰에서 ⏱️ 예상 소요 / 🎬 도입 멘트 등이 노출되는 문제 해결
+    t = wrapOrphanedInstructorMarkers(t);
 
     // fence 복원
     t = t.replace(/\u0000FENCE(\d+)\u0000/g, (_, i) => fences[parseInt(i, 10)] || '');
