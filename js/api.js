@@ -951,13 +951,18 @@ async function extractSearchIntent(keyword, context) {
 5. 공식 스크린샷이 필요하면 "official screenshot", "in-game" 한정자 사용
 
 [AI 이미지 생성 프롬프트(B) 지시사항 — 매우 중요]
-1. **순수 영어로만 작성** — 프롬프트에 한국어 단어·고유명사 절대 포함 금지. 한국 게임이면 영어 설명으로 변환 ("Genshin Impact" 대신 "a fantasy open-world adventure RPG").
-2. **구체적 장면 묘사**: 추상 개념을 시각적 요소로 변환. 예: "게임 기획" → "A diverse team of four game designers collaborating around a large glass table with holographic concept sketches floating above"
-3. **교안 문맥 반영**: 주변 텍스트의 핵심 개념을 시각화 (등장 인물/소품/행위). 예: "재미의 본질" → "players laughing and celebrating during multiplayer gameplay, golden hour lighting, emotional moment"
-4. **스타일 일관성**: "clean flat educational illustration, cohesive blue-purple gradient palette, soft shadows, isometric or front-view perspective, modern digital art"
-5. **텍스트·글자 절대 금지** (매우 중요): 프롬프트에 반드시 다음 문구 포함: "absolutely no text, no letters, no Korean characters, no hangul, no numbers, no typography, no labels, no book titles, no signs. Any screens/papers/signs must appear empty or show only abstract shapes." AI 이미지 모델이 한국어를 그리려다 깨진 오타를 내는 것을 방지.
-6. **구도 지정 — 반드시 준수**: 프롬프트 말미에 다음 문구 포함: "wide horizontal landscape composition, strictly 16:9 cinematic aspect ratio (1408x768), subject fills the frame horizontally, balanced left-right composition". 정사각형·세로 비율 절대 금지.
-7. **저작권 금지**: 특정 게임·캐릭터 이름 직접 언급 금지 (대신 "fantasy warrior", "anime-style adventurer" 등 일반 묘사)
+1. **순수 영어로만 작성** — 한국어 단어·고유명사 절대 포함 금지. 한국 게임이면 영어 일반 묘사로 변환 ("Genshin Impact" → "a fantasy open-world action RPG with anime-style heroes").
+2. **추상 개념 → 다이내믹한 장면**으로 변환. 단순한 물체나 정적 포즈가 아니라 "지금 무언가 일어나고 있는 한 컷"을 만들 것.
+   - 좋은 예: "게임 기획 회의" → "Four game designers in a sleek modern studio mid-discussion, gesturing animatedly at a glowing holographic game world projected above the table. Concept sketches scattered around, neon-lit monitors in background, dynamic angle from below"
+   - 나쁜 예: "Four people standing around a table looking at papers" (정적·교과서적)
+3. **교안 문맥에서 핵심 개념을 추출하여 시각적 은유로 표현**. 등장 인물의 표정·행동·소품을 풍부하게 묘사.
+   - "재미의 본질" → "Two players leaning forward intensely toward a glowing arcade screen, controllers gripped tightly, faces lit by colorful game light, golden particle effects bursting from the screen"
+4. **스타일 — 반드시 다음 문구 포함**: "Dynamic AAA game studio concept art style, cinematic dramatic lighting with rim light and atmospheric haze, painterly digital illustration with bold brushwork, vibrant saturated palette (cobalt blue, electric purple, neon teal accents on deep indigo). Visual references: Riot Games splash art, Blizzard cinematic key art, Supercell promo illustrations". 절대 'flat illustration', 'clip art', 'isometric corporate diagram', 'educational textbook' 같은 정적·범용 키워드는 사용 금지.
+5. **게임 산업 친화 시각 요소**: 적절히 반영 — 모니터·UI 와이어프레임(빈 화면)·게임 컨트롤러·헤드셋·캐릭터 컨셉 시트·픽셀/네온 효과·HUD 도형·디자인 노트북·VR 헤드셋·홀로그램 디스플레이.
+6. **텍스트·글자 절대 금지**: 프롬프트에 반드시 다음 포함: "STRICTLY NO TEXT, no letters, no Korean characters, no hangul, no numbers, no typography, no labels, no UI text. Any screens/papers/signs must be blank or show only abstract glyphs."
+7. **구도 — 반드시 포함**: "Wide cinematic horizontal landscape composition, strictly 16:9 (1408x768), diagonal energy lines, depth of field, hero subject fills the frame horizontally, dynamic camera angle (low-angle / over-shoulder / dutch tilt 권장), motion sense".
+8. **저작권 금지**: 특정 게임·캐릭터 이름 직접 언급 금지 (대신 "fantasy warrior", "cyberpunk hacker", "anime-style adventurer" 등 일반 장르 묘사).
+9. **품질 키워드 필수**: "4K detail, editorial concept art polish, sharp focus, dramatic atmosphere, professional game industry conference quality".
 
 [출력 포맷 JSON — 반드시 준수]
 {
@@ -1322,11 +1327,13 @@ async function processImageTags(mod, markdown) {
                     generatePrompt = intent.image_gen_prompt;
                     console.log(`[AI Gen] 문맥 기반 전용 프롬프트 사용 (${generatePrompt.length}자): ${tag.keyword}`);
                 } else if (intent && intent.reasoning) {
-                    generatePrompt = `[Context: ${intent.reasoning}]\nSubject: ${tag.keyword}\nStyle: clean flat educational illustration, cohesive blue-purple palette, no text, 16:9, professional editorial quality`;
-                    console.log(`[AI Gen] 레거시 프롬프트 사용: ${tag.keyword}`);
+                    // 게임 산업 다이내믹 스타일 (정적 educational illustration 금지)
+                    generatePrompt = `Cinematic concept art for a Korean game design lecture. Subject context: ${intent.reasoning}. Show this concept as a dynamic moment in a modern game studio setting — designers in mid-action, glowing holographic UI, dramatic rim lighting, painterly digital art with bold brushwork, vibrant cobalt-purple palette. AAA game studio splash-art quality, no text.`;
+                    console.log(`[AI Gen] 레거시 게임-스타일 프롬프트 사용: ${tag.keyword}`);
                 } else {
-                    generatePrompt = `${tag.keyword}. Clean flat educational illustration, cohesive blue-purple color palette, minimal text, 16:9 aspect ratio, professional editorial style for a game design course`;
-                    console.log(`[AI Gen] 기본 프롬프트 사용: ${tag.keyword}`);
+                    // 키워드만 있을 때도 다이내믹·게임 친화 기본값
+                    generatePrompt = `Dynamic cinematic concept art illustrating "${tag.keyword}" in the context of professional game design. Show characters, designers or players mid-action with dramatic lighting and atmospheric haze. Painterly digital art style, vibrant cobalt-purple palette, AAA game studio quality (Riot/Blizzard splash-art aesthetic). No text, no letters.`;
+                    console.log(`[AI Gen] 기본 게임-스타일 프롬프트 사용: ${tag.keyword}`);
                 }
                 b64Image = await generateImageAPI(generatePrompt);
                 vendorLabel = "AI 생성 이미지";
@@ -1539,21 +1546,21 @@ async function generateImageAPI(prompt) {
     const geminiModels = [...new Set(geminiOrder.filter(Boolean))];
     const errorHistory = [];
 
-    // 16:9 비율 강제 + 한국어 오타 방지 + 스타일 가이드
+    // 16:9 비율 + 게임 산업 전문가용 다이내믹 아트 스타일
     //
-    // 중요 배경: Imagen/Gemini 이미지 모델은 한국어 텍스트를 정확히 렌더링하지 못함.
-    // "게임 기획자" → "개엠 괴위저" 같은 환각 오타가 발생.
-    // 해결: 이미지 내 모든 텍스트를 강력히 금지 (영어 포함).
-    // 원본 키워드의 한국어 단어도 프롬프트에서 제거하여 글자 환각 유도 방지.
-    const hasStyleHints = /\b(illustration|editorial|palette|flat|educational|isometric)\b/i.test(prompt);
-    const ASPECT_SPEC = " CRITICAL ASPECT RATIO: Wide horizontal landscape, strictly 16:9 cinematic widescreen (1408x768 or 1792x1024). NEVER square, portrait, or vertical. Balanced left-right composition.";
-    const NO_TEXT_SPEC = " ABSOLUTELY NO TEXT, NO LETTERS, NO WORDS, NO KOREAN CHARACTERS, NO HANGUL, NO NUMBERS, NO TYPOGRAPHY, NO LABELS, NO SIGNS, NO BOOK TITLES, NO WATERMARKS, NO SIGNATURES. Pure visual storytelling using only icons, shapes, figures, objects, and symbols. If a sign or label is conceptually needed, show a blank/unreadable mark instead of text. Any computer screens, papers, or signs must appear EMPTY or show only abstract shapes — never letters.";
-    const QUALITY_SPEC = " Quality: high-detail digital illustration, editorial-grade composition, sharp focus, vibrant yet professional color grading, suitable for a premium presentation slide.";
+    // 변경 배경: 이전 'clean flat educational illustration'은 정적·범용·교과서스러운
+    // 결과를 만들어 게임 기획 교안과 어울리지 않음.
+    // 변경 후: AAA 게임 스튜디오 컨셉 아트 / 모던 게임 잡지 일러스트 스타일.
+    //         프로 강사가 PPT에서 사용할 만한 다이내믹·시네마틱·게임친화 비주얼.
+    const hasStyleHints = /\b(cinematic|concept art|game studio|dynamic|AAA|polished)\b/i.test(prompt);
+    const ASPECT_SPEC = " ASPECT RATIO: Wide horizontal landscape, strictly 16:9 cinematic widescreen (1408x768). NEVER square, portrait, or vertical. Cinematic letterbox composition with strong horizontal flow.";
+    const NO_TEXT_SPEC = " STRICTLY NO TEXT: no letters, no words, no Korean characters, no hangul, no numbers, no typography, no labels, no UI text, no signs, no book titles, no watermarks, no signatures. If screens/papers/signs appear, they must be blank or show only abstract glyphs and icons — NEVER readable letters.";
+    const GAME_STYLE_SPEC = " STYLE: Dynamic AAA game studio concept art quality, modern indie game magazine illustration aesthetic. Cinematic dramatic lighting with rim light and atmospheric haze. Painterly digital art with bold brushwork, vibrant saturated colors but harmonized palette (cobalt blue, electric purple, neon teal accents on deep indigo background). Strong sense of energy, motion, and storytelling. Diagonal compositions, leading lines, depth of field. Characters and objects feel alive and in-action — not stiff or posed. Visual references: Riot Games splash art, Blizzard cinematic key art, Supercell promotional illustrations, contemporary game UI/UX portfolio pieces. AVOID: flat vector art, clip-art look, generic educational textbook illustration, static stock-photo poses, isometric corporate diagrams.";
+    const QUALITY_SPEC = " QUALITY: 4K detail, editorial concept art polish, sharp focus on hero subject, dramatic depth and atmosphere, premium presentation slide hero image worthy of a professional game industry conference.";
+    const CONTEXT_SPEC = " CONTEXT: This image illustrates a concept for a Korean professional game design curriculum used by a star instructor. The viewer should immediately feel game-industry energy and understand the visual metaphor without any text.";
     const styleSuffix = hasStyleHints
-        ? NO_TEXT_SPEC + QUALITY_SPEC + ASPECT_SPEC
-        : " STYLE GUIDE: Clean flat educational illustration, cohesive blue-purple gradient palette (cobalt #3b82f6, lavender #a78bfa, deep indigo #0f172a), soft ambient lighting, isometric or dynamic front-view composition, modern digital art for a professional game design curriculum." + NO_TEXT_SPEC + QUALITY_SPEC + ASPECT_SPEC;
-    // 키워드에 한국어가 포함된 경우 → 이미지 모델이 한국어를 그리려다 오타를 내므로,
-    // 프롬프트 본문의 한국어는 최소화 (extractSearchIntent가 영어 프롬프트를 생성하지만 폴백 안전망)
+        ? NO_TEXT_SPEC + QUALITY_SPEC + ASPECT_SPEC + CONTEXT_SPEC
+        : GAME_STYLE_SPEC + NO_TEXT_SPEC + QUALITY_SPEC + ASPECT_SPEC + CONTEXT_SPEC;
     const enhancedPrompt = prompt + styleSuffix;
 
     // Stage 1: Imagen 4.0 (predict 엔드포인트) — 16:9 aspectRatio 공식 파라미터 준수
