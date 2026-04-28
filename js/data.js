@@ -424,9 +424,9 @@ try {
 }
 const STORAGE_KEY = 'agent_curriculum_v4_7';
 let TEXT_MODEL = 'gemini-2.5-flash';
-// 기본 이미지 모델: Imagen 4.0 (16:9 aspectRatio 공식 지원 · 1408x768 고품질)
-// 실측: Gemini 2.5 Flash Image는 1024x1024 정사각형만 반환
-let IMAGE_MODEL = 'imagen-4.0-generate-001';
+// 기본 이미지 모델: gemini-3.1-flash-image-preview (V7.0.0과 동일)
+// 검증: 1408x768 JPEG, 한국어 라벨 시도 가능 (V7 스타일 인포그래픽 출력)
+let IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
 
 
 // [Phase F10] Google Custom Search API 설정 (다중 키 롤링용)
@@ -445,10 +445,11 @@ const TEXT_MODEL_OPTIONS = [
     { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
 ];
 const IMAGE_MODEL_OPTIONS = [
-    { value: 'imagen-4.0-generate-001', label: 'Imagen 4.0 (권장 · 16:9 공식 지원)' },
-    { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image (1:1 정사각형만)' },
-    { value: 'gemini-3.1-flash-image-preview', label: 'Gemini 3.1 Flash Image (Preview)' },
-    { value: 'gemini-3-pro-image-preview', label: 'Gemini 3 Pro Image (Preview)' },
+    { value: 'gemini-3.1-flash-image-preview', label: 'Gemini 3.1 Flash Image Preview (권장 · V7 동일)' },
+    { value: 'imagen-4.0-generate-001', label: 'Imagen 4.0 (16:9 영문 라벨)' },
+    { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image (1:1 정사각형)' },
+    { value: 'imagen-4.0-fast-generate-001', label: 'Imagen 4.0 Fast' },
+    { value: 'imagen-4.0-ultra-generate-001', label: 'Imagen 4.0 Ultra' },
 ];
 
 // 모델 런타임 변경 + localStorage 저장
@@ -464,18 +465,15 @@ try {
     const savedText = localStorage.getItem('gemini_text_model');
     const savedImage = localStorage.getItem('gemini_image_model');
     if (savedText && TEXT_MODEL_OPTIONS.some(o => o.value === savedText)) TEXT_MODEL = savedText;
-    // 저장된 구 모델은 Imagen 4.0으로 자동 마이그레이션 (16:9 보장)
-    // - preview 모델: 404 자주 발생
-    // - gemini-2.5-flash-image: 정사각형만 반환하여 슬라이드 비율 불일치
+    // 저장된 모델 → V7 기본(gemini-3.1-flash-image-preview)으로 자동 마이그레이션
+    // 검증: 3.1-preview가 다시 활성화되어 V7 수준 한국어 인포그래픽 출력 가능
     const UNRELIABLE_IMAGE_MODELS = [
-        'gemini-3.1-flash-image-preview',
-        'gemini-3-pro-image-preview',
-        'gemini-2.5-flash-image', // 정사각형만 생성하여 16:9 슬라이드에 부적합
+        'gemini-3-pro-image-preview',  // 여전히 404
     ];
     if (savedImage) {
         if (UNRELIABLE_IMAGE_MODELS.includes(savedImage)) {
-            console.warn('[Image Model] 저장된 모델(' + savedImage + ')을 Imagen 4.0 (16:9) 으로 자동 마이그레이션');
-            IMAGE_MODEL = 'imagen-4.0-generate-001';
+            console.warn('[Image Model] 저장된 모델(' + savedImage + ')을 V7 기본(3.1-flash-image-preview)으로 자동 마이그레이션');
+            IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
             try { localStorage.setItem('gemini_image_model', IMAGE_MODEL); } catch (_) { }
         } else if (IMAGE_MODEL_OPTIONS.some(o => o.value === savedImage)) {
             IMAGE_MODEL = savedImage;

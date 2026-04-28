@@ -981,17 +981,15 @@ async function extractSearchIntent(keyword, context) {
 4. 부정어 연산자로 가비지 배제 ("-fanart -cosplay -reddit")
 5. 공식 스크린샷이 필요하면 "official screenshot", "in-game" 한정자 사용
 
-[AI 이미지 생성 프롬프트(B) 지시사항 — V7 단순 + 한글 환각 방지]
-중요 배경: 현재 사용 가능한 모든 Gemini/Imagen 이미지 모델은 한글을 깨진 글자로 렌더링.
-한글 정보는 HTML 캡션(이미지 아래)으로 별도 표시되므로, 이미지 안에는 한글 절대 금지.
+[AI 이미지 생성 프롬프트(B) 지시사항 — V7.0.0 단순 방식]
+사용 모델: gemini-3.1-flash-image-preview (V7과 동일, 한국어 라벨 시도 가능)
 
-1. **순수 영어로만 작성** — 프롬프트에 한국어 단어·고유명사 절대 포함 금지. 한국 게임이면 일반 영어 묘사로 변환 ("Genshin Impact" → "fantasy open-world action RPG with anime heroes").
-2. **본문 문맥을 시각화** — 주변 단락의 핵심 개념을 영어 시각 요소로 묘사. 정적 포즈 X, 행위·소품·표정으로 표현.
-   - 좋은 예: "Game development pipeline infographic with 6 stages. Designers brainstorming with sticky notes (PLAN), wireframe sketches (PROTOTYPE), coding monitors (BUILD), QA testing controllers (TEST), rocket launch (SHIP), live dashboard with metrics (LIVE)."
-3. **영어 라벨만 허용** — 인포그래픽 단계 라벨 등은 짧은 영어 단어(PLAN/BUILD/TEST/SHIP/LIVE)로만. 한글 라벨은 절대 금지(깨진 글자 환각 방지).
-4. **반드시 끝에 추가**: "digital art style, clean, professional, illustrative infographic for educational slide, 16:9 wide composition. NO Korean characters, NO hangul, only short English labels if needed."
+1. **간결하게** — 50~150단어 이내. 과도한 스타일 키워드 나열은 모델 혼동 유발.
+2. **본문 문맥을 시각화** — 주변 교안의 구체 개념·키워드를 시각 요소로 묘사. 한국어 키워드 그대로 사용 가능 (V7 모델은 한글 라벨 시도 가능).
+   - 예시: "게임 개발 단계별 기획자의 책임 인포그래픽. 6단계: 기획, 프로토타입, 제작, 테스트, 출시, 라이브 서비스. 각 단계별 디자이너의 모습과 도구"
+3. **다이어그램·인포그래픽 형태 권장** — 게임 기획 교안에 적합한 단계도·플로우차트·카드형 레이아웃.
+4. **반드시 끝에 추가**: "digital art style, clean, professional"
 5. **저작권 금지**: 특정 게임·캐릭터 이름 직접 언급 금지.
-6. **스타일 간결화**: 50~150단어 이내. 과도한 스타일 키워드 나열은 모델 혼동 유발.
 
 [출력 포맷 JSON — 반드시 준수]
 {
@@ -1382,18 +1380,14 @@ async function processImageTags(mod, markdown) {
                 // 2) 레거시 방식 (Context + Query) - 이전 응답 호환
                 // 3) 키워드 단독 - 최후 수단
                 let generatePrompt;
-                // 폴백 프롬프트는 모두 영어 (한글은 이미지에서 깨지므로)
-                // tag.keyword가 한국어면 일반 영어 묘사로 변환
-                const englishKeyword = /[가-힣]/.test(tag.keyword)
-                    ? `educational concept illustration related to: ${tag.keyword}` // 영어 wrapper
-                    : tag.keyword;
+                // V7과 동일: 단순 프롬프트 (한국어 키워드 그대로 사용 가능)
                 if (intent && intent.image_gen_prompt && intent.image_gen_prompt.length > 30) {
                     generatePrompt = intent.image_gen_prompt;
                     console.log(`[AI Gen] 문맥 기반 프롬프트 사용 (${generatePrompt.length}자): ${tag.keyword}`);
                 } else {
-                    // 영어 단순 폼 (한글 환각 방지)
-                    generatePrompt = `${englishKeyword}, digital art style, clean, professional, illustrative infographic, 16:9 wide composition. NO Korean text, NO hangul, only short English labels if needed.`;
-                    console.log(`[AI Gen] 영어 단순 프롬프트 사용: ${tag.keyword}`);
+                    // V7 단순 폼: 키워드 + 단순 스타일 (한글 라벨 시도 허용)
+                    generatePrompt = `${tag.keyword}, digital art style, clean, professional`;
+                    console.log(`[AI Gen] V7 단순 프롬프트 사용: ${tag.keyword}`);
                 }
                 b64Image = await generateImageAPI(generatePrompt);
                 vendorLabel = "AI 생성 이미지";
@@ -1593,65 +1587,29 @@ async function callImagen(modelName, prompt) {
 }
 
 async function generateImageAPI(prompt) {
-    // [근본 분석 - 2026-04-28]
-    // V7과 같은 한글 렌더는 어떤 후속 모델도 불가능. 따라서 **품질·디자인 톤** 기준 우선순위 재정렬:
-    //   - imagen-4.0-generate-001: 1408x768 (16:9), 깨진 한글이라도 출력 (ASPECT 정확)
-    //   - gemini-2.5-flash-image: 1024x1024 (1:1), 한글 거부하고 영어 변환 (텍스트 깨끗)
-    // V7 결과물(첫 첨부 이미지)은 **인포그래픽 스타일 + 영어/한글 혼용 단어 라벨** 형태였음.
-    // 현재 가장 V7에 근접한 출력: imagen-4.0-generate-001 + 영어 라벨 강제 + 16:9 비율
-    // → Imagen 1순위, Gemini 폴백 유지
-    const imagenModels = ['imagen-4.0-generate-001'];
+    // [근본 분석 - 2026-04-28 재검증]
+    // gemini-3.1-flash-image-preview가 다시 활성화 확인: 1408x768 JPEG, 한국어 라벨 시도 가능
+    // → V7과 동일한 모델·프롬프트로 V7 수준 출력 복원
+    // 폴백 체인:
+    //   Stage 1: gemini-3.1-flash-image-preview (V7 기본, 한국어 인포그래픽)
+    //   Stage 2: imagen-4.0-generate-001 (16:9 보장, 영어 라벨)
+    //   Stage 3: gemini-2.5-flash-image (정사각형, 영어)
     const geminiOrder = [
         IMAGE_MODEL,
+        'gemini-3.1-flash-image-preview',
         'gemini-2.5-flash-image',
     ];
     const geminiModels = [...new Set(geminiOrder.filter(Boolean))];
+    const imagenModels = ['imagen-4.0-generate-001'];
     const errorHistory = [];
 
-    // [근본 원인 - 2026-04-28 검증]
-    // V7은 gemini-3.1-flash-image-preview를 사용 → 한글 정확히 렌더 (현재 폐기됨, 404)
-    // 후속 모델 모두 한글 렌더 불가:
-    //   - gemini-2.5-flash-image: 한글 거부, 영어로 강제 변환 (1024x1024 정사각)
-    //   - imagen-4.0-generate-001: 깨진 한글 출력 ('STIEP3약 6수타TEPS')
-    //   - imagen-4.0-fast-generate-001: 프롬프트 무시
-    //   - imagen-4.0-ultra-generate-001: 깨진 한글
-    // 결론: 어떤 후속 모델도 V7 수준 한글 렌더 불가
-    //       → 이미지는 텍스트 없는 시각만, 한글 정보는 HTML 캡션(.image-caption)으로 정확 표시
-    //       → 깨진 한글 글자 환각이 절대 들어가지 않도록 강력 차단
-    const NO_TEXT_SPEC = " IMPORTANT: NO Korean characters or hangul anywhere in the image (the model cannot render Korean correctly and would produce garbled fake hangul). If labels are absolutely needed, use only short ENGLISH words (PLAN, BUILD, TEST, SHIP, LIVE, UI, etc.) — never Korean. Prefer pure visual storytelling using icons, shapes, characters, and props. NO garbled text, NO fake hangul, NO unreadable characters in the image.";
-    const enhancedPrompt = prompt + ", digital art style, clean, professional, illustrative infographic for educational presentation slide, 16:9 wide landscape composition." + NO_TEXT_SPEC;
+    // [재검증 결과 - gemini-3.1-flash-image-preview 활성 확인]
+    // V7과 동일한 모델 사용 → V7 스타일 한국어 인포그래픽 출력 가능
+    // 프롬프트도 V7과 동일하게 단순화: prompt + ", digital art style, clean, professional"
+    const enhancedPrompt = prompt + ", digital art style, clean, professional";
 
-    // Stage 1: Imagen 4.0 (predict 엔드포인트) — 16:9 aspectRatio 공식 파라미터 준수
-    //          실제 테스트 결과: 1408x768 정확히 16:9 반환
-    for (const model of imagenModels) {
-        try {
-            console.log(`[Image Gen] Imagen ${model} 시도 (16:9 공식 파라미터): ${prompt.substring(0, 60)}...`);
-            const data = await callImagen(model, enhancedPrompt);
-
-            const pred = data?.predictions?.[0];
-            if (pred && pred.bytesBase64Encoded) {
-                const mime = pred.mimeType || 'image/png';
-                console.log(`[Image Gen] ✅ Imagen ${model} 성공 (16:9 보장)`);
-                return `data:${mime};base64,${pred.bytesBase64Encoded}`;
-            }
-            console.warn(`[Image Gen] Imagen ${model} 응답에 이미지 없음`, data);
-            errorHistory.push(`${model}: 이미지 파트 없음`);
-        } catch (e) {
-            const msg = e.message || String(e);
-            const is429 = msg.includes('429');
-            if (is429) {
-                console.warn(`[Image Gen] Imagen ${model} 429 — 15초 대기 후 다음 모델로`);
-                if (window.showToast) window.showToast(`이미지 생성 대기 중... (15초)`, 'warning');
-                await new Promise(r => setTimeout(r, 15000));
-            }
-            console.error(`[Image Gen] Imagen ${model} 에러:`, msg);
-            errorHistory.push(`${model}: ${msg.slice(0, 80)}`);
-        }
-    }
-
-    // Stage 2: Gemini 이미지 모델 (generateContent) — Imagen 실패 시 폴백
-    //          주의: Gemini 2.5 Flash Image는 1024x1024 정사각형만 반환 (aspectRatio 무시)
-    //          → 폴백이므로 정사각형이라도 이미지 확보 우선
+    // Stage 1: Gemini 이미지 모델 — V7 동일 (gemini-3.1-flash-image-preview)
+    //          1408x768 JPEG, 한국어 라벨 시도 가능 (V7 스타일 인포그래픽 출력)
     for (const model of geminiModels) {
         const payload = {
             contents: [{ parts: [{ text: enhancedPrompt }] }],
@@ -1660,14 +1618,14 @@ async function generateImageAPI(prompt) {
 
         for (let retry = 0; retry < 3; retry++) {
             try {
-                console.log(`[Image Gen] Gemini ${model} 폴백 시도 (${retry > 0 ? '재시도 ' + retry : '최초'}): ${prompt.substring(0, 60)}...`);
+                console.log(`[Image Gen] Gemini ${model} 시도 (${retry > 0 ? '재시도 ' + retry : '최초'}): ${prompt.substring(0, 60)}...`);
                 const data = await callGemini(model, payload);
 
                 const parts = data?.candidates?.[0]?.content?.parts;
                 if (parts) {
                     const imgPart = parts.find(p => p.inlineData && p.inlineData.mimeType && p.inlineData.mimeType.startsWith('image/'));
                     if (imgPart) {
-                        console.log(`[Image Gen] ✅ Gemini ${model} 폴백 성공 (정사각형)`);
+                        console.log(`[Image Gen] ✅ Gemini ${model} 성공`);
                         return `data:${imgPart.inlineData.mimeType};base64,${imgPart.inlineData.data}`;
                     }
                 }
@@ -1692,6 +1650,26 @@ async function generateImageAPI(prompt) {
                 errorHistory.push(`${model}: ${is404 ? '모델 미지원' : msg.slice(0, 80)}`);
                 break;
             }
+        }
+    }
+
+    // Stage 2: Imagen 4.0 (Gemini 전체 실패 시 16:9 폴백)
+    for (const model of imagenModels) {
+        try {
+            console.log(`[Image Gen] Imagen ${model} 폴백 시도: ${prompt.substring(0, 60)}...`);
+            const data = await callImagen(model, enhancedPrompt);
+            const pred = data?.predictions?.[0];
+            if (pred && pred.bytesBase64Encoded) {
+                const mime = pred.mimeType || 'image/png';
+                console.log(`[Image Gen] ✅ Imagen ${model} 폴백 성공 (16:9)`);
+                return `data:${mime};base64,${pred.bytesBase64Encoded}`;
+            }
+            console.warn(`[Image Gen] Imagen ${model} 응답에 이미지 없음`, data);
+            errorHistory.push(`${model}: 이미지 파트 없음`);
+        } catch (e) {
+            const msg = e.message || String(e);
+            console.error(`[Image Gen] Imagen ${model} 에러:`, msg);
+            errorHistory.push(`${model}: ${msg.slice(0, 80)}`);
         }
     }
 
