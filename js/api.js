@@ -981,29 +981,19 @@ async function extractSearchIntent(keyword, context) {
 4. 부정어 연산자로 가비지 배제 ("-fanart -cosplay -reddit")
 5. 공식 스크린샷이 필요하면 "official screenshot", "in-game" 한정자 사용
 
-[AI 이미지 생성 프롬프트(B) 지시사항 — 매우 중요]
-1. **순수 영어로만 작성** — 한국어 단어·고유명사 절대 포함 금지. 한국 게임이면 영어 일반 묘사로 변환 ("Genshin Impact" → "a fantasy open-world action RPG with anime-style heroes").
-2. **본문 문맥을 1순위로 활용** — [주변 교안 문맥]에서 등장하는 구체적 단어·예시·키워드(예: '코어 루프', 'MDA 프레임워크', '플레이테스트', '레벨 디자인', '밸런싱')를 시각적 은유로 변환. 키워드 자체보다 **본문이 무엇을 설명하고 있는지**를 그림으로 보여주는 것이 핵심.
-   - 본문이 "MDA 프레임워크"를 설명 중 → 'Mechanics(톱니바퀴)→Dynamics(흐르는 빛)→Aesthetics(플레이어 미소)'를 한 화면에 시각화
-   - 본문이 "밸런싱"을 다룸 → 양손에 각기 다른 무기 카드를 들고 저울처럼 비교하는 디자이너
-   - 본문이 "플레이테스트"를 다룸 → 디자이너가 클립보드에 메모하며 플레이어들의 반응을 관찰하는 장면
-3. **단순한 물체나 정적 포즈가 아니라 "지금 무언가 일어나고 있는 한 컷"** 을 만들 것.
-   - 좋은 예: "게임 기획 회의" → "Four game designers in a sleek modern studio mid-discussion, gesturing animatedly at a glowing holographic game world projected above the table. Concept sketches scattered around, neon-lit monitors in background, dynamic low-angle"
-   - 나쁜 예: "Four people standing around a table looking at papers" (정적·교과서적)
-4. **인물의 표정·행동·소품을 풍부하게 묘사** — 본문이 다루는 감정·과정을 표정과 자세로 표현.
-   - "재미의 본질" → "Two players leaning forward intensely toward a glowing arcade screen, controllers gripped tightly, faces lit by colorful game light, golden particle effects bursting from the screen"
-5. **스타일 — 반드시 다음 문구 포함**: "Dynamic AAA game studio concept art style, dramatic lighting with rim light and atmospheric haze, painterly digital illustration with bold brushwork, vibrant saturated palette (cobalt blue, electric purple, neon teal accents on deep indigo). Visual references: Riot Games splash art, Blizzard cinematic key art, Supercell promo illustrations". 절대 'flat illustration', 'clip art', 'isometric corporate diagram', 'educational textbook' 같은 정적·범용 키워드는 사용 금지.
-6. **게임 산업 친화 시각 요소**: 적절히 반영 — 모니터·UI 와이어프레임(빈 화면)·게임 컨트롤러·헤드셋·캐릭터 컨셉 시트·픽셀/네온 효과·HUD 도형·디자인 노트북·VR 헤드셋·홀로그램 디스플레이.
-7. **텍스트·글자 절대 금지**: 프롬프트에 반드시 다음 포함: "STRICTLY NO TEXT, no letters, no Korean characters, no hangul, no numbers, no typography, no labels, no UI text. Any screens/papers/signs must be blank or show only abstract glyphs."
-8. **구도 — 반드시 포함 (letterbox 단어 절대 금지)**: "Wide horizontal landscape composition, strictly 16:9 (1408x768), the composition fills the ENTIRE frame edge-to-edge with NO black bars, NO borders, NO film letterbox, diagonal energy lines, depth of field, hero subject fills the frame horizontally, dynamic camera angle (low-angle / over-shoulder / dutch tilt 권장), motion sense". 'letterbox', 'cinematic bars', 'film border' 단어는 절대 사용 금지 — AI가 검은 띠를 그려넣음.
-9. **저작권 금지**: 특정 게임·캐릭터 이름 직접 언급 금지 (대신 "fantasy warrior", "cyberpunk hacker", "anime-style adventurer" 등 일반 장르 묘사).
-10. **품질 키워드 필수**: "4K detail, editorial concept art polish, sharp focus, dramatic atmosphere, professional game industry conference quality".
+[AI 이미지 생성 프롬프트(B) 지시사항 — V7.0.0 단순 방식 준수]
+1. **간결하게** — 50~120 단어 이내. 과도한 스타일 키워드 나열 금지.
+2. **본문 문맥에서 시각 요소 추출** — 주변 교안의 구체적 키워드(예: '코어 루프', '플레이테스트', '레벨 디자인')를 한국어 그대로 사용해도 무방.
+   예: "게임 기획의 핵심 요소를 보여주는 다이어그램. 모니터 화면에 게임 청사진과 전략 계획, 중앙에 디자이너, 하단에 퍼즐 조각 (전투 시스템, 캐릭터 디자인, 성장 시스템, 세계관 & 스토리, 아트 스타일)"
+3. **한국어 라벨 허용** — 다이어그램이나 인포그래픽 형태일 경우 한국어 키워드 라벨을 자연스럽게 포함 (이미지 모델이 처리 가능한 짧은 단어만).
+4. **스타일은 단 한 줄**: "digital art style, clean, professional, illustrative diagram"
+5. **저작권 금지**: 특정 게임·캐릭터 이름 직접 언급은 피하고 "판타지 RPG", "캐주얼 모바일 게임" 같은 일반 묘사 권장.
 
 [출력 포맷 JSON — 반드시 준수]
 {
   "intent_type": "data_representation | visual_asset | concept_illustration | screenshot | diagram",
   "search_query": "최적화된 검색 쿼리",
-  "image_gen_prompt": "AI 이미지 생성 전용 영문 프롬프트 (위 지시사항 전부 반영, 80~200 단어)",
+  "image_gen_prompt": "AI 이미지 생성 프롬프트 (V7 단순 스타일, 한국어 라벨 가능, 50~120 단어, 끝에 'digital art style, clean, professional, 16:9 wide composition' 포함)",
   "reasoning": "이 결정 이유 (한국어 짧게, 40자 이내)"
 }`;
 
@@ -1390,15 +1380,15 @@ async function processImageTags(mod, markdown) {
                 let generatePrompt;
                 if (intent && intent.image_gen_prompt && intent.image_gen_prompt.length > 30) {
                     generatePrompt = intent.image_gen_prompt;
-                    console.log(`[AI Gen] 문맥 기반 전용 프롬프트 사용 (${generatePrompt.length}자): ${tag.keyword}`);
+                    console.log(`[AI Gen] 문맥 기반 프롬프트 사용 (${generatePrompt.length}자): ${tag.keyword}`);
                 } else if (intent && intent.reasoning) {
-                    // 게임 산업 다이내믹 스타일 (정적 educational illustration 금지)
-                    generatePrompt = `Cinematic concept art for a Korean game design lecture. Subject context: ${intent.reasoning}. Show this concept as a dynamic moment in a modern game studio setting — designers in mid-action, glowing holographic UI, dramatic rim lighting, painterly digital art with bold brushwork, vibrant cobalt-purple palette. AAA game studio splash-art quality, no text.`;
-                    console.log(`[AI Gen] 레거시 게임-스타일 프롬프트 사용: ${tag.keyword}`);
+                    // V7.0.0 단순 스타일 (한국어 라벨 허용)
+                    generatePrompt = `${intent.reasoning}, ${tag.keyword}, digital art style, clean, professional, illustrative diagram`;
+                    console.log(`[AI Gen] V7-style 레거시 프롬프트 사용: ${tag.keyword}`);
                 } else {
-                    // 키워드만 있을 때도 다이내믹·게임 친화 기본값
-                    generatePrompt = `Dynamic cinematic concept art illustrating "${tag.keyword}" in the context of professional game design. Show characters, designers or players mid-action with dramatic lighting and atmospheric haze. Painterly digital art style, vibrant cobalt-purple palette, AAA game studio quality (Riot/Blizzard splash-art aesthetic). No text, no letters.`;
-                    console.log(`[AI Gen] 기본 게임-스타일 프롬프트 사용: ${tag.keyword}`);
+                    // 키워드만 있을 때 V7 단순 방식
+                    generatePrompt = `${tag.keyword}, digital art style, clean, professional`;
+                    console.log(`[AI Gen] V7-style 기본 프롬프트 사용: ${tag.keyword}`);
                 }
                 b64Image = await generateImageAPI(generatePrompt);
                 vendorLabel = "AI 생성 이미지";
@@ -1616,25 +1606,11 @@ async function generateImageAPI(prompt) {
     const geminiModels = [...new Set(geminiOrder.filter(Boolean))];
     const errorHistory = [];
 
-    // 16:9 비율 + 게임 산업 전문가용 다이내믹 아트 스타일
-    //
-    // 변경 배경: 이전 'clean flat educational illustration'은 정적·범용·교과서스러운
-    // 결과를 만들어 게임 기획 교안과 어울리지 않음.
-    // 변경 후: AAA 게임 스튜디오 컨셉 아트 / 모던 게임 잡지 일러스트 스타일.
-    //         프로 강사가 PPT에서 사용할 만한 다이내믹·시네마틱·게임친화 비주얼.
-    const hasStyleHints = /\b(cinematic|concept art|game studio|dynamic|AAA|polished)\b/i.test(prompt);
-    // 주의: 'letterbox' 단어는 AI가 이미지에 검은 띠를 그리도록 유도하므로 절대 사용 금지
-    const ASPECT_SPEC = " ASPECT RATIO: Wide horizontal landscape, strictly 16:9 widescreen (1408x768). NEVER square, portrait, or vertical. The composition fills the ENTIRE frame edge-to-edge with NO black bars, NO borders, NO film letterbox, NO matte frames. Subject and background extend fully to all four edges.";
-    // 한국어가 깨진 글자로 그려지는 것을 강력히 방지
-    // (Imagen 4.0은 한글 렌더링이 불가능 → 깨진 글자가 나오므로 이미지에 텍스트 자체를 전혀 그리지 않도록)
-    const NO_TEXT_SPEC = " ABSOLUTELY ZERO TEXT IN THE IMAGE: This is a PURELY VISUAL illustration with NO written language whatsoever. No letters of any kind, no words, no Korean characters (한글), no hangul, no Chinese characters, no Japanese characters, no Latin alphabet text, no numbers, no typography, no labels, no UI text, no signs, no book titles, no chapter titles, no captions, no watermarks, no signatures. CRITICAL: any monitor screens must show ONLY abstract UI shapes (rectangles, circles, gradients, particle effects) — NEVER any text or recognizable Korean writing. Any papers, books, or documents in the scene must appear as blank pages with NO writing. If you are tempted to draw 'Korean-looking text' on a sign or screen — DO NOT — leave it blank or use abstract glyphs only. Repeat: NO TEXT, NO LETTERS, NO HANGUL, NO READABLE CHARACTERS ANYWHERE IN THE IMAGE.";
-    const GAME_STYLE_SPEC = " STYLE: Dynamic AAA game studio concept art quality, modern indie game magazine illustration aesthetic. Cinematic dramatic lighting with rim light and atmospheric haze. Painterly digital art with bold brushwork, vibrant saturated colors but harmonized palette (cobalt blue, electric purple, neon teal accents on deep indigo background). Strong sense of energy, motion, and storytelling. Diagonal compositions, leading lines, depth of field. Characters and objects feel alive and in-action — not stiff or posed. Visual references: Riot Games splash art, Blizzard cinematic key art, Supercell promotional illustrations, contemporary game UI/UX portfolio pieces. AVOID: flat vector art, clip-art look, generic educational textbook illustration, static stock-photo poses, isometric corporate diagrams.";
-    const QUALITY_SPEC = " QUALITY: 4K detail, editorial concept art polish, sharp focus on hero subject, dramatic depth and atmosphere, premium presentation slide hero image worthy of a professional game industry conference.";
-    const CONTEXT_SPEC = " CONTEXT: This image illustrates a concept for a Korean professional game design curriculum used by a star instructor. The viewer should immediately feel game-industry energy and understand the visual metaphor without any text.";
-    const styleSuffix = hasStyleHints
-        ? NO_TEXT_SPEC + QUALITY_SPEC + ASPECT_SPEC + CONTEXT_SPEC
-        : GAME_STYLE_SPEC + NO_TEXT_SPEC + QUALITY_SPEC + ASPECT_SPEC + CONTEXT_SPEC;
-    const enhancedPrompt = prompt + styleSuffix;
+    // V7.0.0 스타일 — 단순한 프롬프트가 가장 좋은 결과를 만듦
+    // 검증된 V7 원본: prompt + ", digital art style, clean, professional"
+    // 과도한 NO_TEXT/GAME_STYLE/QUALITY 지시는 오히려 모델 출력을 정적·이상하게 만듦
+    // 16:9는 Imagen의 aspectRatio 파라미터로 강제 (프롬프트가 아닌 API 레벨)
+    const enhancedPrompt = prompt + ", digital art style, clean, professional, illustrative diagram, 16:9 wide landscape composition for educational presentation slide";
 
     // Stage 1: Imagen 4.0 (predict 엔드포인트) — 16:9 aspectRatio 공식 파라미터 준수
     //          실제 테스트 결과: 1408x768 정확히 16:9 반환
@@ -2606,7 +2582,7 @@ function renderEditor(mod) {
 
                             <div class="w-px h-4 bg-gray-300 mx-1"></div>
 
-                            <button onclick="toggleViewMode()" id="view-mode-toggle" class="px-2 py-1 text-xs font-bold rounded border border-gray-200 text-gray-600 hover:text-gray-800 transition-all" title="강사/학생 뷰 전환">🎓 강사</button>
+                            <button onclick="toggleViewMode()" id="view-mode-toggle" class="px-3 py-1.5 text-xs font-bold rounded-lg border-2 border-purple-400 bg-purple-50 text-purple-700 hover:bg-purple-100 hover:border-purple-500 shadow-sm transition-all flex items-center gap-1" title="강사/학생/분할 뷰 전환 (3단 토글)">👨‍🏫 강사뷰</button>
 
                             <button onclick="insertImageSlot()" class="px-2 py-1 text-xs font-bold rounded border border-gray-200 text-gray-600 hover:text-gray-800 transition-all" title="이미지 슬롯 삽입">🖼️</button>
 
@@ -3595,18 +3571,33 @@ function toggleViewMode() {
     if (window.viewMode === 'instructor') {
         window.viewMode = 'student';
         document.body.classList.add('student-view');
+        document.body.classList.remove('instructor-view', 'split-view');
         destroySplitView();
-        if (btn) btn.innerHTML = '🎓 학생';
+        if (btn) {
+            btn.innerHTML = '🎓 학생뷰';
+            btn.className = 'px-3 py-1.5 text-xs font-bold rounded-lg border-2 border-emerald-400 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-500 shadow-sm transition-all flex items-center gap-1';
+            btn.title = '강사/학생/분할 뷰 전환 — 현재: 학생뷰 (강사 가이드 숨김)';
+        }
     } else if (window.viewMode === 'student') {
         window.viewMode = 'split';
-        document.body.classList.remove('student-view');
+        document.body.classList.remove('student-view', 'instructor-view');
+        document.body.classList.add('split-view');
         createSplitView();
-        if (btn) btn.innerHTML = '📖 분할';
+        if (btn) {
+            btn.innerHTML = '📖 분할뷰';
+            btn.className = 'px-3 py-1.5 text-xs font-bold rounded-lg border-2 border-amber-400 bg-amber-50 text-amber-700 hover:bg-amber-100 hover:border-amber-500 shadow-sm transition-all flex items-center gap-1';
+            btn.title = '강사/학생/분할 뷰 전환 — 현재: 분할뷰 (좌:학생 / 우:강사)';
+        }
     } else {
         window.viewMode = 'instructor';
-        document.body.classList.remove('student-view');
+        document.body.classList.remove('student-view', 'split-view');
+        document.body.classList.add('instructor-view');
         destroySplitView();
-        if (btn) btn.innerHTML = '🎓 강사';
+        if (btn) {
+            btn.innerHTML = '👨‍🏫 강사뷰';
+            btn.className = 'px-3 py-1.5 text-xs font-bold rounded-lg border-2 border-purple-400 bg-purple-50 text-purple-700 hover:bg-purple-100 hover:border-purple-500 shadow-sm transition-all flex items-center gap-1';
+            btn.title = '강사/학생/분할 뷰 전환 — 현재: 강사뷰 (강사 가이드 표시)';
+        }
     }
 }
 

@@ -580,6 +580,64 @@
             display: none !important;
         }
 
+        /* v8: 뷰 모드 인디케이터 — 우상단에 현재 뷰 표시 */
+        body.student-view .render-view-content::before,
+        body.student-view #render-view::before {
+            content: '🎓 학생뷰 활성 — 강사 가이드 자동 숨김';
+            display: block;
+            background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+            color: #065f46;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            margin-bottom: 16px;
+            border: 1px solid #6ee7b7;
+            text-align: center;
+            letter-spacing: 0.02em;
+        }
+        body:not(.student-view):not(.split-view) #render-view::before {
+            content: '👨‍🏫 강사뷰 활성 — 강사 가이드 표시 중';
+            display: block;
+            background: linear-gradient(135deg, #ede9fe 0%, #ddd6fe 100%);
+            color: #5b21b6;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            margin-bottom: 16px;
+            border: 1px solid #c4b5fd;
+            text-align: center;
+            letter-spacing: 0.02em;
+        }
+
+        /* v8: 강사뷰 강사-callout 시각 강조 — 학생뷰와 명확히 구분 (배경/테두리 강화, ::before는 기존 타입 라벨 유지) */
+        body:not(.student-view):not(.split-view) .instructor-callout {
+            position: relative;
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.08) 0%, rgba(124, 58, 237, 0.04) 100%) !important;
+            border: 2px solid rgba(139, 92, 246, 0.4) !important;
+            border-left: 6px solid #8b5cf6 !important;
+            border-radius: 10px !important;
+            padding: 18px 20px 16px 20px !important;
+            margin: 1.2rem 0 !important;
+            box-shadow: 0 3px 12px rgba(139, 92, 246, 0.15) !important;
+        }
+        /* 강사뷰 우측 상단에 작은 강사 전용 배지 (::after로 추가 — 기존 ::before와 충돌 X) */
+        body:not(.student-view):not(.split-view) .instructor-callout::after {
+            content: '👨‍🏫 강사 전용';
+            position: absolute;
+            top: -10px;
+            right: 12px;
+            font-size: 0.65rem;
+            font-weight: 800;
+            color: white;
+            background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+            padding: 3px 10px;
+            border-radius: 12px;
+            letter-spacing: 0.02em;
+            box-shadow: 0 2px 6px rgba(139, 92, 246, 0.4);
+        }
+
         /* v8: 분할 뷰 (좌: 수강생, 우: 강사) */
         .split-view-container {
             display: flex;
@@ -1777,20 +1835,20 @@
     <!-- Application Logic Modules -->
 
     <!-- Split Logic Modules -->
-    <script src="./js/panel-manager.js?v=118"></script>
-    <script src="./js/filename-convention.js?v=118"></script>
-    <script src="./js/data.js?v=118"></script>
-    <script src="./js/state.js?v=118"></script>
-    <script src="./js/api.js?v=118"></script>
-    <script src="./js/diagram.js?v=118"></script>
-    <script src="./js/ui.js?v=118"></script>
-    <script src="./js/convention.js?v=118"></script>
-    <script src="./js/tutorial.js?v=118"></script>
-    <script src="./js/merge.js?v=118"></script>
-    <script src="./js/tabs.js?v=118"></script>
-    <script src="./js/slide-export.js?v=118"></script>
-    <script src="./js/slide-editor.js?v=118"></script>
-    <script src="./js/export-modal.js?v=118"></script>
+    <script src="./js/panel-manager.js?v=119"></script>
+    <script src="./js/filename-convention.js?v=119"></script>
+    <script src="./js/data.js?v=119"></script>
+    <script src="./js/state.js?v=119"></script>
+    <script src="./js/api.js?v=119"></script>
+    <script src="./js/diagram.js?v=119"></script>
+    <script src="./js/ui.js?v=119"></script>
+    <script src="./js/convention.js?v=119"></script>
+    <script src="./js/tutorial.js?v=119"></script>
+    <script src="./js/merge.js?v=119"></script>
+    <script src="./js/tabs.js?v=119"></script>
+    <script src="./js/slide-export.js?v=119"></script>
+    <script src="./js/slide-editor.js?v=119"></script>
+    <script src="./js/export-modal.js?v=119"></script>
     <script>
         // 튜토리얼 자동 시작 (공지 팝업 → 튜토리얼 순서)
         window.addEventListener('load', () => {
@@ -1810,6 +1868,12 @@
         document.addEventListener('DOMContentLoaded', async () => {
 
             try {
+
+                // 기본 뷰 모드: 강사뷰 (학생뷰는 토글 시 활성화)
+                if (typeof window.viewMode === 'undefined') window.viewMode = 'instructor';
+                if (!document.body.classList.contains('student-view') && !document.body.classList.contains('split-view')) {
+                    document.body.classList.add('instructor-view');
+                }
 
                 // Initialize IndexedDB first
                 if (typeof DBManager !== 'undefined') {
