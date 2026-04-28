@@ -981,13 +981,17 @@ async function extractSearchIntent(keyword, context) {
 4. 부정어 연산자로 가비지 배제 ("-fanart -cosplay -reddit")
 5. 공식 스크린샷이 필요하면 "official screenshot", "in-game" 한정자 사용
 
-[AI 이미지 생성 프롬프트(B) 지시사항 — V7.0.0 단순 방식 준수]
-1. **간결하게** — 50~120 단어 이내. 과도한 스타일 키워드 나열 금지.
-2. **본문 문맥에서 시각 요소 추출** — 주변 교안의 구체적 키워드(예: '코어 루프', '플레이테스트', '레벨 디자인')를 한국어 그대로 사용해도 무방.
-   예: "게임 기획의 핵심 요소를 보여주는 다이어그램. 모니터 화면에 게임 청사진과 전략 계획, 중앙에 디자이너, 하단에 퍼즐 조각 (전투 시스템, 캐릭터 디자인, 성장 시스템, 세계관 & 스토리, 아트 스타일)"
-3. **한국어 라벨 허용** — 다이어그램이나 인포그래픽 형태일 경우 한국어 키워드 라벨을 자연스럽게 포함 (이미지 모델이 처리 가능한 짧은 단어만).
-4. **스타일은 단 한 줄**: "digital art style, clean, professional, illustrative diagram"
-5. **저작권 금지**: 특정 게임·캐릭터 이름 직접 언급은 피하고 "판타지 RPG", "캐주얼 모바일 게임" 같은 일반 묘사 권장.
+[AI 이미지 생성 프롬프트(B) 지시사항 — V7 단순 + 한글 환각 방지]
+중요 배경: 현재 사용 가능한 모든 Gemini/Imagen 이미지 모델은 한글을 깨진 글자로 렌더링.
+한글 정보는 HTML 캡션(이미지 아래)으로 별도 표시되므로, 이미지 안에는 한글 절대 금지.
+
+1. **순수 영어로만 작성** — 프롬프트에 한국어 단어·고유명사 절대 포함 금지. 한국 게임이면 일반 영어 묘사로 변환 ("Genshin Impact" → "fantasy open-world action RPG with anime heroes").
+2. **본문 문맥을 시각화** — 주변 단락의 핵심 개념을 영어 시각 요소로 묘사. 정적 포즈 X, 행위·소품·표정으로 표현.
+   - 좋은 예: "Game development pipeline infographic with 6 stages. Designers brainstorming with sticky notes (PLAN), wireframe sketches (PROTOTYPE), coding monitors (BUILD), QA testing controllers (TEST), rocket launch (SHIP), live dashboard with metrics (LIVE)."
+3. **영어 라벨만 허용** — 인포그래픽 단계 라벨 등은 짧은 영어 단어(PLAN/BUILD/TEST/SHIP/LIVE)로만. 한글 라벨은 절대 금지(깨진 글자 환각 방지).
+4. **반드시 끝에 추가**: "digital art style, clean, professional, illustrative infographic for educational slide, 16:9 wide composition. NO Korean characters, NO hangul, only short English labels if needed."
+5. **저작권 금지**: 특정 게임·캐릭터 이름 직접 언급 금지.
+6. **스타일 간결화**: 50~150단어 이내. 과도한 스타일 키워드 나열은 모델 혼동 유발.
 
 [출력 포맷 JSON — 반드시 준수]
 {
@@ -1378,17 +1382,18 @@ async function processImageTags(mod, markdown) {
                 // 2) 레거시 방식 (Context + Query) - 이전 응답 호환
                 // 3) 키워드 단독 - 최후 수단
                 let generatePrompt;
+                // 폴백 프롬프트는 모두 영어 (한글은 이미지에서 깨지므로)
+                // tag.keyword가 한국어면 일반 영어 묘사로 변환
+                const englishKeyword = /[가-힣]/.test(tag.keyword)
+                    ? `educational concept illustration related to: ${tag.keyword}` // 영어 wrapper
+                    : tag.keyword;
                 if (intent && intent.image_gen_prompt && intent.image_gen_prompt.length > 30) {
                     generatePrompt = intent.image_gen_prompt;
                     console.log(`[AI Gen] 문맥 기반 프롬프트 사용 (${generatePrompt.length}자): ${tag.keyword}`);
-                } else if (intent && intent.reasoning) {
-                    // V7.0.0 단순 스타일 (한국어 라벨 허용)
-                    generatePrompt = `${intent.reasoning}, ${tag.keyword}, digital art style, clean, professional, illustrative diagram`;
-                    console.log(`[AI Gen] V7-style 레거시 프롬프트 사용: ${tag.keyword}`);
                 } else {
-                    // 키워드만 있을 때 V7 단순 방식
-                    generatePrompt = `${tag.keyword}, digital art style, clean, professional`;
-                    console.log(`[AI Gen] V7-style 기본 프롬프트 사용: ${tag.keyword}`);
+                    // 영어 단순 폼 (한글 환각 방지)
+                    generatePrompt = `${englishKeyword}, digital art style, clean, professional, illustrative infographic, 16:9 wide composition. NO Korean text, NO hangul, only short English labels if needed.`;
+                    console.log(`[AI Gen] 영어 단순 프롬프트 사용: ${tag.keyword}`);
                 }
                 b64Image = await generateImageAPI(generatePrompt);
                 vendorLabel = "AI 생성 이미지";
@@ -1588,29 +1593,33 @@ async function callImagen(modelName, prompt) {
 }
 
 async function generateImageAPI(prompt) {
-    // 이미지 생성 폴백 체인 (16:9 정확도 우선)
-    //
-    // 검증 결과:
-    // - gemini-2.5-flash-image: 항상 1024x1024 정사각형 반환 (aspectRatio 지시 무시)
-    // - imagen-4.0-generate-001: aspectRatio="16:9" 파라미터 준수 → 1408x768 반환 ✅
-    //
-    // 따라서 Imagen 4.0을 Stage 1로 우선 호출하여 16:9 준수를 보장.
-    // Gemini는 Imagen 실패 시 폴백으로만 사용 (정사각형이라도 이미지 확보).
+    // [근본 분석 - 2026-04-28]
+    // V7과 같은 한글 렌더는 어떤 후속 모델도 불가능. 따라서 **품질·디자인 톤** 기준 우선순위 재정렬:
+    //   - imagen-4.0-generate-001: 1408x768 (16:9), 깨진 한글이라도 출력 (ASPECT 정확)
+    //   - gemini-2.5-flash-image: 1024x1024 (1:1), 한글 거부하고 영어 변환 (텍스트 깨끗)
+    // V7 결과물(첫 첨부 이미지)은 **인포그래픽 스타일 + 영어/한글 혼용 단어 라벨** 형태였음.
+    // 현재 가장 V7에 근접한 출력: imagen-4.0-generate-001 + 영어 라벨 강제 + 16:9 비율
+    // → Imagen 1순위, Gemini 폴백 유지
     const imagenModels = ['imagen-4.0-generate-001'];
     const geminiOrder = [
         IMAGE_MODEL,
         'gemini-2.5-flash-image',
-        'gemini-2.5-flash-image-preview',
-        'gemini-2.0-flash-exp-image-generation',
     ];
     const geminiModels = [...new Set(geminiOrder.filter(Boolean))];
     const errorHistory = [];
 
-    // V7.0.0 스타일 — 단순한 프롬프트가 가장 좋은 결과를 만듦
-    // 검증된 V7 원본: prompt + ", digital art style, clean, professional"
-    // 과도한 NO_TEXT/GAME_STYLE/QUALITY 지시는 오히려 모델 출력을 정적·이상하게 만듦
-    // 16:9는 Imagen의 aspectRatio 파라미터로 강제 (프롬프트가 아닌 API 레벨)
-    const enhancedPrompt = prompt + ", digital art style, clean, professional, illustrative diagram, 16:9 wide landscape composition for educational presentation slide";
+    // [근본 원인 - 2026-04-28 검증]
+    // V7은 gemini-3.1-flash-image-preview를 사용 → 한글 정확히 렌더 (현재 폐기됨, 404)
+    // 후속 모델 모두 한글 렌더 불가:
+    //   - gemini-2.5-flash-image: 한글 거부, 영어로 강제 변환 (1024x1024 정사각)
+    //   - imagen-4.0-generate-001: 깨진 한글 출력 ('STIEP3약 6수타TEPS')
+    //   - imagen-4.0-fast-generate-001: 프롬프트 무시
+    //   - imagen-4.0-ultra-generate-001: 깨진 한글
+    // 결론: 어떤 후속 모델도 V7 수준 한글 렌더 불가
+    //       → 이미지는 텍스트 없는 시각만, 한글 정보는 HTML 캡션(.image-caption)으로 정확 표시
+    //       → 깨진 한글 글자 환각이 절대 들어가지 않도록 강력 차단
+    const NO_TEXT_SPEC = " IMPORTANT: NO Korean characters or hangul anywhere in the image (the model cannot render Korean correctly and would produce garbled fake hangul). If labels are absolutely needed, use only short ENGLISH words (PLAN, BUILD, TEST, SHIP, LIVE, UI, etc.) — never Korean. Prefer pure visual storytelling using icons, shapes, characters, and props. NO garbled text, NO fake hangul, NO unreadable characters in the image.";
+    const enhancedPrompt = prompt + ", digital art style, clean, professional, illustrative infographic for educational presentation slide, 16:9 wide landscape composition." + NO_TEXT_SPEC;
 
     // Stage 1: Imagen 4.0 (predict 엔드포인트) — 16:9 aspectRatio 공식 파라미터 준수
     //          실제 테스트 결과: 1408x768 정확히 16:9 반환
