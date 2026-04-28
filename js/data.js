@@ -275,17 +275,21 @@ function sanitizeMarkdownContent(md) {
     });
     // AI가 표를 한 줄로 압축한 경우(파이프 사이에 줄바꿈 없음)도 감지·복구
     // 패턴: |헤더1|...|  |:--|...|  |행1|...|  |행2|...|
-    // 행 사이에는 `| |` (이중 파이프)나 추가 공백이 있을 수 있음
-    t = t.replace(/(\|[^\n]*\|)\s*(\|\s*:?[\-\s]+:?\s*(?:\|\s*:?[\-\s]+:?\s*)+\|)\s*((?:\|[^\n|]*)+\|)/g,
+    //
+    // 핵심 수정: 헤더 캡처를 그리디 [^\n]* 가 아닌 셀-단위 (?:\|[^\n|]+)+\| 패턴으로
+    //          → 헤더가 구분선까지 모두 삼키지 않도록 정확히 헤더 셀만 매칭
+    // 구분선 패턴: |:----|:----|:----| 형태 (셀당 3+ 대시)
+    // 셀 패턴: |[^\n|]+ (각 셀은 한 줄 + 파이프 없음)
+    t = t.replace(/((?:\|[^\n|]+)+\|)\s*(\|\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|)\s*((?:\|[^\n|]*)+\|)/g,
         (m, header, sep, body) => {
             // 헤더 셀 수 (구분선의 | 개수 - 1)
             const cols = (sep.match(/\|/g) || []).length - 1;
             if (cols < 2) return m;
+            // 헤더 셀 수도 동일해야 함 (그렇지 않으면 비표 텍스트로 간주)
+            const headerCols = (header.match(/\|/g) || []).length - 1;
+            if (headerCols !== cols) return m;
             // 본문 행 분리: `| |`(이중 파이프) 또는 행 끝 → 시작 패턴으로 split
-            // body 형태: |c1|c2|c3| |c4|c5|c6| |c7|c8|c9|
-            // 먼저 body를 |로 split하고, 빈 셀 제거 후 cols개씩 묶기
             const allCells = body.split('|').map(c => c.trim());
-            // 양 끝과 빈 문자열 제거 (행 사이 || 로 인한 빈 셀 포함)
             const cells = allCells.filter(c => c.length > 0);
             if (cells.length === 0) return m;
             // cols개씩 묶어 행 생성
