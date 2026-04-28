@@ -318,6 +318,21 @@ function sanitizeMermaidCode(code) {
     if (!code || typeof code !== 'string') return code || '';
     let out = String(code);
 
+    // 0) [최우선] HTML 태그·HTML 엔티티 완전 제거
+    //    AI가 ```mermaid 펜스 안에 <pre>/<code>/<div>/<br>/&lt;/등을 흘려 넣는 경우
+    //    Mermaid 파서는 '<' 를 TAGSTART 토큰으로 인식하여 'Parse error: got TAGSTART' 발생
+    //    예시 에러: ...J;P --> Q;    </pre></div>
+    out = out
+        // HTML 엔티티를 본래 문자로 복원 (lt/gt만은 빼기 — Mermaid가 < 를 못 처리)
+        .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'")
+        // 모든 HTML 태그 제거 (<br>, </pre>, </div>, <code>, <span>, <p> 등)
+        .replace(/<\/?[a-zA-Z][^>]*>/g, '')
+        // 남은 < > 도 제거 (Mermaid 파서 호환)
+        .replace(/&lt;|&gt;/g, '')
+        // 다중 공백·빈줄 정리
+        .replace(/[ \t]+$/gm, '')
+        .replace(/\n{3,}/g, '\n\n');
+
     // 1) 중복 괄호/따옴표/대괄호를 한국어 대시로 변환
     //    [라벨 (보조설명)]   → [라벨 - 보조설명]
     //    [라벨 (보조1, 보조2)] → [라벨 - 보조1, 보조2]
@@ -2854,10 +2869,24 @@ window.toggleEditorMode = function (mode) {
                         // 각 다이어그램을 개별적으로 렌더링 (하나 실패해도 나머지 계속)
                         for (let i = 0; i < unrendered.length; i++) {
                             const el = unrendered[i];
-                            let code = el.textContent.trim();
-                            // 안전망: 렌더 직전에도 한 번 더 sanitize (저장된 원본 콘텐츠 호환)
+                            // textContent 추출 시 HTML 태그가 흘러들어와 있을 수 있으므로
+                            // 강제로 한 번 더 텍스트만 추출 (innerText는 가시성 영향, textContent 사용)
+                            let code = (el.textContent || '').trim();
+                            // 안전망 1: HTML 태그·엔티티 완전 제거 (렌더 직전 최후 방어선)
+                            code = code
+                                .replace(/<\/?[a-zA-Z][^>]*>/g, '')
+                                .replace(/&lt;|&gt;|&amp;|&quot;|&#39;|&apos;/g, (m) => ({
+                                    '&lt;':'', '&gt;':'', '&amp;':'&', '&quot;':"'", '&#39;':"'", '&apos;':"'"
+                                }[m] || ''))
+                                .trim();
+                            // 안전망 2: sanitizeMermaidCode (괄호·노드 라벨 등 전체 정리)
                             if (typeof sanitizeMermaidCode === 'function') {
                                 code = sanitizeMermaidCode(code);
+                            }
+                            // 빈 코드면 렌더 스킵 (의미없는 에러 방지)
+                            if (!code || code.length < 8) {
+                                el.style.display = 'none';
+                                continue;
                             }
                             const id = 'mermaid-svg-' + Date.now() + '-' + i;
                             try {
