@@ -266,6 +266,40 @@ function sanitizeMarkdownContent(md) {
         return `\u0000FENCE${fences.length - 1}\u0000`;
     });
 
+    // 2-1) 마크다운 표 보호 + 정상화 (다른 단계가 표를 망가뜨리지 않도록)
+    //      AI가 표 행을 모두 한 줄에 출력하거나 헤더와 구분선 사이 빈줄을 빼는 경우 복구
+    const tables = [];
+    t = t.replace(/(^|\n)((?:\|[^\n]*\|\s*\n)(?:\s*\|[\s:|\-]+\|\s*\n)(?:\s*\|[^\n]*\|\s*\n?)*)/g, (match, prefix, tbl) => {
+        tables.push(tbl.trim());
+        return `${prefix}\u0000TABLE${tables.length - 1}\u0000\n`;
+    });
+    // AI가 표를 한 줄로 압축한 경우(파이프 사이에 줄바꿈 없음)도 감지·복구
+    // 패턴: |헤더1|...|  |:--|...|  |행1|...|  |행2|...|
+    // 행 사이에는 `| |` (이중 파이프)나 추가 공백이 있을 수 있음
+    t = t.replace(/(\|[^\n]*\|)\s*(\|\s*:?[\-\s]+:?\s*(?:\|\s*:?[\-\s]+:?\s*)+\|)\s*((?:\|[^\n|]*)+\|)/g,
+        (m, header, sep, body) => {
+            // 헤더 셀 수 (구분선의 | 개수 - 1)
+            const cols = (sep.match(/\|/g) || []).length - 1;
+            if (cols < 2) return m;
+            // 본문 행 분리: `| |`(이중 파이프) 또는 행 끝 → 시작 패턴으로 split
+            // body 형태: |c1|c2|c3| |c4|c5|c6| |c7|c8|c9|
+            // 먼저 body를 |로 split하고, 빈 셀 제거 후 cols개씩 묶기
+            const allCells = body.split('|').map(c => c.trim());
+            // 양 끝과 빈 문자열 제거 (행 사이 || 로 인한 빈 셀 포함)
+            const cells = allCells.filter(c => c.length > 0);
+            if (cells.length === 0) return m;
+            // cols개씩 묶어 행 생성
+            const rows = [];
+            for (let i = 0; i + cols <= cells.length; i += cols) {
+                const row = cells.slice(i, i + cols);
+                rows.push('| ' + row.join(' | ') + ' |');
+            }
+            if (rows.length === 0) return m;
+            const restored = header + '\n' + sep + '\n' + rows.join('\n');
+            tables.push(restored);
+            return `\u0000TABLE${tables.length - 1}\u0000`;
+        });
+
     // 3) 닫히지 않은 **볼드 수리: 한 줄 내에 ** 개수가 홀수면 마지막 ** 제거
     t = t.split('\n').map((line) => {
         if (line.trim().startsWith('```')) return line; // fence 마커 보존
@@ -301,6 +335,13 @@ function sanitizeMarkdownContent(md) {
     // 9) [강사 전용] 자동 래핑 — AI가 instructor-callout 밖에 출력한 강사 마커를 감지해 래핑
     //    학생뷰에서 ⏱️ 예상 소요 / 🎬 도입 멘트 등이 노출되는 문제 해결
     t = wrapOrphanedInstructorMarkers(t);
+
+    // 표 복원 (보호된 마크다운 표를 원래 위치에 복귀)
+    t = t.replace(/\u0000TABLE(\d+)\u0000/g, (_, i) => {
+        const tbl = tables[parseInt(i, 10)] || '';
+        // 표 앞뒤로 빈 줄 보장 (marked.js 표 인식 안정화)
+        return '\n\n' + tbl + '\n\n';
+    });
 
     // fence 복원
     t = t.replace(/\u0000FENCE(\d+)\u0000/g, (_, i) => fences[parseInt(i, 10)] || '');

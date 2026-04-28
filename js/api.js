@@ -1220,26 +1220,56 @@ async function searchPixabayAPI(query) {
 // --------------------------------------------------------
 
 
-// 이미지 태그가 누락된 경우 ## 헤딩마다 자동 주입 (LLM이 태그를 빠뜨려도 이미지 생성 보장)
+// 이미지 태그가 부족한 경우 헤딩마다 자동 주입 — 모든 단락이 이미지를 갖도록 보장
+// 전략:
+//   - LLM이 ## 단위로만 이미지 태그를 넣은 경우, ### 하위 섹션이 길면(>200자) 추가 주입
+//   - LLM이 이미지 태그를 전혀 안 넣었으면 ## + 긴 ### 모두에 주입
+//   - 단, 학습목표·교강사 가이드 섹션은 제외
 function autoInjectImageTags(markdown) {
     if (!markdown || typeof markdown !== 'string') return markdown;
-    // 이미 이미지 태그가 하나라도 있으면 그대로 반환 (LLM이 배치한 위치 신뢰)
-    if (/<!--\s*\[IMG:/.test(markdown)) return markdown;
 
     const ICON_RE = /[■▣📝⚙️🎮💡✅⚠️🧠🏆🚀🔬🎓📘📗📙📕🖥️🧩🎯🔍]/g;
-    let injected = 0;
-    const out = markdown.replace(/^(##\s+[^\n]+)$/gm, (m, heading) => {
-        const title = heading.replace(/^##\s+/, '').replace(ICON_RE, '').replace(/^\[|\]$/g, '').trim();
-        // 학습 목표 섹션은 이미지 태그 제외
-        if (/학습\s*목표|Objectives?/i.test(title)) return m;
-        if (!title) return m;
-        injected++;
-        return `${m}\n\n<!-- [IMG: "${title}"] -->\n`;
-    });
-    if (injected > 0) {
-        console.log(`[autoInjectImageTags] LLM이 이미지 태그를 누락함 → ${injected}개 자동 주입`);
+    const SKIP_RE = /학습\s*목표|Objectives?|교강사\s*가이드|강사\s*전용/i;
+
+    // 섹션을 헤딩 단위로 분리하여 각 섹션의 길이·이미지 보유 여부 점검
+    const lines = markdown.split('\n');
+    const sections = []; // { startLine, level, title, content, hasImage }
+    let cur = null;
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const m = line.match(/^(#{2,3})\s+(.+)$/);
+        if (m) {
+            if (cur) sections.push(cur);
+            const title = m[2].replace(ICON_RE, '').replace(/^\[|\]$/g, '').trim();
+            cur = { startLine: i, level: m[1].length, title, content: '', hasImage: false };
+        } else if (cur) {
+            cur.content += line + '\n';
+            if (/<!--\s*\[IMG:/.test(line)) cur.hasImage = true;
+        }
     }
-    return out;
+    if (cur) sections.push(cur);
+
+    let injected = 0;
+    const linesCopy = lines.slice();
+    // 뒤에서부터 삽입(오프셋 변동 방지)
+    for (let s = sections.length - 1; s >= 0; s--) {
+        const sec = sections[s];
+        if (sec.hasImage) continue;
+        if (SKIP_RE.test(sec.title)) continue;
+        if (!sec.title) continue;
+        // ## 섹션은 항상 주입, ### 섹션은 본문이 충분히 길어야 주입(200자 이상)
+        const contentLength = sec.content.replace(/\s+/g, '').length;
+        if (sec.level === 3 && contentLength < 200) continue;
+        // 헤딩 라인 직후에 IMG 태그 삽입
+        const insertAt = sec.startLine + 1;
+        linesCopy.splice(insertAt, 0, '', `<!-- [IMG: "${sec.title}"] -->`, '');
+        injected++;
+    }
+
+    if (injected > 0) {
+        console.log(`[autoInjectImageTags] 누락된 단락에 이미지 태그 ${injected}개 자동 주입 (## + 긴 ### 포함)`);
+    }
+    return linesCopy.join('\n');
 }
 window.autoInjectImageTags = autoInjectImageTags;
 
@@ -1388,7 +1418,12 @@ async function processImageTags(mod, markdown) {
                 else if (vendorLabel.includes('Pixabay') || vendorLabel.includes('스톡')) vendorIcon = 'ph-camera';
                 else if (vendorLabel.includes('캐시')) vendorIcon = 'ph-images';
 
-                const imgHTML = `\n<div class="image-wrapper"><img src="local:${imgId}" alt="${safeKoreanDesc}" class="rounded-lg border-2 border-accent/30 shadow-md max-w-full"><button class="image-regenerate-btn px-3 py-1.5 text-xs text-white font-bold rounded flex items-center gap-1 border border-accent/50 hover:bg-accent transition-colors" onclick="promptRegenerateImage(this, '${tag.keyword}', '${imgId}')"><i class="ph-bold ph-arrows-clockwise"></i> 다시 찾기</button></div>\n`;
+                // 한글 캡션 텍스트 (이미지 안에 깨진 한글이 그려지는 대신 HTML로 정확히 표시)
+                // tag.keyword가 영어면 intent.reasoning(한글) 또는 fallback
+                const captionText = (intent && intent.reasoning && /[가-힣]/.test(intent.reasoning))
+                    ? intent.reasoning.replace(/'/g, "\\'").replace(/"/g, '&quot;').slice(0, 80)
+                    : (/[가-힣]/.test(tag.keyword) ? tag.keyword.replace(/'/g, "\\'").replace(/"/g, '&quot;').slice(0, 80) : safeKoreanDesc.slice(0, 80));
+                const imgHTML = `\n<div class="image-wrapper"><img src="local:${imgId}" alt="${safeKoreanDesc}" class="rounded-lg border-2 border-accent/30 shadow-md max-w-full"><button class="image-regenerate-btn px-3 py-1.5 text-xs text-white font-bold rounded flex items-center gap-1 border border-accent/50 hover:bg-accent transition-colors" onclick="promptRegenerateImage(this, '${tag.keyword}', '${imgId}')"><i class="ph-bold ph-arrows-clockwise"></i> 다시 찾기</button><div class="image-caption" style="margin-top:8px;text-align:center;font-size:0.85rem;color:#6b7280;font-style:italic;font-weight:500;letter-spacing:-0.01em;line-height:1.4;max-width:100%;">${captionText}</div></div>\n`;
 
                 successCount++;
                 console.log(`[Image Pipeline] (${index + 1}/${filteredTags.length}) ✅ ${tag.keyword} → ${vendorLabel}`);
@@ -1590,7 +1625,9 @@ async function generateImageAPI(prompt) {
     const hasStyleHints = /\b(cinematic|concept art|game studio|dynamic|AAA|polished)\b/i.test(prompt);
     // 주의: 'letterbox' 단어는 AI가 이미지에 검은 띠를 그리도록 유도하므로 절대 사용 금지
     const ASPECT_SPEC = " ASPECT RATIO: Wide horizontal landscape, strictly 16:9 widescreen (1408x768). NEVER square, portrait, or vertical. The composition fills the ENTIRE frame edge-to-edge with NO black bars, NO borders, NO film letterbox, NO matte frames. Subject and background extend fully to all four edges.";
-    const NO_TEXT_SPEC = " STRICTLY NO TEXT: no letters, no words, no Korean characters, no hangul, no numbers, no typography, no labels, no UI text, no signs, no book titles, no watermarks, no signatures. If screens/papers/signs appear, they must be blank or show only abstract glyphs and icons — NEVER readable letters.";
+    // 한국어가 깨진 글자로 그려지는 것을 강력히 방지
+    // (Imagen 4.0은 한글 렌더링이 불가능 → 깨진 글자가 나오므로 이미지에 텍스트 자체를 전혀 그리지 않도록)
+    const NO_TEXT_SPEC = " ABSOLUTELY ZERO TEXT IN THE IMAGE: This is a PURELY VISUAL illustration with NO written language whatsoever. No letters of any kind, no words, no Korean characters (한글), no hangul, no Chinese characters, no Japanese characters, no Latin alphabet text, no numbers, no typography, no labels, no UI text, no signs, no book titles, no chapter titles, no captions, no watermarks, no signatures. CRITICAL: any monitor screens must show ONLY abstract UI shapes (rectangles, circles, gradients, particle effects) — NEVER any text or recognizable Korean writing. Any papers, books, or documents in the scene must appear as blank pages with NO writing. If you are tempted to draw 'Korean-looking text' on a sign or screen — DO NOT — leave it blank or use abstract glyphs only. Repeat: NO TEXT, NO LETTERS, NO HANGUL, NO READABLE CHARACTERS ANYWHERE IN THE IMAGE.";
     const GAME_STYLE_SPEC = " STYLE: Dynamic AAA game studio concept art quality, modern indie game magazine illustration aesthetic. Cinematic dramatic lighting with rim light and atmospheric haze. Painterly digital art with bold brushwork, vibrant saturated colors but harmonized palette (cobalt blue, electric purple, neon teal accents on deep indigo background). Strong sense of energy, motion, and storytelling. Diagonal compositions, leading lines, depth of field. Characters and objects feel alive and in-action — not stiff or posed. Visual references: Riot Games splash art, Blizzard cinematic key art, Supercell promotional illustrations, contemporary game UI/UX portfolio pieces. AVOID: flat vector art, clip-art look, generic educational textbook illustration, static stock-photo poses, isometric corporate diagrams.";
     const QUALITY_SPEC = " QUALITY: 4K detail, editorial concept art polish, sharp focus on hero subject, dramatic depth and atmosphere, premium presentation slide hero image worthy of a professional game industry conference.";
     const CONTEXT_SPEC = " CONTEXT: This image illustrates a concept for a Korean professional game design curriculum used by a star instructor. The viewer should immediately feel game-industry energy and understand the visual metaphor without any text.";
@@ -3118,7 +3155,8 @@ window.executeAICommand = async function () {
                 const imgId = 'img_' + Date.now() + Math.floor(Math.random() * 1000);
                 mod.images[imgId] = b64;
 
-                const imgTag = `\n<div class="image-wrapper"><img src="local:${imgId}" alt="${command}" class="rounded-lg border-2 border-accent/30 shadow-md max-w-full"><span class="absolute bottom-3 left-3 bg-black/80 text-white text-[0.6rem] px-2 py-1 rounded border border-white/20 flex items-center gap-1 pointer-events-none"><i class="ph-fill ph-sparkle text-accent"></i> AI 생성 이미지</span><button class="image-regenerate-btn px-3 py-1.5 text-xs text-white font-bold rounded flex items-center gap-1 border border-accent/50 hover:bg-accent transition-colors" onclick="promptRegenerateImage(this, '${command}', '${imgId}')"><i class="ph-bold ph-arrows-clockwise"></i> 다시 생성</button></div>\n`;
+                const safeCmd = String(command).replace(/'/g, "\\'").replace(/"/g, '&quot;').slice(0, 80);
+                const imgTag = `\n<div class="image-wrapper"><img src="local:${imgId}" alt="${command}" class="rounded-lg border-2 border-accent/30 shadow-md max-w-full"><span class="absolute bottom-3 left-3 bg-black/80 text-white text-[0.6rem] px-2 py-1 rounded border border-white/20 flex items-center gap-1 pointer-events-none"><i class="ph-fill ph-sparkle text-accent"></i> AI 생성 이미지</span><button class="image-regenerate-btn px-3 py-1.5 text-xs text-white font-bold rounded flex items-center gap-1 border border-accent/50 hover:bg-accent transition-colors" onclick="promptRegenerateImage(this, '${command}', '${imgId}')"><i class="ph-bold ph-arrows-clockwise"></i> 다시 생성</button><div class="image-caption" style="margin-top:8px;text-align:center;font-size:0.85rem;color:#6b7280;font-style:italic;font-weight:500;letter-spacing:-0.01em;line-height:1.4;max-width:100%;">${safeCmd}</div></div>\n`;
 
                 const text = rawView.value;
                 // 보기 모드에서 진입한 경우 커서가 0이므로 문서 끝에 삽입

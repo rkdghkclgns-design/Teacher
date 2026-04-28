@@ -432,6 +432,27 @@
             margin: 1rem 0;
         }
 
+        /* 한글 캡션 — 이미지 안의 깨진 글자 대신 정확한 한글을 HTML로 표시 */
+        .image-wrapper .image-caption {
+            display: block;
+            margin-top: 8px;
+            padding: 6px 12px;
+            text-align: center;
+            font-size: 0.85rem;
+            color: #6b7280;
+            font-style: italic;
+            font-weight: 500;
+            letter-spacing: -0.01em;
+            line-height: 1.4;
+            background: rgba(124, 91, 245, 0.04);
+            border-left: 3px solid rgba(124, 91, 245, 0.3);
+            border-radius: 4px;
+        }
+        body.student-view .image-wrapper .image-caption,
+        .markdown-body .image-wrapper .image-caption {
+            color: #4a4a5a;
+        }
+
         .image-regenerate-btn {
 
             position: absolute;
@@ -1756,20 +1777,20 @@
     <!-- Application Logic Modules -->
 
     <!-- Split Logic Modules -->
-    <script src="./js/panel-manager.js?v=117"></script>
-    <script src="./js/filename-convention.js?v=117"></script>
-    <script src="./js/data.js?v=117"></script>
-    <script src="./js/state.js?v=117"></script>
-    <script src="./js/api.js?v=117"></script>
-    <script src="./js/diagram.js?v=117"></script>
-    <script src="./js/ui.js?v=117"></script>
-    <script src="./js/convention.js?v=117"></script>
-    <script src="./js/tutorial.js?v=117"></script>
-    <script src="./js/merge.js?v=117"></script>
-    <script src="./js/tabs.js?v=117"></script>
-    <script src="./js/slide-export.js?v=117"></script>
-    <script src="./js/slide-editor.js?v=117"></script>
-    <script src="./js/export-modal.js?v=117"></script>
+    <script src="./js/panel-manager.js?v=118"></script>
+    <script src="./js/filename-convention.js?v=118"></script>
+    <script src="./js/data.js?v=118"></script>
+    <script src="./js/state.js?v=118"></script>
+    <script src="./js/api.js?v=118"></script>
+    <script src="./js/diagram.js?v=118"></script>
+    <script src="./js/ui.js?v=118"></script>
+    <script src="./js/convention.js?v=118"></script>
+    <script src="./js/tutorial.js?v=118"></script>
+    <script src="./js/merge.js?v=118"></script>
+    <script src="./js/tabs.js?v=118"></script>
+    <script src="./js/slide-export.js?v=118"></script>
+    <script src="./js/slide-editor.js?v=118"></script>
+    <script src="./js/export-modal.js?v=118"></script>
     <script>
         // 튜토리얼 자동 시작 (공지 팝업 → 튜토리얼 순서)
         window.addEventListener('load', () => {
