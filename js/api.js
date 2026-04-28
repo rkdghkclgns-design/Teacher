@@ -981,15 +981,21 @@ async function extractSearchIntent(keyword, context) {
 4. 부정어 연산자로 가비지 배제 ("-fanart -cosplay -reddit")
 5. 공식 스크린샷이 필요하면 "official screenshot", "in-game" 한정자 사용
 
-[AI 이미지 생성 프롬프트(B) 지시사항 — V7.0.0 단순 방식]
+[AI 이미지 생성 프롬프트(B) 지시사항 — V7.0.0 단순 방식 + 한글 정확도]
 사용 모델: gemini-3.1-flash-image-preview (V7과 동일, 한국어 라벨 시도 가능)
+중요: 모델은 한글 글자를 종종 깨진 형태로 렌더하므로, **짧고 일반적인 한국어 단어**만 사용하고
+       정확한 글자를 모델이 따라쓸 수 있도록 프롬프트 첫머리에 **라벨 리스트**를 명시.
 
-1. **간결하게** — 50~150단어 이내. 과도한 스타일 키워드 나열은 모델 혼동 유발.
-2. **본문 문맥을 시각화** — 주변 교안의 구체 개념·키워드를 시각 요소로 묘사. 한국어 키워드 그대로 사용 가능 (V7 모델은 한글 라벨 시도 가능).
-   - 예시: "게임 개발 단계별 기획자의 책임 인포그래픽. 6단계: 기획, 프로토타입, 제작, 테스트, 출시, 라이브 서비스. 각 단계별 디자이너의 모습과 도구"
-3. **다이어그램·인포그래픽 형태 권장** — 게임 기획 교안에 적합한 단계도·플로우차트·카드형 레이아웃.
-4. **반드시 끝에 추가**: "digital art style, clean, professional"
-5. **저작권 금지**: 특정 게임·캐릭터 이름 직접 언급 금지.
+1. **첫머리에 한국어 라벨 리스트 명시** — 이미지에 들어갈 정확한 한국어 단어를 따옴표로 묶어 나열.
+   - 예: 'Korean labels (use these EXACT spellings): "기획", "제작", "테스트", "출시"'
+   - 가능하면 1~3음절 짧은 단어만 사용 (긴 단어일수록 모델이 자모를 깨뜨림)
+   - 동일 단어를 반복하더라도 정확히 따라쓰도록 강조
+2. **간결하게** — 60~180단어 이내. 과도한 스타일 키워드 나열은 모델 혼동 유발.
+3. **본문 문맥을 시각화** — 주변 교안의 구체 개념·키워드를 시각 요소로 묘사. 핵심 한국어 단어는 라벨 리스트와 동일하게 표기.
+   - 예시: 'Korean labels: "기획", "제작", "테스트", "출시", "라이브". A 5-stage game development pipeline infographic showing each phase with designers at work, monitors, controllers, rocket launch icons.'
+4. **다이어그램·인포그래픽 형태 권장** — 게임 기획 교안에 적합한 단계도·플로우차트·카드형 레이아웃.
+5. **반드시 끝에 추가**: "digital art style, clean, professional. Render Korean text EXACTLY as written in the label list above with correct hangul characters."
+6. **저작권 금지**: 특정 게임·캐릭터 이름 직접 언급 금지.
 
 [출력 포맷 JSON — 반드시 준수]
 {
@@ -1380,14 +1386,22 @@ async function processImageTags(mod, markdown) {
                 // 2) 레거시 방식 (Context + Query) - 이전 응답 호환
                 // 3) 키워드 단독 - 최후 수단
                 let generatePrompt;
-                // V7과 동일: 단순 프롬프트 (한국어 키워드 그대로 사용 가능)
+                // V7 단순 프롬프트 + 한글 정확도 레퍼런스 (라벨 리스트)
                 if (intent && intent.image_gen_prompt && intent.image_gen_prompt.length > 30) {
                     generatePrompt = intent.image_gen_prompt;
                     console.log(`[AI Gen] 문맥 기반 프롬프트 사용 (${generatePrompt.length}자): ${tag.keyword}`);
                 } else {
-                    // V7 단순 폼: 키워드 + 단순 스타일 (한글 라벨 시도 허용)
-                    generatePrompt = `${tag.keyword}, digital art style, clean, professional`;
-                    console.log(`[AI Gen] V7 단순 프롬프트 사용: ${tag.keyword}`);
+                    // 한글 키워드면 라벨 리스트 + 정확한 글자 강조
+                    const hasKorean = /[가-힣]/.test(tag.keyword);
+                    if (hasKorean) {
+                        // 키워드를 짧은 단어들로 분리하여 라벨 리스트 형성
+                        const labels = tag.keyword.split(/[\s,&·/]+/).filter(s => /[가-힣]/.test(s)).slice(0, 6);
+                        const labelList = labels.map(l => `"${l}"`).join(', ');
+                        generatePrompt = `Korean labels (render with EXACT hangul spelling): ${labelList}. ${tag.keyword}, digital art style, clean, professional. Render Korean text exactly as written in the label list with correct hangul characters.`;
+                    } else {
+                        generatePrompt = `${tag.keyword}, digital art style, clean, professional`;
+                    }
+                    console.log(`[AI Gen] V7+한글-레퍼런스 프롬프트 사용: ${tag.keyword}`);
                 }
                 b64Image = await generateImageAPI(generatePrompt);
                 vendorLabel = "AI 생성 이미지";
