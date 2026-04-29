@@ -1227,7 +1227,12 @@ function autoInjectImageTags(markdown) {
     if (!markdown || typeof markdown !== 'string') return markdown;
 
     const ICON_RE = /[■▣📝⚙️🎮💡✅⚠️🧠🏆🚀🔬🎓📘📗📙📕🖥️🧩🎯🔍]/g;
-    const SKIP_RE = /학습\s*목표|Objectives?|교강사\s*가이드|강사\s*전용/i;
+    // 이미지 자동 주입 제외 섹션
+    // - 학습 목표·Objectives: 컨벤션 규칙 (목표는 텍스트 위주)
+    // - 교강사 가이드·강사 전용: 강사 노트 영역
+    // - 개요·Overview: 차시 시작 안내문 (이미지 불필요, 사용자 요청)
+    // - 요약·정리·마무리·Summary: 마무리 섹션도 보통 이미지 불요
+    const SKIP_RE = /학습\s*목표|Objectives?|교강사\s*가이드|강사\s*전용|개요|Overview|요약|정리|마무리|Summary/i;
 
     // 섹션을 헤딩 단위로 분리하여 각 섹션의 길이·이미지 보유 여부 점검
     const lines = markdown.split('\n');
@@ -1291,16 +1296,19 @@ async function processImageTags(mod, markdown) {
 
     if (tagsToReplace.length === 0) return result;
 
-    // v7.2: 학습 목표(Objectives) 섹션 내 이미지 태그 제외
+    // 학습 목표·개요·요약 등 텍스트 위주 섹션의 이미지 태그 제외
+    const SKIP_SECTIONS = /학습\s*목표|objectives?|개요|overview|요약|정리|마무리|summary/i;
     const filteredTags = tagsToReplace.filter(tag => {
         const pos = markdown.indexOf(tag.fullMatch);
         const beforeText = markdown.substring(Math.max(0, pos - 500), pos);
-        // 학습 목표 섹션인지 확인 (## 학습 목표 ~ 다음 ## 사이)
+        // 가장 가까운 ## 헤딩 찾기
         const lastH2 = beforeText.lastIndexOf('## ');
-        if (lastH2 >= 0) {
-            const sectionTitle = beforeText.substring(lastH2, lastH2 + 30).toLowerCase();
-            if (sectionTitle.includes('학습 목표') || sectionTitle.includes('objectives')) {
-                console.log(`[Image] 학습 목표 섹션 이미지 태그 건너뜀: ${tag.keyword}`);
+        const lastH1 = beforeText.lastIndexOf('# ');
+        const lastHeading = Math.max(lastH2, lastH1);
+        if (lastHeading >= 0) {
+            const sectionTitle = beforeText.substring(lastHeading, lastHeading + 60);
+            if (SKIP_SECTIONS.test(sectionTitle)) {
+                console.log(`[Image] 텍스트 위주 섹션 이미지 태그 건너뜀: ${sectionTitle.split('\n')[0]} → ${tag.keyword}`);
                 return false;
             }
         }
@@ -1386,22 +1394,23 @@ async function processImageTags(mod, markdown) {
                 // 2) 레거시 방식 (Context + Query) - 이전 응답 호환
                 // 3) 키워드 단독 - 최후 수단
                 let generatePrompt;
-                // V7 단순 프롬프트 + 한글 정확도 레퍼런스 (라벨 리스트)
+                // V7 단순 프롬프트 — 키워드는 통째로 사용 (토큰화 → 개별 라벨 카드 생성 방지)
+                // 이전 버그: '5. 핵심 내용: 최신 게임 업계 트렌드 분석' 같은 섹션 제목을
+                //          공백으로 split → '핵심', '내용:', '최신', '게임', '업계', '트렌드' 6개
+                //          라벨 카드로 그려져 본문 무관 이미지 생성됨.
+                // 수정: 키워드는 한 덩어리 개념으로 묘사 (개별 라벨 X)
                 if (intent && intent.image_gen_prompt && intent.image_gen_prompt.length > 30) {
                     generatePrompt = intent.image_gen_prompt;
                     console.log(`[AI Gen] 문맥 기반 프롬프트 사용 (${generatePrompt.length}자): ${tag.keyword}`);
                 } else {
-                    // 한글 키워드면 라벨 리스트 + 정확한 글자 강조
-                    const hasKorean = /[가-힣]/.test(tag.keyword);
-                    if (hasKorean) {
-                        // 키워드를 짧은 단어들로 분리하여 라벨 리스트 형성
-                        const labels = tag.keyword.split(/[\s,&·/]+/).filter(s => /[가-힣]/.test(s)).slice(0, 6);
-                        const labelList = labels.map(l => `"${l}"`).join(', ');
-                        generatePrompt = `Korean labels (render with EXACT hangul spelling): ${labelList}. ${tag.keyword}, digital art style, clean, professional. Render Korean text exactly as written in the label list with correct hangul characters.`;
-                    } else {
-                        generatePrompt = `${tag.keyword}, digital art style, clean, professional`;
-                    }
-                    console.log(`[AI Gen] V7+한글-레퍼런스 프롬프트 사용: ${tag.keyword}`);
+                    // 키워드에서 번호·불필요한 기호 제거하여 자연스러운 주제로 변환
+                    const cleanedKeyword = tag.keyword
+                        .replace(/^\d+[.\)]\s*/, '')      // 앞쪽 '5.' 같은 번호 제거
+                        .replace(/^[#*\-]+\s*/, '')       // 마크다운 마커 제거
+                        .replace(/[:：]\s*$/, '')         // 끝의 콜론 제거
+                        .trim();
+                    generatePrompt = `${cleanedKeyword} 를 표현하는 교육용 일러스트, digital art style, clean, professional`;
+                    console.log(`[AI Gen] V7 단순 프롬프트 사용 (정제된 키워드): ${cleanedKeyword}`);
                 }
                 b64Image = await generateImageAPI(generatePrompt);
                 vendorLabel = "AI 생성 이미지";

@@ -297,36 +297,56 @@ function sanitizeMarkdownContent(md) {
         tables.push(tbl.trim());
         return `${prefix}\u0000TABLE${tables.length - 1}\u0000\n`;
     });
-    // AI가 표를 한 줄로 압축한 경우(파이프 사이에 줄바꿈 없음)도 감지·복구
-    // 패턴: |헤더1|...|  |:--|...|  |행1|...|  |행2|...|
-    //
-    // 핵심 수정: 헤더 캡처를 그리디 [^\n]* 가 아닌 셀-단위 (?:\|[^\n|]+)+\| 패턴으로
-    //          → 헤더가 구분선까지 모두 삼키지 않도록 정확히 헤더 셀만 매칭
-    // 구분선 패턴: |:----|:----|:----| 형태 (셀당 3+ 대시)
-    // 셀 패턴: |[^\n|]+ (각 셀은 한 줄 + 파이프 없음)
-    t = t.replace(/((?:\|[^\n|]+)+\|)\s*(\|\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|)\s*((?:\|[^\n|]*)+\|)/g,
-        (m, header, sep, body) => {
-            // 헤더 셀 수 (구분선의 | 개수 - 1)
+    // AI가 표를 한 줄로 압축하거나 셀 내부에 빈 줄/줄바꿈을 끼워넣은 경우 모두 복구
+    // 핵심 전략:
+    //   1) 헤더(셀-단위 매칭) + 구분선(|:---|...|)을 먼저 발견
+    //   2) 구분선 직후부터 표 끝(다음 헤딩 또는 3+ 빈 줄)까지를 본문으로 추출
+    //   3) 본문의 모든 \n 을 공백으로 치환 → 셀 사이 | 로만 split
+    //   4) 빈 셀 제거 후 cols개씩 묶어 깔끔한 행으로 재구성
+    {
+        const tableHeaderSepRe = /((?:\|[^\n|]+){2,}\|)[ \t]*\n?[ \t]*(\|(?:[ \t]*:?-{3,}:?[ \t]*\|){2,})/g;
+        let lastIndex = 0;
+        const segments = [];
+        let m;
+        while ((m = tableHeaderSepRe.exec(t)) !== null) {
+            const tableStart = m.index;
+            const header = m[1];
+            const sep = m[2];
             const cols = (sep.match(/\|/g) || []).length - 1;
-            if (cols < 2) return m;
-            // 헤더 셀 수도 동일해야 함 (그렇지 않으면 비표 텍스트로 간주)
             const headerCols = (header.match(/\|/g) || []).length - 1;
-            if (headerCols !== cols) return m;
-            // 본문 행 분리: `| |`(이중 파이프) 또는 행 끝 → 시작 패턴으로 split
-            const allCells = body.split('|').map(c => c.trim());
-            const cells = allCells.filter(c => c.length > 0);
-            if (cells.length === 0) return m;
-            // cols개씩 묶어 행 생성
+            if (cols < 2 || headerCols !== cols) continue;
+
+            // 본문 끝 감지 (헤딩 또는 3+ 빈 줄)
+            const bodyStart = tableStart + m[0].length;
+            const endSearch = t.substring(bodyStart);
+            const endRe = /\n[ \t]*#{1,4}\s|\n\s*\n\s*\n/;
+            const endMatch = endSearch.match(endRe);
+            const bodyLen = endMatch ? endMatch.index : endSearch.length;
+            const body = endSearch.substring(0, bodyLen);
+
+            // 본문 셀 추출 (줄바꿈은 공백으로 치환하여 cell 단위로 분리)
+            const flat = body.replace(/\s*\n\s*/g, ' ');
+            const cells = flat.split('|').map(c => c.replace(/\s+/g, ' ').trim()).filter(c => c.length > 0);
+            if (cells.length === 0) continue;
             const rows = [];
             for (let i = 0; i + cols <= cells.length; i += cols) {
-                const row = cells.slice(i, i + cols);
-                rows.push('| ' + row.join(' | ') + ' |');
+                rows.push('| ' + cells.slice(i, i + cols).join(' | ') + ' |');
             }
-            if (rows.length === 0) return m;
-            const restored = header + '\n' + sep + '\n' + rows.join('\n');
+            if (rows.length === 0) continue;
+
+            // 표 이전 텍스트 + placeholder + 표 이후 위치 갱신
+            segments.push(t.substring(lastIndex, tableStart));
+            const restored = header.trim() + '\n' + sep.trim() + '\n' + rows.join('\n');
             tables.push(restored);
-            return `\u0000TABLE${tables.length - 1}\u0000`;
-        });
+            segments.push(`\u0000TABLE${tables.length - 1}\u0000`);
+            lastIndex = bodyStart + bodyLen;
+            tableHeaderSepRe.lastIndex = lastIndex;
+        }
+        if (segments.length > 0) {
+            segments.push(t.substring(lastIndex));
+            t = segments.join('');
+        }
+    }
 
     // 3) 닫히지 않은 **볼드 수리: 한 줄 내에 ** 개수가 홀수면 마지막 ** 제거
     t = t.split('\n').map((line) => {
