@@ -73,7 +73,7 @@ async function generateTabContent(moduleId, tabId) {
         .join('\n');
 
     const subj = globalState.subjects.find(s => s.id === currentSubjectId);
-    const { systemInstruction, userPrompt } = buildTaskContext('tab_content', {
+    const baseArgs = {
         title: mod.title,
         description: mod.description,
         keyConcepts: [],
@@ -82,20 +82,81 @@ async function generateTabContent(moduleId, tabId) {
         otherTabContents: otherTabSummaries || null,
         hasMainQuest: !!subj?.mainQuest,
         mainQuestText: subj?.mainQuest?.description || ''
-    });
+    };
+    const { systemInstruction, userPrompt } = buildTaskContext('tab_content', baseArgs);
 
     try {
         document.getElementById('editor-loading').style.display = 'flex';
 
-        const payload = {
+        // 진행도 표기: 로딩 오버레이의 안내 문구를 단계별로 갱신해 사용자가 현재 진행 상황을 알 수 있게 함
+        const setLoadingText = (txt) => {
+            const el = document.getElementById('editor-loading-text');
+            if (el) el.textContent = txt;
+        };
+
+        // ─── CONTINUE/END 분할 생성 루프 (긴 탭, 특히 기본 학습 480분이 잘리지 않도록) ───
+        const CONTINUE_MARKER = '<!-- CONTINUE -->';
+        const END_MARKER = '<!-- END -->';
+        // 기본 학습은 분량이 가장 크므로 더 많은 청크 허용
+        const MAX_CHUNKS = tabId === 'basicLearn' ? 6 : 3;
+
+        setLoadingText(`📝 ${tabMeta.label} 작성 중입니다... (1/${MAX_CHUNKS} 단락)`);
+
+        const firstPayload = {
             contents: [{ parts: [{ text: userPrompt }] }],
             systemInstruction: { parts: [{ text: systemInstruction }] },
             generationConfig: { maxOutputTokens: 65536 }
         };
 
-        const data = await callGemini(TEXT_MODEL, payload);
+        let fullText = extractText(await callGemini(TEXT_MODEL, firstPayload));
+        let chunkCount = 1;
 
-        let resultText = extractText(data);
+        while (fullText.includes(CONTINUE_MARKER) && chunkCount < MAX_CHUNKS) {
+            // 마커 제거 후 이어쓰기 준비
+            fullText = fullText.replace(new RegExp(CONTINUE_MARKER, 'g'), '').trimEnd();
+            const contextTail = fullText.length > 2000 ? fullText.slice(-2000) : fullText;
+
+            const cont = buildTaskContext('tab_content_continue', {
+                ...baseArgs,
+                chunkIndex: chunkCount,
+                previousContent: contextTail
+            });
+
+            setLoadingText(`✍️ ${tabMeta.label} 이어서 작성 중입니다... (${chunkCount + 1}/${MAX_CHUNKS} 단락)`);
+
+            await new Promise(r => setTimeout(r, 1500));
+
+            const contPayload = {
+                contents: [{ parts: [{ text: cont.userPrompt }] }],
+                systemInstruction: { parts: [{ text: cont.systemInstruction }] },
+                generationConfig: { maxOutputTokens: 65536 }
+            };
+
+            let contText = extractText(await callGemini(TEXT_MODEL, contPayload));
+
+            // 중복 헤딩 제거: 이어쓴 첫 헤딩이 직전 마지막 헤딩과 같으면 제거
+            const prevHeadings = fullText.match(/^(#{1,4}\s+.+)$/gm) || [];
+            const lastHeading = prevHeadings.length ? prevHeadings[prevHeadings.length - 1].trim() : null;
+            if (lastHeading) {
+                const contLines = contText.split('\n');
+                const firstNonEmpty = contLines.findIndex(l => l.trim() !== '');
+                if (firstNonEmpty !== -1 && contLines[firstNonEmpty].trim() === lastHeading) {
+                    contLines.splice(firstNonEmpty, 1);
+                    contText = contLines.join('\n');
+                }
+            }
+
+            fullText += '\n\n' + contText.trimStart();
+            chunkCount++;
+        }
+
+        // 잔여 마커 정리
+        fullText = fullText
+            .replace(new RegExp(CONTINUE_MARKER, 'g'), '')
+            .replace(new RegExp(END_MARKER, 'g'), '')
+            .trimEnd();
+
+        let resultText = fullText;
         // 마크다운 정리 + 강사 callout 자동 래핑 (예상 소요 등이 학생뷰에 노출되지 않도록)
         if (typeof sanitizeMarkdownContent === 'function') {
             resultText = sanitizeMarkdownContent(resultText);
@@ -113,6 +174,7 @@ async function generateTabContent(moduleId, tabId) {
 
         // 이미지 태그 자동 처리 (딥리서치 파이프라인 활용)
         if (typeof processImageTags === 'function') {
+            setLoadingText(`🖼️ ${tabMeta.label} 이미지와 서식을 정리하고 있습니다...`);
             // LLM 응답의 이미지 태그 개수 진단 로깅 — 왜 이미지가 안 나오는지 원인 파악
             const tagCount = (resultText.match(/<!--\s*\[IMG:/g) || []).length;
             console.log(`[TabGen] ${tabMeta.label} 생성 완료 — LLM이 생성한 이미지 태그: ${tagCount}개`);
@@ -138,6 +200,9 @@ async function generateTabContent(moduleId, tabId) {
         console.error(`[TabGen] ${tabMeta.label} 실패:`, err);
         window.showAlert(`${tabMeta.label} 생성 중 오류: ${err.message}`);
     } finally {
+        // 진행도 안내 문구를 기본값으로 복원해 다음 작업에 잔여 텍스트가 남지 않도록 함
+        const loadingTextEl = document.getElementById('editor-loading-text');
+        if (loadingTextEl) loadingTextEl.textContent = 'AI가 상세 교안을 작성하고 있습니다...';
         document.getElementById('editor-loading').style.display = 'none';
     }
 }

@@ -268,6 +268,41 @@ function wrapOrphanedInstructorMarkers(md) {
 }
 window.wrapOrphanedInstructorMarkers = wrapOrphanedInstructorMarkers;
 
+// 파이프(마크다운) 표 텍스트를 인라인 스타일 HTML 표로 변환
+// 프로젝트 컨벤션(GFM 표 금지, 인라인 스타일 HTML Table 사용)에 맞춰
+// marked 의 GFM 표 렌더링 불안정성(빈 줄 의존)을 우회한다.
+function convertPipeTableToHtml(pipeText) {
+    if (!pipeText || typeof pipeText !== 'string') return pipeText;
+    const lines = pipeText.split('\n').map((l) => l.trim()).filter((l) => l.length > 0 && l.includes('|'));
+    if (lines.length < 2) return pipeText;
+    const splitRow = (line) => line.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map((c) => c.trim());
+    const isSep = (line) => /-/.test(line) && /^\s*\|?[\s:|\-]+\|?\s*$/.test(line);
+    const inline = (s) => s
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
+    const headerCells = splitRow(lines[0]);
+    if (headerCells.length === 0) return pipeText;
+    const cols = headerCells.length;
+    const bodyRows = [];
+    for (let i = 1; i < lines.length; i++) {
+        if (isSep(lines[i])) continue;
+        bodyRows.push(splitRow(lines[i]));
+    }
+    const thStyle = 'border: 1px solid black; padding: 10px; background-color: #f2f2f2; text-align: center;';
+    const tdStyle = 'border: 1px solid black; padding: 10px;';
+    let html = '<table style="border-collapse: collapse; width: 100%;">\n<thead>\n<tr>';
+    html += headerCells.map((c) => `<th style="${thStyle}">${inline(c)}</th>`).join('');
+    html += '</tr>\n</thead>\n<tbody>\n';
+    for (const row of bodyRows) {
+        const tds = [];
+        for (let c = 0; c < cols; c++) tds.push(`<td style="${tdStyle}">${inline((row[c] || '').trim())}</td>`);
+        html += '<tr>' + tds.join('') + '</tr>\n';
+    }
+    html += '</tbody>\n</table>';
+    return html;
+}
+if (typeof window !== 'undefined') window.convertPipeTableToHtml = convertPipeTableToHtml;
+
 function sanitizeMarkdownContent(md) {
     if (!md || typeof md !== 'string') return md;
     let t = md.replace(/\r\n/g, '\n');
@@ -290,11 +325,18 @@ function sanitizeMarkdownContent(md) {
         return `\u0000FENCE${fences.length - 1}\u0000`;
     });
 
+    // 2-0) 메타 작업 라벨 줄 제거 (요청#2): 집필 지시용 라벨이 학생 교안 본문에 노출된 경우 해당 줄만 삭제
+    //      코드펜스는 이미 보호되어 코드 내용에는 영향 없음. 줄 전체가 메타 라벨일 때만 제거.
+    t = t.replace(
+        /^[ \t>]*#{0,4}[ \t]*\*{0,3}\[?\s*(?:상세\s*교안|현재\s*작업[^\]\n]*|탭\s*범위\s*제한|내부\s*프로세스[^\]\n]*|기본\s*학습)\s*\]?\*{0,3}[ \t]*[:：]?[ \t]*$/gm,
+        ''
+    );
+
     // 2-1) 마크다운 표 보호 + 정상화 (다른 단계가 표를 망가뜨리지 않도록)
     //      AI가 표 행을 모두 한 줄에 출력하거나 헤더와 구분선 사이 빈줄을 빼는 경우 복구
     const tables = [];
     t = t.replace(/(^|\n)((?:\|[^\n]*\|\s*\n)(?:\s*\|[\s:|\-]+\|\s*\n)(?:\s*\|[^\n]*\|\s*\n?)*)/g, (match, prefix, tbl) => {
-        tables.push(tbl.trim());
+        tables.push(convertPipeTableToHtml(tbl.trim()));
         return `${prefix}\u0000TABLE${tables.length - 1}\u0000\n`;
     });
     // AI가 표를 한 줄로 압축하거나 셀 내부에 빈 줄/줄바꿈을 끼워넣은 경우 모두 복구
@@ -304,7 +346,7 @@ function sanitizeMarkdownContent(md) {
     //   3) 본문의 모든 \n 을 공백으로 치환 → 셀 사이 | 로만 split
     //   4) 빈 셀 제거 후 cols개씩 묶어 깔끔한 행으로 재구성
     {
-        const tableHeaderSepRe = /((?:\|[^\n|]+){2,}\|)[ \t]*\n?[ \t]*(\|(?:[ \t]*:?-{3,}:?[ \t]*\|){2,})/g;
+        const tableHeaderSepRe = /((?:\|[^\n|]+){2,}\|)[ \t]*\n?[ \t]*(\|(?:[ \t]*:?-{1,}:?[ \t]*\|){2,})/g;
         let lastIndex = 0;
         const segments = [];
         let m;
@@ -337,7 +379,7 @@ function sanitizeMarkdownContent(md) {
             // 표 이전 텍스트 + placeholder + 표 이후 위치 갱신
             segments.push(t.substring(lastIndex, tableStart));
             const restored = header.trim() + '\n' + sep.trim() + '\n' + rows.join('\n');
-            tables.push(restored);
+            tables.push(convertPipeTableToHtml(restored));
             segments.push(`\u0000TABLE${tables.length - 1}\u0000`);
             lastIndex = bodyStart + bodyLen;
             tableHeaderSepRe.lastIndex = lastIndex;
@@ -717,17 +759,11 @@ const CONTEXT_CORE = {
             '이 블록은 "교안을 읽기만 해도 바로 수업할 수 있는 강사 대본"입니다.\n' +
             '짧은 메모가 아니라, 실제로 입을 열어 말할 완전한 문장을 작성하세요.\n\n' +
 
-            '=== 강의 시간 배분 규칙 (총 480분 = 8시간) ===\n' +
-            '전체 과정은 기본학습 + 기본실습 + 심화학습 + 심화실습 + 학습이해도 5개 탭으로 구성됩니다.\n' +
-            '각 탭은 대략 다음 시간 배분을 따르세요:\n' +
-            '- 기본학습: 약 90~120분 (이론 중심 + 강사 대본 충분)\n' +
-            '- 기본실습: 약 90~120분 (실습 과제 + 평가가이드 + 피드백 시간 포함)\n' +
-            '- 심화학습: 약 90~120분 (심화 이론 + 사례 분석 + 토론)\n' +
-            '- 심화실습: 약 90~120분 (프로젝트형 실습 + 발표/피드백)\n' +
-            '- 학습이해도: 약 30~60분 (퀴즈 + 해설)\n' +
-            '합계 480분이 되도록 조절하세요.\n' +
-            '각 ## 섹션의 ⏱️ 예상 소요 시간을 명시하고, 탭 마지막 교강사 가이드에서 전체 시간 합계를 정리하세요.\n' +
-            '강사 대본은 실제 수업 시간(90~120분)을 채울 수 있을 만큼 충분히 길고 구체적으로 작성하세요.\n\n' +
+            '=== 강의 시간 배분 규칙 ===\n' +
+            '이 탭의 목표 수업 시간과 분량은 "현재 작업" 지시문에 명시된 기준을 그대로 따르세요. (탭마다 목표 시간이 다릅니다 — 임의로 90~120분 등으로 축소하지 마세요.)\n' +
+            '각 ## 섹션에는 ⏱️ 예상 소요 시간을 분 단위로 명시하고, 모든 섹션 소요 시간의 합계가 이 탭의 목표 수업 시간과 일치하도록 조절하세요.\n' +
+            '탭 마지막 교강사 가이드에서 전체 시간 합계를 정리하세요.\n' +
+            '강사 대본은 명시된 목표 수업 시간을 실제로 채울 수 있을 만큼 충분히 길고 구체적으로 작성하세요.\n\n' +
 
             '=== Callout 내부 구조 (반드시 이 순서대로, 모든 항목 포함) ===\n' +
             '⏱️ **예상 소요:** {N}분 | 🎚️ **난이도:** 쉬움/보통/어려움\n\n' +

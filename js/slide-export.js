@@ -657,6 +657,127 @@ function augmentSlides(slides, courseTitle) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// 본문 과다 슬라이드 자동 분할 (16:9 프레임 초과·가독성 저하 방지)
+//   - 순수 텍스트(불릿/문단/소제목) 본문만 대상
+//   - 이미지·표·mermaid·코드 본문은 전용 레이아웃이 따로 처리하므로 제외
+//   - 분할 후속 페이지는 제목에 " (계속)"을 붙여 연속성을 표시
+// ═══════════════════════════════════════════════════════════════
+function estimateUnitHeight(unit) {
+    const CPL = 32;        // 한 줄 추정 글자 수(보수적 과대추정 → 분할을 일찍 유도)
+    const LINE_H = 38;     // 줄 높이(px, 본문 22px·line-height≈1.6 + 여유)
+    const ITEM_PAD = 18;   // 항목 간 여백(px)
+    if (unit.type === 'heading') return 52;
+    const plain = String(unit.text || '').replace(/<[^>]+>/g, '').replace(/[#*_`>]/g, '').trim();
+    const lines = Math.max(1, Math.ceil(plain.length / CPL));
+    return lines * LINE_H + ITEM_PAD;
+}
+
+function splitBodyIntoUnits(body) {
+    // 본문을 분할 단위(top-level 불릿/문단/소제목)로 쪼갠다.
+    const rawLines = String(body || '').split('\n');
+    const units = [];
+    let para = null; // 누적 중인 문단 라인들
+    const flushPara = () => {
+        if (para && para.length) units.push({ type: 'para', text: para.join('\n') });
+        para = null;
+    };
+    for (let i = 0; i < rawLines.length; i++) {
+        const line = rawLines[i];
+        if (!line.trim()) { flushPara(); continue; }
+        // 소제목
+        if (/^#{1,6}\s+/.test(line)) {
+            flushPara();
+            units.push({ type: 'heading', text: line });
+            continue;
+        }
+        // top-level 불릿/번호 (들여쓰기 없음)
+        if (/^(?:[-*•]|\d+[.)])\s+/.test(line)) {
+            flushPara();
+            const item = [line];
+            // 뒤따르는 들여쓰기 하위 라인(중첩 불릿 포함) 흡수
+            while (i + 1 < rawLines.length && /^\s+\S/.test(rawLines[i + 1])) {
+                item.push(rawLines[++i]);
+            }
+            units.push({ type: 'bullet', text: item.join('\n') });
+            continue;
+        }
+        // 일반 문단 라인 누적
+        if (!para) para = [];
+        para.push(line);
+    }
+    flushPara();
+    return units;
+}
+
+function paginateSlides(slides) {
+    const PAGE_BUDGET = 720; // 페이지당 추정 본문 높이 상한(px) — 초과 시 분할
+    const MAX_PAGES = 12;    // 원본 1슬라이드당 최대 분할 수(폭주 방지)
+    const out = [];
+
+    for (const slide of slides) {
+        // 분할 대상이 아닌 타입(표지·섹션·퀴즈 등)은 그대로 통과
+        if (!slide || (slide.type !== 'content' && slide.type !== 'data-table')) {
+            out.push(slide);
+            continue;
+        }
+        const body = preProcessSlideBody(slide.body || '');
+        // 특수 본문(이미지·표·mermaid·코드)은 분할 제외 — 전용 레이아웃이 처리
+        const hasImage = /<img\b|image-wrapper|!\[/.test(body);
+        const hasTable = /<table/i.test(body) || /^\|.*\|.*\n\|?\s*[-:|\s]+/m.test(body);
+        const hasMermaid = /```mermaid|class="mermaid"/.test(body);
+        const hasCode = /```/.test(body);
+        if (hasImage || hasTable || hasMermaid || hasCode) {
+            out.push(slide);
+            continue;
+        }
+
+        const units = splitBodyIntoUnits(body);
+        if (units.length <= 1) { out.push(slide); continue; }
+
+        // 전체 추정 높이가 한 페이지 예산 이내면 분할 불필요
+        const totalH = units.reduce((sum, u) => sum + estimateUnitHeight(u), 0);
+        if (totalH <= PAGE_BUDGET) { out.push(slide); continue; }
+
+        // 그리디 패킹: 단위들을 페이지 예산까지 채운다(페이지당 최소 1단위 보장)
+        const pages = [];
+        let cur = [];
+        let curH = 0;
+        for (const u of units) {
+            const h = estimateUnitHeight(u);
+            if (cur.length > 0 && curH + h > PAGE_BUDGET) {
+                pages.push(cur);
+                cur = [];
+                curH = 0;
+            }
+            cur.push(u);
+            curH += h;
+        }
+        if (cur.length) pages.push(cur);
+
+        // 고아 소제목 방지: 페이지 끝에 소제목만 남으면 다음 페이지로 이동
+        for (let p = 0; p < pages.length - 1; p++) {
+            while (pages[p].length > 1 && pages[p][pages[p].length - 1].type === 'heading') {
+                pages[p + 1].unshift(pages[p].pop());
+            }
+        }
+
+        // 비정상(과다 분할/분할 불가) 입력 방어 → 원본 유지
+        if (pages.length <= 1 || pages.length > MAX_PAGES) {
+            out.push(slide);
+            continue;
+        }
+
+        pages.forEach((pg, idx) => {
+            const pageBody = pg.map(u => u.text).join('\n');
+            const heading = idx === 0 ? slide.heading : `${slide.heading || ''} (계속)`.trim();
+            out.push({ ...slide, heading, body: pageBody });
+        });
+    }
+
+    return out;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // 전체 슬라이드 HTML 빌드
 // ═══════════════════════════════════════════════════════════════
 function buildSlideHTML(markdown, title) {
@@ -669,6 +790,7 @@ function buildSlideHTML(markdown, title) {
         slides.push({ type: 'cover', heading: title, body: '', level: 1 });
     }
     slides = augmentSlides(slides, title);
+    slides = paginateSlides(slides);   // 본문 과다 슬라이드 분할 (16:9 초과·클리핑 방지)
     const total = slides.length;
 
     const slidesHTML = slides.map((s, i) => slideToHTML(s, {
@@ -704,7 +826,7 @@ function buildSlideHTML(markdown, title) {
                 div.textContent = el.textContent;
                 (el.closest('pre') || el).replaceWith(div);
             });
-            setTimeout(() => { try { mermaid.run({ suppressErrors: true }); } catch(e) {} }, 200);
+            setTimeout(() => { try { mermaid.run({ suppressErrors: true }); } catch(e) {} setTimeout(fitSlides, 120); }, 200);
         }
         let currentSlide = 0;
         const slides = document.querySelectorAll('.slide-container');
@@ -729,6 +851,30 @@ function buildSlideHTML(markdown, title) {
             });
         }, { threshold: 0.6 });
         slides.forEach(s => io.observe(s));
+        // ── 자동 맞춤(shrink-to-fit): 16:9 프레임을 절대 초과하지 않도록 본문을 축소 ──
+        function fitSlides() {
+            document.querySelectorAll('.slide-body').forEach(el => {
+                el.style.transform = '';
+                el.style.transformOrigin = 'top left';
+                const availH = el.clientHeight, availW = el.clientWidth;
+                if (availH <= 0 || availW <= 0) return;
+                const needH = el.scrollHeight, needW = el.scrollWidth;
+                const sH = needH > availH ? availH / needH : 1;
+                const sW = needW > availW ? availW / needW : 1;
+                let scale = Math.min(sH, sW);
+                if (scale < 1) {
+                    if (scale < 0.4) scale = 0.4;
+                    el.style.transform = 'scale(' + scale + ')';
+                }
+            });
+        }
+        window.addEventListener('load', () => setTimeout(fitSlides, 80));
+        window.addEventListener('resize', () => { clearTimeout(window.__fitT); window.__fitT = setTimeout(fitSlides, 150); });
+        if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => setTimeout(fitSlides, 50));
+        document.querySelectorAll('.slide-body img').forEach(img => {
+            if (!img.complete) img.addEventListener('load', () => setTimeout(fitSlides, 30), { once: true });
+        });
+        setTimeout(fitSlides, 300);
     <\/script>
 </body>
 </html>`;
@@ -764,7 +910,7 @@ window.exportToSlideHTML = function () {
 // ═══════════════════════════════════════════════════════════════
 // PPTX 내보내기 — HTML 디자인 토큰과 동기화
 // ═══════════════════════════════════════════════════════════════
-window.exportToPptx = function () {
+window.exportToPptx = async function () {
     if (typeof PptxGenJS === 'undefined') {
         return window.showAlert('슬라이드 라이브러리(PptxGenJS)를 불러오는 중입니다. 잠시 후 다시 시도해 주세요.');
     }
@@ -774,8 +920,24 @@ window.exportToPptx = function () {
         return window.showAlert('차시를 먼저 선택해주세요.');
     }
 
-    const content = (mod.tabContents && mod.tabContents[currentLessonTab]) || mod.content;
+    let content = (mod.tabContents && mod.tabContents[currentLessonTab]) || mod.content;
     if (!content) return window.showAlert('교안 내용이 없습니다.');
+
+    // ── 참고 이미지 준비: 본문에 미생성 [IMG] 태그가 있으면 먼저 생성 ──
+    // (본문 참고 이미지는 인용하고, 부족한 것은 생성)
+    if (content.includes('<!-- [IMG:') && typeof processImageTags === 'function') {
+        try {
+            if (window.showToast) window.showToast('🖼️ 슬라이드용 참고 이미지를 준비하는 중입니다...', 'info');
+            const withImages = await processImageTags(mod, content);
+            if (withImages) {
+                content = withImages;
+                if (mod.tabContents && mod.tabContents[currentLessonTab]) mod.tabContents[currentLessonTab] = content;
+                else mod.content = content;
+            }
+        } catch (imgErr) {
+            // 이미지 생성 실패 시에도 텍스트 슬라이드는 정상 진행
+        }
+    }
 
     try {
         const pptx = new PptxGenJS();
@@ -852,8 +1014,8 @@ window.exportToPptx = function () {
                 return;
             }
 
-            // 본문 처리
-            renderContentSection(pptx, T, FONT, heading, fullBody, partNum);
+            // 본문 처리 (참고 이미지 인용 위해 mod.images 전달)
+            renderContentSection(pptx, T, FONT, heading, fullBody, partNum, mod.images || {});
         });
 
         // ── 마무리 ──
@@ -907,7 +1069,23 @@ function addPartDivider(pptx, T, FONT, partNum, heading) {
     });
 }
 
-function renderContentSection(pptx, T, FONT, heading, body, partNum) {
+function renderContentSection(pptx, T, FONT, heading, body, partNum, images) {
+    images = images || {};
+    // ── 참고 이미지 추출: cleanText가 <img> 태그를 제거하기 전에 먼저 수집 ──
+    const imgIds = [];
+    const seen = new Set();
+    let _im;
+    const _imgRe = /local:([^"'\s>]+)/g;
+    while ((_im = _imgRe.exec(body)) !== null) {
+        const id = _im[1];
+        if (!seen.has(id) && images[id] && String(images[id]).startsWith('data:')) {
+            seen.add(id);
+            imgIds.push(id);
+        }
+    }
+    // 본문에 참고 이미지가 있으면 전용 슬라이드로 렌더 (16:9 contain — 절대 초과 안 함)
+    if (imgIds.length) renderSectionImages(pptx, T, FONT, heading, imgIds, images);
+
     // 본문 분석
     const tableRows = [];
     const processed = [];
@@ -1032,10 +1210,28 @@ function renderContentSection(pptx, T, FONT, heading, body, partNum) {
     // (C) 일반 콘텐츠 — 불릿 슬라이드 (페이지 분할)
     const allItems = [...bullets, ...processed].filter(Boolean);
     if (allItems.length > 0) {
-        const MAX = 7;
-        const pages = Math.ceil(allItems.length / MAX);
-        for (let p = 0; p < pages; p++) {
-            const chunk = allItems.slice(p * MAX, (p + 1) * MAX);
+        const MAX_ITEMS = 7;       // 페이지당 항목 수 상한
+        const LINE_BUDGET = 13;    // 18pt 줄 수 상한 (본문 박스 5.15in — 16:9 초과 방지)
+        const estLines = (row) => {
+            const isHead = !bullets.includes(row) && row.length < 60 && /^[가-힣A-Z]/.test(row);
+            const cpl = isHead ? 36 : 48;            // 12in 폭 기준 줄당 글자 수(보수적)
+            const len = Math.min(row.length, 130);   // 130자 캡과 동일
+            return Math.max(1, Math.ceil(len / cpl)) + 0.6;  // 문단 간격 보정
+        };
+        // 라인 예산 + 항목수 상한으로 페이지 분할 (긴 항목이 박스를 넘지 않도록)
+        const pageChunks = [];
+        let cur = []; let curLines = 0;
+        for (const row of allItems) {
+            const l = estLines(row);
+            if (cur.length > 0 && (curLines + l > LINE_BUDGET || cur.length >= MAX_ITEMS)) {
+                pageChunks.push(cur); cur = []; curLines = 0;
+            }
+            cur.push(row); curLines += l;
+        }
+        if (cur.length) pageChunks.push(cur);
+
+        const pages = pageChunks.length;
+        pageChunks.forEach((chunk, p) => {
             const sl = pptx.addSlide({ masterName: 'CONTENT_MASTER' });
             const pageTitle = pages > 1 ? `${heading} (${p + 1}/${pages})` : heading;
             sl.addText(pageTitle.length > 80 ? pageTitle.substring(0, 77) + '...' : pageTitle, {
@@ -1063,9 +1259,30 @@ function renderContentSection(pptx, T, FONT, heading, body, partNum) {
             sl.addText(items, {
                 x: 0.6, y: 1.75, w: 12, h: 5.15, valign: 'top', wrap: true,
             });
-        }
+        });
         return;
     }
+}
+
+// ── 참고 이미지 전용 슬라이드 (16:9 contain — 절대 초과 안 함) ──
+function renderSectionImages(pptx, T, FONT, heading, imgIds, images) {
+    imgIds.forEach((id, i) => {
+        const data = images[id];
+        if (!data || !String(data).startsWith('data:')) return;
+        const sl = pptx.addSlide({ masterName: 'CONTENT_MASTER' });
+        const title = imgIds.length > 1
+            ? `${heading} · 참고 이미지 (${i + 1}/${imgIds.length})`
+            : `${heading} · 참고 이미지`;
+        sl.addText(title.length > 80 ? title.substring(0, 77) + '...' : title, {
+            x: 0.6, y: 0.45, w: 12, h: 0.85, fontSize: 30, fontFace: FONT, color: T.accent, bold: true,
+        });
+        sl.addShape(pptx.ShapeType.rect, { x: 0.6, y: 1.45, w: 12, h: 0.025, fill: { color: T.border } });
+        sl.addImage({
+            data,
+            x: 0.6, y: 1.7, w: 12.13, h: 5.2,
+            sizing: { type: 'contain', w: 12.13, h: 5.2 },
+        });
+    });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1100,7 +1317,7 @@ window.exportSubjectToSlide = function () {
 // ═══════════════════════════════════════════════════════════════
 // 교과 전체 PPTX 내보내기
 // ═══════════════════════════════════════════════════════════════
-window.exportSubjectToPptx = function () {
+window.exportSubjectToPptx = async function () {
     const subj = globalState.subjects.find(s => s.id === currentSubjectId);
     if (!subj) return window.showAlert('교과를 먼저 선택해주세요.');
     const lessonList = subj.lessons || [];
@@ -1108,7 +1325,7 @@ window.exportSubjectToPptx = function () {
     if (typeof PptxGenJS === 'undefined') return window.showAlert('PptxGenJS를 불러오는 중입니다.');
 
     let count = 0;
-    const downloadNext = (idx) => {
+    const downloadNext = async (idx) => {
         if (idx >= lessonList.length) {
             window.showToast(`📁 ${count}개 차시 PPTX 다운로드 완료`, 'success');
             return;
@@ -1121,7 +1338,7 @@ window.exportSubjectToPptx = function () {
         if (typeof currentEditingModuleId !== 'undefined') currentEditingModuleId = mod.id;
 
         try {
-            window.exportToPptx();
+            await window.exportToPptx();
             count++;
         } catch (e) { console.warn('[PPTX Subject Export]', e); }
 
@@ -1139,6 +1356,21 @@ let _slideHtmlCache = '';
 let _slideMdCache = '';
 let _slideModRef = null;
 
+// 인라인 슬라이드 iframe을 안전하게 마운트 (요청#4: 슬라이드 생성 실패 방지)
+//   기존 방식: innerHTML + srcdoc="${html.replace(/"/g,'&quot;')}" 문자열 인젝션
+//   → 대용량/복잡한 HTML(480분 교안)에서 속성값이 깨지며 iframe이 비어 보이는 문제 발생
+//   개선: DOM 엘리먼트를 직접 생성하고 srcdoc을 "프로퍼티"로 할당해 파서 의존성 제거
+function mountInlineSlideIframe(previewArea, slideHtml) {
+    if (!previewArea) return;
+    previewArea.innerHTML = '';
+    const iframe = document.createElement('iframe');
+    iframe.id = 'slide-inline-iframe';
+    iframe.style.cssText = 'width:100%;height:600px;border:1px solid #e2e8f0;border-radius:12px;background:#0B1120;';
+    iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+    previewArea.appendChild(iframe);
+    iframe.srcdoc = slideHtml;
+}
+
 window.generateSlideView = function (moduleId) {
     const mod = getEditingModule(moduleId);
     if (!mod) return window.showAlert('교안을 먼저 선택해주세요.');
@@ -1146,42 +1378,42 @@ window.generateSlideView = function (moduleId) {
     const content = (mod.tabContents && mod.tabContents[currentLessonTab]) || mod.content;
     if (!content) return window.showAlert('교안 내용이 없습니다. 먼저 탭을 생성해주세요.');
 
-    let slideHtml = buildSlideHTML(content, mod.title);
-    if (mod.images) {
-        for (const [imgId, b64] of Object.entries(mod.images)) {
-            slideHtml = slideHtml.replace(new RegExp(`local:${imgId}`, 'g'), b64);
+    try {
+        let slideHtml = buildSlideHTML(content, mod.title);
+        if (mod.images) {
+            for (const [imgId, b64] of Object.entries(mod.images)) {
+                slideHtml = slideHtml.replace(new RegExp(`local:${imgId}`, 'g'), b64);
+            }
         }
-    }
 
-    _slideHtmlCache = slideHtml;
-    _slideMdCache = content;
-    _slideModRef = mod;
+        _slideHtmlCache = slideHtml;
+        _slideMdCache = content;
+        _slideModRef = mod;
 
-    const previewArea = document.getElementById('slide-preview-area');
-    const statusBadge = document.getElementById('slide-status-badge');
-    const downloadBtn = document.getElementById('slide-download-btn');
+        const previewArea = document.getElementById('slide-preview-area');
+        const statusBadge = document.getElementById('slide-status-badge');
+        const downloadBtn = document.getElementById('slide-download-btn');
 
-    if (previewArea) {
-        previewArea.innerHTML = `<iframe id="slide-inline-iframe" srcdoc="${slideHtml.replace(/"/g, '&quot;')}"
-            style="width:100%;height:600px;border:1px solid #e2e8f0;border-radius:12px;background:#0B1120;"
-            sandbox="allow-scripts allow-same-origin"></iframe>`;
-    }
-    if (statusBadge) {
-        statusBadge.textContent = '생성됨';
-        statusBadge.className = 'text-[0.6rem] px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-600 font-bold';
-    }
-    if (downloadBtn) {
-        downloadBtn.classList.remove('hidden');
-        downloadBtn.classList.add('flex');
-    }
-    const regenBtn = document.getElementById('slide-regen-btn');
-    if (regenBtn) {
-        regenBtn.classList.remove('hidden');
-        regenBtn.classList.add('flex');
-    }
+        mountInlineSlideIframe(previewArea, slideHtml);
+        if (statusBadge) {
+            statusBadge.textContent = '생성됨';
+            statusBadge.className = 'text-[0.6rem] px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-600 font-bold';
+        }
+        if (downloadBtn) {
+            downloadBtn.classList.remove('hidden');
+            downloadBtn.classList.add('flex');
+        }
+        const regenBtn = document.getElementById('slide-regen-btn');
+        if (regenBtn) {
+            regenBtn.classList.remove('hidden');
+            regenBtn.classList.add('flex');
+        }
 
-    if (previewArea) previewArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    if (window.showToast) window.showToast('슬라이드가 생성되었습니다.', 'success');
+        if (previewArea) previewArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (window.showToast) window.showToast('슬라이드가 생성되었습니다.', 'success');
+    } catch (err) {
+        window.showAlert('슬라이드 생성 실패: ' + (err && err.message ? err.message : err));
+    }
 };
 
 window.regenerateSlideView = async function (moduleId) {
@@ -1239,16 +1471,11 @@ ${content.substring(0, 15000)}`;
         _slideModRef = mod;
 
         const previewArea = document.getElementById('slide-preview-area');
-        if (previewArea) {
-            previewArea.innerHTML = `<iframe id="slide-inline-iframe" srcdoc="${slideHtml.replace(/"/g, '&quot;')}"
-                style="width:100%;height:600px;border:1px solid #e2e8f0;border-radius:12px;background:#0B1120;"
-                sandbox="allow-scripts allow-same-origin"></iframe>`;
-        }
+        mountInlineSlideIframe(previewArea, slideHtml);
 
         if (window.showToast) window.showToast('슬라이드가 재생성되었습니다.', 'success');
     } catch (err) {
-        console.error('[SlideRegen]', err);
-        window.showAlert('슬라이드 재생성 실패: ' + err.message);
+        window.showAlert('슬라이드 재생성 실패: ' + (err && err.message ? err.message : err));
     } finally {
         const loadingEl = document.getElementById('editor-loading');
         if (loadingEl) loadingEl.style.display = 'none';

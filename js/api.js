@@ -968,6 +968,40 @@ function getContextWindow(text, matchStr, windowSize = 300) {
     return text.substring(start, end).replace(/<!--.*?-->/g, '').replace(/[#*`_>]/g, '').trim();
 }
 
+// 첫 번째로 완전히 닫힌 JSON 객체만 추출 (중괄호 균형 스캔, 문자열/이스케이프 인식).
+// Gemini가 여러 객체나 후행 텍스트를 반환해도 첫 객체만 안전하게 파싱하기 위함.
+function extractFirstJsonObject(text) {
+    const start = text.indexOf('{');
+    if (start === -1) return null;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < text.length; i++) {
+        const ch = text[i];
+        if (inString) {
+            if (escaped) {
+                escaped = false;
+            } else if (ch === '\\') {
+                escaped = true;
+            } else if (ch === '"') {
+                inString = false;
+            }
+            continue;
+        }
+        if (ch === '"') {
+            inString = true;
+        } else if (ch === '{') {
+            depth++;
+        } else if (ch === '}') {
+            depth--;
+            if (depth === 0) {
+                return text.slice(start, i + 1);
+            }
+        }
+    }
+    return null; // 닫히지 않은 객체 → 파싱 불가
+}
+
 async function extractSearchIntent(keyword, context) {
     const systemPrompt = `당신은 게임 기획 및 시장 분석 전문 데이터 리서처이자 이미지 프롬프트 엔지니어입니다.
 주어진 이미지 키워드와 주변 교안 문맥을 분석하여 두 종류의 출력을 생성합니다:
@@ -981,27 +1015,25 @@ async function extractSearchIntent(keyword, context) {
 4. 부정어 연산자로 가비지 배제 ("-fanart -cosplay -reddit")
 5. 공식 스크린샷이 필요하면 "official screenshot", "in-game" 한정자 사용
 
-[AI 이미지 생성 프롬프트(B) 지시사항 — V7.0.0 단순 방식 + 한글 정확도]
-사용 모델: gemini-3.1-flash-image-preview (V7과 동일, 한국어 라벨 시도 가능)
-중요: 모델은 한글 글자를 종종 깨진 형태로 렌더하므로, **짧고 일반적인 한국어 단어**만 사용하고
-       정확한 글자를 모델이 따라쓸 수 있도록 프롬프트 첫머리에 **라벨 리스트**를 명시.
+[AI 이미지 생성 프롬프트(B) 지시사항 — V8.0.0 텍스트 없는 순수 비주얼]
+사용 모델: gemini-3.1-flash-image-preview
+중요: 모델은 한글 글자를 깨진 형태로 렌더하므로, **이미지 안에는 어떤 글자도 넣지 않습니다.**
+       한국어 설명은 이미지 아래 HTML 캡션으로 별도 표시되므로, 이미지는 순수하게 시각적 요소(아이콘·일러스트·구도)로만 구성합니다.
 
-1. **첫머리에 한국어 라벨 리스트 명시** — 이미지에 들어갈 정확한 한국어 단어를 따옴표로 묶어 나열.
-   - 예: 'Korean labels (use these EXACT spellings): "기획", "제작", "테스트", "출시"'
-   - 가능하면 1~3음절 짧은 단어만 사용 (긴 단어일수록 모델이 자모를 깨뜨림)
-   - 동일 단어를 반복하더라도 정확히 따라쓰도록 강조
-2. **간결하게** — 60~180단어 이내. 과도한 스타일 키워드 나열은 모델 혼동 유발.
-3. **본문 문맥을 시각화** — 주변 교안의 구체 개념·키워드를 시각 요소로 묘사. 핵심 한국어 단어는 라벨 리스트와 동일하게 표기.
-   - 예시: 'Korean labels: "기획", "제작", "테스트", "출시", "라이브". A 5-stage game development pipeline infographic showing each phase with designers at work, monitors, controllers, rocket launch icons.'
-4. **다이어그램·인포그래픽 형태 권장** — 게임 기획 교안에 적합한 단계도·플로우차트·카드형 레이아웃.
-5. **반드시 끝에 추가**: "digital art style, clean, professional. Render Korean text EXACTLY as written in the label list above with correct hangul characters."
-6. **저작권 금지**: 특정 게임·캐릭터 이름 직접 언급 금지.
+1. **반드시 영어로만 작성** — 프롬프트 자체를 영어로 작성. 한국어 단어("상세 교안", "교육용 일러스트", "교안" 등) 절대 포함 금지.
+2. **글자/라벨 금지** — 이미지에 텍스트, 글자, 숫자, 라벨, 워터마크, 캡션이 일절 나타나지 않도록 명시.
+3. **본문 문맥을 시각화** — 주변 교안의 구체 개념을 글자 대신 시각 요소(아이콘·심볼·장면)로 묘사.
+   - 예시: 'A 5-stage game development pipeline infographic: planning desk, art monitors, QA controllers, rocket launch icon, live broadcast. Symbolic icons only, no text, no letters, no labels.'
+4. **다이어그램·인포그래픽 형태 권장** — 단계도·플로우차트·카드형 레이아웃 (단, 글자 없이 아이콘/색상 구분).
+5. **간결하게** — 50~120 단어 이내.
+6. **반드시 끝에 추가**: "digital art style, clean, professional, 16:9 wide composition. No text, no letters, no words, no labels, no watermark anywhere in the image."
+7. **저작권 금지**: 특정 게임·캐릭터 이름 직접 언급 금지.
 
 [출력 포맷 JSON — 반드시 준수]
 {
   "intent_type": "data_representation | visual_asset | concept_illustration | screenshot | diagram",
   "search_query": "최적화된 검색 쿼리",
-  "image_gen_prompt": "AI 이미지 생성 프롬프트 (V7 단순 스타일, 한국어 라벨 가능, 50~120 단어, 끝에 'digital art style, clean, professional, 16:9 wide composition' 포함)",
+  "image_gen_prompt": "영어 전용 이미지 생성 프롬프트 (50~120 단어, 이미지 내 텍스트 없음, 끝에 'digital art style, clean, professional, 16:9 wide composition. No text, no letters, no words, no labels, no watermark anywhere in the image.' 포함)",
   "reasoning": "이 결정 이유 (한국어 짧게, 40자 이내)"
 }`;
 
@@ -1025,9 +1057,9 @@ async function extractSearchIntent(keyword, context) {
             .replace(/```json\s*/gi, '')         // 코드펜스 제거
             .replace(/```\s*/g, '')
             .trim();
-        // JSON 블록 추출 (응답에 설명 텍스트가 섞인 경우 대비)
-        const jsonMatch = sanitized.match(/\{[\s\S]*\}/);
-        return jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+        // v7.4: 첫 번째 완전한 JSON 객체만 추출 (다중 객체/후행 텍스트가 와도 안전)
+        const firstObject = extractFirstJsonObject(sanitized);
+        return firstObject ? JSON.parse(firstObject) : null;
     } catch (e) {
         console.warn("검색어 의도 추출 에이전트 실패 (폴백 사용):", e.message);
         return null; // 실패 시 기존 키워드 Fallback을 위해 Null 반환
@@ -1399,8 +1431,16 @@ async function processImageTags(mod, markdown) {
                 //          공백으로 split → '핵심', '내용:', '최신', '게임', '업계', '트렌드' 6개
                 //          라벨 카드로 그려져 본문 무관 이미지 생성됨.
                 // 수정: 키워드는 한 덩어리 개념으로 묘사 (개별 라벨 X)
+                // 이미지에 글자가 박히지 않도록 보장하는 영어 접미사
+                const NO_TEXT_SUFFIX = ' No text, no letters, no words, no labels, no watermark anywhere in the image.';
                 if (intent && intent.image_gen_prompt && intent.image_gen_prompt.length > 30) {
-                    generatePrompt = intent.image_gen_prompt;
+                    // 방어적 정제: 모델이 실수로 넣은 한국어 메타 라벨 제거 + 글자 금지 접미사 보강
+                    let promptText = intent.image_gen_prompt
+                        .replace(/["']?(상세\s*교안|교육용\s*일러스트|교안|학습\s*이해도|기본\s*학습|심화\s*학습)["']?/g, '')
+                        .replace(/\s{2,}/g, ' ')
+                        .trim();
+                    if (!/no text/i.test(promptText)) promptText += NO_TEXT_SUFFIX;
+                    generatePrompt = promptText;
                     console.log(`[AI Gen] 문맥 기반 프롬프트 사용 (${generatePrompt.length}자): ${tag.keyword}`);
                 } else {
                     // 키워드에서 번호·불필요한 기호 제거하여 자연스러운 주제로 변환
@@ -1409,8 +1449,9 @@ async function processImageTags(mod, markdown) {
                         .replace(/^[#*\-]+\s*/, '')       // 마크다운 마커 제거
                         .replace(/[:：]\s*$/, '')         // 끝의 콜론 제거
                         .trim();
-                    generatePrompt = `${cleanedKeyword} 를 표현하는 교육용 일러스트, digital art style, clean, professional`;
-                    console.log(`[AI Gen] V7 단순 프롬프트 사용 (정제된 키워드): ${cleanedKeyword}`);
+                    // V8: 영어 전용 + 글자 금지 (한국어 "교육용 일러스트" 제거 — 이미지에 글자가 박히던 문제 해결)
+                    generatePrompt = `Educational concept illustration representing "${cleanedKeyword}", digital art style, clean, professional, 16:9 wide composition.${NO_TEXT_SUFFIX}`;
+                    console.log(`[AI Gen] V8 텍스트 없는 프롬프트 사용 (정제된 키워드): ${cleanedKeyword}`);
                 }
                 b64Image = await generateImageAPI(generatePrompt);
                 vendorLabel = "AI 생성 이미지";
@@ -2520,6 +2561,9 @@ function renderEditor(mod) {
 
     let renderText = (typeof getActiveTabContent === 'function') ? getActiveTabContent(mod) : mod.content;
 
+    // [이슈#2] 현재 탭에 생성된 내용이 없는지 판별 (심화학습 등 미생성 탭의 빈 화면 방지)
+    const _tabEmpty = !renderText || !String(renderText).trim();
+
     // [최적화 & 버그픽스] 렌더 시 Base64 이미지로 교체 (정규표현식 글로벌 치환으로 안전하게 처리)
     if (mod.images) {
         for (const [imgId, b64] of Object.entries(mod.images)) {
@@ -2539,19 +2583,42 @@ function renderEditor(mod) {
 
     let htmlContent = '';
 
-    try {
+    if (_tabEmpty) {
 
-        htmlContent = typeof marked !== 'undefined' ? marked.parse(renderText) : `<pre class="text-gray-200 whitespace-pre-wrap">${renderText.replace(/</g, '&lt;')}</pre>`;
-        // instructor-callout 내부 마크다운 재파싱
-        htmlContent = reParseInstructorCallouts(htmlContent);
-        // 한국어 마침표 뒤 줄바꿈 적용
-        htmlContent = applyPeriodLineBreakHTML(htmlContent);
-        // v7.6: 공통 HTML 후처리 적용
-        htmlContent = postprocessHtml(htmlContent);
+        // [이슈#2] 미생성 탭 빈 화면 방지: 친절한 안내 + 생성 버튼 노출
+        const _tabLabel = (typeof LESSON_TABS !== 'undefined' && Array.isArray(LESSON_TABS))
+            ? ((LESSON_TABS.find(t => t.id === currentLessonTab) || {}).label || '이 탭')
+            : '이 탭';
+        htmlContent = `
+            <div class="flex flex-col items-center justify-center text-center py-20 px-6 select-none">
+                <div class="w-16 h-16 mb-5 flex items-center justify-center rounded-2xl bg-accent/10 text-accent text-3xl">
+                    <i class="ph-bold ph-sparkle"></i>
+                </div>
+                <h3 class="text-lg font-bold text-gray-800 mb-2">아직 «${_tabLabel}» 탭 내용이 없습니다</h3>
+                <p class="text-sm text-gray-500 mb-6 leading-relaxed">아래 버튼을 눌러 AI로 «${_tabLabel}» 탭 교안을 생성하세요.<br>생성에는 수십 초가 걸릴 수 있습니다.</p>
+                <button onclick="generateTabContent('${mod.id}', currentLessonTab)"
+                    class="px-5 py-2.5 text-sm font-bold text-white bg-accent rounded-lg hover:bg-accentHover transition-colors flex items-center gap-2 shadow-sm hover:-translate-y-0.5">
+                    <i class="ph-bold ph-lightning"></i> «${_tabLabel}» 탭 생성하기
+                </button>
+            </div>`;
 
-    } catch (e) {
+    } else {
 
-        htmlContent = `<div class="p-4 bg-red-500/20 border border-red-500 text-red-400 rounded">마크다운 파싱 오류: ${e.message}</div><pre class="text-gray-200 mt-4">${renderText.replace(/</g, '&lt;')}</pre>`;
+        try {
+
+            htmlContent = typeof marked !== 'undefined' ? marked.parse(renderText) : `<pre class="text-gray-200 whitespace-pre-wrap">${renderText.replace(/</g, '&lt;')}</pre>`;
+            // instructor-callout 내부 마크다운 재파싱
+            htmlContent = reParseInstructorCallouts(htmlContent);
+            // 한국어 마침표 뒤 줄바꿈 적용
+            htmlContent = applyPeriodLineBreakHTML(htmlContent);
+            // v7.6: 공통 HTML 후처리 적용
+            htmlContent = postprocessHtml(htmlContent);
+
+        } catch (e) {
+
+            htmlContent = `<div class="p-4 bg-red-500/20 border border-red-500 text-red-400 rounded">마크다운 파싱 오류: ${e.message}</div><pre class="text-gray-200 mt-4">${renderText.replace(/</g, '&lt;')}</pre>`;
+
+        }
 
     }
 
