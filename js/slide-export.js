@@ -992,31 +992,77 @@ window.exportToPptx = async function () {
         cover.addShape(pptx.ShapeType.rect, { x: 11.0, y: 5.5, w: 1.5, h: 0.05, fill: { color: T.accent } });
         cover.addText('디벨로켓', { x: 11.0, y: 5.6, w: 2, h: 0.4, fontSize: 14, fontFace: FONT, color: T.muted, bold: true });
 
-        // ── 본문 섹션 분리 ──
+        // ── 본문 섹션 파싱 ──
         const rawSections = content.split(/^(?=#{1,2}\s)/m).filter(s => s.trim());
-        let partNum = 0;
-
-        rawSections.forEach(section => {
+        const modImages = mod.images || {};
+        const parsed = [];
+        for (const section of rawSections) {
             const lines = section.trim().split('\n');
             const firstLine = lines[0].trim();
-            const isH1 = firstLine.startsWith('# ') && !firstLine.startsWith('## ');
-            const isH2 = firstLine.startsWith('## ');
             const heading = cleanText(firstLine.replace(/^#{1,4}\s*/, ''));
-            const bodyLines = lines.slice(1);
-            const fullBody = preProcessSlideBody(bodyLines.join('\n'));
+            const fullBody = preProcessSlideBody(lines.slice(1).join('\n'));
+            // 본문이 실질적으로 비어 있을 때만 '구분 슬라이드'로 처리
+            // (표·불릿·이미지·산문이 있으면 반드시 콘텐츠 슬라이드로 — 누락 방지)
+            const _plain = fullBody.replace(/<!--[\s\S]*?-->/g, '').replace(/<[^>]*>/g, '');
+            const _hasBullets = /^\s*(?:[-*•]|\d+\.)\s+\S/m.test(_plain);
+            const _hasTable = /\|.*\|/.test(fullBody) && /\|[\s:|-]+\|/.test(fullBody);
+            const _hasImage = /local:|data:image|<img|!\[/.test(fullBody);
+            const _proseLen = _plain.replace(/[#>*`~\-|]/g, '').replace(/\s+/g, '').length;
+            const isDivider = !(_hasBullets || _hasTable || _hasImage || _proseLen >= 12);
 
-            // instructor-callout 제외 — preProcessSlideBody가 이미 처리
-
-            // 섹션 타이틀
-            if (isH1 || (isH2 && fullBody.replace(/[^a-zA-Z가-힣]/g, '').length < 60)) {
-                partNum++;
-                addPartDivider(pptx, T, FONT, partNum, heading);
-                return;
+            // 본문 참고 이미지 수집 (local:imgId → data URL, 인라인 data: 포함)
+            const imgs = [];
+            const seenIds = new Set();
+            let _m; const _re = /local:([^"'\s>)]+)/g;
+            while ((_m = _re.exec(fullBody)) !== null) {
+                const id = _m[1];
+                if (!seenIds.has(id) && modImages[id] && String(modImages[id]).startsWith('data:')) {
+                    seenIds.add(id); imgs.push(modImages[id]);
+                }
             }
+            let _d; const _reD = /(data:image\/[a-zA-Z]+;base64,[A-Za-z0-9+/=]+)/g;
+            while ((_d = _reD.exec(fullBody)) !== null) { if (!imgs.includes(_d[1])) imgs.push(_d[1]); }
 
-            // 본문 처리 (참고 이미지 인용 위해 mod.images 전달)
-            renderContentSection(pptx, T, FONT, heading, fullBody, partNum, mod.images || {});
-        });
+            parsed.push({ heading, body: fullBody, isDivider, images: imgs });
+        }
+
+        // ── 부족한 참고 이미지 생성 (본문 이미지 인용 우선, 없는 본문 단락은 생성) ──
+        const NO_IMG = /학습\s*목표|objectives?|개요|overview|요약|정리|마무리|summary|채점|루브릭|평가\s*기준|q\s*&?\s*a/i;
+        const needGen = parsed.filter(s => !s.isDivider && s.images.length === 0
+            && !NO_IMG.test(s.heading)
+            && !/\n\s*\|.*\|/.test(s.body)
+            && cleanText(s.body).replace(/\s+/g, '').length >= 80);
+        const toGen = needGen.slice(0, 16); // 생성 상한 (대기시간·rate limit 보호)
+        if (toGen.length && typeof generateImageAPI === 'function') {
+            _pptProgress(0, `강의용 참고 이미지 생성 준비 (${toGen.length}장)`);
+            for (let i = 0; i < toGen.length; i++) {
+                const s = toGen[i];
+                _pptProgress(Math.round((i / toGen.length) * 100), `참고 이미지 생성 ${i + 1}/${toGen.length} — ${s.heading}`);
+                try {
+                    const b64 = await generateImageAPI(_pptBuildGenPrompt(s.heading, cleanText(s.body)));
+                    if (b64 && String(b64).startsWith('data:')) {
+                        const id = 'img_' + Date.now() + Math.floor(Math.random() * 1000);
+                        modImages[id] = b64; s.images.push(b64);
+                    }
+                } catch (e) { /* 개별 실패는 텍스트 슬라이드로 진행 */ }
+                if (i < toGen.length - 1) await new Promise(r => setTimeout(r, 800));
+            }
+            mod.images = modImages;
+            if (typeof saveState === 'function') { try { await saveState(); } catch (e) {} }
+            _pptProgressDone(`참고 이미지 ${toGen.length}장 준비 완료`);
+        }
+
+        // ── 슬라이드 렌더 ──
+        const _titleKey = (mod.title || '').replace(/\s/g, '');
+        let partNum = 0;
+        for (const s of parsed) {
+            if (s.isDivider) {
+                // 표지와 동일 제목의 빈 섹션은 생략 (중복 타이틀 방지)
+                if (s.heading && _titleKey && s.heading.replace(/\s/g, '') === _titleKey) continue;
+                partNum++; addPartDivider(pptx, T, FONT, partNum, s.heading); continue;
+            }
+            renderContentSection(pptx, T, FONT, s.heading, s.body, partNum, s.images);
+        }
 
         // ── 마무리 ──
         const endSlide = pptx.addSlide({ masterName: 'COVER_MASTER' });
@@ -1069,22 +1115,9 @@ function addPartDivider(pptx, T, FONT, partNum, heading) {
     });
 }
 
-function renderContentSection(pptx, T, FONT, heading, body, partNum, images) {
-    images = images || {};
-    // ── 참고 이미지 추출: cleanText가 <img> 태그를 제거하기 전에 먼저 수집 ──
-    const imgIds = [];
-    const seen = new Set();
-    let _im;
-    const _imgRe = /local:([^"'\s>]+)/g;
-    while ((_im = _imgRe.exec(body)) !== null) {
-        const id = _im[1];
-        if (!seen.has(id) && images[id] && String(images[id]).startsWith('data:')) {
-            seen.add(id);
-            imgIds.push(id);
-        }
-    }
-    // 본문에 참고 이미지가 있으면 전용 슬라이드로 렌더 (16:9 contain — 절대 초과 안 함)
-    if (imgIds.length) renderSectionImages(pptx, T, FONT, heading, imgIds, images);
+function renderContentSection(pptx, T, FONT, heading, body, partNum, imageData) {
+    // imageData: 이 섹션에 인용/생성된 참고 이미지 data URL 배열
+    const imgs = (imageData || []).filter(d => d && String(d).startsWith('data:'));
 
     // 본문 분석
     const tableRows = [];
@@ -1098,7 +1131,6 @@ function renderContentSection(pptx, T, FONT, heading, body, partNum, images) {
         if (trimmed.startsWith('```')) { inCodeBlock = !inCodeBlock; return; }
         if (inCodeBlock) return;
         if (!trimmed) { inTable = false; return; }
-        // 표
         if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
             if (trimmed.match(/^\|[\s:|-]+\|$/)) return;
             inTable = true;
@@ -1106,126 +1138,116 @@ function renderContentSection(pptx, T, FONT, heading, body, partNum, images) {
             return;
         }
         inTable = false;
-        // 불릿
         const bm = trimmed.match(/^[-*•]\s+(.+)/) || trimmed.match(/^\d+\.\s+(.+)/);
-        if (bm) {
-            bullets.push(cleanText(bm[1]));
-            return;
-        }
+        if (bm) { bullets.push(cleanText(bm[1])); return; }
         const c = cleanText(trimmed);
         if (c) processed.push(c);
     });
 
-    // (A) 표 — 페이지 분할 지원
+    const textItems = [...bullets, ...processed].filter(Boolean);
+    const hasText = textItems.length > 0;
+
+    // (A) 표 — 페이지 분할 (표는 전체 폭 우선, 이미지는 표 뒤 별도 슬라이드)
     if (tableRows.length >= 2) {
         const header = tableRows[0];
         const rows = tableRows.slice(1);
-        const ROWS_PER_PAGE = 10;
+        const ROWS_PER_PAGE = 9;
         const totalPages = Math.ceil(rows.length / ROWS_PER_PAGE);
         for (let p = 0; p < totalPages; p++) {
             const sl = pptx.addSlide({ masterName: 'CONTENT_MASTER' });
-            const pageTitle = totalPages > 1 ? `${heading} (${p + 1}/${totalPages})` : heading;
-            sl.addText(pageTitle.length > 80 ? pageTitle.substring(0, 77) + '...' : pageTitle, {
-                x: 0.6, y: 0.45, w: 12, h: 0.85, fontSize: 30, fontFace: FONT, color: T.accent, bold: true,
-            });
-            sl.addShape(pptx.ShapeType.rect, { x: 0.6, y: 1.45, w: 12, h: 0.025, fill: { color: T.border } });
-
+            _pptHead(pptx, sl, T, FONT, totalPages > 1 ? `${heading} (${p + 1}/${totalPages})` : heading);
             const slice = rows.slice(p * ROWS_PER_PAGE, (p + 1) * ROWS_PER_PAGE);
-            const colW = header.map(() => 12 / header.length);
+            const colW = header.map(() => 12.13 / header.length);
             const tblRows = [
-                header.map(h => ({ text: h, options: { fontSize: 14, fontFace: FONT, color: T.accent, bold: true, fill: { color: '1A2A4D' }, border: { pt: 1, color: T.border }, valign: 'middle' } })),
+                header.map(h => ({ text: h, options: { fontSize: 14, fontFace: FONT, color: T.accent, bold: true, fill: { color: '1A2A4D' }, border: { pt: 1, color: T.border }, valign: 'middle', align: 'center' } })),
                 ...slice.map((row, i) => row.map(cell => ({
                     text: cell, options: {
-                        fontSize: 13, fontFace: FONT, color: T.txt,
+                        fontSize: 12, fontFace: FONT, color: T.txt,
                         fill: { color: i % 2 === 0 ? T.bg : '11203E' }, border: { pt: 1, color: T.border }, valign: 'middle',
                     }
                 })))
             ];
-            sl.addTable(tblRows, { x: 0.6, y: 1.7, w: 12, colW, rowH: 0.42 });
+            // autoPage:false + rowH로 본문 영역(최대 5.15in) 내 고정 — 16:9 초과 방지
+            sl.addTable(tblRows, { x: 0.6, y: 1.7, w: 12.13, colW, rowH: Math.min(0.5, 5.0 / (slice.length + 1)), autoPage: false, valign: 'middle' });
         }
+        if (imgs.length) renderSectionImages(pptx, T, FONT, heading, imgs);
         return;
     }
 
-    // (B) 짧은 불릿 3~6개 — 카드형
+    // (B) 참고 이미지 + 본문 → 2단(텍스트 좌 / 이미지 우) 동일 슬라이드 (강의용)
+    if (imgs.length && hasText) {
+        const sl = pptx.addSlide({ masterName: 'CONTENT_MASTER' });
+        _pptHead(pptx, sl, T, FONT, heading);
+        // 좌측 텍스트 컬럼 (최대 7항목, fit:shrink로 박스 내 강제 축소)
+        const items = textItems.slice(0, 7).map(row => {
+            const isHead = !bullets.includes(row) && row.length < 56 && /^[가-힣A-Z]/.test(row);
+            return {
+                text: row.length > 110 ? row.substring(0, 107) + '...' : row,
+                options: {
+                    fontSize: isHead ? 19 : 16, fontFace: FONT, color: isHead ? T.h : T.txt, bold: isHead,
+                    ...(isHead ? {} : { bullet: { type: 'number', color: T.accent } }),
+                    breakLine: true, paraSpaceBefore: isHead ? 10 : 5, paraSpaceAfter: 5,
+                }
+            };
+        });
+        sl.addText(items, { x: 0.6, y: 1.7, w: 6.45, h: 5.05, valign: 'top', wrap: true, fit: 'shrink' });
+        // 우측 이미지 카드 (contain — 절대 초과 안 함)
+        _pptImageCard(pptx, sl, T, imgs[0], { x: 7.25, y: 1.72, w: 5.45, h: 5.06 });
+        // 여분 이미지(2장 이상)는 뒤에 별도 슬라이드
+        if (imgs.length > 1) renderSectionImages(pptx, T, FONT, heading, imgs.slice(1));
+        return;
+    }
+
+    // (C) 참고 이미지만 있고 본문 텍스트가 거의 없음 → 전체 이미지 슬라이드
+    if (imgs.length && !hasText) {
+        renderSectionImages(pptx, T, FONT, heading, imgs);
+        return;
+    }
+
+    // (D) 짧은 불릿 3~6개 — 카드형 (이미지 없음)
     const shortBullets = bullets.filter(b => b.length < 70);
     if (shortBullets.length >= 3 && shortBullets.length <= 6 && shortBullets.length === bullets.length) {
         const sl = pptx.addSlide({ masterName: 'CONTENT_MASTER' });
-        sl.addText(heading.length > 80 ? heading.substring(0, 77) + '...' : heading, {
-            x: 0.6, y: 0.45, w: 12, h: 0.85, fontSize: 30, fontFace: FONT, color: T.accent, bold: true,
-        });
-        sl.addShape(pptx.ShapeType.rect, { x: 0.6, y: 1.45, w: 12, h: 0.025, fill: { color: T.border } });
-
+        _pptHead(pptx, sl, T, FONT, heading);
         const cards = shortBullets.slice(0, 6);
         const cols = cards.length <= 2 ? cards.length : (cards.length === 4 ? 2 : 3);
         const rows = Math.ceil(cards.length / cols);
         const gap = 0.25;
-        const cw = (12 - (cols - 1) * gap) / cols;
+        const cw = (12.13 - (cols - 1) * gap) / cols;
         const startY = 1.85;
-        const availH = 5.0;
-        const ch = (availH - (rows - 1) * gap) / rows;
-
+        const ch = (5.0 - (rows - 1) * gap) / rows;
         cards.forEach((card, i) => {
-            const r = Math.floor(i / cols);
-            const c = i % cols;
-            const cx = 0.6 + c * (cw + gap);
-            const cy = startY + r * (ch + gap);
-            // 카드 배경 (둥근 모서리)
-            sl.addShape(pptx.ShapeType.roundRect, {
-                x: cx, y: cy, w: cw, h: ch,
-                fill: { color: T.card }, line: { color: T.border, width: 1 },
-                rectRadius: 0.12,
-            });
-            // 상단 액센트 바
+            const r = Math.floor(i / cols), c = i % cols;
+            const cx = 0.6 + c * (cw + gap), cy = startY + r * (ch + gap);
+            sl.addShape(pptx.ShapeType.roundRect, { x: cx, y: cy, w: cw, h: ch, fill: { color: T.card }, line: { color: T.border, width: 1 }, rectRadius: 0.12 });
             sl.addShape(pptx.ShapeType.rect, { x: cx, y: cy, w: cw, h: 0.08, fill: { color: T.accent } });
-            // 번호 박스 (둥근 모서리)
-            sl.addShape(pptx.ShapeType.roundRect, {
-                x: cx + 0.25, y: cy + 0.3, w: 0.55, h: 0.55,
-                fill: { color: T.accent }, rectRadius: 0.08,
-            });
-            sl.addText(String(i + 1).padStart(2, '0'), {
-                x: cx + 0.25, y: cy + 0.3, w: 0.55, h: 0.55, fontSize: 18, fontFace: FONT,
-                color: '0B1120', bold: true, align: 'center', valign: 'middle',
-            });
-            // 카드 텍스트 — 제목/설명 분리
+            sl.addShape(pptx.ShapeType.roundRect, { x: cx + 0.25, y: cy + 0.3, w: 0.55, h: 0.55, fill: { color: T.accent }, rectRadius: 0.08 });
+            sl.addText(String(i + 1).padStart(2, '0'), { x: cx + 0.25, y: cy + 0.3, w: 0.55, h: 0.55, fontSize: 18, fontFace: FONT, color: '0B1120', bold: true, align: 'center', valign: 'middle' });
             const m = card.match(/^([^:：]{2,40})[:：]\s*(.+)/);
             if (m) {
-                sl.addText(m[1].trim(), {
-                    x: cx + 0.95, y: cy + 0.3, w: cw - 1.15, h: 0.5, fontSize: 17, fontFace: FONT,
-                    color: T.h, bold: true, valign: 'middle',
-                });
-                sl.addText(m[2].trim(), {
-                    x: cx + 0.25, y: cy + 1.0, w: cw - 0.5, h: ch - 1.2, fontSize: 14, fontFace: FONT,
-                    color: T.txt, valign: 'top', wrap: true,
-                });
+                sl.addText(m[1].trim(), { x: cx + 0.95, y: cy + 0.3, w: cw - 1.15, h: 0.55, fontSize: 17, fontFace: FONT, color: T.h, bold: true, valign: 'middle', fit: 'shrink' });
+                sl.addText(m[2].trim(), { x: cx + 0.25, y: cy + 1.0, w: cw - 0.5, h: ch - 1.2, fontSize: 14, fontFace: FONT, color: T.txt, valign: 'top', wrap: true, fit: 'shrink' });
             } else {
-                sl.addText(card, {
-                    x: cx + 0.25, y: cy + 1.0, w: cw - 0.5, h: ch - 1.2, fontSize: 15, fontFace: FONT,
-                    color: T.h, valign: 'top', wrap: true,
-                });
+                sl.addText(card, { x: cx + 0.25, y: cy + 1.0, w: cw - 0.5, h: ch - 1.2, fontSize: 15, fontFace: FONT, color: T.h, valign: 'top', wrap: true, fit: 'shrink' });
             }
         });
         return;
     }
 
-    // (C) 일반 콘텐츠 — 불릿 슬라이드 (페이지 분할)
-    const allItems = [...bullets, ...processed].filter(Boolean);
-    if (allItems.length > 0) {
-        const MAX_ITEMS = 7;       // 페이지당 항목 수 상한
-        const LINE_BUDGET = 13;    // 18pt 줄 수 상한 (본문 박스 5.15in — 16:9 초과 방지)
+    // (E) 일반 콘텐츠 — 불릿 슬라이드 (라인 예산 기반 페이지 분할 + fit:shrink)
+    if (textItems.length > 0) {
+        const MAX_ITEMS = 7, LINE_BUDGET = 13;
         const estLines = (row) => {
             const isHead = !bullets.includes(row) && row.length < 60 && /^[가-힣A-Z]/.test(row);
-            const cpl = isHead ? 36 : 48;            // 12in 폭 기준 줄당 글자 수(보수적)
-            const len = Math.min(row.length, 130);   // 130자 캡과 동일
-            return Math.max(1, Math.ceil(len / cpl)) + 0.6;  // 문단 간격 보정
+            const cpl = isHead ? 36 : 48;
+            const len = Math.min(row.length, 130);
+            return Math.max(1, Math.ceil(len / cpl)) + 0.6;
         };
-        // 라인 예산 + 항목수 상한으로 페이지 분할 (긴 항목이 박스를 넘지 않도록)
         const pageChunks = [];
-        let cur = []; let curLines = 0;
-        for (const row of allItems) {
+        let cur = [], curLines = 0;
+        for (const row of textItems) {
             const l = estLines(row);
-            if (cur.length > 0 && (curLines + l > LINE_BUDGET || cur.length >= MAX_ITEMS)) {
-                pageChunks.push(cur); cur = []; curLines = 0;
-            }
+            if (cur.length > 0 && (curLines + l > LINE_BUDGET || cur.length >= MAX_ITEMS)) { pageChunks.push(cur); cur = []; curLines = 0; }
             cur.push(row); curLines += l;
         }
         if (cur.length) pageChunks.push(cur);
@@ -1233,56 +1255,81 @@ function renderContentSection(pptx, T, FONT, heading, body, partNum, images) {
         const pages = pageChunks.length;
         pageChunks.forEach((chunk, p) => {
             const sl = pptx.addSlide({ masterName: 'CONTENT_MASTER' });
-            const pageTitle = pages > 1 ? `${heading} (${p + 1}/${pages})` : heading;
-            sl.addText(pageTitle.length > 80 ? pageTitle.substring(0, 77) + '...' : pageTitle, {
-                x: 0.6, y: 0.45, w: 12, h: 0.85, fontSize: 30, fontFace: FONT, color: T.accent, bold: true,
-            });
-            sl.addShape(pptx.ShapeType.rect, { x: 0.6, y: 1.45, w: 12, h: 0.025, fill: { color: T.border } });
-
-            // 텍스트 옵션 배열
+            _pptHead(pptx, sl, T, FONT, pages > 1 ? `${heading} (${p + 1}/${pages})` : heading);
             const items = chunk.map(row => {
                 const isHead = !bullets.includes(row) && row.length < 60 && /^[가-힣A-Z]/.test(row);
                 return {
                     text: row.length > 130 ? row.substring(0, 127) + '...' : row,
                     options: {
-                        fontSize: isHead ? 22 : 18,
-                        fontFace: FONT,
-                        color: isHead ? T.h : T.txt,
-                        bold: isHead,
+                        fontSize: isHead ? 22 : 18, fontFace: FONT, color: isHead ? T.h : T.txt, bold: isHead,
                         ...(isHead ? {} : { bullet: { type: 'number', color: T.accent } }),
-                        breakLine: true,
-                        paraSpaceBefore: isHead ? 14 : 6,
-                        paraSpaceAfter: 6,
+                        breakLine: true, paraSpaceBefore: isHead ? 14 : 6, paraSpaceAfter: 6,
                     }
                 };
             });
-            sl.addText(items, {
-                x: 0.6, y: 1.75, w: 12, h: 5.15, valign: 'top', wrap: true,
-            });
+            sl.addText(items, { x: 0.6, y: 1.75, w: 12.13, h: 5.1, valign: 'top', wrap: true, fit: 'shrink' });
         });
         return;
     }
 }
 
-// ── 참고 이미지 전용 슬라이드 (16:9 contain — 절대 초과 안 함) ──
-function renderSectionImages(pptx, T, FONT, heading, imgIds, images) {
-    imgIds.forEach((id, i) => {
-        const data = images[id];
+// ── 공통: 제목 + 구분선 ──
+function _pptHead(pptx, sl, T, FONT, title) {
+    const t = String(title || '');
+    sl.addText(t.length > 80 ? t.substring(0, 77) + '...' : t, {
+        x: 0.6, y: 0.4, w: 12.13, h: 0.9, fontSize: 30, fontFace: FONT, color: T.accent, bold: true, valign: 'middle', fit: 'shrink',
+    });
+    sl.addShape(pptx.ShapeType.rect, { x: 0.6, y: 1.45, w: 12.13, h: 0.025, fill: { color: T.border } });
+}
+
+// ── 공통: 이미지 카드 (프레임 + contain — 16:9 절대 초과 안 함) ──
+function _pptImageCard(pptx, sl, T, data, box) {
+    if (!data || !String(data).startsWith('data:')) return;
+    sl.addShape(pptx.ShapeType.roundRect, { x: box.x, y: box.y, w: box.w, h: box.h, fill: { color: '0E1A33' }, line: { color: T.border, width: 1 }, rectRadius: 0.10 });
+    const pad = 0.18;
+    sl.addImage({ data, x: box.x + pad, y: box.y + pad, w: box.w - pad * 2, h: box.h - pad * 2, sizing: { type: 'contain', w: box.w - pad * 2, h: box.h - pad * 2 } });
+}
+
+// ── 참고 이미지 전용 슬라이드 (data URL 배열, 16:9 contain) ──
+function renderSectionImages(pptx, T, FONT, heading, dataUrls) {
+    (dataUrls || []).forEach((data, i) => {
         if (!data || !String(data).startsWith('data:')) return;
         const sl = pptx.addSlide({ masterName: 'CONTENT_MASTER' });
-        const title = imgIds.length > 1
-            ? `${heading} · 참고 이미지 (${i + 1}/${imgIds.length})`
-            : `${heading} · 참고 이미지`;
-        sl.addText(title.length > 80 ? title.substring(0, 77) + '...' : title, {
-            x: 0.6, y: 0.45, w: 12, h: 0.85, fontSize: 30, fontFace: FONT, color: T.accent, bold: true,
-        });
-        sl.addShape(pptx.ShapeType.rect, { x: 0.6, y: 1.45, w: 12, h: 0.025, fill: { color: T.border } });
-        sl.addImage({
-            data,
-            x: 0.6, y: 1.7, w: 12.13, h: 5.2,
-            sizing: { type: 'contain', w: 12.13, h: 5.2 },
-        });
+        const title = dataUrls.length > 1 ? `${heading} · 참고 이미지 (${i + 1}/${dataUrls.length})` : `${heading} · 참고 이미지`;
+        _pptHead(pptx, sl, T, FONT, title);
+        _pptImageCard(pptx, sl, T, data, { x: 0.6, y: 1.7, w: 12.13, h: 5.15 });
     });
+}
+
+// ── 강의용 참고 이미지 생성 프롬프트 (글자 없는 개념 일러스트) ──
+function _pptBuildGenPrompt(title, plain) {
+    const t = String(title || '').replace(/^\d+[.)]\s*/, '').replace(/[:：]\s*$/, '').trim();
+    const ctx = String(plain || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+    return `Educational concept illustration for a lecture slide titled "${t}". Context: ${ctx}. Modern flat digital art, clean, professional, high detail, 16:9 wide composition, soft lighting. No text, no letters, no words, no numbers, no labels, no captions, no watermark anywhere in the image.`;
+}
+
+// ── PPT 변환 진행바 ──
+function _pptProgress(pct, label) {
+    let bar = document.getElementById('ppt-progress-bar');
+    if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'ppt-progress-bar';
+        bar.style.cssText = 'position:fixed;top:0;left:0;width:100%;z-index:99999;background:rgba(11,17,32,0.96);color:#fff;padding:12px 24px;font-size:14px;font-weight:600;display:flex;align-items:center;gap:16px;backdrop-filter:blur(8px);';
+        document.body.appendChild(bar);
+    }
+    bar.innerHTML = `<div style="flex:1"><div style="margin-bottom:6px;">📊 PPT 변환 — <span style="color:#4BACC6;">${label}</span></div><div style="width:100%;height:6px;background:rgba(255,255,255,0.15);border-radius:4px;overflow:hidden;"><div style="width:${pct}%;height:100%;background:linear-gradient(90deg,#4BACC6,#A78BFA);border-radius:4px;transition:width .4s;"></div></div></div><span style="font-size:18px;min-width:48px;text-align:right;">${pct}%</span>`;
+}
+function _pptProgressDone(label) {
+    const bar = document.getElementById('ppt-progress-bar');
+    if (!bar) return;
+    bar.innerHTML = `<div style="flex:1;text-align:center;">✅ ${label}</div>`;
+    setTimeout(() => bar.remove(), 2200);
+}
+function _pptProgressFail(label) {
+    const bar = document.getElementById('ppt-progress-bar');
+    if (!bar) return;
+    bar.innerHTML = `<div style="flex:1;color:#f87171;">⚠️ ${label}</div>`;
+    setTimeout(() => bar.remove(), 4000);
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -46,8 +46,8 @@ window.showExportModal = function () {
                 <label class="cursor-pointer">
                     <input type="radio" name="export-format" value="slide" class="hidden peer">
                     <div class="peer-checked:border-accent peer-checked:bg-accent/10 border border-gray-200 rounded-lg p-3 flex items-center gap-2 transition-all hover:bg-gray-50">
-                        <i class="ph-bold ph-presentation-chart text-purple-500 text-lg"></i>
-                        <span class="text-xs font-bold">슬라이드 (HTML)</span>
+                        <i class="ph-bold ph-file-ppt text-purple-500 text-lg"></i>
+                        <span class="text-xs font-bold">PPT (.pptx)</span>
                     </div>
                 </label>
                 <label class="cursor-pointer">
@@ -115,7 +115,9 @@ window.executeExport = function () {
             break;
         }
         case 'slide':
-            if (typeof exportToSlideHTML === 'function') exportToSlideHTML();
+            // 강의용 PPT(.pptx) 변환 — 16:9 엄수 + 본문 참고 이미지 인용/생성
+            if (typeof exportToPptx === 'function') exportToPptx();
+            else if (typeof exportToSlideHTML === 'function') exportToSlideHTML();
             break;
         case 'html': {
             const htmlContent = typeof marked !== 'undefined' ? marked.parse(content) : content;
