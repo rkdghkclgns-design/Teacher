@@ -112,8 +112,12 @@ async function generateTabContent(moduleId, tabId) {
 
         setLoadingText(`📝 ${tabMeta.label} 작성 중입니다... (1/${MAX_CHUNKS} 단락)`);
 
+        // 강사 callout 4항목 구조를 안정적으로 유도하기 위해 Few-Shot 예시 turn을 contents 앞에 주입
+        // (규칙·예시 텍스트만으로는 모델이 "강사 스크립트"를 말하기 대본으로 출력하는 prior를 못 이김)
+        const calloutFewshot = (typeof CALLOUT_FORMAT_FEWSHOT !== 'undefined') ? CALLOUT_FORMAT_FEWSHOT : [];
+
         const firstPayload = {
-            contents: [{ parts: [{ text: userPrompt }] }],
+            contents: [...calloutFewshot, { role: 'user', parts: [{ text: userPrompt }] }],
             systemInstruction: { parts: [{ text: systemInstruction }] },
             generationConfig: { maxOutputTokens: 65536 }
         };
@@ -139,7 +143,7 @@ async function generateTabContent(moduleId, tabId) {
             await new Promise(r => setTimeout(r, 1500));
 
             const contPayload = {
-                contents: [{ parts: [{ text: cont.userPrompt }] }],
+                contents: [...calloutFewshot, { role: 'user', parts: [{ text: cont.userPrompt }] }],
                 systemInstruction: { parts: [{ text: cont.systemInstruction }] },
                 generationConfig: { maxOutputTokens: 65536 }
             };
