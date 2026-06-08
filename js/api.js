@@ -163,6 +163,29 @@ function enhanceKeyPoints(html) {
     );
 }
 
+// v8.1: 강사 callout 내부 마크다운이 marked에서 한 문단으로 뭉개지지 않도록 빈 줄을 보정한다.
+//   - 이모지 라벨(💡/⏰/🗣️ 등) 줄 앞에 빈 줄 → 라벨이 별도 문단으로 분리
+//   - 비불릿 줄 바로 뒤 첫 불릿 앞에 빈 줄 → 불릿이 리스트로 분리 (라벨+내용이 한 줄로 합쳐지는 깨짐 방지)
+function ensureCalloutBlockSpacing(text) {
+    if (!text || typeof text !== 'string') return text || '';
+    const isLabel = (l) => /^\s*(?:⏰|⏱️|🎚️|🎬|🗣️|💡|⚠️|❓|🔗|💼|🎓|📝|🎯|📚|🔍)/.test(l);
+    const isBullet = (l) => /^\s*[-*]\s+/.test(l);
+    const lines = text.split('\n');
+    const out = [];
+    for (let i = 0; i < lines.length; i++) {
+        const cur = lines[i];
+        const prev = out.length ? out[out.length - 1] : '';
+        const prevTrim = prev.trim();
+        if (isLabel(cur) && prevTrim !== '') {
+            out.push('');                 // 라벨 줄 앞 빈 줄
+        } else if (isBullet(cur) && prevTrim !== '' && !isBullet(prev)) {
+            out.push('');                 // 첫 불릿 앞 빈 줄
+        }
+        out.push(cur);
+    }
+    return out.join('\n');
+}
+
 function reParseInstructorCallouts(html) {
     try {
         const tmp = document.createElement('div');
@@ -184,6 +207,9 @@ function reParseInstructorCallouts(html) {
             preprocessed = preprocessed.replace(/<pre><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, (_, code) => {
                 return code.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
             });
+
+            // v8.1: 이모지 라벨/불릿 사이 빈 줄 보정 — 라벨과 내용이 한 문단으로 합쳐지는 마크다운 깨짐 방지
+            preprocessed = ensureCalloutBlockSpacing(preprocessed);
 
             // v7.1: 항상 marked.parse() 호출 — **볼드**, 리스트, 테이블 등 미파싱 방지
             let parsedContent;
@@ -267,9 +293,11 @@ function getReferenceContext(maxChars = 8000) {
     return ctx;
 }
 
-async function fetchWithRetry(url, options, retries = 5) {
-    // 503 과부하 에러 등을 대비해 기본 재시도 횟수 5회 및 대기 시간 대폭 연장 (1.5s, 3s, 6s, 10s, 15s)
-    const delays = [1500, 3000, 6000, 10000, 15000];
+async function fetchWithRetry(url, options, retries = 5, onRetry = null) {
+    // 503 과부하 에러 등 일반 지연 대비 기본 백오프 (1.5s, 3s, 6s, 10s, 15s)
+    const baseDelays = [1500, 3000, 6000, 10000, 15000];
+    // 429(호출 한도/쿼터 초과)는 분당 쿼터 리셋에 최대 ~60초가 필요하므로 더 길게 대기
+    const rateLimitDelays = [5000, 10000, 20000, 30000, 45000];
 
     for (let i = 0; i < retries; i++) {
         try {
@@ -281,8 +309,19 @@ async function fetchWithRetry(url, options, retries = 5) {
                     const statusLabel = res.status === 401 ? 'Unauthorized (API 키 확인 필요)' : res.status === 403 ? 'Forbidden' : 'Bad Request';
                     throw new Error(`HTTP error! status: ${res.status}, ${statusLabel}: ${errText.substring(0, 150)}`);
                 }
-                // 429, 500, 503 등은 throw하여 아래 catch 블록에서 지연 재시도를 타게 만듦
-                throw new Error(`HTTP error! status: ${res.status}`);
+                // 429 호출 한도: 응답 본문에 서버 권장 재시도 시간(retryDelay)이 있으면 추출해 존중
+                if (res.status === 429) {
+                    const bodyText = await res.text().catch(() => '');
+                    const err = new Error(`HTTP error! status: 429`);
+                    err.status = 429;
+                    const m = bodyText.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/);
+                    if (m) err.suggestedDelayMs = Math.ceil(parseFloat(m[1]) * 1000);
+                    throw err;
+                }
+                // 500, 503 등은 throw하여 아래 catch 블록에서 지연 재시도를 타게 만듦
+                const err = new Error(`HTTP error! status: ${res.status}`);
+                err.status = res.status;
+                throw err;
             }
             return await res.json();
         } catch (e) {
@@ -291,18 +330,32 @@ async function fetchWithRetry(url, options, retries = 5) {
                 throw e;
             }
 
-            console.warn(`[fetchWithRetry] API 오류 또는 지연 발생. ${delays[i] / 1000}초 후 재시도합니다... (${i + 1}/${retries - 1}) | 사유: ${e.message}`);
-            await new Promise(r => setTimeout(r, delays[i]));
+            const isRateLimit = e.status === 429 || /status: 429/.test(e.message);
+            let delay = isRateLimit ? rateLimitDelays[i] : baseDelays[i];
+            // 서버가 명시한 권장 재시도 시간이 더 길면 그 값을 따름 (상한 65초)
+            if (e.suggestedDelayMs && e.suggestedDelayMs > delay) {
+                delay = Math.min(e.suggestedDelayMs, 65000);
+            }
+
+            console.warn(`[fetchWithRetry] ${isRateLimit ? 'API 호출 한도(429)' : 'API 오류 또는 지연'} 발생. ${Math.round(delay / 1000)}초 후 재시도합니다... (${i + 1}/${retries - 1}) | 사유: ${e.message}`);
+            // 호출자에게 재시도 상황 통지 (로딩 문구 갱신 등) — 선택적
+            if (typeof onRetry === 'function') {
+                try { onRetry({ attempt: i + 1, total: retries - 1, delayMs: delay, isRateLimit }); } catch (_) { /* 통지 실패는 무시 */ }
+            }
+            await new Promise(r => setTimeout(r, delay));
         }
     }
 }
 
 // Edge Function 프록시를 통한 Gemini API 호출 헬퍼
-function callGemini(modelName, payload) {
+// onRetry: 재시도 발생 시 호출되는 선택적 콜백 ({ attempt, total, delayMs, isRateLimit })
+function callGemini(modelName, payload, onRetry = null) {
     const proxyPayload = { model: modelName, ...payload };
     return fetchWithRetry(
         GEMINI_PROXY_URL,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) }
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) },
+        5,
+        onRetry
     );
 }
 

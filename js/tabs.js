@@ -94,6 +94,16 @@ async function generateTabContent(moduleId, tabId) {
             if (el) el.textContent = txt;
         };
 
+        // 재시도 발생 시(특히 429 호출 한도) 로딩 문구를 갱신해 멈춘 것처럼 보이지 않게 함
+        const onRetry = ({ delayMs, isRateLimit }) => {
+            const sec = Math.round((delayMs || 0) / 1000);
+            if (isRateLimit) {
+                setLoadingText(`⏳ API 호출 한도에 도달했습니다. ${sec}초 후 자동으로 다시 시도합니다...`);
+            } else {
+                setLoadingText(`⏳ 일시적인 응답 지연이 발생했습니다. ${sec}초 후 자동으로 다시 시도합니다...`);
+            }
+        };
+
         // ─── CONTINUE/END 분할 생성 루프 (긴 탭, 특히 기본 학습 480분이 잘리지 않도록) ───
         const CONTINUE_MARKER = '<!-- CONTINUE -->';
         const END_MARKER = '<!-- END -->';
@@ -108,8 +118,10 @@ async function generateTabContent(moduleId, tabId) {
             generationConfig: { maxOutputTokens: 65536 }
         };
 
-        let fullText = extractText(await callGemini(TEXT_MODEL, firstPayload));
+        let fullText = extractText(await callGemini(TEXT_MODEL, firstPayload, onRetry));
         let chunkCount = 1;
+        // 이어쓰기 단계에서 호출 한도 등으로 실패하면, 이미 만든 단락은 버리지 않고 보존하기 위한 플래그
+        let partialDueToError = false;
 
         while (fullText.includes(CONTINUE_MARKER) && chunkCount < MAX_CHUNKS) {
             // 마커 제거 후 이어쓰기 준비
@@ -132,7 +144,15 @@ async function generateTabContent(moduleId, tabId) {
                 generationConfig: { maxOutputTokens: 65536 }
             };
 
-            let contText = extractText(await callGemini(TEXT_MODEL, contPayload));
+            let contText;
+            try {
+                contText = extractText(await callGemini(TEXT_MODEL, contPayload, onRetry));
+            } catch (contErr) {
+                // 이어쓰기 청크 실패(예: 429 호출 한도) — 첫 청크는 이미 성공했으므로
+                // 지금까지 생성된 분량을 보존하고 루프를 종료한다 (전체 폐기 방지)
+                partialDueToError = true;
+                break;
+            }
 
             // 중복 헤딩 제거: 이어쓴 첫 헤딩이 직전 마지막 헤딩과 같으면 제거
             const prevHeadings = fullText.match(/^(#{1,4}\s+.+)$/gm) || [];
@@ -195,10 +215,18 @@ async function generateTabContent(moduleId, tabId) {
         await saveState();
         renderSidebar();
         renderEditor(mod);
-        if (!_suppressTabAlert) window.showAlert(`${tabMeta.label} 탭이 생성되었습니다.`);
+        if (!_suppressTabAlert) {
+            window.showAlert(partialDueToError
+                ? `${tabMeta.label} 탭이 생성되었지만, API 호출 한도로 일부 단락이 누락되었을 수 있습니다. 잠시 후(1~2분) 다시 생성하면 전체 분량이 완성됩니다.`
+                : `${tabMeta.label} 탭이 생성되었습니다.`);
+        }
     } catch (err) {
         console.error(`[TabGen] ${tabMeta.label} 실패:`, err);
-        window.showAlert(`${tabMeta.label} 생성 중 오류: ${err.message}`);
+        // 429(호출 한도)는 원인과 대처법을 명확히 안내해 사용자가 무한 재시도하지 않도록 함
+        const is429 = /status:\s*429/.test(err.message || '');
+        window.showAlert(is429
+            ? `${tabMeta.label} 생성 실패: API 호출 한도(429)에 도달했습니다. 1~2분 후 다시 시도해 주세요. (짧은 시간에 여러 탭을 연속 생성하면 한도에 걸릴 수 있습니다.)`
+            : `${tabMeta.label} 생성 중 오류: ${err.message}`);
     } finally {
         // 진행도 안내 문구를 기본값으로 복원해 다음 작업에 잔여 텍스트가 남지 않도록 함
         const loadingTextEl = document.getElementById('editor-loading-text');
