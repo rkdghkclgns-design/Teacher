@@ -799,7 +799,8 @@ window.viewHistoryItem = function (id) {
         let htmlContent;
         if (typeof marked !== 'undefined') {
             try {
-                htmlContent = marked.parse(resolved);
+                // v8.2: 강사 callout 내부 빈 줄 제거 → marked가 div를 통째 raw HTML로 넘기게 함 (이후 reParse가 재파싱)
+                htmlContent = marked.parse(typeof collapseCalloutInnerBlankLines === 'function' ? collapseCalloutInnerBlankLines(resolved) : resolved);
                 if (typeof reParseInstructorCallouts === 'function') htmlContent = reParseInstructorCallouts(htmlContent);
                 if (typeof applyPeriodLineBreakHTML === 'function') htmlContent = applyPeriodLineBreakHTML(htmlContent);
             } catch (parseErr) {
@@ -1141,7 +1142,8 @@ async function _generatePdfFromMarkdown(markdownContent, title, images) {
         // ─── 2. Markdown → HTML 변환 ───
         var htmlContent = '';
         if (typeof marked !== 'undefined') {
-            htmlContent = marked.parse(markdownContent);
+            // v8.2: 강사 callout 내부 빈 줄 제거 → marked가 div를 통째 raw HTML로 넘기게 함 (이후 reParse가 재파싱)
+            htmlContent = marked.parse(typeof collapseCalloutInnerBlankLines === 'function' ? collapseCalloutInnerBlankLines(markdownContent) : markdownContent);
             if (typeof reParseInstructorCallouts === 'function') htmlContent = reParseInstructorCallouts(htmlContent);
             if (typeof applyPeriodLineBreakHTML === 'function') htmlContent = applyPeriodLineBreakHTML(htmlContent);
         } else {

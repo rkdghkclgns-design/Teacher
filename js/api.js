@@ -163,19 +163,39 @@ function enhanceKeyPoints(html) {
     );
 }
 
+// v8.2: 메인 marked.parse가 강사 callout(<div>)을 빈 줄에서 조각내어 내부 마크다운을
+//   먼저(잘못) 파싱하는 문제를 방지한다. callout div 내부의 빈 줄을 모두 제거해
+//   div 전체가 하나의 raw HTML 블록으로 유지되게 하면, 이후 reParseInstructorCallouts가
+//   원본 마크다운을 그대로 받아 ensureCalloutBlockSpacing으로 올바르게 재파싱할 수 있다.
+function collapseCalloutInnerBlankLines(md) {
+    if (!md || typeof md !== 'string') return md || '';
+    return md.replace(
+        /(<div\s+class\s*=\s*["'][^"']*instructor-callout[^"']*["'][^>]*>)([\s\S]*?)(<\/div>)/gi,
+        (full, openTag, inner, closeTag) =>
+            openTag + '\n' + inner.split('\n').filter((l) => l.trim() !== '').join('\n') + '\n' + closeTag
+    );
+}
+
 // v8.1: 강사 callout 내부 마크다운이 marked에서 한 문단으로 뭉개지지 않도록 빈 줄을 보정한다.
 //   - 이모지 라벨(💡/⏰/🗣️ 등) 줄 앞에 빈 줄 → 라벨이 별도 문단으로 분리
 //   - 비불릿 줄 바로 뒤 첫 불릿 앞에 빈 줄 → 불릿이 리스트로 분리 (라벨+내용이 한 줄로 합쳐지는 깨짐 방지)
+//   - 비해당 표시 단독 "-" → 앞 빈 줄 + HTML 엔티티 대시(&#45;)로 치환 (Setext 헤딩·빈 불릿 오해 방지)
 function ensureCalloutBlockSpacing(text) {
     if (!text || typeof text !== 'string') return text || '';
     const isLabel = (l) => /^\s*(?:⏰|⏱️|🎚️|🎬|🗣️|💡|⚠️|❓|🔗|💼|🎓|📝|🎯|📚|🔍)/.test(l);
     const isBullet = (l) => /^\s*[-*]\s+/.test(l);
+    const isDashOnly = (l) => l.trim() === '-';
     const lines = text.split('\n');
     const out = [];
     for (let i = 0; i < lines.length; i++) {
         const cur = lines[i];
         const prev = out.length ? out[out.length - 1] : '';
         const prevTrim = prev.trim();
+        if (isDashOnly(cur)) {
+            if (prevTrim !== '') out.push('');   // 단독 "-" 앞 빈 줄 (Setext 헤딩 방지)
+            out.push('&#45;');                    // 리터럴 대시로 렌더
+            continue;
+        }
         if (isLabel(cur) && prevTrim !== '') {
             out.push('');                 // 라벨 줄 앞 빈 줄
         } else if (isBullet(cur) && prevTrim !== '' && !isBullet(prev)) {
@@ -2659,6 +2679,8 @@ function renderEditor(mod) {
 
         try {
 
+            // v8.2: 강사 callout 내부 빈 줄 제거 → marked가 div를 통째 raw HTML로 넘기게 함 (이후 reParse가 원본 마크다운 재파싱)
+            if (typeof collapseCalloutInnerBlankLines === 'function') renderText = collapseCalloutInnerBlankLines(renderText);
             htmlContent = typeof marked !== 'undefined' ? marked.parse(renderText) : `<pre class="text-gray-200 whitespace-pre-wrap">${renderText.replace(/</g, '&lt;')}</pre>`;
             // instructor-callout 내부 마크다운 재파싱
             htmlContent = reParseInstructorCallouts(htmlContent);
@@ -2988,6 +3010,8 @@ window.toggleEditorMode = function (mode) {
 
             try {
 
+                // v8.2: 강사 callout 내부 빈 줄 제거 → marked가 div를 통째 raw HTML로 넘기게 함 (이후 reParse가 원본 마크다운 재파싱)
+                if (typeof collapseCalloutInnerBlankLines === 'function') renderText = collapseCalloutInnerBlankLines(renderText);
                 let parsedHtml = typeof marked !== 'undefined' ? marked.parse(renderText) : `<pre class="text-gray-200 whitespace-pre-wrap">${renderText.replace(/</g, '&lt;')}</pre>`;
                 parsedHtml = reParseInstructorCallouts(parsedHtml);
                 parsedHtml = applyPeriodLineBreakHTML(parsedHtml);
