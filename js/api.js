@@ -171,8 +171,13 @@ function collapseCalloutInnerBlankLines(md) {
     if (!md || typeof md !== 'string') return md || '';
     return md.replace(
         /(<div\s+class\s*=\s*["'][^"']*instructor-callout[^"']*["'][^>]*>)([\s\S]*?)(<\/div>)/gi,
-        (full, openTag, inner, closeTag) =>
-            openTag + '\n' + inner.split('\n').filter((l) => l.trim() !== '').join('\n') + '\n' + closeTag
+        (full, openTag, inner, closeTag) => {
+            // 방어: 비탐욕 매칭은 '첫 번째' </div>에서 멈추므로, callout 내부에 중첩 <div가 있으면
+            // inner가 엉뚱한 지점에서 끊겨 손상될 수 있다. 정상 callout은 4항목(라벨+불릿)만 — 중첩 div가 없다.
+            // 중첩 div가 감지되면 빈 줄 정리를 건너뛰고 원본을 그대로 보존한다 (손상 방지).
+            if (/<div\b/i.test(inner)) return full;
+            return openTag + '\n' + inner.split('\n').filter((l) => l.trim() !== '').join('\n') + '\n' + closeTag;
+        }
     );
 }
 
@@ -214,8 +219,11 @@ function reParseInstructorCallouts(html) {
         tmp.querySelectorAll('.instructor-callout').forEach(callout => {
             const inner = callout.innerHTML;
 
-            // v7.1: 강사 callout 내부 | 구분자를 줄바꿈으로 변환 (가독성 개선)
-            let preprocessed = inner.replace(/\s*\|\s*(?=[\s\S]*(?:\*\*|🎚️|⏱️|🗣️|💡|⚠️))/g, '\n');
+            // v8.3: 강사 callout 내부 | 구분자를 줄바꿈으로 변환.
+            //   v8 callout은 4항목(라벨+불릿)만 — 파이프 표를 쓰지 않으므로 모든 | 를 무조건 줄바꿈으로 치환한다.
+            //   (기존 무한 룩어헤드 /\s*\|\s*(?=[\s\S]*...)/ 는 모든 | 마다 문자열 끝까지 스캔해 O(n²) 경향이 있었고,
+            //    callout에 표가 섞이면 표를 파괴할 수 있었음. 좌우 수평 공백만 흡수하고 개행은 보존.)
+            let preprocessed = inner.replace(/[^\S\n]*\|[^\S\n]*/g, '\n');
 
             // v7.2: <br> 텍스트를 실제 줄바꿈으로 변환 (marked가 이스케이프하지 않도록)
             preprocessed = preprocessed.replace(/&lt;br&gt;/gi, '\n').replace(/<br\s*\/?>/gi, '\n');
@@ -2691,7 +2699,7 @@ function renderEditor(mod) {
 
         } catch (e) {
 
-            htmlContent = `<div class="p-4 bg-red-500/20 border border-red-500 text-red-400 rounded">마크다운 파싱 오류: ${e.message}</div><pre class="text-gray-200 mt-4">${renderText.replace(/</g, '&lt;')}</pre>`;
+            htmlContent = `<div class="p-4 bg-red-500/20 border border-red-500 text-red-400 rounded">마크다운 파싱 오류: ${escapeHtml(String(e.message || e))}</div><pre class="text-gray-200 mt-4">${renderText.replace(/</g, '&lt;')}</pre>`;
 
         }
 
@@ -3086,7 +3094,7 @@ window.toggleEditorMode = function (mode) {
 
             } catch (e) {
 
-                renderView.innerHTML = `<div class="p-4 bg-red-500/20 border border-red-500 text-red-400 rounded">마크다운 파싱 오류: ${e.message}</div>`;
+                renderView.innerHTML = `<div class="p-4 bg-red-500/20 border border-red-500 text-red-400 rounded">마크다운 파싱 오류: ${escapeHtml(String(e.message || e))}</div>`;
 
             }
 

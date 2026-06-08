@@ -95,7 +95,7 @@ function getConventionMarkdown() {
 
 ### 8. 강사 스크립트 (강사 전용 핵심 정리)
 
-- 각 \`##\` 섹션 직후에 \`<div class="instructor-callout">\` 블록 삽입
+- 각 \`##\` 섹션은 [제목] → [강사 스크립트 박스] → [본문] 순서. 제목 바로 다음(본문 서두)에 \`<div class="instructor-callout">\` 블록을 먼저 삽입
 - **모든 탭에서 포함** (학습이해도 탭 제외)
 - Callout 내부 구조 (순서대로, 4개 항목 모두 포함):
   - ⏰ **예상 소요 시간:** {N}분

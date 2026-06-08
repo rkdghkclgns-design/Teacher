@@ -142,8 +142,10 @@ async function generateTabContent(moduleId, tabId) {
 
             await new Promise(r => setTimeout(r, 1500));
 
+            // 이어쓰기 청크는 이전 출력(previousContent)과 이어쓰기 systemInstruction의 4항목 규칙으로
+            // 이미 형식이 고정되므로, few-shot(약 300토큰)을 재전송하지 않아 토큰을 절감한다. (few-shot은 첫 청크에만 주입)
             const contPayload = {
-                contents: [...calloutFewshot, { role: 'user', parts: [{ text: cont.userPrompt }] }],
+                contents: [{ role: 'user', parts: [{ text: cont.userPrompt }] }],
                 systemInstruction: { parts: [{ text: cont.systemInstruction }] },
                 generationConfig: { maxOutputTokens: 65536 }
             };
@@ -276,7 +278,7 @@ async function generateAllTabs(moduleId) {
             <span style="font-size:20px;">100%</span>`;
         setTimeout(() => progressBar?.remove(), 3000);
     } catch (e) {
-        if (progressBar) progressBar.innerHTML = `<span style="color:#f87171;">⚠️ 생성 중 오류 발생: ${e.message || e}</span>`;
+        if (progressBar) progressBar.innerHTML = `<span style="color:#f87171;">⚠️ 생성 중 오류 발생: ${(typeof escapeHtml === 'function' ? escapeHtml(String(e.message || e)) : String(e.message || e))}</span>`;
         setTimeout(() => progressBar?.remove(), 5000);
         throw e;
     } finally {
