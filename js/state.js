@@ -663,7 +663,10 @@ window.exportSelectedHistoryPDF = async function () {
 
         try {
 
-            htmlContent += typeof marked !== 'undefined' ? marked.parse(resolveMarkdownImages(h.content, h.images)) : `<pre>${resolveMarkdownImages(h.content, h.images)}</pre>`;
+            // 교안 렌더 단일 파이프라인 사용 (기존엔 callout 재파싱·후처리 없이 marked만 호출해 강사 박스가 깨져 보였음)
+            htmlContent += (typeof renderLessonHTML === 'function')
+                ? renderLessonHTML(resolveMarkdownImages(h.content, h.images))
+                : (typeof marked !== 'undefined' ? marked.parse(resolveMarkdownImages(h.content, h.images)) : `<pre>${resolveMarkdownImages(h.content, h.images)}</pre>`);
 
         } catch (e) {
 
@@ -799,10 +802,9 @@ window.viewHistoryItem = function (id) {
         let htmlContent;
         if (typeof marked !== 'undefined') {
             try {
-                // v8.2: 강사 callout 내부 빈 줄 제거 → marked가 div를 통째 raw HTML로 넘기게 함 (이후 reParse가 재파싱)
-                htmlContent = marked.parse(typeof collapseCalloutInnerBlankLines === 'function' ? collapseCalloutInnerBlankLines(resolved) : resolved);
-                if (typeof reParseInstructorCallouts === 'function') htmlContent = reParseInstructorCallouts(htmlContent);
-                if (typeof applyPeriodLineBreakHTML === 'function') htmlContent = applyPeriodLineBreakHTML(htmlContent);
+                // 교안 렌더 단일 파이프라인 (편집기와 동일: collapse→marked→reParse→마침표줄바꿈→postprocess)
+                // 기존 이력 보기 경로는 postprocessHtml이 누락되어 화면과 다르게 렌더되던 것을 통합으로 수정
+                htmlContent = (typeof renderLessonHTML === 'function') ? renderLessonHTML(resolved) : marked.parse(resolved);
             } catch (parseErr) {
                 console.warn("marked.parse 파싱 경고:", parseErr);
                 htmlContent = `<pre style="white-space:pre-wrap;word-break:break-word;">${resolved.replace(/</g, '&lt;')}</pre>`;
@@ -1142,10 +1144,9 @@ async function _generatePdfFromMarkdown(markdownContent, title, images) {
         // ─── 2. Markdown → HTML 변환 ───
         var htmlContent = '';
         if (typeof marked !== 'undefined') {
-            // v8.2: 강사 callout 내부 빈 줄 제거 → marked가 div를 통째 raw HTML로 넘기게 함 (이후 reParse가 재파싱)
-            htmlContent = marked.parse(typeof collapseCalloutInnerBlankLines === 'function' ? collapseCalloutInnerBlankLines(markdownContent) : markdownContent);
-            if (typeof reParseInstructorCallouts === 'function') htmlContent = reParseInstructorCallouts(htmlContent);
-            if (typeof applyPeriodLineBreakHTML === 'function') htmlContent = applyPeriodLineBreakHTML(htmlContent);
+            // 교안 렌더 단일 파이프라인 (편집기와 동일: collapse→marked→reParse→마침표줄바꿈→postprocess)
+            // 기존 PDF 경로는 postprocessHtml이 누락되어 화면과 다르게 렌더되던 것을 통합으로 수정
+            htmlContent = (typeof renderLessonHTML === 'function') ? renderLessonHTML(markdownContent) : marked.parse(markdownContent);
         } else {
             htmlContent = '<pre style="white-space:pre-wrap;">' + markdownContent + '</pre>';
         }

@@ -143,6 +143,27 @@ function postprocessHtml(html) {
     return html;
 }
 
+// ── 교안 마크다운 → 최종 HTML 단일 렌더 파이프라인 ──────────────────────────
+// 편집기·보기 토글·이력 보기·PDF/이력 내보내기가 '동일한' 변환을 거치도록 통합한다.
+// 순서: collapse(강사 callout 빈 줄 정리) → marked → reParse(callout 재파싱)
+//       → 한국어 마침표 줄바꿈 → postprocess(공통 HTML 후처리)
+// 기존에는 편집기만 postprocessHtml을 적용하고 PDF/이력 경로는 누락되어
+// 같은 교안이 화면과 내보내기에서 다르게 렌더되는 불일치가 있었다.
+// opts.postprocess: 기본 true. (이미지 치환은 호출 측에서 미리 수행)
+function renderLessonHTML(md, opts) {
+    const postprocess = !opts || opts.postprocess !== false;
+    const safe = (md == null) ? '' : String(md);
+    const src = (typeof collapseCalloutInnerBlankLines === 'function') ? collapseCalloutInnerBlankLines(safe) : safe;
+    let html = (typeof marked !== 'undefined')
+        ? marked.parse(src)
+        : `<pre class="text-gray-200 whitespace-pre-wrap">${safe.replace(/</g, '&lt;')}</pre>`;
+    if (typeof reParseInstructorCallouts === 'function') html = reParseInstructorCallouts(html);
+    if (typeof applyPeriodLineBreakHTML === 'function') html = applyPeriodLineBreakHTML(html);
+    if (postprocess && typeof postprocessHtml === 'function') html = postprocessHtml(html);
+    return html;
+}
+if (typeof window !== 'undefined') window.renderLessonHTML = renderLessonHTML;
+
 // ── instructor-callout 내부 마크다운 재파싱 ──────────────────────
 // marked.parse()는 HTML <div> 내부의 마크다운을 파싱하지 않으므로
 // .instructor-callout 요소를 찾아 내부 콘텐츠를 별도로 재파싱한다.
@@ -451,6 +472,21 @@ function sanitizeMermaidCode(code) {
 
     // 3) stateDiagram-v2는 convention 상 금지이므로 flowchart로 치환
     out = out.replace(/^\s*stateDiagram-v2/m, 'flowchart TD');
+
+    // 4) subgraph 제목 정제 — Mermaid는 subgraph 제목에 괄호 ( ) 를 허용하지 않음.
+    //    예시 에러: Parse error on line 10: subgraph 게임 코어 루프 (Core Loop) ... got 'PS'
+    //    "subgraph 게임 코어 루프 (Core Loop)" → 'subgraph "게임 코어 루프 - Core Loop"'
+    //    괄호가 없는 제목은 그대로 두어 기존 subgraph id 참조를 보존한다.
+    out = out.replace(/^([ \t]*subgraph[ \t]+)(.+?)[ \t]*$/gim, (m, prefix, title) => {
+        if (!/[()]/.test(title)) return m;                       // 괄호 없으면 변경하지 않음
+        const t = title
+            .replace(/^["']|["']$/g, '')                         // 양끝 따옴표 제거
+            .replace(/\s*\(\s*([^()]*?)\s*\)\s*/g, ' - $1')      // (X) → - X
+            .replace(/["'\[\]{}()]/g, '')                        // 남은 특수문자 제거
+            .replace(/\s+/g, ' ')
+            .trim();
+        return prefix + '"' + t + '"';
+    });
 
     return out;
 }
@@ -2687,15 +2723,8 @@ function renderEditor(mod) {
 
         try {
 
-            // v8.2: 강사 callout 내부 빈 줄 제거 → marked가 div를 통째 raw HTML로 넘기게 함 (이후 reParse가 원본 마크다운 재파싱)
-            if (typeof collapseCalloutInnerBlankLines === 'function') renderText = collapseCalloutInnerBlankLines(renderText);
-            htmlContent = typeof marked !== 'undefined' ? marked.parse(renderText) : `<pre class="text-gray-200 whitespace-pre-wrap">${renderText.replace(/</g, '&lt;')}</pre>`;
-            // instructor-callout 내부 마크다운 재파싱
-            htmlContent = reParseInstructorCallouts(htmlContent);
-            // 한국어 마침표 뒤 줄바꿈 적용
-            htmlContent = applyPeriodLineBreakHTML(htmlContent);
-            // v7.6: 공통 HTML 후처리 적용
-            htmlContent = postprocessHtml(htmlContent);
+            // 교안 렌더 단일 파이프라인 (collapse→marked→reParse→마침표줄바꿈→postprocess)
+            htmlContent = renderLessonHTML(renderText);
 
         } catch (e) {
 
@@ -3018,13 +3047,8 @@ window.toggleEditorMode = function (mode) {
 
             try {
 
-                // v8.2: 강사 callout 내부 빈 줄 제거 → marked가 div를 통째 raw HTML로 넘기게 함 (이후 reParse가 원본 마크다운 재파싱)
-                if (typeof collapseCalloutInnerBlankLines === 'function') renderText = collapseCalloutInnerBlankLines(renderText);
-                let parsedHtml = typeof marked !== 'undefined' ? marked.parse(renderText) : `<pre class="text-gray-200 whitespace-pre-wrap">${renderText.replace(/</g, '&lt;')}</pre>`;
-                parsedHtml = reParseInstructorCallouts(parsedHtml);
-                parsedHtml = applyPeriodLineBreakHTML(parsedHtml);
-                parsedHtml = postprocessHtml(parsedHtml);
-                renderView.innerHTML = parsedHtml;
+                // 교안 렌더 단일 파이프라인 (collapse→marked→reParse→마침표줄바꿈→postprocess)
+                renderView.innerHTML = renderLessonHTML(renderText);
 
                 // Mermaid 다이어그램 렌더링 (근본적 수정)
                 if (window.mermaid) {
