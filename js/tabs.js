@@ -142,10 +142,11 @@ async function generateTabContent(moduleId, tabId) {
 
             await new Promise(r => setTimeout(r, 1500));
 
-            // 이어쓰기 청크는 이전 출력(previousContent)과 이어쓰기 systemInstruction의 4항목 규칙으로
-            // 이미 형식이 고정되므로, few-shot(약 300토큰)을 재전송하지 않아 토큰을 절감한다. (few-shot은 첫 청크에만 주입)
+            // 이어쓰기 청크에도 few-shot을 재주입한다. (텍스트 규칙만으로는 모델이 "강사 스크립트"를
+            // 말하기 대본(narration)으로 회귀하므로, 모든 청크가 4항목 구조를 유지하려면 few-shot이 필요.
+            // 첫 청크에만 넣으면 후반 섹션이 narration으로 깨지는 문제가 있어 형식 일관성을 위해 토큰을 감수.)
             const contPayload = {
-                contents: [{ role: 'user', parts: [{ text: cont.userPrompt }] }],
+                contents: [...calloutFewshot, { role: 'user', parts: [{ text: cont.userPrompt }] }],
                 systemInstruction: { parts: [{ text: cont.systemInstruction }] },
                 generationConfig: { maxOutputTokens: 65536 }
             };
