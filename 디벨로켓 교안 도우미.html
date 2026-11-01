@@ -845,7 +845,7 @@
                     class="ph-bold ph-x"></i></button>
         </div>
         <div class="p-4 flex flex-col gap-4 overflow-y-auto max-h-[75vh] editor-scroll">
-            <div style="display:none;">
+            <div>
                 <label class="flex items-center gap-1.5 text-xs font-bold text-textMuted mb-2"><i
                         class="ph-fill ph-key text-accent/70"></i> Gemini API Key</label>
                 <div class="flex gap-2">
@@ -865,6 +865,29 @@
                     <div id="api-key-status-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-400"></div><span
                         id="api-key-status-text" class="text-[0.6rem] text-textMuted">Key 등록됨</span>
                 </div>
+            </div>
+
+            <div>
+                <label class="flex items-center gap-1.5 text-xs font-bold text-textMuted mb-2"><i
+                        class="ph-fill ph-sparkle text-accent/70"></i> Claude API Key</label>
+                <div class="flex gap-2">
+                    <div class="relative flex-1">
+                        <input type="password" id="settings-claude-key-input" autocomplete="off"
+                            class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-accent transition-all pr-8"
+                            placeholder="sk-ant-...">
+                        <button
+                            onclick="const i=document.getElementById('settings-claude-key-input');i.type=i.type==='password'?'text':'password'"
+                            class="absolute right-2 top-1/2 -translate-y-1/2 text-textMuted hover:text-white transition-colors"><i
+                                class="ph-bold ph-eye text-xs"></i></button>
+                    </div>
+                    <button onclick="saveClaudeKeySetting()"
+                        class="px-3 py-2 text-xs font-bold text-white bg-accent hover:bg-accentHover rounded-lg transition-colors shrink-0">저장</button>
+                </div>
+                <div class="flex items-center gap-1 mt-1.5">
+                    <div id="claude-key-status-dot" class="w-1.5 h-1.5 rounded-full bg-red-400"></div><span
+                        id="claude-key-status-text" class="text-[0.6rem] text-textMuted">Key 미등록</span>
+                </div>
+                <p class="text-[0.55rem] text-textMuted/50 mt-1">Claude 모델을 고르면 텍스트 생성에 사용됩니다. 이미지 생성에는 Gemini 키가 필요합니다. 빈 칸으로 저장하면 키가 삭제됩니다.</p>
             </div>
 
             <!-- [Phase F10] 구글 검색 이미지 연동 (다중 키 롤링) -->
@@ -920,6 +943,13 @@
                     style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22%238a8ab5%22><path d=%22M7 10l5 5 5-5z%22/></svg>');background-repeat:no-repeat;background-position:right 10px center;">
                 </select>
                 <p class="text-[0.55rem] text-textMuted/50 mt-1">교안·퀴즈·문체 변환 등 텍스트 생성에 사용</p>
+                <label class="flex items-center gap-1.5 text-xs font-bold text-textMuted mt-3 mb-2"><i
+                        class="ph-fill ph-gauge text-accent/70"></i> 추론 강도</label>
+                <select id="settings-reasoning-effort" onchange="updateReasoningEffort(this.value)"
+                    class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent transition-all appearance-none cursor-pointer"
+                    style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22%238a8ab5%22><path d=%22M7 10l5 5 5-5z%22/></svg>');background-repeat:no-repeat;background-position:right 10px center;">
+                </select>
+                <p class="text-[0.55rem] text-textMuted/50 mt-1">높을수록 품질이 좋아지고 시간과 비용이 늘어납니다. Gemini는 '높음'이 상한입니다.</p>
             </div>
             <div>
                 <label class="flex items-center gap-1.5 text-xs font-bold text-textMuted mb-2"><i
@@ -928,7 +958,7 @@
                     class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent transition-all appearance-none cursor-pointer"
                     style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22%238a8ab5%22><path d=%22M7 10l5 5 5-5z%22/></svg>');background-repeat:no-repeat;background-position:right 10px center;">
                 </select>
-                <p class="text-[0.55rem] text-textMuted/50 mt-1">교안 내 삽입 이미지 생성에 사용</p>
+                <p class="text-[0.55rem] text-textMuted/50 mt-1">교안 내 삽입 이미지 생성에 사용 (16:9 · 2K, Gemini 키 필요)</p>
             </div>
             <div class="h-px bg-white/5"></div>
             <div>
@@ -1657,6 +1687,11 @@
             if (wasHidden) {
                 const input = document.getElementById('settings-api-key-input');
                 if (input) input.value = typeof apiKey !== 'undefined' ? apiKey : '';
+                // 등록된 키가 없으면 첫 입력은 비밀번호 없이 허용 (등록 후 수정만 잠금)
+                if (input && typeof apiKey !== 'undefined' && !apiKey) {
+                    input.disabled = false;
+                    input.placeholder = 'AIzaSy...';
+                }
                 const dot = document.getElementById('api-key-status-dot');
                 const txt = document.getElementById('api-key-status-text');
                 if (typeof apiKey !== 'undefined' && apiKey) {
@@ -1667,9 +1702,19 @@
                     if (txt) txt.textContent = 'Key 미등록';
                 }
 
+                // Claude API 키 입력값·상태 초기화
+                const hasClaudeKey = typeof claudeApiKey !== 'undefined' && !!claudeApiKey;
+                const claudeInput = document.getElementById('settings-claude-key-input');
+                const claudeDot = document.getElementById('claude-key-status-dot');
+                const claudeTxt = document.getElementById('claude-key-status-text');
+                if (claudeInput) claudeInput.value = hasClaudeKey ? claudeApiKey : '';
+                if (claudeDot) claudeDot.className = `w-1.5 h-1.5 rounded-full ${hasClaudeKey ? 'bg-emerald-400' : 'bg-red-400'}`;
+                if (claudeTxt) claudeTxt.textContent = hasClaudeKey ? 'Key 등록됨' : 'Key 미등록';
+
                 // 모델 콤보박스 초기화
                 populateModelSelect('settings-text-model', typeof TEXT_MODEL_OPTIONS !== 'undefined' ? TEXT_MODEL_OPTIONS : [], typeof TEXT_MODEL !== 'undefined' ? TEXT_MODEL : '');
                 populateModelSelect('settings-image-model', typeof IMAGE_MODEL_OPTIONS !== 'undefined' ? IMAGE_MODEL_OPTIONS : [], typeof IMAGE_MODEL !== 'undefined' ? IMAGE_MODEL : '');
+                populateModelSelect('settings-reasoning-effort', typeof REASONING_EFFORT_OPTIONS !== 'undefined' ? REASONING_EFFORT_OPTIONS : [], typeof REASONING_EFFORT !== 'undefined' ? REASONING_EFFORT : '');
 
                 // [Phase F10] 구글 검색 이미지 설정 초기화
                 const cxInput = document.getElementById('settings-google-cx-input');
@@ -1720,10 +1765,20 @@
         window.saveApiKeySetting = function () {
             const input = document.getElementById('settings-api-key-input');
             if (input && typeof updateApiKey === 'function' && updateApiKey(input.value)) {
-                window.showAlert('API Key가 저장되었습니다.');
+                window.showAlert(apiKey ? 'API Key가 저장되었습니다.' : 'API Key가 삭제되었습니다.');
                 closeSettingsPanel();
             } else {
                 window.showAlert('유효한 API Key를 입력해 주세요.');
+            }
+        };
+
+        window.saveClaudeKeySetting = function () {
+            const input = document.getElementById('settings-claude-key-input');
+            if (input && typeof updateClaudeApiKey === 'function' && updateClaudeApiKey(input.value)) {
+                window.showAlert(claudeApiKey ? 'Claude API Key가 저장되었습니다.' : 'Claude API Key가 삭제되었습니다.');
+                closeSettingsPanel();
+            } else {
+                window.showAlert('유효한 Claude API Key를 입력해 주세요.');
             }
         };
 
@@ -1798,19 +1853,20 @@
     <!-- Application Logic Modules -->
 
     <!-- Split Logic Modules -->
-    <script src="./js/panel-manager.js?v=136"></script>
-    <script src="./js/filename-convention.js?v=136"></script>
-    <script src="./js/data.js?v=136"></script>
-    <script src="./js/state.js?v=136"></script>
-    <script src="./js/api.js?v=136"></script>
-    <script src="./js/diagram.js?v=136"></script>
-    <script src="./js/ui.js?v=136"></script>
-    <script src="./js/convention.js?v=136"></script>
-    <script src="./js/tutorial.js?v=136"></script>
-    <script src="./js/merge.js?v=136"></script>
-    <script src="./js/tabs.js?v=136"></script>
-    <script src="./js/slide-export.js?v=136"></script>
-    <script src="./js/export-modal.js?v=136"></script>
+    <script src="./js/panel-manager.js?v=137"></script>
+    <script src="./js/filename-convention.js?v=137"></script>
+    <script src="./js/data.js?v=137"></script>
+    <script src="./js/claude.js?v=137"></script>
+    <script src="./js/state.js?v=137"></script>
+    <script src="./js/api.js?v=137"></script>
+    <script src="./js/diagram.js?v=137"></script>
+    <script src="./js/ui.js?v=137"></script>
+    <script src="./js/convention.js?v=137"></script>
+    <script src="./js/tutorial.js?v=137"></script>
+    <script src="./js/merge.js?v=137"></script>
+    <script src="./js/tabs.js?v=137"></script>
+    <script src="./js/slide-export.js?v=137"></script>
+    <script src="./js/export-modal.js?v=137"></script>
     <script>
         // 튜토리얼 자동 시작 (공지 팝업 → 튜토리얼 순서)
         window.addEventListener('load', () => {

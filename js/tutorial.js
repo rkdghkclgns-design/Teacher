@@ -115,14 +115,15 @@ function showNoticePopup(onClose) {
 
             <div style="background:rgba(139,92,246,0.1);border-left:3px solid #a78bfa;padding:12px 16px;border-radius:0 8px 8px 0;margin-bottom:14px;">
                 <strong style="color:#a78bfa;">🕐 생성 시간 안내</strong><br>
-                권장 모델(Gemini 2.5 Flash) 대신 <strong>고급 모델(Pro)</strong>을 사용하면<br>
-                생성 시간이 <strong style="color:#f87171;">3~5배 증가</strong>합니다.<br>
+                빠른 모델(Flash · Haiku) 대신 <strong>고급 모델(Fable · Argon)</strong>을 사용하면<br>
+                생성 시간이 <strong style="color:#f87171;">크게 증가</strong>합니다.<br>
                 <span style="color:#22d3ee;">고급 모델 사용 시 내용과 이미지의 정확도가 크게 증가합니다.</span>
             </div>
 
             <div style="background:rgba(34,211,238,0.1);border-left:3px solid #22d3ee;padding:12px 16px;border-radius:0 8px 8px 0;margin-bottom:14px;">
                 <strong style="color:#22d3ee;">🔑 API 키 관리</strong><br>
-                API 키는 담당자 <strong style="color:#f3f4f6;">유치훈</strong>이 관리합니다.
+                좌측 하단 <strong style="color:#f3f4f6;">설정</strong>에서 Gemini 또는 Claude API 키를 입력해야 합니다.<br>
+                키는 이 브라우저에만 저장됩니다.
             </div>
 
             <div style="background:rgba(248,113,113,0.1);border-left:3px solid #f87171;padding:12px 16px;border-radius:0 8px 8px 0;">

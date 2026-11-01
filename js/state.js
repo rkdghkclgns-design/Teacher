@@ -158,6 +158,7 @@ function generateUniqueId(prefix = '') {
 
 function sanitizeState(state) {
     if (!state) return null;
+    delete state.apiKey; // 이전 버전 저장 파일에 남은 API 키는 불러오지 않음
     state.courseId = state.courseId || "course_" + Date.now();
     state.courseTitle = state.courseTitle || "게임 기획 전문가 양성 과정";
     state.subjects = Array.isArray(state.subjects) ? state.subjects : [];
@@ -1005,7 +1006,8 @@ window.exportAllModules = async function () {
             subject: subj ? subj.title : '',
             timestamp: new Date().toISOString(),
             module_count: courseData.length,
-            context: globalState // 전체 설정 및 현황 컨텍스트 직렬화
+            // 전체 설정 및 현황 컨텍스트 직렬화 (API 키는 공유 파일에 남지 않도록 제외)
+            context: { ...globalState, apiKey: undefined }
         };
         rootFolder.file('save_data.yaml', JSON.stringify(metaObj, null, 2)); // 편의상 JSON 직렬화를 yaml 확장자로 보존
 
@@ -1555,8 +1557,6 @@ window.importProjectZip = async function (event) {
 
             // 2순회: globalState 통째 복원 (전체 코스 모드)
             globalState = sanitizeState(metaObj.context) || sanitizeState({});
-            // API 키 등 브라우저 의존 휘발성 값 보존
-            if (typeof apiKey !== 'undefined') globalState.apiKey = apiKey;
 
             // 3순회: courseData 재구성 및 이미지 역치환 (Map에서 로컬 에디전트 메모리로 전송)
             const restoredSubj = globalState.subjects.find(s => s.id === currentSubjectId) || globalState.subjects[0];

@@ -52,7 +52,7 @@ AI 기반 게임 기획 교안 자동 생성 도구
 
 ## 주요 기능
 
-- **AI 교안 생성**: Google Gemini API 기반 자동 교안 생성
+- **AI 교안 생성**: Google Gemini API · Claude API 기반 자동 교안 생성 (키는 설정 패널에서 입력, 이미지 생성은 Gemini 키 필요)
 - **5탭 시스템**: 기본학습 / 기본실습 / 심화학습 / 심화실습 / 학습이해도
 - **내보내기**: Markdown / HTML / PDF / PPTX / ZIP
 - **이미지 삽입**: Google 검색 + Pixabay + AI 생성 자동 삽입
@@ -63,7 +63,7 @@ AI 기반 게임 기획 교안 자동 생성 도구
 
 | 분류 | 기술 |
 |------|------|
-| AI | Google Gemini API |
+| AI | Google Gemini API, Claude API |
 | 마크다운 | marked.js |
 | 다이어그램 | Mermaid.js |
 | PDF | html2pdf.js |

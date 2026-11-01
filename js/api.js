@@ -396,16 +396,39 @@ async function fetchWithRetry(url, options, retries = 5, onRetry = null) {
     }
 }
 
-// Edge Function 프록시를 통한 Gemini API 호출 헬퍼
-// onRetry: 재시도 발생 시 호출되는 선택적 콜백 ({ attempt, total, delayMs, isRateLimit })
-function callGemini(modelName, payload, onRetry = null) {
-    const proxyPayload = { model: modelName, ...payload };
+// REASONING_EFFORT → Gemini thinkingLevel 변환 (Gemini는 HIGH가 상한)
+const GEMINI_THINKING_LEVELS = { max: 'HIGH', xhigh: 'HIGH', high: 'HIGH', medium: 'MEDIUM' };
+
+// thinkingConfig를 지원하지 않는 이미지 모델에 보내면 오류이므로 텍스트 모델에만 적용
+function withGeminiThinking(modelName, payload) {
+    if (!TEXT_MODEL_OPTIONS.some(o => o.value === modelName)) return payload;
+    const thinkingConfig = { thinkingLevel: GEMINI_THINKING_LEVELS[REASONING_EFFORT] };
+    return { ...payload, generationConfig: { ...payload.generationConfig, thinkingConfig } };
+}
+
+// Gemini API 호출 (키가 URL·로그에 남지 않도록 헤더로 전달)
+async function requestGemini(modelName, payload, onRetry) {
+    if (!apiKey) {
+        throw new Error('Gemini API 키가 설정되지 않았습니다.\n좌측 하단 설정 버튼에서 Gemini API 키를 먼저 입력해주세요.');
+    }
     return fetchWithRetry(
-        GEMINI_PROXY_URL,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) },
+        `${GEMINI_API_BASE}/${modelName}:generateContent`,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+            body: JSON.stringify(withGeminiThinking(modelName, payload))
+        },
         5,
         onRetry
     );
+}
+
+// 텍스트·이미지 공통 호출 진입점. 호출부는 Gemini payload 형식을 유지하고,
+// claude- 모델이면 어댑터(claude.js)가 요청과 응답을 변환한다.
+// onRetry: 재시도 발생 시 호출되는 선택적 콜백 ({ attempt, total, delayMs, isRateLimit })
+function callGemini(modelName, payload, onRetry = null) {
+    if (isClaudeModel(modelName)) return callClaude(modelName, payload);
+    return requestGemini(modelName, payload, onRetry);
 }
 
 
@@ -714,8 +737,6 @@ async function handleGenerate() {
 
 
 async function generateModuleContent(moduleId, keyConcepts) {
-    // API 키: Edge Function 프록시가 서버 측에서 관리
-
     const mod = getEditingModule(moduleId);
 
     if (!mod) return;
@@ -981,11 +1002,6 @@ window.promptAndGenerateMainQuest = function () {
 
 
 async function generateMainQuest() {
-    if (!apiKey) {
-        window.showAlert('API 키가 설정되지 않았습니다.\n좌측 하단 설정 버튼에서 Gemini API 키를 먼저 입력해주세요.');
-        return;
-    }
-
     const subj = globalState.subjects.find(s => s.id === currentSubjectId);
 
     if (!subj) return;
@@ -1123,7 +1139,7 @@ async function extractSearchIntent(keyword, context) {
     const systemPrompt = `당신은 게임 기획 및 시장 분석 전문 데이터 리서처이자 이미지 프롬프트 엔지니어입니다.
 주어진 이미지 키워드와 주변 교안 문맥을 분석하여 두 종류의 출력을 생성합니다:
 (A) 웹 검색용 쿼리 — 구글 이미지 등 검색 엔진에서 실제 자료를 찾기 위한 쿼리
-(B) AI 이미지 생성용 프롬프트 — Gemini/Imagen 모델이 문맥에 맞는 고품질 일러스트를 생성하도록 하는 프롬프트
+(B) AI 이미지 생성용 프롬프트 — Gemini 이미지 모델이 문맥에 맞는 고품질 일러스트를 생성하도록 하는 프롬프트
 
 [검색 쿼리(A) 지시사항]
 1. 고유명사(게임명, 캐릭터명, 시스템명, 회사명 등)를 쿼리의 핵심에 배치
@@ -1133,7 +1149,7 @@ async function extractSearchIntent(keyword, context) {
 5. 공식 스크린샷이 필요하면 "official screenshot", "in-game" 한정자 사용
 
 [AI 이미지 생성 프롬프트(B) 지시사항 — V8.0.0 텍스트 없는 순수 비주얼]
-사용 모델: gemini-3.1-flash-image-preview
+사용 모델: ${IMAGE_MODEL}
 중요: 모델은 한글 글자를 깨진 형태로 렌더하므로, **이미지 안에는 어떤 글자도 넣지 않습니다.**
        한국어 설명은 이미지 아래 HTML 캡션으로 별도 표시되므로, 이미지는 순수하게 시각적 요소(아이콘·일러스트·구도)로만 구성합니다.
 
@@ -1754,47 +1770,21 @@ window.sanitizeAllContent = async function () {
     }
 };
 
-// Imagen 3.0 전용 호출 헬퍼 (프록시의 imagen 분기 사용)
-async function callImagen(modelName, prompt) {
-    const proxyPayload = {
-        model: modelName,
-        instances: [{ prompt: String(prompt || '') }],
-        parameters: { sampleCount: 1, aspectRatio: '16:9' },
-    };
-    return fetchWithRetry(
-        GEMINI_PROXY_URL,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proxyPayload) }
-    );
-}
-
 async function generateImageAPI(prompt) {
-    // [근본 분석 - 2026-04-28 재검증]
-    // gemini-3.1-flash-image-preview가 다시 활성화 확인: 1408x768 JPEG, 한국어 라벨 시도 가능
-    // → V7과 동일한 모델·프롬프트로 V7 수준 출력 복원
-    // 폴백 체인:
-    //   Stage 1: gemini-3.1-flash-image-preview (V7 기본, 한국어 인포그래픽)
-    //   Stage 2: imagen-4.0-generate-001 (16:9 보장, 영어 라벨)
-    //   Stage 3: gemini-2.5-flash-image (정사각형, 영어)
-    const geminiOrder = [
-        IMAGE_MODEL,
-        'gemini-3.1-flash-image-preview',
-        'gemini-2.5-flash-image',
-    ];
-    const geminiModels = [...new Set(geminiOrder.filter(Boolean))];
-    const imagenModels = ['imagen-4.0-generate-001'];
+    // 폴백 체인: 선택한 모델 → 나머지 IMAGE_MODEL_OPTIONS 순서
+    // (gemini-3.1-flash-image-preview, Imagen 4는 2026년 서비스 종료로 제거)
+    const geminiModels = [...new Set([IMAGE_MODEL, ...IMAGE_MODEL_OPTIONS.map(o => o.value)])];
     const errorHistory = [];
 
-    // [재검증 결과 - gemini-3.1-flash-image-preview 활성 확인]
-    // V7과 동일한 모델 사용 → V7 스타일 한국어 인포그래픽 출력 가능
-    // 프롬프트도 V7과 동일하게 단순화: prompt + ", digital art style, clean, professional"
     const enhancedPrompt = prompt + ", digital art style, clean, professional";
 
-    // Stage 1: Gemini 이미지 모델 — V7 동일 (gemini-3.1-flash-image-preview)
-    //          1408x768 JPEG, 한국어 라벨 시도 가능 (V7 스타일 인포그래픽 출력)
     for (const model of geminiModels) {
         const payload = {
             contents: [{ parts: [{ text: enhancedPrompt }] }],
-            generationConfig: { responseModalities: ["TEXT", "IMAGE"] }
+            generationConfig: {
+                responseModalities: ["TEXT", "IMAGE"],
+                imageConfig: { aspectRatio: IMAGE_ASPECT_RATIO, imageSize: IMAGE_SIZE }
+            }
         };
 
         for (let retry = 0; retry < 3; retry++) {
@@ -1831,26 +1821,6 @@ async function generateImageAPI(prompt) {
                 errorHistory.push(`${model}: ${is404 ? '모델 미지원' : msg.slice(0, 80)}`);
                 break;
             }
-        }
-    }
-
-    // Stage 2: Imagen 4.0 (Gemini 전체 실패 시 16:9 폴백)
-    for (const model of imagenModels) {
-        try {
-            console.log(`[Image Gen] Imagen ${model} 폴백 시도: ${prompt.substring(0, 60)}...`);
-            const data = await callImagen(model, enhancedPrompt);
-            const pred = data?.predictions?.[0];
-            if (pred && pred.bytesBase64Encoded) {
-                const mime = pred.mimeType || 'image/png';
-                console.log(`[Image Gen] ✅ Imagen ${model} 폴백 성공 (16:9)`);
-                return `data:${mime};base64,${pred.bytesBase64Encoded}`;
-            }
-            console.warn(`[Image Gen] Imagen ${model} 응답에 이미지 없음`, data);
-            errorHistory.push(`${model}: 이미지 파트 없음`);
-        } catch (e) {
-            const msg = e.message || String(e);
-            console.error(`[Image Gen] Imagen ${model} 에러:`, msg);
-            errorHistory.push(`${model}: ${msg.slice(0, 80)}`);
         }
     }
 

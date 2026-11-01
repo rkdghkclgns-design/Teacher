@@ -527,19 +527,25 @@ function escapeControlCharsInJSONStrings(src) {
 }
 
 // 1. API 설정 및 애플리케이션 상수
-// Supabase Edge Function 프록시를 통해 Gemini API 호출 (서버 측 키 관리)
-const GEMINI_PROXY_URL = 'https://pkwbqbxuujpcvndpacsc.supabase.co/functions/v1/gemini-proxy';
+// Gemini·Claude API를 브라우저에서 직접 호출 (키는 설정 패널에서 입력하며 이 브라우저에만 저장)
+const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 let apiKey = '';
+let claudeApiKey = '';
 try {
     apiKey = localStorage.getItem('gemini_api_key') || '';
+    claudeApiKey = localStorage.getItem('claude_api_key') || '';
 } catch (e) {
     console.warn("localStorage 접근 불가 (API Key):", e);
 }
 const STORAGE_KEY = 'agent_curriculum_v4_7';
-let TEXT_MODEL = 'gemini-2.5-flash';
-// 기본 이미지 모델: gemini-3.1-flash-image-preview (V7.0.0과 동일)
-// 검증: 1408x768 JPEG, 한국어 라벨 시도 가능 (V7 스타일 인포그래픽 출력)
-let IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
+let TEXT_MODEL = 'gemini-4-argon';
+// 기본 이미지 모델: Nano Banana 2.1 (gemini-3.1-flash-image-preview, Imagen 4 종료 후 공식 후속 모델)
+let IMAGE_MODEL = 'gemini-nano-banana-2.1';
+// 추론 강도: Claude는 output_config.effort, Gemini는 thinkingLevel로 변환되어 적용
+let REASONING_EFFORT = 'max';
+// 이미지 규격: 교안 레이아웃 기준 16:9. 4K는 교안 저장·내보내기 용량 부담이 커서 2K 사용
+const IMAGE_ASPECT_RATIO = '16:9';
+const IMAGE_SIZE = '2K';
 
 
 // [Phase F10] Google Custom Search API 설정 (다중 키 롤링용)
@@ -552,17 +558,24 @@ let pixabayApiKey = '';
 
 // 모델 선택지 목록
 const TEXT_MODEL_OPTIONS = [
+    { value: 'claude-fable-5-1', label: 'Claude Fable 5.1 (최고 성능)' },
+    { value: 'claude-opus-5-5', label: 'Claude Opus 5.5' },
+    { value: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5' },
+    { value: 'claude-haiku-5-5', label: 'Claude Haiku 5.5 (빠름 · 저비용)' },
+    { value: 'gemini-4-argon', label: 'Gemini 4 Argon (Gemini 최고 성능)' },
+    { value: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash (무료 등급 지원)' },
     { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro (Preview)' },
-    { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash (Preview)' },
-    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (권장)' },
-    { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
 ];
 const IMAGE_MODEL_OPTIONS = [
-    { value: 'gemini-3.1-flash-image-preview', label: 'Gemini 3.1 Flash Image Preview (권장 · V7 동일)' },
-    { value: 'imagen-4.0-generate-001', label: 'Imagen 4.0 (16:9 영문 라벨)' },
-    { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image (1:1 정사각형)' },
-    { value: 'imagen-4.0-fast-generate-001', label: 'Imagen 4.0 Fast' },
-    { value: 'imagen-4.0-ultra-generate-001', label: 'Imagen 4.0 Ultra' },
+    { value: 'gemini-nano-banana-2.1', label: 'Nano Banana 2.1 (권장 · 최고 성능)' },
+    { value: 'gemini-3-pro-image', label: 'Nano Banana Pro' },
+    { value: 'gemini-3.1-flash-image', label: 'Nano Banana 2' },
+];
+const REASONING_EFFORT_OPTIONS = [
+    { value: 'max', label: '최대 (최고 품질 · 가장 느림)' },
+    { value: 'xhigh', label: '매우 높음' },
+    { value: 'high', label: '높음' },
+    { value: 'medium', label: '보통 (빠름)' },
 ];
 
 // 모델 런타임 변경 + localStorage 저장
@@ -572,26 +585,18 @@ function updateTextModel(val) {
 function updateImageModel(val) {
     if (val) { IMAGE_MODEL = val; try { localStorage.setItem('gemini_image_model', val); } catch (e) { } }
 }
+function updateReasoningEffort(val) {
+    if (val) { REASONING_EFFORT = val; try { localStorage.setItem('reasoning_effort', val); } catch (e) { } }
+}
 
-// 저장된 모델 복원 + preview 모델 자동 마이그레이션
+// 저장된 모델 복원 (서비스 종료로 목록에서 빠진 모델은 기본값 유지)
 try {
     const savedText = localStorage.getItem('gemini_text_model');
     const savedImage = localStorage.getItem('gemini_image_model');
+    const savedEffort = localStorage.getItem('reasoning_effort');
     if (savedText && TEXT_MODEL_OPTIONS.some(o => o.value === savedText)) TEXT_MODEL = savedText;
-    // 저장된 모델 → V7 기본(gemini-3.1-flash-image-preview)으로 자동 마이그레이션
-    // 검증: 3.1-preview가 다시 활성화되어 V7 수준 한국어 인포그래픽 출력 가능
-    const UNRELIABLE_IMAGE_MODELS = [
-        'gemini-3-pro-image-preview',  // 여전히 404
-    ];
-    if (savedImage) {
-        if (UNRELIABLE_IMAGE_MODELS.includes(savedImage)) {
-            console.warn('[Image Model] 저장된 모델(' + savedImage + ')을 V7 기본(3.1-flash-image-preview)으로 자동 마이그레이션');
-            IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
-            try { localStorage.setItem('gemini_image_model', IMAGE_MODEL); } catch (_) { }
-        } else if (IMAGE_MODEL_OPTIONS.some(o => o.value === savedImage)) {
-            IMAGE_MODEL = savedImage;
-        }
-    }
+    if (savedImage && IMAGE_MODEL_OPTIONS.some(o => o.value === savedImage)) IMAGE_MODEL = savedImage;
+    if (savedEffort && REASONING_EFFORT_OPTIONS.some(o => o.value === savedEffort)) REASONING_EFFORT = savedEffort;
 
     // [Phase F10] 구글 검색 상태 복원
     googleSearchCx = localStorage.getItem('google_search_cx') || '';
@@ -602,18 +607,26 @@ try {
     pixabayApiKey = localStorage.getItem('pixabay_api_key') || '';
 } catch (e) { console.warn("localStorage 접근 불가 (Model/Search):", e); }
 
-// 1-1. API Key 런타임 관리
-function updateApiKey(newKey) {
-    if (newKey && newKey.trim()) {
-        apiKey = newKey.trim();
-        try {
-            localStorage.setItem('gemini_api_key', apiKey);
-        } catch (e) {
-            console.warn("localStorage 접근 불가 (API Key 저장):", e);
-        }
-        return true;
+// 1-1. API Key 런타임 관리 (빈 값을 저장하면 삭제 — 공용 PC에서 키를 지울 수 있도록)
+function storeApiKey(storageKey, value) {
+    try {
+        if (value) localStorage.setItem(storageKey, value);
+        else localStorage.removeItem(storageKey);
+    } catch (e) {
+        console.warn("localStorage 접근 불가 (API Key 저장):", e);
     }
-    return false;
+}
+
+function updateApiKey(newKey) {
+    apiKey = (newKey || '').trim();
+    storeApiKey('gemini_api_key', apiKey);
+    return true;
+}
+
+function updateClaudeApiKey(newKey) {
+    claudeApiKey = (newKey || '').trim();
+    storeApiKey('claude_api_key', claudeApiKey);
+    return true;
 }
 
 // 1-2. [Phase F10] 구글 검색 API 설정 저장
@@ -1007,7 +1020,7 @@ const CONTEXT_CORE = {
 // ── 모델이 "강사 스크립트"를 말하기 대본(narration)으로 출력하는 강한 prior를
 //    덮어쓰기 위해, 규칙·예시 텍스트만으로는 부족하여 실제 (user→model) 예시 turn을
 //    대화에 주입한다. 모델은 이 예시를 모방해 <div class="instructor-callout"> 4항목
-//    구조를 안정적으로 출력한다. (프록시/Gemini contents에 role 포함 가능)
+//    구조를 안정적으로 출력한다. (Gemini contents에 role 포함 가능)
 const CALLOUT_FORMAT_FEWSHOT = [
     {
         role: 'user',
