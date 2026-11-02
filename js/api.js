@@ -2059,6 +2059,8 @@ function renderSidebar() {
 
     if (!subj) return;
 
+    window.fillMissingLessonNcs?.(subj); // NCS가 없는 차시를 가장 가까운 후보로 채운다
+
 
 
     let html = renderSubjectNcsCard(subj) + renderSubjectFlowCard(subj);

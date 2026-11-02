@@ -76,11 +76,13 @@ async function run(name, fn) {
         assert.deepStrictEqual(plain(get('pickLessonElements')(recs)).map(rec => rec.unitCode), [realUnit.code], '목록 밖은 적합도가 높아도 자동으로 고르지 않는다');
     });
 
-    await run('요소 추천: 키가 없으면 키워드 후보만, 자동 배정 없음', async () => {
+    await run('요소 추천: 키가 없으면 키워드 후보 중 가장 가까운 하나를 고른다', async () => {
         const { recs, note } = await call('recommendLessonElements')({ title: '게임 기획', ncs: { units: [realUnit] } }, LESSON);
         assert.ok(recs.length > 0 && recs.every(rec => rec.by === '키워드' && !rec.elementCode));
         assert.ok(note.includes('키워드'));
-        assert.deepStrictEqual(plain(call('pickLessonElements')(recs)), [], '키워드 일치는 적합도가 아니다');
+        const picked = plain(call('pickLessonElements')(recs));
+        assert.strictEqual(picked.length, 1, '차시를 비워 두지 않는다');
+        assert.strictEqual(picked[0].unitCode, realUnit.code, '교과에 배정한 단위를 앞에 둔다');
     });
 
     await run('요소 추천: 응답을 읽지 못하면 알린다', async () => {
@@ -131,6 +133,44 @@ async function run(name, fn) {
         assert.deepStrictEqual(plain(mod.ncsElements).map(element => element.unitCode), [realUnit.code]);
     });
 
+    await run('자동 배정: 40점 미만이어도 가장 가까운 후보를 고르고 목록 밖은 고르지 않는다', async () => {
+        const low = makeContext(async () => reply({ recs: [{ unitCode: realUnit.code, unitName: '단위', fit: 20 }, { unitCode: '', unitName: '목록 밖', fit: 90 }] }), { gemini: 'k' });
+        const mod = { ...LESSON };
+        await ofCtx(low)('assignLessonElements')({ title: '교과' }, mod);
+        assert.deepStrictEqual(plain(mod.ncsElements).map(element => element.unitCode), [realUnit.code]);
+        const outOnly = makeContext(async () => reply({ recs: [{ unitCode: '', unitName: '목록 밖', fit: 90 }] }), { gemini: 'k' });
+        const kept = { ...LESSON, ncsElements: [{ code: realUnit2.code, name: '키워드', unitCode: realUnit2.code, auto: true }], ncsAuto: true, ncsKeyword: true };
+        await ofCtx(outOnly)('assignLessonElements')({ title: '교과' }, kept);
+        assert.strictEqual(kept.ncsElements[0].code, realUnit2.code, '고를 후보가 없으면 키워드로 채운 값을 지우지 않는다');
+    });
+
+    await run('빈 차시: 교안이 없어도 키워드로 채우고, 해제한 차시와 메인 퀘스트는 두며, 교안이 생기면 AI로 다시 배정한다', async () => {
+        const fillCtx = makeContext(noAi);
+        const get = ofCtx(fillCtx);
+        let rendered = 0;
+        fillCtx.renderSidebar = () => { rendered += 1; };
+        const subject = { id: 's1', title: '게임 기획', ncs: { units: [realUnit2] }, lessons: [
+            { id: 1, title: '게임 기획서 작성', objectives: ['게임 기획서를 양식에 맞게 작성할 수 있습니다.'] },
+            { id: 2, title: '해제한 차시', ncsNone: true, ncsElements: [] },
+            { id: 'mainQuest', title: '메인 퀘스트' },
+            { id: 3, title: '확정한 차시', ncsElements: [{ code: 'X', name: '확정', unitCode: 'X' }], ncsAuto: false }
+        ] };
+        await get('fillMissingLessonNcs')(subject);
+        const [first, cleared, quest, confirmed] = subject.lessons;
+        assert.strictEqual(first.ncsElements.length, 1);
+        assert.ok(first.ncsAuto && first.ncsKeyword && first.ncsElements[0].auto, '확정 전 키워드 배정');
+        assert.strictEqual(first.ncsElements[0].unitCode, realUnit2.code, '교과에 배정한 단위 안에서 고른다');
+        assert.ok(!cleared.ncsElements.length && !quest.ncsElements && confirmed.ncsElements[0].code === 'X');
+        assert.strictEqual(rendered, 1, '채웠으면 목록을 다시 그린다');
+        await get('fillMissingLessonNcs')(subject);
+        assert.strictEqual(rendered, 1, '채울 것이 없으면 다시 그리지 않는다');
+        const aiCtx = makeContext(assignReply(), { gemini: 'k' });
+        const withBody = { ...first, tabContents: { basicLearn: '## 학습 목표\n\n- 게임 기획서를 양식에 맞게 작성할 수 있습니다.\n\n## 기획서\n\n본문입니다.' } };
+        assert.strictEqual(ofCtx(aiCtx)('needsElementAutoAssign')(withBody), true, '키워드로 채운 차시는 교안이 생기면 AI 배정 대상');
+        await ofCtx(aiCtx)('assignLessonElements')(subject, withBody);
+        assert.ok(!withBody.ncsKeyword && withBody.ncsElements[0].unitCode === realUnit.code, 'AI 배정으로 바꾼다');
+    });
+
     await run('자동 배정: 확정한 선택은 덮어쓰지 않는다', async () => {
         let calls = 0;
         const aiCtx = makeContext(async () => { calls += 1; return reply({ recs: [] }); }, { gemini: 'k' });
@@ -173,7 +213,8 @@ async function run(name, fn) {
         assert.strictEqual(confirmed.ncsAuto, false);
         assert.ok(!('auto' in confirmed.ncsElements[0]), '확정하면 미확정 표시를 지운다');
         setDraft({ ...base, selected: new Set() });
-        assert.deepStrictEqual(plain(call('metaElementResult')()), { ncsElements: [], ncsAuto: false }, '모두 해제해도 사용자의 결정이다');
+        assert.deepStrictEqual(plain(call('metaElementResult')()), { ncsElements: [], ncsAuto: false, ncsKeyword: false, ncsNone: true }, '모두 해제해도 사용자의 결정이고, 빈 차시 채우기가 다시 넣지 않는다');
+        assert.strictEqual(confirmed.ncsNone, false);
         setDraft(null);
     });
 

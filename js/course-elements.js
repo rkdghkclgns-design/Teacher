@@ -77,18 +77,39 @@ function normalizeElementRec(row, objectiveCount) {
     };
 }
 
-function keywordElementRecs(units) {
-    return units.slice(0, ELEMENT_MAX_KEYWORD_RECS).map(unit => ({
-        unitCode: unit.code, unitName: unit.name, level: unit.level, elementCode: '', elementName: '', fit: ELEMENT_KEYWORD_FIT, covers: [],
-        reason: '키워드 일치 (AI 키를 저장하면 교안을 분석해 추천합니다)', by: '키워드'
-    }));
+const lessonKeywordText = (mod, objectives) => [mod.title, mod.category, mod.description, ...objectives].filter(Boolean).join(' ');
+
+// 차시 제목과 학습 목표로 찾은 순서를 쓴다. 교과에 배정한 단위는 차시가 속한 범위이므로 찾은 것 중에서 앞에 두고, 못 찾았어도 다른 단위보다 앞에 둔다
+function keywordCandidateUnits(subject, mod, objectives) {
+    const hits = ncsSearch(lessonKeywordText(mod, objectives), NCS_REF_LIMIT, { perSubd: ELEMENT_SEARCH_PER_SUBD });
+    const own = subject?.ncs?.units || [];
+    const ownCodes = new Set(own.map(unit => unit.code));
+    const units = [
+        ...hits.filter(unit => ownCodes.has(unit.code)),
+        ...own.filter(unit => !hits.some(hit => hit.code === unit.code)),
+        ...hits.filter(unit => !ownCodes.has(unit.code))
+    ];
+    return units.map(unit => ncsRefInfo(unit.code, unit)).filter(Boolean);
+}
+
+// 단위에 요소를 등록해 두었으면 차시 글과 낱말이 가장 많이 겹치는 요소를 고른다
+function keywordElementRecs(units, text = '') {
+    const lessonTokens = ncsTokens(text);
+    const overlap = name => Object.keys(ncsTokens(name)).filter(token => lessonTokens[token]).length;
+    return units.slice(0, ELEMENT_MAX_KEYWORD_RECS).map(unit => {
+        const element = (unit.elements || []).length ? [...unit.elements].sort((a, b) => overlap(b.name) - overlap(a.name))[0] : null;
+        return {
+            unitCode: unit.code, unitName: unit.name, level: unit.level, elementCode: element?.code || '', elementName: element?.name || '',
+            fit: unit.match || ELEMENT_KEYWORD_FIT, covers: [], reason: '키워드 일치 (교안을 만들면 AI가 분석해 다시 배정합니다)', by: '키워드'
+        };
+    });
 }
 
 async function recommendLessonElements(subject, mod) {
     await loadNcsCatalog();
     const objectives = qbankObjectives(mod);
     const units = elementCandidateUnits(subject, mod, objectives);
-    if (!textModelHasKey()) return { recs: keywordElementRecs(units), note: 'AI 없이 키워드로 찾은 후보입니다.' };
+    if (!textModelHasKey()) return { recs: keywordElementRecs(keywordCandidateUnits(subject, mod, objectives), lessonKeywordText(mod, objectives)), note: 'AI 없이 키워드로 찾은 후보입니다.' };
     const parsed = await askNcsJson(buildElementPrompt(subject, mod, units, objectives));
     const rows = Array.isArray(parsed) ? parsed : (parsed?.recs || []);
     const recs = rows.slice(0, ELEMENT_MAX_RECS).map(row => normalizeElementRec(row, objectives.length)).filter(rec => rec.unitName || rec.elementName);
@@ -112,17 +133,59 @@ function recToElement(rec) {
     return { code: rec.elementCode || (isElement ? '' : rec.unitCode), name, unitCode: rec.unitCode, unitName: rec.unitName, ...(isElement ? {} : { unitLevel: true }) };
 }
 
-// 키워드 일치와 목록 밖 후보는 자동으로 고르지 않고 후보로만 둔다
+// 적합도 기준을 넘는 AI 후보를 고르고, 없으면 차시가 비지 않도록 가장 가까운 후보 하나를 고른다.
+// 목록 밖 후보(참조 목록에 없는 코드)는 고르지 않는다. 키워드 후보는 AI 후보가 없을 때만 쓴다
 function pickLessonElements(recs) {
-    return topNcsPicks(recs.filter(rec => rec.by === 'AI' && elementRecState(rec) !== 'out'), rec => rec.fit);
+    const listed = recs.filter(rec => elementRecState(rec) !== 'out');
+    const ai = listed.filter(rec => rec.by === 'AI');
+    const picks = topNcsPicks(ai, rec => rec.fit);
+    return picks.length ? picks : [...(ai.length ? ai : listed)].sort((a, b) => b.fit - a.fit).slice(0, 1);
 }
 
 const hasConfirmedElements = mod => (mod.ncsElements || []).length > 0 && !mod.ncsAuto;
 const lessonHasBody = mod => Object.values(mod.tabContents || {}).some(Boolean) || !!mod.content;
 
+// 키워드로 채워 둔 차시는 교안이 생기면 AI로 다시 배정한다
 function needsElementAutoAssign(mod) {
-    return textModelHasKey() && !mod.ncsAutoTried && !(mod.ncsElements || []).length && !(mod.ncsRecs || []).length && lessonHasBody(mod) && qbankObjectives(mod).length > 0;
+    const empty = !(mod.ncsElements || []).length && !(mod.ncsRecs || []).length;
+    return textModelHasKey() && !mod.ncsAutoTried && (empty || !!mod.ncsKeyword) && lessonHasBody(mod) && qbankObjectives(mod).length > 0;
 }
+
+/* ---------- 빈 차시 채우기 ---------- */
+// 사용자가 일부러 모두 해제한 차시는 다시 채우지 않는다
+const needsKeywordNcs = mod => mod.id !== 'mainQuest' && !mod.ncsNone && !(mod.ncsElements || []).length;
+
+// 교안이 없거나 AI를 쓸 수 없어도 비워 두지 않는다. 가장 가까운 후보를 확정 전으로 넣는다
+function keywordAssignLesson(subject, mod) {
+    const objectives = qbankObjectives(mod);
+    const recs = keywordElementRecs(keywordCandidateUnits(subject, mod, objectives), lessonKeywordText(mod, objectives));
+    const [pick] = pickLessonElements(recs);
+    if (!pick) return false;
+    Object.assign(mod, { ncsRecs: recs, ncsElements: [{ ...recToElement(pick), auto: true }], ncsAuto: true, ncsKeyword: true });
+    return true;
+}
+
+let _lessonNcsFilling = null;
+
+// 목록을 그릴 때마다 불러도 된다. 채울 차시가 없으면 아무것도 하지 않고, 채웠을 때만 다시 그린다
+window.fillMissingLessonNcs = function (subject) {
+    const lessons = (subject?.lessons || []).filter(needsKeywordNcs);
+    if (!lessons.length || _lessonNcsFilling) return _lessonNcsFilling;
+    _lessonNcsFilling = (async () => {
+        try {
+            await loadNcsCatalog();
+            const filled = lessons.filter(lesson => needsKeywordNcs(lesson) && keywordAssignLesson(subject, lesson)).length;
+            if (!filled) return;
+            await saveState();
+            if (subject.id === currentSubjectId) renderSidebar();
+        } catch (err) {
+            console.warn('[NCS] 빈 차시를 채우지 못했습니다:', err.message);
+        } finally {
+            _lessonNcsFilling = null;
+        }
+    })();
+    return _lessonNcsFilling;
+};
 
 // 확정한 선택은 건드리지 않는다. 기다리는 사이 사용자가 고쳤으면 후보만 남기고 선택은 그대로 둔다.
 async function assignLessonElements(subject, mod) {
@@ -136,7 +199,8 @@ async function assignLessonElements(subject, mod) {
     const kept = JSON.stringify(mod.ncsElements || []) !== before;
     const picks = kept ? [] : pickLessonElements(recs);
     const elements = picks.map(rec => ({ ...recToElement(rec), auto: true }));
-    Object.assign(mod, { ncsRecs: recs, ncsNote: note }, kept ? {} : { ncsElements: elements, ncsAuto: elements.length > 0 });
+    // 고를 후보가 없으면(모두 목록 밖) 키워드로 채운 값을 지운 채 두지 않는다
+    Object.assign(mod, { ncsRecs: recs, ncsNote: note }, kept || !elements.length ? {} : { ncsElements: elements, ncsAuto: true, ncsKeyword: false });
     if (elements.length) Object.assign(mod, withHistoryNote(mod, `NCS 자동 배정 ${elements.length}개 (확정 전)`));
     return elements.length > 0;
 }

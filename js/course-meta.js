@@ -545,7 +545,7 @@ function metaElementResult() {
     const before = (mod.ncsElements || []).map(elementKey);
     const same = before.length === picked.length && picked.every(element => before.includes(elementKey(element)));
     if (same && !confirm) return { ncsElements: mod.ncsElements || [], ncsAuto: !!mod.ncsAuto };
-    return { ncsElements: picked.map(({ auto, ...element }) => element), ncsAuto: false };
+    return { ncsElements: picked.map(({ auto, ...element }) => element), ncsAuto: false, ncsKeyword: false, ncsNone: !picked.length };
 }
 
 function readMetaPrereqs(dialog, mod) {
