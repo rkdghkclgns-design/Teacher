@@ -800,6 +800,7 @@ window.executeDropdownExport = function (format) {
             else exportToPDF();
             break;
         case 'slide':
+            if (_exportScope === 'subject') window.showToast('슬라이드는 차시 단위로 열립니다. 현재 차시를 엽니다.', 'warning');
             openCurrentSlideStudio();
             break;
         case 'html':
@@ -823,7 +824,7 @@ function exportCurrentToMD() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = (mod.title || '교안') + '.md';
+    a.download = lessonFileName(mod, 'md');
     a.click();
     URL.revokeObjectURL(url);
 }
@@ -840,7 +841,7 @@ function exportSubjectToMD() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = (mod.title || '차시') + '.md';
+        a.download = lessonFileName(mod, 'md');
         a.click();
         URL.revokeObjectURL(url);
     });
@@ -861,7 +862,7 @@ function exportCurrentToHTML() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = (mod.title || '교안') + '.html';
+    a.download = lessonFileName(mod, 'html');
     a.click();
     URL.revokeObjectURL(url);
 }
@@ -883,7 +884,7 @@ function exportSubjectToHTML() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = (mod.title || '차시') + '.html';
+        a.download = lessonFileName(mod, 'html');
         a.click();
         URL.revokeObjectURL(url);
     });
@@ -2580,22 +2581,6 @@ function buildTaskContext(taskScope, additionalContext = "") {
             systemInstruction = `${CONTEXT_CORE.personas.assistant}\n[규칙]\n- ${CONTEXT_CORE.rules.concise_edit}`;
 
             userPrompt = `[현재 작업: 텍스트 부분 수정]\n문맥:\n${cleanForAPI(additionalContext.context)}\n\n원본 텍스트:\n${additionalContext.selectedText}\n\n요청사항:\n${additionalContext.command}`;
-
-            break;
-
-        case 'tone':
-
-            systemInstruction = `${CONTEXT_CORE.personas.assistant}\n[규칙]\n- 반드시 한국어로만 작성하세요. 영어로 작성하지 마세요.\n- 마크다운 구조(#, ##, ###, *, - 등)를 원본과 동일하게 유지하세요.\n- <!-- IMG --> 태그, <div>, <img>, <button> 등 모든 HTML 요소는 절대 수정하지 말고 원본 그대로 보존하세요.\n- 텍스트 내용의 문체(톤앤매너)만 변환하고, 핵심 정보와 의미를 누락하지 마세요.\n- ${CONTEXT_CORE.rules.concise_edit}`;
-
-            userPrompt = `[현재 작업: 문체 변환]\n[변환 지시]\n${additionalContext.tonePrompt}\n\n[원본 교안 — 반드시 한국어로 변환 결과를 출력하세요]\n${additionalContext.content}`;
-
-            break;
-
-        case 'volume':
-
-            systemInstruction = `${CONTEXT_CORE.personas.assistant}\n[규칙]\n- 반드시 한국어로만 작성하세요. 영어로 작성하지 마세요.\n- 마크다운 구조(#, ##, ###, *, - 등)를 원본과 동일하게 유지하세요.\n- <!-- IMG --> 태그, <div>, <img>, <button> 등 모든 HTML 요소는 절대 수정하지 말고 원본 그대로 보존하세요.\n- 텍스트 분량만 조절하고, 핵심 정보와 의미를 누락하지 마세요.\n- ${CONTEXT_CORE.rules.concise_edit}`;
-
-            userPrompt = `[현재 작업: 분량 조절]\n[조절 지시]\n${additionalContext.volumePrompt}\n\n[원본 교안 — 반드시 한국어로 조절 결과를 출력하세요]\n${additionalContext.content}`;
 
             break;
 

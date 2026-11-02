@@ -2639,10 +2639,6 @@ function renderEditor(mod) {
                         <button onclick="openSectionLocks('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-slate-50 text-slate-600 border border-slate-200 rounded hover:bg-slate-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="다시 생성해도 유지할 섹션 선택"><i class="ph-bold ph-lock-simple"></i> 섹션 고정</button>
                         <button onclick="openQuestionBank('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-violet-50 text-violet-600 border border-violet-200 rounded hover:bg-violet-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="문항 분포·검수·CSV"><i class="ph-bold ph-exam"></i> 문제은행</button>
                         <button onclick="runConventionCheck('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-rose-50 text-rose-600 border border-rose-200 rounded hover:bg-rose-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="콘텐츠 업무 설계 규칙으로 현재 탭 검사"><i class="ph-bold ph-list-checks"></i> 컨벤션 검수</button>
-                        <div id="tone-loading" class="hidden items-center gap-1.5 ml-2">
-                            <div class="w-3 h-3 border-2 border-accent/30 border-t-accent rounded-full animate-spin"></div>
-                            <span class="text-[0.6rem] font-bold text-accent" id="tone-loading-text">재생성 중...</span>
-                        </div>
                     </div>
 
                 </div>

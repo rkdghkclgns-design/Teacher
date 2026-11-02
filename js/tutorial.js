@@ -12,8 +12,7 @@ const TUTORIAL_STEPS = [
 <strong>📖 사용법</strong><br>
 ① 톱니바퀴 아이콘을 클릭하세요.<br>
 ② <strong>AI 모델</strong>을 선택합니다 (텍스트/이미지 각각).<br>
-③ <strong>파일명 규칙</strong>을 체크박스로 지정합니다.<br>
-④ 이 튜토리얼을 다시 볼 수 있습니다.`,
+③ 이 튜토리얼을 다시 볼 수 있습니다.`,
         position: 'bottom'
     },
     {
@@ -49,8 +48,7 @@ const TUTORIAL_STEPS = [
 • <strong>📤 내보내기</strong> — 범위(현재/전체) 선택 후 MD, PDF, 슬라이드, HTML 형식으로 저장<br>
 • <strong>🕐 히스토리</strong> — 이전에 생성한 교안 기록을 복원<br>
 • <strong>📦 캐시 보관함</strong> — 이미지 캐시를 관리<br>
-• <strong>📏 컨벤션</strong> — 교안 작성 규칙을 확인<br>
-• <strong>🔄 서식 변환</strong> — 교안 서식을 일괄 변환`,
+• <strong>📏 컨벤션</strong> — 교안 작성 규칙을 확인`,
         position: 'bottom'
     },
     {

@@ -33,6 +33,29 @@ function saveFilenameConvention() {
     } catch (e) {}
 }
 
+function buildFilename(mod, idx, subj) {
+    const ep = filenameConvention.enabledParts || [];
+    const parts = [
+        filenameConvention.customPrefix,
+        ep.includes('unit') && subj && subj.title.replace(/[^\w가-힣]/g, '').substring(0, 20),
+        ep.includes('lesson') && (idx < 0 ? 'MQ' : `${String(idx + 1).padStart(2, '0')}차시`),
+        ep.includes('title') && mod && mod.title.replace(/[\/\?<>\\:\*\|"]/g, '').substring(0, 30),
+        ep.includes('date') && new Date().toISOString().slice(0, 10),
+        ep.includes('author') && filenameConvention.author
+    ].filter(Boolean);
+    return parts.join(filenameConvention.separator || '_') || 'export';
+}
+
+// 교과에 명명 규칙(nn 치환)이 있으면 그것을, 없으면 파일명 규칙을 쓴다
+function lessonFileName(mod, extension, subject) {
+    const subj = subject || globalState.subjects.find(item => item.id === currentSubjectId);
+    const lessons = subj?.id === currentSubjectId ? courseData : (subj?.lessons || []);
+    const idx = lessons.findIndex(lesson => lesson.id === mod.id);
+    const number = idx < 0 ? 'MQ' : String(idx + 1).padStart(2, '0');
+    const name = subj?.namingConvention ? subj.namingConvention.replace(/nn/g, number) : buildFilename(mod, idx, subj);
+    return `${name}.${extension}`;
+}
+
 function renderFilenameConventionUI() {
     // 설정 패널과 사이드바 양쪽에 렌더링
     const containers = [

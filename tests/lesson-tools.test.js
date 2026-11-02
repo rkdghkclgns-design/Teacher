@@ -5,7 +5,7 @@ const vm = require('vm');
 const path = require('path');
 const assert = require('assert');
 const root = path.join(__dirname, '..', 'js') + path.sep;
-const FILES = ['kbuilder/ncs-catalog.js', 'lesson-lint.js', 'course-ncs.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'course-art.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js', 'course-refs.js'];
+const FILES = ['kbuilder/ncs-catalog.js', 'lesson-lint.js', 'course-ncs.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'course-art.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js', 'course-refs.js', 'filename-convention.js'];
 
 function makeContext(callGemini, keys = { gemini: '' }) {
     const ctx = {
@@ -20,6 +20,7 @@ function makeContext(callGemini, keys = { gemini: '' }) {
         CONTEXT_CORE: { personas: { orchestrator: '설계자' } },
         globalState: { courseTitle: '과정', subjects: [] },
         courseData: [],
+        localStorage: { getItem: () => null, setItem() {} },
         archived: [],
         archiveContent: async item => { ctx.archived.push(item.content); },
         saveState: async () => {},
@@ -476,6 +477,14 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
         assert.deepStrictEqual(['plan', 'review', 'qgen', 'fast', undefined].map(effort), ['medium', 'medium', 'low', 'low', 'max'], '교안 본문은 낮추지 않는다');
         assert.strictEqual(request('qgen').output_config.effort, 'low');
         assert.ok(!('taskRole' in request('qgen')), '앱 내부 값은 요청에 싣지 않는다');
+    });
+
+    await run('파일명 규칙: 교과 명명 규칙이 우선', async () => {
+        const lesson = { id: 7, title: '재미/분석' };
+        const subject = { id: 's9', title: '게임 기획', lessons: [{ id: 1, title: '앞' }, lesson] };
+        assert.strictEqual(call('lessonFileName')(lesson, 'md', subject), '게임기획_02차시_재미분석.md');
+        assert.strictEqual(call('lessonFileName')({ id: 'mainQuest', title: '퀘스트' }, 'md', subject), '게임기획_MQ_퀘스트.md');
+        assert.strictEqual(call('lessonFileName')(lesson, 'html', { ...subject, namingConvention: 'GD_nn_교안' }), 'GD_02_교안.html');
     });
 
     await run('AI 수정 비교', async () => {

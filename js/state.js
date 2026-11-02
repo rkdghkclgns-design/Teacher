@@ -568,6 +568,16 @@ window.deleteSelectedHistory = async function () {
 
 
 
+window.clearHistory = function () {
+    if (contentHistory.length === 0) return window.showAlert('삭제할 히스토리가 없습니다.');
+    showConfirm(`히스토리 ${contentHistory.length}개를 모두 영구 삭제하시겠습니까?`, async () => {
+        contentHistory = [];
+        selectedHistoryIds.clear();
+        await saveState();
+        toggleHistoryPanel(); // Refresh view
+    });
+}
+
 window.exportSelectedHistoryMD = function () {
 
     if (selectedHistoryIds.size === 0) return window.showAlert('다운로드할 항목을 선택해주세요.');
@@ -938,18 +948,8 @@ window.exportCurrentModule = async function () {
     const safeCourseName = rawCourseTitle.replace(/[\/\?<>\\:\*\|"]/g, '_').trim();
     const safeSubjName = subj ? subj.title.replace(/[\/\?<>\\:\*\|"]/g, '_').trim() : '기본_교과';
 
-    let fileName = `${mod.title}.md`;
+    let fileName = lessonFileName(mod, 'md', subj);
 
-    if (subj && subj.namingConvention) {
-        if (mod.id === 'mainQuest') {
-            fileName = subj.namingConvention.replace(/nn/g, 'MQ') + '.md';
-        } else {
-            const idx = courseData.findIndex(m => m.id === mod.id);
-            if (idx !== -1) {
-                fileName = subj.namingConvention.replace(/nn/g, String(idx + 1).padStart(2, '0')) + '.md';
-            }
-        }
-    }
 
     try {
         const zip = new JSZip();
@@ -1019,17 +1019,8 @@ window.exportAllModules = async function () {
             const moduleTitle = `# ${m.title}\n\n`;
 
             // 차시명 뷰티파이 (예: 01_차시명.md)
-            let mdFileName = `${String(idx + 1).padStart(2, '0')}_${m.title}.md`;
-            if (m.id === 'mainQuest') mdFileName = `MQ_단원평가.md`;
+            const mdFileName = lessonFileName(m, 'md', subj);
 
-            // 네이밍 컨벤션 덮어쓰기 로직 유지
-            if (subj && subj.namingConvention) {
-                if (m.id === 'mainQuest') {
-                    mdFileName = subj.namingConvention.replace(/nn/g, 'MQ') + '.md';
-                } else {
-                    mdFileName = subj.namingConvention.replace(/nn/g, String(idx + 1).padStart(2, '0')) + '.md';
-                }
-            }
 
             const markdownContent = extractImagesToZip(m.content, m.images, attachFolder);
             subjFolder.file(mdFileName, moduleTitle + markdownContent);
@@ -1038,10 +1029,7 @@ window.exportAllModules = async function () {
         // 4. 메인 퀘스트(mainQuest) 별도 내보내기 — subj.mainQuest는 courseData(lessons)에 미포함
         if (subj && subj.mainQuest && subj.mainQuest.content) {
             const mq = subj.mainQuest;
-            let mqFileName = 'MQ_단원평가.md';
-            if (subj.namingConvention) {
-                mqFileName = subj.namingConvention.replace(/nn/g, 'MQ') + '.md';
-            }
+            const mqFileName = lessonFileName(mq, 'md', subj);
 
             const mqContent = extractImagesToZip(mq.content, mq.images, attachFolder);
             subjFolder.file(mqFileName, `# ${mq.title}\n\n` + mqContent);
@@ -1946,12 +1934,7 @@ async function syncToLinkedFolder() {
                 if (!m.content) continue;
 
                 let markdownContent = m.content;
-                let mdFileName = `${String(idx + 1).padStart(2, '0')}_${m.title}.md`;
-                if (m.id === 'mainQuest') mdFileName = `MQ_단원평가.md`;
-                if (subj.namingConvention) {
-                    if (m.id === 'mainQuest') mdFileName = subj.namingConvention.replace(/nn/g, 'MQ') + '.md';
-                    else mdFileName = subj.namingConvention.replace(/nn/g, String(idx + 1).padStart(2, '0')) + '.md';
-                }
+                const mdFileName = lessonFileName(m, 'md', subj);
 
                 // 이미지 분리 저장
                 if (m.images && Object.keys(m.images).length > 0) {
@@ -1976,8 +1959,7 @@ async function syncToLinkedFolder() {
             if (subj.mainQuest && subj.mainQuest.content) {
                 const mq = subj.mainQuest;
                 let mqContent = mq.content;
-                let mqFileName = 'MQ_단원평가.md';
-                if (subj.namingConvention) mqFileName = subj.namingConvention.replace(/nn/g, 'MQ') + '.md';
+                const mqFileName = lessonFileName(mq, 'md', subj);
 
                 if (mq.images && Object.keys(mq.images).length > 0) {
                     for (const [imgId, b64] of Object.entries(mq.images)) {
