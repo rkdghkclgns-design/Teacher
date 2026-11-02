@@ -41,7 +41,13 @@ const LESSON_LINT_MULTI_ANSWER = /복수\s*정답|모두 고르/;
 const LESSON_LINT_CHOICE_MARK = /[①-⑩]/g;
 // 원본 규칙표(course-rules.js @3a7303f)에서 필수(sev: bad)로 정한 항목. 나머지는 권장이다.
 const LESSON_LINT_REQUIRED = /"~할 수 있습니다"로 끝냅니다|관찰 가능한 행동|체크리스트는 학습 목표와 같은 수|다른 차시를 지칭|문항 내용을 작성|학습 목표와 밴드를 표기|밴드에는 .+ 유형을 씁니다|체크리스트 문장을|정답을 표기|같은 보기|정답 번호가 보기에 없|단일 선택 문제에|모든 보기가 정답|채점 기준을 작성|기대 출력이나 테스트|채점 루브릭을 작성/;
-const LESSON_QUESTION_WARNINGS = [`보기는 ${LESSON_LINT_MIN_CHOICES}개 이상 둡니다.`, '복수 정답 문제에 정답이 하나입니다.', '정답이 단어나 값 하나로 확정되는지 확인합니다.'];
+const LESSON_LINT_QUESTION_VERSION = /(?:Ctrl|Cmd|Alt|Shift)\s*\+|단축키|20\d\d\.\d+\.\d+|버전\s*\d/i;
+const LESSON_LINT_QUESTION_ADDRESS = /여러분|당신/;
+const LESSON_LINT_MULTI_NOTICE = /모두|전부|있는 대로|복수/;
+const LESSON_QUESTION_WARNINGS = [
+    `보기는 ${LESSON_LINT_MIN_CHOICES}개 이상 둡니다.`, '복수 정답 문제에 정답이 하나입니다.', '정답이 단어나 값 하나로 확정되는지 확인합니다.',
+    '채점 요소마다 점수를 적습니다.', '버전에 의존하는 정보를 쓰지 않습니다.', '학습자를 호칭하지 않습니다.'
+];
 // 개요·목표·체크리스트 구조를 갖는 탭. 실습·학습이해도 탭은 구조가 달라 어구와 문항만 검사한다.
 const LESSON_STRUCTURED_TABS = ['basicLearn', 'advLearn'];
 const LESSON_HEADING_PREFIX = '^(?:[^\\s\\w가-힣]+\\s*)?(?:\\d+[.)]\\s*)?';
@@ -306,6 +312,7 @@ function lintChoiceQuestion(q) {
     const answers = q.answer.match(LESSON_LINT_CHOICE_MARK) || [];
     return [
         q.choices.length < LESSON_LINT_MIN_CHOICES && `보기는 ${LESSON_LINT_MIN_CHOICES}개 이상 둡니다.`,
+        texts.some(text => !text.trim()) && '빈 보기를 두지 않습니다.',
         new Set(texts).size !== texts.length && '같은 보기를 두지 않습니다.',
         answers.some(answer => !marks.includes(answer)) && '정답 번호가 보기에 없습니다.',
         lintAnswerCount(answers, q.choices.length, q.multi)
@@ -318,20 +325,24 @@ function lintQuestionByType(q) {
         const longAnswer = q.answer.length > LESSON_LINT_MAX_SHORT_ANSWER || q.answer.split(/\s+/).length > 3 || q.answer.includes('\n');
         return [!q.answer && '정답을 표기합니다.', longAnswer && '정답이 단어나 값 하나로 확정되는지 확인합니다.'];
     }
-    if (q.type === '서술형') return [!q.rubric && '채점 기준을 작성합니다.'];
+    if (q.type === '서술형') return [!q.rubric && '채점 기준을 작성합니다.', !!q.rubric && !/\d/.test(q.rubric) && '채점 요소마다 점수를 적습니다.'];
     if (q.type === '코드제출') return [!q.tests && '기대 출력이나 테스트 케이스를 작성합니다.'];
     if (q.type === '파일제출') return [!q.rubric && '채점 루브릭을 작성합니다.'];
     return [];
 }
 
-function lintQuestion(q, checklist = []) {
+// objectiveCount: 차시의 학습 목표 수. 알 수 없으면 번호 범위는 보지 않는다
+function lintQuestion(q, checklist = [], objectiveCount = Infinity) {
     const text = `${q.title} ${q.stem}`.trim();
     return [
         !text && '문항 내용을 작성합니다.',
         (!q.objective || !q.band) && '문제마다 학습 목표와 밴드를 표기합니다.',
+        q.objective > objectiveCount && '대응하는 학습 목표가 없습니다.',
         q.typed && q.band && !QUESTION_BAND_TYPES[q.band].includes(q.type) && `${q.band} 밴드에는 ${QUESTION_BAND_TYPES[q.band].join('·')} 유형을 씁니다.`,
         ...lintQuestionByType(q),
         checklist.some(item => textSimilarity(item, text) > LESSON_LINT_SIMILAR_TEXT) && '체크리스트 문장을 그대로 쓰지 않습니다.',
+        LESSON_LINT_QUESTION_VERSION.test(`${q.stem} ${q.choices.map(choice => choice.text).join(' ')}`) && '버전에 의존하는 정보를 쓰지 않습니다.',
+        LESSON_LINT_QUESTION_ADDRESS.test(q.stem) && '학습자를 호칭하지 않습니다.',
         q.review.startsWith('수정 필요') && `AI 교차 검수: ${q.review}`
     ].filter(Boolean);
 }

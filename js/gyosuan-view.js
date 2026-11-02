@@ -167,8 +167,10 @@ window.syncGyosuanView = function () {
 
 // 탭 교안은 학생뷰에서 보여 주므로 강사뷰에서 탭을 다루면 학생뷰로 옮긴다
 window.showLessonView = function () {
-    window.clearLessonPanel?.();
+    const closed = window.clearLessonPanel?.();
     if (window.viewMode === 'instructor') applyViewMode('student');
+    const mod = closed && getEditingModule();
+    if (mod) renderEditor(mod);
 };
 
 window.toggleGyosuanEdit = function (field = 'docMd') {

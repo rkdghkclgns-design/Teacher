@@ -530,11 +530,11 @@ async function runGyosuanGeneration(moduleId, opts = {}) {
     _gyosuanRunning = true;
     _gyosuanOnStatus = opts.onStatus || null;
     if (loading && !opts.background) loading.style.display = 'flex';
-    window.beginGenerationStop?.(GYOSUAN_STOP_LABELS);
+    if (!opts.background) window.beginGenerationStop?.(GYOSUAN_STOP_LABELS);
     try {
         const style = gyosuanSlideStyle();
         const built = await buildGyosuanFromLesson(mod, parts, style);
-        window.endGenerationStop?.(); // 이미지 단계는 자체 건너뛰기 버튼을 쓴다
+        if (!opts.background) window.endGenerationStop?.(); // 이미지 단계는 자체 건너뛰기 버튼을 쓴다
         const keepDoc = !!(opts.keepDoc && mod.gyosuan?.docMd);
         const texts = { docMd: keepDoc ? '' : built.docMd, deckMd: built.deckMd };
         const draft = window.attachGyosuanImages ? await window.attachGyosuanImages(mod, texts) : texts;
@@ -542,7 +542,10 @@ async function runGyosuanGeneration(moduleId, opts = {}) {
         Object.assign(mod, withHistoryNote(mod, keepDoc ? '슬라이드 편성안 AI 생성' : '교수안·슬라이드 편성안 AI 생성'));
         _gyosuanEditing = null;
         await saveGyosuan(mod);
-        if (String(currentEditingModuleId) === String(mod.id)) renderEditor(mod);
+        if (String(currentEditingModuleId) === String(mod.id)) {
+            if (opts.background) window.refreshAfterGyosuan(mod);
+            else renderEditor(mod);
+        }
         return { ok: true, built, draft, partial: built.failedCount > 0 };
     } catch (err) {
         if (window.isTabGenerationStopped?.()) return { ok: false, stopped: true };
@@ -551,9 +554,11 @@ async function runGyosuanGeneration(moduleId, opts = {}) {
     } finally {
         _gyosuanRunning = false;
         _gyosuanOnStatus = null;
-        if (loading) loading.style.display = 'none';
-        window.endGenerationStop?.();
-        setGyosuanProgress('AI가 상세 교안을 작성하고 있습니다...');
+        if (!opts.background) {
+            if (loading) loading.style.display = 'none';
+            window.endGenerationStop?.();
+            setGyosuanProgress('AI가 상세 교안을 작성하고 있습니다...');
+        }
     }
 }
 

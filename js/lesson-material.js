@@ -9,7 +9,8 @@ const MATERIAL_CHECK_REF = /\s*[(（]\s*다시\s*보기\s*:\s*([^)）]+)[)）]\s
 const materialTitle = title => String(title).replace(MATERIAL_TIME_NOTE, '').trim();
 const materialCell = text => String(text || '').replace(/\|/g, '｜').replace(/\s+/g, ' ').trim();
 const sectionBody = section => section.text.replace(/^##\s+[^\n]*\n?/, '');
-const materialTabMd = (lesson, tabId) => (lesson.tabContents?.[tabId] ? resolveMarkdownImages(lesson.tabContents[tabId], lesson.images).replace(/\r\n/g, '\n') : '');
+// 화면과 같게 강사 전용 내용과 첫머리의 시간표·목록을 뺀다
+const materialTabMd = (lesson, tabId) => (lesson.tabContents?.[tabId] ? resolveMarkdownImages(cleanLessonOpening(stripInstructorCallouts(lesson.tabContents[tabId])), lesson.images).replace(/\r\n/g, '\n') : '');
 
 // 글머리 "- 용어: 설명" → "- **용어** | 설명". 짧은 이름(15자 이하)일 때만 항목 표기로 본다
 function materialTermLine(line) {
@@ -21,14 +22,16 @@ function materialTermLine(line) {
 // 소제목은 #### ▣ 로 내리고 코드 블록 안은 그대로 둔다
 function materialBody(md) {
     let fence = 0;
-    const lines = String(md || '').split('\n').flatMap(line => {
+    const lines = [];
+    String(md || '').split('\n').forEach(line => {
         const coded = fence > 0;
         fence = nextCodeFence(fence, line);
-        if (coded || fence) return [line];
-        const heading = line.match(/^#{1,6}\s+(.*)$/);
-        return heading ? [MATERIAL_GAP, '', `#### ▣ ${materialTitle(heading[1])}`, ''] : [materialTermLine(line)];
+        const heading = !coded && !fence && line.match(/^#{1,6}\s+(.*)$/);
+        if (coded || fence) lines.push(line);
+        else if (heading) lines.push(MATERIAL_GAP, '', `#### ▣ ${materialTitle(heading[1])}`, '');
+        else if (line.trim() || lines.at(-1)?.trim()) lines.push(materialTermLine(line)); // 코드 블록 밖의 빈 줄은 한 줄로 줄인다
     });
-    return lines.join('\n').replace(/\n{3,}/g, '\n\n').replace(/^\s*<br>\s*/, '').trim();
+    return lines.join('\n').replace(/^\s*<br>\s*/, '').trim();
 }
 
 // 개요는 글머리로 쓴다. 줄글이면 문장마다 나눈다

@@ -623,7 +623,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
     window.beginLessonPipeline(moduleId);
     const setLoadingStatus = window.setPipelineStatus;
     setLoadingStatus('교안을 작성하고 있습니다...');
-    renderEditor(mod);
+    let reported = false; // 결과를 이미 알렸으면 파이프라인 종료 때 또 알리지 않는다
 
 
 
@@ -649,6 +649,8 @@ async function generateModuleContent(moduleId, keyConcepts) {
     let chunkCount = 0;
 
     try {
+        renderEditor(mod);
+
         // ── Chunk 1: 최초 생성 ──
         const { systemInstruction, userPrompt } = buildTaskContext('module', {
             title: mod.title,
@@ -767,6 +769,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
         renderEditor(mod);
 
         if (stopped) {
+            reported = true;
             window.showAlert('교안 생성을 중단했습니다. 받은 내용까지 저장했습니다. 이전 교안은 히스토리에 있습니다.');
             return;
         }
@@ -777,6 +780,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
     } catch (err) {
 
         console.error("교안 생성 중 에러 상세 (generateModuleContent):", err, err.stack);
+        reported = true;
 
         if (err.message && err.message.includes('401')) {
 
@@ -801,7 +805,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
 
     } finally {
 
-        window.finishLessonPipeline();
+        window.finishLessonPipeline({ quiet: reported });
 
     }
 
@@ -2444,7 +2448,7 @@ function renderEditor(mod) {
 
 
     // 생성 중에는 빈 차시도 탐색줄을 보여 준다
-    if (!mod.content && !mod.gyosuan && !window.isLessonPipelineRunning()) {
+    if (!mod.content && !mod.gyosuan && !window.isLessonPipelineRunning(mod.id)) {
 
         area.innerHTML = `
 
@@ -2500,7 +2504,7 @@ function renderEditor(mod) {
 
     let htmlContent = '';
 
-    if (_tabEmpty && window.isLessonPipelineRunning()) {
+    if (_tabEmpty && window.isLessonPipelineRunning(mod.id)) {
         htmlContent = `
             <div class="flex flex-col items-center justify-center text-center py-20 px-6 select-none text-gray-500">
                 <i class="ph-bold ph-circle-notch animate-spin text-3xl text-accent mb-4"></i>
@@ -2832,12 +2836,13 @@ window.toggleEditorMode = function (mode) {
         btnEdit.classList.add('text-gray-500');
 
         syncGyosuanView();
+        window.syncLessonPanelView();
 
 
 
         const mod = getEditingModule();
 
-        if (mod && rawView.value.trim()) { // 빈 탭은 renderEditor가 그린 안내를 둔다
+        if (mod && (rawView.value.trim() || getActiveTabContent(mod))) { // 빈 탭은 renderEditor가 그린 안내를 둔다
 
             let renderText = rawView.value;
 
@@ -2951,7 +2956,9 @@ window.saveRawContent = function () {
 
         const tabId = rawView.dataset.tabId || currentLessonTab;
 
-        if (rawView.value === ((mod.tabContents ? mod.tabContents[tabId] : mod.content) || '')) return;
+        const stored = (mod.tabContents ? mod.tabContents[tabId] : mod.content) || '';
+        // 편집기는 첫머리를 정리해 보여 준다. 고치지 않았으면 저장도 이미지 정리도 하지 않는다
+        if (rawView.value === stored || rawView.value === cleanLessonOpening(stored)) return;
 
         setTabMarkdown(mod, tabId, rawView.value);
 

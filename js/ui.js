@@ -2065,7 +2065,7 @@ window.startBatchGeneration = async function () {
                     const lesson = doneLessons[ti];
                     progressSpan.innerText = `5탭 생성 중... (${ti + 1}/${doneLessons.length}: ${lesson.title})`;
                     try {
-                        await window.runLessonPipeline(lesson.id);
+                        await window.runLessonPipeline(lesson.id, { quiet: true });
                     } catch (tabErr) {
                         console.warn(`[5탭 생성 실패] ${lesson.title}:`, tabErr.message);
                     }

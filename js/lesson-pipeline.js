@@ -7,8 +7,11 @@ const PIPELINE_COOLDOWN_MS = 2000; // 호출 한도를 피하려고 항목 사�
 
 let _pipeline = null;
 
-window.isLessonPipelineRunning = () => !!_pipeline;
-window.isPipelineStep = id => _pipeline?.current === id;
+const isPipelineLesson = moduleId => !!_pipeline && String(_pipeline.moduleId) === String(moduleId);
+
+// moduleId를 주면 그 차시를 만드는 중인지 본다. 다른 차시를 보는 동안 거짓 진행 표시를 하지 않는다
+window.isLessonPipelineRunning = moduleId => (moduleId === undefined ? !!_pipeline : isPipelineLesson(moduleId));
+window.isPipelineStep = (id, moduleId) => isPipelineLesson(moduleId) && _pipeline.current === id;
 
 /* ---------- 문제은행 채우기 ---------- */
 function questionBankGaps(mod) {
@@ -18,10 +21,13 @@ function questionBankGaps(mod) {
 
 // 학습 목표마다 문항이 있도록 빠진 목표의 문항을 채운다. 문제은행은 학습이해도 탭의 마크다운을 쓴다
 async function fillQuestionBank(moduleId, { isStopped = () => false, onStatus = () => {} } = {}) {
-    for (const objective of questionBankGaps(getEditingModule(moduleId))) {
+    const lesson = getEditingModule(moduleId);
+    if (!lesson) return { ok: false, error: '차시를 찾지 못했습니다.' };
+    for (const objective of questionBankGaps(lesson)) {
         if (isStopped()) return { ok: false, stopped: true };
         onStatus(`학습 목표 ${objective}의 문항을 만들고 있습니다...`);
         const mod = getEditingModule(moduleId);
+        if (!mod) return { ok: false, error: '차시를 찾지 못했습니다.' };
         const questions = await generateQuestions(mod, { objective, band: 'L1', type: '객관식', multi: false, count: QBANK_FILL_COUNT });
         setTabMarkdown(mod, 'assessment', appendQuestionsMd(qbankMarkdown(mod), questions));
         Object.assign(mod, withHistoryNote(mod, `문제은행 문항 생성 (학습 목표 ${objective}, ${questions.length}개)`));
@@ -41,8 +47,8 @@ function pipelineSteps(moduleId, lockedByTab) {
     if (moduleId === 'mainQuest') return tabs;
     return [
         ...tabs,
-        { id: 'gyosuan', label: '교수안·슬라이드', needed: lessonNeedsGyosuan, run: () => runGyosuanGeneration(moduleId, { background: true, onStatus: window.setPipelineStatus }) },
-        { id: 'qbank', label: '문제은행', needed: mod => questionBankGaps(mod).length > 0, run: () => fillQuestionBank(moduleId, { isStopped: () => !!_pipeline?.stopped, onStatus: window.setPipelineStatus }) }
+        { id: 'gyosuan', label: '교수안·슬라이드', afterTabs: true, needed: lessonNeedsGyosuan, run: () => runGyosuanGeneration(moduleId, { background: true, onStatus: window.setPipelineStatus }) },
+        { id: 'qbank', label: '문제은행', afterTabs: true, needed: mod => questionBankGaps(mod).length > 0, run: () => fillQuestionBank(moduleId, { isStopped: () => !!_pipeline?.stopped, onStatus: window.setPipelineStatus }) }
     ];
 }
 
@@ -99,52 +105,73 @@ window.requestLessonPipelineStop = function () {
 
 /* ---------- 실행 ---------- */
 window.beginLessonPipeline = function (moduleId) {
-    _pipeline = { moduleId, stopped: false, current: LESSON_TABS[0].id, label: LESSON_TABS[0].label, status: '', done: 0, total: 0, failed: [] };
+    _pipeline = { moduleId, subjectId: currentSubjectId, stopped: false, moved: false, current: LESSON_TABS[0].id, label: LESSON_TABS[0].label, status: '', done: 0, total: 0, failed: [], partial: [], skipped: [] };
     _suppressTabAlert = true;
     _tabGenStop = false;
     refreshPipelineView(_pipeline);
 };
 
 function pipelineSummary(run) {
-    if (run.failed.length) return { alert: `일부 항목을 만들지 못했습니다.\n${run.failed.join('\n')}\n\n전체 생성을 다시 누르면 빠진 항목만 만듭니다.` };
+    const notes = [
+        run.moved ? '다른 교과로 옮기거나 차시가 없어져 전체 생성을 멈췄습니다.' : '',
+        run.failed.length ? `만들지 못한 항목:\n${run.failed.join('\n')}` : '',
+        run.skipped.length ? `교안 탭이 모두 있어야 해서 건너뛴 항목: ${run.skipped.join(', ')}` : '',
+        run.partial.length ? `일부 내용이 빠졌을 수 있는 항목: ${run.partial.join(', ')}` : ''
+    ].filter(Boolean);
+    if (notes.length) return { alert: `${notes.join('\n\n')}\n\n이 차시에서 전체 생성을 다시 누르면 빠진 항목만 만듭니다.` };
     return run.stopped ? { toast: '전체 생성을 중지했습니다. 만든 내용은 저장했습니다.', kind: 'warning' } : { toast: '전체 생성을 마쳤습니다.', kind: 'success' };
 }
 
-window.finishLessonPipeline = function () {
+// 기다리던 빈 탭의 안내가 남지 않게 한다. 내용을 읽거나 항목을 고치는 화면은 두고 탐색줄만 고친다
+function refreshFinishedLesson(mod) {
+    const waiting = String(currentEditingModuleId) === String(mod.id) && !_lessonPanel && !getActiveTabContent(mod);
+    if (waiting) renderEditor(mod);
+    else window.refreshLessonNav?.(mod);
+}
+
+// quiet: 부른 쪽이 이미 결과를 알렸거나, 여러 차시를 이어서 만드는 중이라 차시마다 알리지 않는다. 실패는 그래도 알린다
+window.finishLessonPipeline = function ({ quiet = false } = {}) {
     const run = _pipeline;
     if (!run) return;
     _pipeline = null;
     _suppressTabAlert = false;
     document.getElementById('lesson-pipeline-bar')?.remove();
     const mod = getEditingModule(run.moduleId);
-    if (mod) window.refreshLessonNav?.(mod);
+    if (mod) refreshFinishedLesson(mod);
     renderSidebar();
     const { alert, toast, kind } = pipelineSummary(run);
     if (alert) window.showAlert(alert);
-    else window.showToast?.(toast, kind);
+    else if (!quiet) window.showToast?.(toast, kind);
 };
 
 // continuing: 교안 전체 생성이 기본 학습을 만든 뒤 이어서 부를 때 / lockedByTab: 재생성 전에 챙겨 둔 고정 섹션
-window.runLessonPipeline = async function (moduleId, { lockedByTab = {}, continuing = false } = {}) {
+// quiet: 끝나도 성공 알림을 띄우지 않는다
+window.runLessonPipeline = async function (moduleId, { lockedByTab = {}, continuing = false, quiet = false } = {}) {
     if (_pipeline && !continuing) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
     if (!continuing) window.beginLessonPipeline(moduleId);
     const run = _pipeline;
-    if (String(currentEditingModuleId) === String(moduleId)) renderEditor(getEditingModule(moduleId));
     const steps = pipelineSteps(moduleId, lockedByTab);
     run.total = steps.length;
     try {
+        if (String(currentEditingModuleId) === String(moduleId)) renderEditor(getEditingModule(moduleId));
         for (let i = 0; i < steps.length; i++) {
-            const mod = getEditingModule(moduleId);
+            const mod = currentSubjectId === run.subjectId ? getEditingModule(moduleId) : null;
+            run.moved = !mod && !run.stopped;
             if (!mod || run.stopped) break;
             if (!steps[i].needed(mod)) continue;
+            if (steps[i].afterTabs && run.failed.length) {
+                run.skipped.push(steps[i].label);
+                continue;
+            }
             Object.assign(run, { current: steps[i].id, label: steps[i].label, status: '', done: i });
             refreshPipelineView(run);
             const result = await runPipelineStep(steps[i]);
             if (!result.ok && !result.stopped) run.failed.push(`${steps[i].label}: ${result.error}`);
+            if (result.partial) run.partial.push(steps[i].label);
             if (!run.stopped) await new Promise(resolve => setTimeout(resolve, PIPELINE_COOLDOWN_MS));
         }
     } finally {
-        window.finishLessonPipeline();
+        window.finishLessonPipeline({ quiet });
     }
 };
 

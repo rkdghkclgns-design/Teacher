@@ -14,7 +14,6 @@ const QBANK_LESSON_CHARS = 6000;
 const QBANK_MAX_FLAGGED = 20;
 const QBANK_FLASH_MS = 1600;
 const QBANK_CHOICE_MARKS = '①②③④⑤⑥⑦⑧⑨⑩';
-const QBANK_MULTI_NOTICE = /모두|전부|있는 대로|복수/;
 const QBANK_TYPE_FORMATS = {
     객관식: '보기는 ①~⑤로 쓰고, "✅ **정답:** ②"로 정답을 표기합니다. 복수 정답이면 제목 끝에 (복수정답)을 붙이고 문항에 「모두 고르시오」를 밝힙니다.',
     단답식: '"✅ **정답:** 값" 다음 줄에 "🔤 **허용 표기:** 대소문자·띄어쓰기 변형"을 적습니다. 정답은 단어나 값 하나로 확정되어야 합니다.',
@@ -70,6 +69,12 @@ function qbankObjectives(mod) {
 }
 
 const qbankChecklist = mod => qbankTabBullets(mod, '학습\\s*후\\s*체크리스트');
+
+// 화면에서 쓰는 문항 검수. 학습 목표를 지운 뒤 남은 번호도 잡는다
+function lintBankQuestion(q, checklist) {
+    const mod = _qbank ? qbankMod() : null;
+    return lintQuestion(q, checklist, (mod && qbankObjectives(mod).length) || Infinity);
+}
 
 function lessonCodeTags(mod) {
     const sources = [...Object.values(mod.tabContents || {}), mod.content];
@@ -240,7 +245,7 @@ async function askQuestionModel(prompt) {
     return extractText(data);
 }
 
-const withMultiNotice = stem => (QBANK_MULTI_NOTICE.test(stem) ? stem : `${stem} (모두 고르시오)`.trim());
+const withMultiNotice = stem => (LESSON_LINT_MULTI_NOTICE.test(stem) ? stem : `${stem} (모두 고르시오)`.trim());
 
 // 모델이 쓴 태그와 달라도 사용자가 고른 목표·밴드·유형으로 맞춘다
 function parseGeneratedQuestions(text, spec) {
@@ -360,7 +365,7 @@ function qbankFormHtml(objectives, mod) {
 }
 
 function qbankFlaggedHtml(questions, checklist) {
-    const flagged = questions.map((q, index) => ({ q, index, issues: lintQuestion(q, checklist) })).filter(row => row.issues.length);
+    const flagged = questions.map((q, index) => ({ q, index, issues: lintBankQuestion(q, checklist) })).filter(row => row.issues.length);
     return flagged.slice(0, QBANK_MAX_FLAGGED).map(({ q, index, issues }) => `
         <button data-qbank-action="jump" data-index="${index}" class="px-2 py-0.5 text-[0.6rem] text-left rounded bg-amber-500/10 text-amber-300 hover:bg-amber-500/20">
             ${escapeHtml(q.band || '밴드 없음')} ${q.no}. ${escapeHtml(String(q.title || q.stem || '(빈 문항)').slice(0, 24))} · ${escapeHtml(issues[0].slice(0, 20))}${issues.length > 1 ? ` 외 ${issues.length - 1}` : ''}
@@ -368,7 +373,7 @@ function qbankFlaggedHtml(questions, checklist) {
 }
 
 function qbankCardHtml(q, index, checklist) {
-    const issues = lintQuestion(q, checklist);
+    const issues = lintBankQuestion(q, checklist);
     const answer = q.answer ? `<p class="text-[0.65rem] text-emerald-300 mt-1">정답: ${escapeHtml(q.answer)}${q.accepted ? ` · 허용 표기: ${escapeHtml(q.accepted)}` : ''}</p>` : '';
     return `
         <div id="qbank-q-${index}" class="p-2 rounded-lg bg-white/5 border ${issues.length ? 'border-amber-400/40' : 'border-white/10'}">
@@ -428,7 +433,7 @@ function renderQbank() {
     const questions = qbankQuestions(mod);
     const objectives = qbankObjectives(mod);
     const checklist = qbankChecklist(mod);
-    const passed = questions.filter(q => !lintQuestion(q, checklist).length).length;
+    const passed = questions.filter(q => !lintBankQuestion(q, checklist).length).length;
     const select = 'px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white';
     const button = 'px-2 py-1 text-xs font-bold text-textLight bg-white/10 rounded hover:bg-white/20';
     body.innerHTML = `
@@ -506,7 +511,7 @@ async function commitQbankMarkdown(mod, md) {
     mod.tabContents = { ...mod.tabContents, assessment: md };
     Object.assign(mod, withHistoryNote(mod, `문제은행 수정 (문항 ${lessonLintQuestions(md).length}개)`));
     await saveState();
-    if (_qbank?.moduleId !== moduleId) return renderEditor(mod);
+    if (_qbank?.moduleId !== moduleId) return String(currentEditingModuleId) === String(mod.id) ? renderEditor(mod) : undefined;
     _qbank = { ..._qbank, busy: false, dirty: true, editing: null, draft: null, status: '' };
     renderQbank();
 }

@@ -165,7 +165,7 @@ window.openLessonRun = function (scope) {
     if (_lessonRun || document.getElementById('lesson-run-dialog')) return;
     if (!textModelHasKey()) return window.showAlert('교안 생성에는 AI 키가 필요합니다. 설정에서 키를 입력해주세요.');
     if (generationBusy()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
-    if (!runnableLessons(runSubjects(scope), true).length) return window.showToast?.('생성할 차시가 없습니다. 모든 차시에 내용과 교수안이 있습니다.', 'success');
+    if (!runnableLessons(runSubjects(scope), true).length) return window.showToast?.('생성할 차시가 없습니다. 모든 차시에 내용, 교수안, 문제은행이 있습니다.', 'success');
     const withGyosuan = globalState.courseDesign?.runGyosuan !== false || !runnableLessons(runSubjects(scope)).length; // 탭이 다 찼으면 교수안이나 문제은행만 남은 것이다
     const pending = pendingLessons(runSubjects(scope), withGyosuan);
     const overlay = document.createElement('div');

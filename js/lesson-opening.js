@@ -1,22 +1,35 @@
 // lesson-opening.js - 교안 첫머리 정리: 본문 앞 이미지와 개요의 시간표·특징 목록을 뺀다
 // 개요는 문제 상황, 해결할 일, 학습 후 가능해지는 일만 담는다. 프롬프트로도 막지만 모델이 어길 수 있고,
 // 예전에 저장한 교안도 같게 보이도록 읽을 때 거른다.
+// 고치는 곳은 첫머리, 학습 목표, 개요뿐이다. 본문의 표·코드 블록·이미지와 <br> 간격은 건드리지 않는다.
 
 const OPENING_IMAGE_LINE = /<!--\s*\[IMG:|^\s*!\[[^\]]*\]\(|<div class="image-(?:wrapper|placeholder)"/;
 const OPENING_TIME_LINE = /^\s*[-*]\s+\**\s*\d+\s*분?\s*[~∼～-]\s*\d+\s*분/;
 const OPENING_TIME_HEAD = /^\s*(?:#{3,6}\s*|\*\*)?\s*(?:타임\s*테이블|시간표|시간\s*배분|수업\s*흐름)\s*(?:\*\*)?\s*:?\s*(?:\*\*)?\s*$/;
+const OPENING_TIME_TABLE = /^\s*\|\s*(?:시간|소요\s*시간|분|구간|타임)[^|]*\|/;
 const OPENING_KEYWORD_LINE = /^\s*[-*]\s+\*\*[^*]+\*\*\s*:?\s*$/;
 const OPENING_FILLER_LINE = /^\s*(?:$|[-*+]\s|\d+[.)]\s|\||<br|\*\*[^*]+\*\*\s*:?\s*$)/;
+const OPENING_GAP_LINE = /^\s*(?:<br\s*\/?>\s*)*$/;
+const OPENING_SENTENCE_END = /다\.?\**\s*$/;
 const OPENING_GOAL_TITLE = /학습\s*목표/;
+
+// 줄마다 코드 블록 안인지 표시한다. 여닫는 펜스 줄도 코드로 본다
+function openingFences(lines) {
+    let fence = 0;
+    return lines.map(line => {
+        const coded = fence > 0;
+        fence = nextCodeFence(fence, line);
+        return coded || fence > 0;
+    });
+}
 
 // # · ## 제목으로 나눈다. 코드 블록 안의 # 은 제목이 아니다
 function openingSections(md) {
+    const lines = md.split('\n');
+    const coded = openingFences(lines);
     const sections = [{ level: 0, title: '', lines: [] }];
-    let fence = 0;
-    md.split('\n').forEach(line => {
-        const coded = fence > 0;
-        fence = nextCodeFence(fence, line);
-        const heading = !coded && !fence && line.match(/^(#{1,2})\s+(.*)$/);
+    lines.forEach((line, index) => {
+        const heading = !coded[index] && line.match(/^(#{1,2})\s+(.*)$/);
         if (heading) sections.push({ level: heading[1].length, title: heading[2].trim(), lines: [line] });
         else sections.at(-1).lines.push(line);
     });
@@ -25,38 +38,68 @@ function openingSections(md) {
 
 const isOverviewSection = section => section.level === 2 && LESSON_OVERVIEW_TITLE.test(section.title);
 const isGoalSection = section => section.level === 2 && OPENING_GOAL_TITLE.test(section.title) && LESSON_FRAME_TITLE.test(section.title);
+const isTimeLine = line => OPENING_TIME_LINE.test(line) && !OPENING_SENTENCE_END.test(line);
 
-// 시간표와 "**키워드**" 아래 세부 불릿 묶음을 뺀다. 시간 열이 있는 표도 시간표다
-function withoutOverviewPadding(lines) {
-    const kept = [];
-    let inGroup = false;
-    let inTimeTable = false;
-    lines.forEach(line => {
-        if (inGroup && /^\s+\S/.test(line)) return;
-        inGroup = OPENING_KEYWORD_LINE.test(line);
-        if (inGroup) return;
+// 빠진 자리에 남은 <br>과 빈 줄을 한 벌로 줄인다
+function withoutRepeatedGaps(lines) {
+    return lines.filter((line, index) => !OPENING_GAP_LINE.test(line) || !line.trim() || !lines.slice(0, index).reverse().find(item => item.trim())?.match(OPENING_GAP_LINE));
+}
+
+function withoutImages(lines) {
+    const coded = openingFences(lines);
+    return withoutRepeatedGaps(lines.filter((line, index) => coded[index] || !OPENING_IMAGE_LINE.test(line)));
+}
+
+// 제목 바로 아래 이미지만 뺀다. 내용이 시작된 뒤의 이미지는 본문이다
+function withoutLeadingImages(lines) {
+    const [title, ...rest] = lines;
+    const start = rest.findIndex(line => !OPENING_GAP_LINE.test(line) && !OPENING_IMAGE_LINE.test(line));
+    const opening = start < 0 ? rest : rest.slice(0, start);
+    return [title, ...withoutImages(opening), ...(start < 0 ? [] : rest.slice(start))];
+}
+
+function withoutTimeTable(lines) {
+    const coded = openingFences(lines);
+    let inTable = false;
+    return lines.filter((line, index) => {
+        if (coded[index]) return true;
         const tableRow = /^\s*\|/.test(line);
-        inTimeTable = tableRow && (inTimeTable || (/시간|분/.test(line) && !/^\s*\|/.test(kept.at(-1) || '')));
-        if (!inTimeTable && !OPENING_TIME_LINE.test(line) && !OPENING_TIME_HEAD.test(line)) kept.push(line);
+        inTable = tableRow && (inTable || OPENING_TIME_TABLE.test(line));
+        return !inTable && !isTimeLine(line) && !OPENING_TIME_HEAD.test(line);
     });
-    return kept;
 }
 
-const withoutImages = lines => lines.filter(line => !OPENING_IMAGE_LINE.test(line));
-
-// 다음 큰 제목 바로 위에 붙은 이미지는 본문 앞 이미지다
-function withoutTrailingImages(lines) {
-    let end = lines.length;
-    while (end > 0 && (!lines[end - 1].trim() || OPENING_IMAGE_LINE.test(lines[end - 1]))) end -= 1;
-    return lines.slice(end).some(line => line.trim()) ? [...lines.slice(0, end), ''] : lines;
+// "**키워드**" 줄과 그 아래 세부 불릿 묶음을 뺀다
+function withoutKeywordGroups(lines) {
+    const coded = openingFences(lines);
+    let inGroup = false;
+    return lines.filter((line, index) => {
+        if (coded[index]) return true;
+        if (inGroup && /^\s+\S/.test(line)) return false;
+        inGroup = OPENING_KEYWORD_LINE.test(line);
+        return !inGroup;
+    });
 }
 
-function cleanedSection(section, index, sections) {
-    const before = sections[index + 1]?.level === 1;
-    if (section.level === 0 || (section.level === 1 && index <= 1) || isGoalSection(section)) return withoutImages(section.lines);
-    if (isOverviewSection(section)) return withoutOverviewPadding(withoutImages(section.lines));
-    return before ? withoutTrailingImages(section.lines) : section.lines;
+const hasOverviewBody = lines => lines.slice(1).some(line => !OPENING_GAP_LINE.test(line));
+
+// 특징 묶음밖에 없는 개요는 비우지 않고 남긴다. 예전 프롬프트가 개요를 이 형식으로 쓰게 했다
+function cleanedOverview(lines) {
+    const noTable = withoutTimeTable(withoutImages(lines));
+    const noGroups = withoutKeywordGroups(noTable);
+    return withoutRepeatedGaps(hasOverviewBody(noGroups) ? noGroups : noTable);
 }
+
+function cleanedSection(section, index, firstTitle) {
+    if (section.level === 0 || isGoalSection(section)) return withoutImages(section.lines);
+    if (index === firstTitle) return withoutLeadingImages(section.lines);
+    return isOverviewSection(section) ? cleanedOverview(section.lines) : section.lines;
+}
+
+const isOpeningFiller = lines => {
+    const coded = openingFences(lines);
+    return lines.every((line, index) => !coded[index] && (OPENING_FILLER_LINE.test(line) || OPENING_IMAGE_LINE.test(line)));
+};
 
 // 첫 큰 제목(# 📝 ...) 앞에 목록만 있으면 머리말이다. 차시 안에 학습 목표가 있으면 통째로 빼고, 없으면 학습 목표만 남긴다.
 // 내용 섹션이 앞에 있는 교안(끝에 # 일일 퀘스트가 붙는 경우)은 머리말이 아니다
@@ -64,7 +107,7 @@ function withoutPreamble(sections) {
     const firstTitle = sections.findIndex(section => section.level === 1);
     if (firstTitle < 1) return sections;
     const head = sections.slice(0, firstTitle);
-    const opening = head.every(section => (section.level === 0 ? section.lines.every(line => OPENING_FILLER_LINE.test(line) || OPENING_IMAGE_LINE.test(line)) : isGoalSection(section) || isOverviewSection(section)));
+    const opening = head.every(section => (section.level === 0 ? isOpeningFiller(section.lines) : isGoalSection(section) || isOverviewSection(section)));
     if (!opening) return sections;
     const body = sections.slice(firstTitle);
     return [...(body.some(isGoalSection) ? [] : head.filter(isGoalSection)), ...body];
@@ -73,6 +116,6 @@ function withoutPreamble(sections) {
 function cleanLessonOpening(md) {
     if (!md) return md;
     const sections = withoutPreamble(openingSections(String(md).replace(/\r\n/g, '\n')));
-    const lines = sections.flatMap((section, index) => cleanedSection(section, index, sections));
-    return lines.join('\n').replace(/(?:\s*<br\s*\/?>\s*){2,}/g, '\n\n<br>\n\n').replace(/\n{4,}/g, '\n\n\n').trimStart();
+    const firstTitle = sections.findIndex(section => section.level === 1);
+    return sections.flatMap((section, index) => cleanedSection(section, index, firstTitle)).join('\n').trimStart();
 }

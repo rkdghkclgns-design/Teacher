@@ -33,7 +33,7 @@ function lessonPanelButton(mod, panel) {
             class="px-3 py-2 text-[0.75rem] font-bold rounded-t-lg border-b-2 transition-all cursor-pointer select-none flex items-center gap-1.5 whitespace-nowrap ${_lessonPanel === panel.id ? colors.active : colors.inactive}">
             <i class="ph-bold ${panel.icon} text-sm"></i>
             ${panel.label}
-            ${lessonNavDot(panel.done(mod), !!window.isPipelineStep?.(panel.step))}
+            ${lessonNavDot(panel.done(mod), !!window.isPipelineStep?.(panel.step, mod.id))}
         </button>`;
 }
 
@@ -45,7 +45,7 @@ function renderTabBar(mod) {
         const hasContent = !!tabContents[tab.id];
         const colors = TAB_COLORS[tab.color] || TAB_COLORS.blue;
         const cls = isActive ? colors.active : colors.inactive;
-        const dot = lessonNavDot(hasContent, !!window.isPipelineStep?.(tab.id));
+        const dot = lessonNavDot(hasContent, !!window.isPipelineStep?.(tab.id, mod.id));
         return `<button onclick="switchLessonTab('${tab.id}')"
             class="px-3 py-2 text-[0.75rem] font-bold rounded-t-lg border-b-2 transition-all cursor-pointer select-none flex items-center gap-1.5 whitespace-nowrap ${cls}">
             <i class="ph-bold ${tab.icon} text-sm"></i>
@@ -64,9 +64,12 @@ function switchLessonTab(tabId) {
     if (mod) renderEditor(mod);
 }
 
+// 패널을 닫았으면 true
 window.clearLessonPanel = function () {
+    const opened = !!_lessonPanel;
     _lessonPanel = null;
     window.forgetInlineQbank?.();
+    return opened;
 };
 
 window.showLessonPanel = function (panel) {
@@ -78,12 +81,28 @@ window.showLessonPanel = function (panel) {
 
 // 탐색줄에서 고른 항목만 본문 자리에 보여 준다. renderEditor가 화면을 다시 그린 뒤 부른다
 function applyLessonPanel(mod) {
+    // 메인 퀘스트에는 교수안·슬라이드·문제은행 항목이 없다
+    if (mod.id === 'mainQuest' && _lessonPanel) {
+        window.clearLessonPanel();
+        window.refreshLessonNav(mod);
+    }
     applyViewMode(_lessonPanel === 'gyosuan' ? 'instructor' : 'student');
-    document.getElementById('render-view')?.classList.toggle('hidden', _lessonPanel === 'slides' || _lessonPanel === 'qbank');
-    document.getElementById('slide-view-panel')?.classList.toggle('hidden', _lessonPanel !== 'slides');
+    window.syncLessonPanelView();
     document.getElementById('lesson-tab-generate')?.classList.toggle('hidden', !!_lessonPanel);
     if (_lessonPanel === 'qbank') window.openQuestionBank(mod.id, { inline: true });
 }
+
+// 보기/수정 전환 뒤에도 고른 항목만 보이게 한다
+window.syncLessonPanelView = function () {
+    document.getElementById('render-view')?.classList.toggle('hidden', _lessonPanel === 'slides' || _lessonPanel === 'qbank');
+    document.getElementById('slide-view-panel')?.classList.toggle('hidden', _lessonPanel !== 'slides');
+};
+
+// 교수안이 끝나도 입력 중인 다른 항목은 다시 그리지 않는다
+window.refreshAfterGyosuan = function (mod) {
+    if (_lessonPanel === 'gyosuan' || _lessonPanel === 'slides') renderEditor(mod);
+    else window.refreshLessonNav(mod);
+};
 
 // 생성이 끝날 때 보고 있는 화면은 두고 탐색줄 표시만 고친다
 window.refreshLessonNav = function (mod) {
@@ -379,10 +398,13 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         return { ok: false, error: message };
     } finally {
         // 진행도 안내 문구를 기본값으로 복원해 다음 작업에 잔여 텍스트가 남지 않도록 함
-        const loadingTextEl = document.getElementById('editor-loading-text');
-        if (loadingTextEl) loadingTextEl.textContent = 'AI가 상세 교안을 작성하고 있습니다...';
-        document.getElementById('editor-loading').style.display = 'none';
-        showTabGenStop(false);
+        // 화면을 막지 않고 만들 때는 다른 작업이 켠 로딩 화면을 끄지 않는다
+        if (!opts.background) {
+            const loadingTextEl = document.getElementById('editor-loading-text');
+            if (loadingTextEl) loadingTextEl.textContent = 'AI가 상세 교안을 작성하고 있습니다...';
+            document.getElementById('editor-loading').style.display = 'none';
+            showTabGenStop(false);
+        }
     }
 }
 
