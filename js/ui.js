@@ -2066,6 +2066,7 @@ window.startBatchGeneration = async function () {
                     } catch (tabErr) {
                         console.warn(`[5탭 생성 실패] ${lesson.title}:`, tabErr.message);
                     }
+                    if (window.isTabGenerationStopped?.()) break;
                     // API 쿨다운
                     if (ti < doneLessons.length - 1) {
                         progressSpan.innerText = `API 쿨다운 대기 중... (${ti + 1}/${doneLessons.length})`;
@@ -2776,7 +2777,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
                     '- 복수정답인 경우 정답을 한 줄에 횡으로 나열하세요: `✅ **정답:** ①, ②, ④`\n' +
                     '- 단일정답인 경우: `✅ **정답:** ③`\n' +
                     '- 구조 예시:\n' +
-                    '```\n### 문제 1. 제목\n\n① 선택지1\n② 선택지2\n③ 선택지3\n④ 선택지4\n⑤ 선택지5\n\n💡 **힌트:** 힌트 내용\n\n✅ **정답:** ②\n\n📝 **해설:** 해설 내용\n\n---\n\n### 문제 2. 제목 (복수정답)\n\n① 선택지1\n② 선택지2\n③ 선택지3\n④ 선택지4\n⑤ 선택지5\n\n💡 **힌트:** 힌트 내용\n\n✅ **정답:** ①, ②, ④\n\n📝 **해설:** 해설 내용\n\n---\n```'
+                    '```\n### 문제 1. 제목\n학습 목표 1 · 밴드 L1\n\n① 선택지1\n② 선택지2\n③ 선택지3\n④ 선택지4\n⑤ 선택지5\n\n💡 **힌트:** 힌트 내용\n\n✅ **정답:** ②\n\n📝 **해설:** 해설 내용\n\n---\n\n### 문제 2. 제목 (복수정답)\n학습 목표 2 · 밴드 L2\n\n① 선택지1\n② 선택지2\n③ 선택지3\n④ 선택지4\n⑤ 선택지5\n\n💡 **힌트:** 힌트 내용\n\n✅ **정답:** ①, ②, ④\n\n📝 **해설:** 해설 내용\n\n---\n```'
             };
             const tabInstruction = tabPrompts[additionalContext.tabId] || tabPrompts.basicLearn;
 
