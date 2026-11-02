@@ -1859,7 +1859,7 @@ window.updateSubjectMeta = function (field, value) {
 // ─── v5.9 포팅: 사이드바 탭 전환 ───
 function switchSidebarTab(tabId) {
     currentSidebarTab = tabId;
-    ['topic', 'curriculum', 'reference'].forEach(t => {
+    ['topic', 'reference'].forEach(t => {
         const panel = document.getElementById('sidebar-tab-' + t);
         const btn = document.querySelector('.sidebar-input-tab[data-sidebar-tab="' + t + '"]');
         if (panel) panel.classList.toggle('hidden', t !== tabId);
@@ -2024,17 +2024,6 @@ function syncReferenceUI() {
     if (countEl) countEl.textContent = (subj.referenceText || '').length + '자';
     renderReferenceUrls();
     updateReferenceStatus();
-}
-
-// ─── v5.9 포팅: 커리큘럼 샘플 MD 다운로드 ───
-function downloadCurriculumSample() {
-    const sample = `# 게임 기획 기초 과정\n\n## 1단원: 게임 기획의 이해\n- 게임 기획이란 무엇인가?\n- MDA 프레임워크\n- 게임 디자이너의 역할\n- 재미의 본질\n- 기획 문서 작성법\n\n## 2단원: 시스템 기획\n- 수치 밸런스\n- 경제 시스템\n- 전투 시스템\n- 성장 시스템\n- 보상 설계`;
-    const blob = new Blob([sample], { type: 'text/markdown;charset=utf-8' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = '커리큘럼_샘플.md';
-    a.click();
-    URL.revokeObjectURL(a.href);
 }
 
 function renderSidebar() {

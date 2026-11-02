@@ -557,6 +557,19 @@ const LESSON_MD = [
         ctx.extractTextFromFile = originalRead;
     });
 
+    await run('화면: 입력칸은 모두 어딘가에서 읽고 히스토리 패널은 hidden으로 여닫는다', async () => {
+        const html = fs.readFileSync(path.join(root, '..', 'index.html'), 'utf8');
+        const js = fs.readdirSync(root).filter(file => file.endsWith('.js')).map(file => fs.readFileSync(root + file, 'utf8')).join(' ');
+        const fields = [...html.matchAll(/<(?:input|textarea|select)\s[^>]*>/g)].map(match => match[0]);
+        const unread = fields.filter(tag => !/\son\w+=/.test(tag)).map(tag => tag.match(/\sid="([^"]+)"/)?.[1]).filter(Boolean)
+            .filter(id => !js.includes(id) && html.split(id).length <= 2);
+        assert.ok(fields.length > 10, '입력칸을 실제로 찾았는지 확인한다');
+        assert.deepStrictEqual(unread, [], '입력해도 아무도 읽지 않는 칸이 있으면 안 된다');
+        const state = fs.readFileSync(root + 'state.js', 'utf8');
+        assert.ok(/<aside id="history-panel"\s+class="hidden /.test(html));
+        assert.ok(/function toggleHistoryPanel[\s\S]{0,400}classList\.remove\('hidden'\)/.test(state), '패널이 hidden이면 여는 코드가 그것을 지워야 보인다');
+    });
+
     await run('역할별 AI 분배: 켠 경우에만 나누고 교차 검수는 다른 공급자가 맡는다', async () => {
         const model = call('roleModel');
         const cross = call('crossCheckModel');

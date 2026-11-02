@@ -443,32 +443,33 @@ async function archiveContent(mod) {
 const selectedHistoryIds = new Set();
 let lastHistoryIdx = -1;
 
+// 캐시 패널과 같이 hidden으로 여닫는다. 목록은 패널의 머리글 아래에 그린다
 function toggleHistoryPanel() {
-    const p = document.getElementById('history-panel');
-    let bg = document.getElementById('history-bg');
-
-    if (p.classList.contains('translate-x-full')) {
-        // 열기
-        if (!bg) {
-            bg = document.createElement('div');
-            bg.id = 'history-bg';
-            bg.className = 'fixed inset-0 bg-black/50 z-40 animate-fade-in backdrop-blur-sm';
-            bg.onclick = toggleHistoryPanel;
-            document.body.appendChild(bg);
-        }
-        bg.style.display = 'block';
-        p.classList.remove('translate-x-full');
-        selectedHistoryIds.clear();
-        lastHistoryIdx = -1;
-        renderHistoryUI(p);
-    } else {
-        // 닫기
-        p.classList.add('translate-x-full');
-        if (bg) bg.style.display = 'none';
+    const panel = document.getElementById('history-panel');
+    if (!panel.classList.contains('hidden')) {
+        panel.classList.add('hidden');
+        return;
     }
+    document.getElementById('cache-panel')?.classList.add('hidden');
+    panel.classList.remove('hidden');
+    selectedHistoryIds.clear();
+    lastHistoryIdx = -1;
+    refreshHistoryPanel();
+}
+
+function refreshHistoryPanel() {
+    renderHistoryUI(document.getElementById('history-list'));
+}
+
+function updateHistoryBadges() {
+    const count = document.getElementById('history-count-badge');
+    const size = document.getElementById('history-storage-badge');
+    if (count) count.textContent = contentHistory.length;
+    if (size) size.textContent = `${(new Blob([JSON.stringify(contentHistory)]).size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 async function renderHistoryUI(area) {
+    updateHistoryBadges();
     if (!Array.isArray(contentHistory) || contentHistory.length === 0) {
         area.innerHTML = `<div class="h-full flex items-center justify-center text-textMuted bg-[#12121e]">저장된 히스토리가 없습니다. (모듈 삭제 시 자동 저장됩니다)</div>`;
         return;
@@ -537,15 +538,15 @@ window.renderHistoryList = function () {
         const isSelected = selectedHistoryIds.has(h.id);
         return `
             <div class="p-3 rounded-lg border ${isSelected ? 'bg-accent/20 border-accent/50' : 'bg-white/[0.04] border-transparent hover:bg-white/[0.08]'} cursor-pointer flex justify-between items-center transition-colors"
-                 onclick="handleHistoryClick(event, ${h.id}, ${displayIdx})">
+                 onclick="handleHistoryClick(event, ${Number(h.id)}, ${displayIdx})">
                 <div class="flex items-center gap-3 pl-1">
                     <input type="checkbox" class="w-4 h-4 rounded border-white/20 bg-black/50 accent-accent pointer-events-none" ${isSelected ? 'checked' : ''}>
                     <div>
-                        <h4 class="font-bold ${isSelected ? 'text-white' : 'text-white/80'} text-sm">${h.title}</h4>
-                        <span class="text-xs text-white/40">${h.date}</span>
+                        <h4 class="font-bold ${isSelected ? 'text-white' : 'text-white/80'} text-sm">${escapeHtml(h.title)}</h4>
+                        <span class="text-xs text-white/40">${escapeHtml(h.date)}</span>
                     </div>
                 </div>
-                <button onclick="event.stopPropagation(); viewHistoryItem(${h.id})" class="text-accent hover:text-white hover:bg-accent text-xs font-bold px-3 py-1.5 bg-accent/10 rounded transition-colors border border-accent/20">내용 보기</button>
+                <button onclick="event.stopPropagation(); viewHistoryItem(${Number(h.id)})" class="text-accent hover:text-white hover:bg-accent text-xs font-bold px-3 py-1.5 bg-accent/10 rounded transition-colors border border-accent/20">내용 보기</button>
             </div>
         `;
     }).join('');
@@ -583,7 +584,7 @@ window.deleteSelectedHistory = async function () {
         contentHistory = contentHistory.filter(h => !selectedHistoryIds.has(h.id));
         selectedHistoryIds.clear();
         await saveState();
-        toggleHistoryPanel(); // Refresh view
+        refreshHistoryPanel();
     });
 }
 
@@ -595,7 +596,7 @@ window.clearHistory = function () {
         contentHistory = [];
         selectedHistoryIds.clear();
         await saveState();
-        toggleHistoryPanel(); // Refresh view
+        refreshHistoryPanel();
     });
 }
 
@@ -687,9 +688,9 @@ window.exportSelectedHistoryPDF = async function () {
 
     items.forEach(h => {
 
-        htmlContent += `<h1 style="border-bottom: 2px solid #e8e6f0; padding-bottom: 10px; color: #1a1a2e;">${h.title}</h1>`;
+        htmlContent += `<h1 style="border-bottom: 2px solid #e8e6f0; padding-bottom: 10px; color: #1a1a2e;">${escapeHtml(h.title)}</h1>`;
 
-        htmlContent += `<p style="color:#888; font-size:12px; margin-bottom: 20px;">삭제일: ${h.date}</p>`;
+        htmlContent += `<p style="color:#888; font-size:12px; margin-bottom: 20px;">삭제일: ${escapeHtml(h.date)}</p>`;
 
 
 

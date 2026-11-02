@@ -150,7 +150,7 @@ function lessonRunIntroHtml(queue, uploaded, withGyosuan = false) {
         </label>
         <label class="flex items-start gap-2 text-xs text-textLight">
             <input id="lesson-run-overwrite" type="checkbox">
-            <span>이미 만든 내용도 모두 다시 만들기<span class="block text-[0.6rem] text-textMuted">기존 글은 작업 히스토리에 남기고 고정 섹션은 유지합니다. 교수안까지 만들기를 켜면 교수안과 슬라이드도 다시 만들고, 슬라이드 화면을 직접 고친 내용은 되살릴 수 없습니다.</span></span>
+            <span>이미 만든 내용도 모두 다시 만들기<span class="block text-[0.6rem] text-textMuted">기존 글은 작업 히스토리에 남아 다시 보거나 내려받을 수 있고, 고정 섹션은 유지합니다. 교수안까지 만들기를 켜면 교수안과 슬라이드도 다시 만들고, 슬라이드 화면을 직접 고친 내용은 되살릴 수 없습니다.</span></span>
         </label>
         <label class="flex items-start gap-2 text-xs text-textLight">
             <input id="lesson-run-art" type="checkbox" ${globalState.courseDesign?.autoArt ? 'checked' : ''}>
@@ -252,7 +252,7 @@ function rewriteConfirmText(scope, withGyosuan) {
     const lessonOf = item => item.subject.lessons.find(lesson => lesson.id === item.lessonId);
     const edited = withGyosuan ? queue.filter(item => lessonOf(item)?.gyosuan && gyosuanHasScreenEdits(lessonOf(item).gyosuan)).length : 0;
     const warning = edited ? ` 슬라이드 화면을 직접 고친 차시 ${edited}개의 화면 편집은 되살릴 수 없습니다.` : '';
-    return `차시 ${queue.length}개의 내용을 지우고 다시 만듭니다. ${withGyosuan ? '탭과 교수안의' : '탭의'} 글은 작업 히스토리에서 되살릴 수 있습니다.${warning} 계속할까요?`;
+    return `차시 ${queue.length}개의 내용을 지우고 다시 만듭니다. ${withGyosuan ? '탭과 교수안의' : '탭의'} 글은 작업 히스토리에 남아 다시 보거나 MD로 받을 수 있습니다.${warning} 계속할까요?`;
 }
 
 // 화면 갱신이 실패해도 닫기 버튼은 나오도록 정리는 finally에서 한다

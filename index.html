@@ -819,7 +819,7 @@
 
         <!-- History Panel -->
         <aside id="history-panel"
-            class="hidden absolute right-0 top-0 w-80 h-full bg-[#1a1a2e]/95 backdrop-blur-xl border-l border-white/10 flex flex-col z-40 transition-transform shadow-[-8px_0_30px_rgba(0,0,0,0.5)]">
+            class="hidden absolute right-0 top-0 w-[520px] max-w-[92vw] h-full bg-[#1a1a2e]/95 backdrop-blur-xl border-l border-white/10 flex flex-col z-50 transition-transform shadow-[-8px_0_30px_rgba(0,0,0,0.5)]">
             <div class="flex items-center justify-between p-4 border-b border-white/5 bg-black/20 shrink-0">
                 <div class="flex items-center gap-2">
                     <i class="ph-fill ph-clock-counter-clockwise text-blue-400 text-lg"></i>
@@ -855,7 +855,7 @@
 
         <!-- [Phase F10] 캐시 보관함 패널 -->
         <aside id="cache-panel"
-            class="hidden absolute right-0 top-0 w-80 h-full bg-[#1a1a2e]/95 backdrop-blur-xl border-l border-white/10 flex flex-col z-40 transition-transform shadow-[-8px_0_30px_rgba(0,0,0,0.5)]">
+            class="hidden absolute right-0 top-0 w-80 h-full bg-[#1a1a2e]/95 backdrop-blur-xl border-l border-white/10 flex flex-col z-50 transition-transform shadow-[-8px_0_30px_rgba(0,0,0,0.5)]">
             <div class="flex items-center justify-between p-4 border-b border-white/5 bg-black/20 shrink-0">
                 <div class="flex items-center gap-2">
                     <i class="ph-fill ph-images text-emerald-400 text-lg"></i>
@@ -1096,7 +1096,6 @@
                 <!-- v5.9: 사이드바 탭 (주제/커리큘럼/참고자료) -->
                 <div class="flex border-b border-white/10 mb-2">
                     <button class="sidebar-input-tab flex-1 py-1.5 text-xs font-bold text-center transition-colors border-b-2 border-accent text-accent" data-sidebar-tab="topic" onclick="switchSidebarTab('topic')">📝 주제</button>
-                    <button class="sidebar-input-tab flex-1 py-1.5 text-xs font-bold text-center transition-colors border-b-2 border-transparent text-textMuted hover:text-white" data-sidebar-tab="curriculum" onclick="switchSidebarTab('curriculum')">📋 커리큘럼</button>
                     <button class="sidebar-input-tab flex-1 py-1.5 text-xs font-bold text-center transition-colors border-b-2 border-transparent text-textMuted hover:text-white" data-sidebar-tab="reference" onclick="switchSidebarTab('reference')">📎 참고자료</button>
                 </div>
 
@@ -1107,13 +1106,6 @@
                         <input type="text" id="topic-input" placeholder="교육 주제 입력 (예: Unity 2D 액션 게임 기획)"
                             class="w-full px-3 py-2.5 text-sm bg-white/5 border border-white/10 rounded-lg text-white placeholder-textMuted focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
                             onblur="updateSubjectMeta('title', this.value)">
-                    </div>
-
-                    <!-- 커리큘럼 탭 -->
-                    <div id="sidebar-tab-curriculum" class="hidden">
-                        <textarea id="curriculum-input" rows="5" placeholder="단원명과 내용을 입력하세요.&#10;예)&#10;1단원: 게임 기획 기초&#10;- 게임 기획이란?&#10;- MDA 프레임워크"
-                            class="w-full px-3 py-2 text-xs bg-white/5 border border-white/10 rounded-lg text-white placeholder-textMuted focus:outline-none focus:border-accent resize-y editor-scroll"></textarea>
-                        <button onclick="downloadCurriculumSample()" class="text-[0.65rem] text-textMuted hover:text-accent transition-colors mt-1">📥 샘플 MD 다운로드</button>
                     </div>
 
                     <!-- 참고자료 탭 -->
