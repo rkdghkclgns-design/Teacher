@@ -65,11 +65,6 @@
         }
     </script>
 
-    <!-- PptxGenJS for PPTX Export (Google Slides / PowerPoint 호환) -->
-    <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
-
-
-
     <!-- Phosphor Icons -->
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
 
@@ -491,140 +486,6 @@
         .tutorial-next-btn:hover { transform:translateY(-1px); box-shadow:0 4px 14px rgba(124,91,245,0.4); }
         .tutorial-dont-show { display:flex; align-items:center; gap:5px; font-size:0.72rem; color:#8888a8; cursor:pointer; }
 
-        /* ── 강사 스크립트 callout (v8 — 읽기만 해도 수업 가능) ─── */
-        .instructor-callout {
-            background: linear-gradient(135deg, rgba(96,165,250,0.06), rgba(124,91,245,0.03));
-            border: 1px solid rgba(96,165,250,0.2);
-            border-left: 5px solid #60a5fa;
-            border-radius: 10px;
-            padding: 20px 24px;
-            margin: 20px 0;
-            position: relative;
-            font-size: 0.93rem;
-            line-height: 1.8;
-            color: #111827; /* 강사 스크립트 본문 — 검정색 (가독성 최대) */
-        }
-        .instructor-callout::before {
-            content: '🎓 강사 스크립트';
-            display: block;
-            font-size: 0.7rem;
-            font-weight: 800;
-            color: #60a5fa;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 12px;
-            padding-bottom: 8px;
-            border-bottom: 1px solid rgba(96,165,250,0.15);
-        }
-        .instructor-callout p { margin: 6px 0; white-space: pre-wrap; word-break: break-word; overflow: visible; }
-        .instructor-callout p:first-of-type { margin-top: 0; }
-        /* 강사 callout 내부 볼드: 섹션 헤더 스타일 */
-        .instructor-callout strong {
-            color: #1e40af; /* 진한 블루 — 섹션 헤더 강조 (어두운 배경에서도 검정 계열) */
-            display: inline-block;
-            margin-top: 10px;
-        }
-        /* 첫 번째 strong (⏱️ 예상 소요)은 margin-top 없음 */
-        .instructor-callout p:first-of-type strong { margin-top: 0; }
-        .instructor-callout br { display: block; content: ''; margin: 4px 0; }
-        .instructor-callout > * { max-width: 100%; overflow-wrap: break-word; overflow: visible; }
-        .instructor-callout { overflow: visible; max-height: none; }
-        /* 강사 callout 내부 불릿 스타일 */
-        .instructor-callout ul { margin: 6px 0 6px 16px; padding: 0; }
-        .instructor-callout ul li {
-            list-style-type: disc;
-            color: #111827; /* 검정색 — 가독성 최대 */
-            margin: 3px 0;
-            line-height: 1.7;
-        }
-        .instructor-callout ul li::marker { color: #60a5fa; }
-
-        /* ── 강사 callout 하위 섹션별 아이콘 강조 ── */
-        /* 🎬 도입 멘트 — 파랑 */
-        .instructor-callout strong:has(+ br):first-line { }
-        /* 🗣️ 핵심 설명 — 보라 */
-        /* 💡 핵심 강조 — 노랑 */
-        /* ⚠️ 주의 — 빨강 */
-        /* 🗣️ 질문 — 초록 */
-        /* 🔗 전환 — 회색 */
-
-        /* callout 타입별 변형 (호환성 유지) */
-        .instructor-callout.callout-script { border-left-color: #60a5fa; }
-        .instructor-callout.callout-script::before { content: '🎬 강사 스크립트'; color: #60a5fa; }
-        .instructor-callout.callout-emphasis { border-left-color: #f59e0b; }
-        .instructor-callout.callout-emphasis::before { content: '💡 핵심 강조'; color: #f59e0b; }
-        .instructor-callout.callout-warning { border-left-color: #f87171; }
-        .instructor-callout.callout-warning::before { content: '⚠️ 주의사항'; color: #f87171; }
-        .instructor-callout.callout-question { border-left-color: #34d399; }
-        .instructor-callout.callout-question::before { content: '🗣️ 질문 유도'; color: #34d399; }
-        .instructor-callout.callout-closing { border-left-color: #818cf8; }
-        .instructor-callout.callout-closing::before { content: '🏁 마무리'; color: #818cf8; }
-
-        /* v5.9: 학생 뷰 — 강사 callout 숨김 */
-        .student-view .instructor-callout,
-        .student-view .instructor-only,
-        .student-view [class*="교강사"] {
-            display: none !important;
-        }
-
-        /* v8: 뷰 모드 인디케이터 — 우상단에 현재 뷰 표시 */
-        body.student-view .render-view-content::before,
-        body.student-view #render-view::before {
-            content: '🎓 학생뷰 활성 — 강사 가이드 자동 숨김';
-            display: block;
-            background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
-            color: #065f46;
-            padding: 8px 16px;
-            border-radius: 8px;
-            font-size: 0.75rem;
-            font-weight: 700;
-            margin-bottom: 16px;
-            border: 1px solid #6ee7b7;
-            text-align: center;
-            letter-spacing: 0.02em;
-        }
-        body:not(.student-view):not(.split-view) #render-view::before {
-            content: '👨‍🏫 강사뷰 활성 — 강사 가이드 표시 중';
-            display: block;
-            background: linear-gradient(135deg, #ede9fe 0%, #ddd6fe 100%);
-            color: #5b21b6;
-            padding: 8px 16px;
-            border-radius: 8px;
-            font-size: 0.75rem;
-            font-weight: 700;
-            margin-bottom: 16px;
-            border: 1px solid #c4b5fd;
-            text-align: center;
-            letter-spacing: 0.02em;
-        }
-
-        /* v8: 강사뷰 강사-callout 시각 강조 — 학생뷰와 명확히 구분 (배경/테두리 강화, ::before는 기존 타입 라벨 유지) */
-        body:not(.student-view):not(.split-view) .instructor-callout {
-            position: relative;
-            background: linear-gradient(135deg, rgba(139, 92, 246, 0.08) 0%, rgba(124, 58, 237, 0.04) 100%) !important;
-            border: 2px solid rgba(139, 92, 246, 0.4) !important;
-            border-left: 6px solid #8b5cf6 !important;
-            border-radius: 10px !important;
-            padding: 18px 20px 16px 20px !important;
-            margin: 1.2rem 0 !important;
-            box-shadow: 0 3px 12px rgba(139, 92, 246, 0.15) !important;
-        }
-        /* 강사뷰 우측 상단에 작은 강사 전용 배지 (::after로 추가 — 기존 ::before와 충돌 X) */
-        body:not(.student-view):not(.split-view) .instructor-callout::after {
-            content: '👨‍🏫 강사 전용';
-            position: absolute;
-            top: -10px;
-            right: 12px;
-            font-size: 0.65rem;
-            font-weight: 800;
-            color: white;
-            background: linear-gradient(135deg, #8b5cf6, #7c3aed);
-            padding: 3px 10px;
-            border-radius: 12px;
-            letter-spacing: 0.02em;
-            box-shadow: 0 2px 6px rgba(139, 92, 246, 0.4);
-        }
-
         /* v8: 분할 뷰 (좌: 수강생, 우: 강사) */
         .split-view-container {
             display: flex;
@@ -666,39 +527,9 @@
             color: #b45309;
             border-bottom: 2px solid #f59e0b;
         }
-        /* 수강생뷰: 강사 callout → 투명 스페이서 (높이 유지, 라인 정렬) */
-        .split-student-pane .instructor-callout,
-        .split-student-pane .instructor-only,
-        .split-student-pane [class*="교강사"] {
-            visibility: hidden !important;
-            pointer-events: none !important;
-            opacity: 0 !important;
-            /* display: none 대신 visibility: hidden → 공간 유지 = 라인 정렬 */
-        }
-        /* 수강생뷰 스페이서에 라인 정렬 가이드 표시 */
-        .split-student-pane .instructor-callout {
-            position: relative;
-            border: none !important;
-            background: repeating-linear-gradient(
-                0deg,
-                transparent,
-                transparent 19px,
-                rgba(124,91,245,0.08) 19px,
-                rgba(124,91,245,0.08) 20px
-            ) !important;
-            border-left: 3px dashed rgba(124,91,245,0.15) !important;
-            border-radius: 0 !important;
-            padding: 20px 24px !important;
-        }
-        .split-student-pane .instructor-callout::before {
-            content: '📙 강사 스크립트 영역' !important;
-            visibility: visible !important;
-            opacity: 0.3 !important;
-            color: #7c5bf5 !important;
-            font-size: 0.6rem !important;
-        }
-    </style>
+        </style>
 
+    <link rel="stylesheet" href="./css/gyosuan-doc.css?v=125">
 </head>
 
 <body class="bg-bgBody text-textLight flex flex-col h-screen overflow-hidden font-sans">
@@ -807,7 +638,7 @@
                     </button>
                     <button onclick="executeDropdownExport('slide')"
                         class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
-                        <i class="ph-fill ph-file-ppt text-purple-400 text-sm"></i> PPT (.pptx)
+                        <i class="ph-fill ph-presentation-chart text-purple-400 text-sm"></i> 슬라이드 (PPTX·HTML)
                     </button>
                     <button onclick="executeDropdownExport('html')"
                         class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
@@ -883,11 +714,11 @@
                         class="ph-fill ph-key text-accent/70"></i> Gemini API Key</label>
                 <div class="flex gap-2">
                     <div class="relative flex-1">
-                        <input type="password" id="settings-api-key-input" disabled
-                            class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-accent transition-all pr-8 disabled:opacity-60 disabled:cursor-not-allowed"
-                            placeholder="🔒 수정하려면 클릭하세요" onclick="unlockApiKeyInput()">
+                        <input type="password" id="settings-api-key-input" autocomplete="off"
+                            class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-accent transition-all pr-8"
+                            placeholder="AIzaSy...">
                         <button
-                            onclick="const i=document.getElementById('settings-api-key-input');if(!i.disabled)i.type=i.type==='password'?'text':'password'"
+                            onclick="const i=document.getElementById('settings-api-key-input');i.type=i.type==='password'?'text':'password'"
                             class="absolute right-2 top-1/2 -translate-y-1/2 text-textMuted hover:text-white transition-colors"><i
                                 class="ph-bold ph-eye text-xs"></i></button>
                     </div>
@@ -1711,11 +1542,6 @@
             if (wasHidden) {
                 const input = document.getElementById('settings-api-key-input');
                 if (input) input.value = typeof apiKey !== 'undefined' ? apiKey : '';
-                // 등록된 키가 없으면 첫 입력은 비밀번호 없이 허용 (등록 후 수정만 잠금)
-                if (input && typeof apiKey !== 'undefined' && !apiKey) {
-                    input.disabled = false;
-                    input.placeholder = 'AIzaSy...';
-                }
                 const dot = document.getElementById('api-key-status-dot');
                 const txt = document.getElementById('api-key-status-text');
                 if (typeof apiKey !== 'undefined' && apiKey) {
@@ -1757,34 +1583,6 @@
         window.closeSettingsPanel = function () {
             const panel = document.getElementById('settings-panel');
             if (panel) panel.classList.add('hidden');
-        };
-        // API 키 비밀번호 보호 (112400)
-        let _apiKeyUnlockAttempts = 0;
-        let _apiKeyBlocked = false;
-        window.unlockApiKeyInput = function () {
-            const input = document.getElementById('settings-api-key-input');
-            if (!input || !input.disabled) return;
-            if (_apiKeyBlocked) {
-                window.showAlert('⛔ API 키 수정이 차단되었습니다. 페이지를 새로고침해주세요.');
-                return;
-            }
-            const pw = prompt('API 키를 수정하려면 비밀번호를 입력하세요:');
-            if (pw === null) return; // 취소
-            if (pw === '112400') {
-                input.disabled = false;
-                input.placeholder = 'AIzaSy...';
-                input.value = typeof apiKey !== 'undefined' ? apiKey : '';
-                _apiKeyUnlockAttempts = 0;
-                window.showToast('🔓 API 키 수정이 허용되었습니다.', 'success');
-            } else {
-                _apiKeyUnlockAttempts++;
-                if (_apiKeyUnlockAttempts >= 3) {
-                    _apiKeyBlocked = true;
-                    window.showAlert('⛔ 비밀번호를 3회 틀렸습니다. API 키 수정이 차단되었습니다.');
-                } else {
-                    window.showAlert(`❌ 비밀번호가 틀렸습니다. (${_apiKeyUnlockAttempts}/3)`);
-                }
-            }
         };
         window.saveApiKeySetting = function () {
             const input = document.getElementById('settings-api-key-input');
@@ -1889,8 +1687,10 @@
     <script src="./js/tutorial.js?v=125"></script>
     <script src="./js/merge.js?v=125"></script>
     <script src="./js/tabs.js?v=125"></script>
-    <script src="./js/slide-export.js?v=125"></script>
-    <script src="./js/slide-editor.js?v=125"></script>
+    <script src="./js/kbuilder/parser.js?v=125"></script>
+    <script src="./js/kbuilder/render-doc.js?v=125"></script>
+    <script src="./js/gyosuan.js?v=125"></script>
+    <script src="./js/lesson-lint.js?v=125"></script>
     <script src="./js/export-modal.js?v=125"></script>
     <script>
         // 튜토리얼 자동 시작 (공지 팝업 → 튜토리얼 순서)

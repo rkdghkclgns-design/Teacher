@@ -115,9 +115,7 @@ window.executeExport = function () {
             break;
         }
         case 'slide':
-            // 강의용 PPT(.pptx) 변환 — 16:9 엄수 + 본문 참고 이미지 인용/생성
-            if (typeof exportToPptx === 'function') exportToPptx();
-            else if (typeof exportToSlideHTML === 'function') exportToSlideHTML();
+            openCurrentSlideStudio();
             break;
         case 'html': {
             const htmlContent = typeof marked !== 'undefined' ? marked.parse(content) : content;

@@ -188,105 +188,34 @@ function extractText(data) {
 // 3) HTML 엔티티 디코드 (&lt; → <)
 // 4) 헤딩 앞뒤 공백 정리
 // 5) 깨진 이미지 태그 복원 (<!-- [IMG: "..."] -->)
-// 강사 전용 마커가 instructor-callout 밖에 나와있을 때 자동으로 감싸기
-// 학생뷰에 '⏱️ 예상 소요' / '예상 소요 시간' 등이 노출되는 문제 해결
-function wrapOrphanedInstructorMarkers(md) {
-    if (!md || typeof md !== 'string') return md;
-    // 강사 전용 마커 패턴 — 이모지 유무 모두 허용 (AI가 이모지 생략한 경우 대응)
-    // 패턴 1: 이모지 시작 → '⏱️ **예상 소요:** 30분'
-    // 패턴 2: 이모지 없이 '**예상 소요 시간:** 30분', '예상 소요 시간 : 30분'
-    // 패턴 3: HTML <strong> 으로 감싸진 경우 '<strong>예상 소요 시간:</strong>'
-    const INSTRUCTOR_MARKERS = new RegExp(
-        '^[ \\t]*' +
-        '(?:' +
-            '(?:⏱️?|🎚️?|🎬|🗣️?|💡|⚠️?|🔗|🎓|📝|🎯|💼|📚|🔍|⏰)\\s*' +     // 이모지 prefix
-            '|<strong>\\s*' +                                                  // <strong> prefix
-            '|' +                                                              // 이모지·태그 없음
-        ')' +
-        '\\*{0,2}\\s*' +
-        '(?:' +
-            '예상\\s*소요(?:\\s*시간)?' +              // 예상 소요 / 예상 소요 시간
-            '|난이도' +
-            '|도입\\s*멘트' +
-            '|핵심\\s*설명(?:\\s*대본)?' +
-            '|해당\\s*세션[^\\n]*인지' +              // 해당 세션에서 수강생이 인지하여야 할 항목
-            '|수강생이\\s*인지' +                      // (이모지 생략 시 대응)
-            '|핵심\\s*강조' +                          // 핵심 강조 항목
-            '|활용\\s*교보' +                          // 활용 교보재
-            '|꼭\\s*짚어(?:야|야\\s*할\\s*핵심)?' +    // 꼭 짚어야 할 핵심 (구버전 호환)
-            '|꼭\\s*집어야(?:\\s*할\\s*내용)?' +       // 꼭 집어야 할 내용 (사용자 표기)
-            '|자주\\s*헷갈' +
-            '|질문\\s*\\/?\\s*참여' +
-            '|권장\\s*질문' +
-            '|활용\\s*예시' +
-            '|전환\\s*멘트' +
-        ')'
-    );
-    const lines = md.split('\n');
-    const out = [];
-    let i = 0;
-    while (i < lines.length) {
-        const line = lines[i];
-        // 이미 instructor-callout 안에 있으면 그대로 통과
-        if (/<div\s+class\s*=\s*["'][^"']*instructor-callout/i.test(line)) {
-            // div depth를 추적해 중첩 <div>가 있어도 '매칭되는' </div>까지 정확히 통과한다.
-            // (기존 코드는 첫 </div>에서 멈춰, 중첩 div가 있으면 callout 일부가 새어나가 이중 래핑될 수 있었음)
-            let depth = 0;
-            while (i < lines.length) {
-                const ln = lines[i];
-                depth += (ln.match(/<div\b/gi) || []).length - (ln.match(/<\/div>/gi) || []).length;
-                out.push(ln);
-                i++;
-                if (depth <= 0) break;
-            }
-            continue;
-        }
-
-        // 강사 마커 발견 → 다음 빈 줄·헤딩·다른 블록까지 모아 instructor-callout으로 감쌈
-        if (INSTRUCTOR_MARKERS.test(line)) {
-            const block = [];
-            // 마커가 있는 첫 줄부터 시작
-            while (i < lines.length) {
-                const cur = lines[i];
-                // 헤딩(##/###/####)이나 코드펜스 시작이면 블록 종료
-                if (/^#{1,4}\s/.test(cur) || /^```/.test(cur.trim())) break;
-                // 두 줄 연속 빈 줄이면 종료 (강사 가이드 끝)
-                if (cur.trim() === '' && i + 1 < lines.length && lines[i + 1].trim() === '') break;
-                block.push(cur);
-                i++;
-            }
-            // 블록을 instructor-callout으로 감싸기
-            const inner = block.join('\n').replace(/^\n+|\n+$/g, '');
-            if (inner.trim()) {
-                out.push('<div class="instructor-callout">');
-                out.push('');
-                out.push(inner);
-                out.push('');
-                out.push('</div>');
-            }
-            continue;
-        }
-
-        out.push(line);
-        i++;
-    }
-    return out.join('\n');
-}
-window.wrapOrphanedInstructorMarkers = wrapOrphanedInstructorMarkers;
-
-// 부분 생성(이어쓰기 청크가 callout 중간에서 실패)으로 마지막 강사 callout이 </div> 없이 잘린 경우,
-// 닫는 태그를 보강한다. 닫지 않으면 marked가 div를 문서 끝까지 확장해 이후 본문 전체가
-// 강사 스타일을 상속하고 학생뷰에서 숨겨지는 데이터 무결성 문제가 발생한다.
-function closeUnclosedCallouts(md) {
+// 이전 버전이 교안 본문에 넣었던 강사 callout은 교수안으로 대체되어 표시하지 않는다.
+// 중첩 <div>는 깊이로 짝을 맞추고, 닫히지 않은 블록은 다음 헤딩까지만 지워 본문을 잃지 않는다.
+function stripInstructorCallouts(md) {
     if (!md || typeof md !== 'string') return md || '';
-    const openRe = /<div\s+class\s*=\s*["'][^"']*instructor-callout[^"']*["'][^>]*>/gi;
-    let lastOpen = -1, m;
-    while ((m = openRe.exec(md)) !== null) lastOpen = m.index;
-    if (lastOpen === -1) return md;                       // callout 없음
-    if (/<\/div>/i.test(md.slice(lastOpen))) return md;   // 마지막 callout이 정상적으로 닫힘
-    return md.replace(/\s*$/, '') + '\n</div>';           // 잘린 callout 닫기
+    const openRe = /<div\s+class\s*=\s*["'][^"']*instructor-callout[^"']*["'][^>]*>/i;
+    let out = '';
+    let rest = md;
+    let open = openRe.exec(rest);
+    while (open) {
+        out += rest.slice(0, open.index);
+        const body = rest.slice(open.index + open[0].length);
+        const headingAt = body.search(/^#{1,4}\s/m);
+        const limit = headingAt === -1 ? body.length : headingAt;
+        const tagRe = /<div\b[^>]*>|<\/div>/gi;
+        let depth = 1;
+        let closeEnd = -1;
+        let tag = tagRe.exec(body);
+        while (tag && tag.index < limit) {
+            depth += tag[0][1] === '/' ? -1 : 1;
+            if (depth === 0) { closeEnd = tag.index + tag[0].length; break; }
+            tag = tagRe.exec(body);
+        }
+        rest = closeEnd === -1 ? body.slice(limit) : body.slice(closeEnd).replace(/^[ \t]*\r?\n/, '');
+        open = openRe.exec(rest);
+    }
+    return out + rest;
 }
-window.closeUnclosedCallouts = closeUnclosedCallouts;
+window.stripInstructorCallouts = stripInstructorCallouts;
 
 // 파이프(마크다운) 표 텍스트를 인라인 스타일 HTML 표로 변환
 // 프로젝트 컨벤션(GFM 표 금지, 인라인 스타일 HTML Table 사용)에 맞춰
@@ -442,12 +371,8 @@ function sanitizeMarkdownContent(md) {
     // 8) 깨진 이미지 태그 복원 — "<!- [IMG: ... ] -->", "<-- [IMG" 등
     t = t.replace(/<!?-{1,3}\s*\[IMG\s*:\s*"?([^"\]>]+?)"?\s*\]\s*-{1,3}>?/gi, '<!-- [IMG: "$1"] -->');
 
-    // 9) [강사 전용] 자동 래핑 — AI가 instructor-callout 밖에 출력한 강사 마커를 감지해 래핑
-    //    학생뷰에서 ⏱️ 예상 소요 / 🎬 도입 멘트 등이 노출되는 문제 해결
-    t = wrapOrphanedInstructorMarkers(t);
-
-    // 9-1) 부분 생성으로 마지막 강사 callout이 닫히지 않은 경우 </div> 보강 (데이터 무결성)
-    t = closeUnclosedCallouts(t);
+    // 9) 이전 버전의 강사 callout 제거 (강사 내용은 교수안이 담당)
+    t = stripInstructorCallouts(t);
 
     // 표 복원 (보호된 마크다운 표를 원래 위치에 복귀)
     t = t.replace(/\u0000TABLE(\d+)\u0000/g, (_, i) => {
@@ -789,75 +714,20 @@ const CONTEXT_CORE = {
             "레벨테스트(Level Test) = 별칭 '메인 퀘스트', 교과 전체의 최종 과제. " +
             "기본 실습(Basic Practice) = 별칭 '일일 퀘스트', 각 차시 끝 실습 과제.",
 
-        // ── 컨벤션: 강사 Callout 규칙 (v8 — 읽기만 해도 수업 가능한 강사 스크립트) ──
-        instructor_callout:
-            '★★★ 강사 Callout 최우선 규칙 ★★★\n' +
-            '각 ## 섹션은 반드시 [## 제목] → [강사 스크립트 박스] → [본문] 순서로 작성합니다.\n' +
-            '즉 ## 제목 바로 다음 줄(본문 시작 전, 본문 서두)에 <div class="instructor-callout"> 블록을 먼저 삽입하고, 그 아래에 본문을 작성하세요. (박스를 본문 뒤에 두지 마세요.)\n' +
-            '이 블록은 강사가 수업 직전에 빠르게 확인하는 "강사 스크립트(강사 전용 핵심 정리)"입니다.\n' +
-            '아래에 정의된 4개 항목 구조를 정확히 지켜 작성하세요.\n' +
-            '★★ 절대 금지(말하기 대본/narration 금지): 박스 안에 "환영합니다", "자, 이제 ~", "여러분 ~해보신 적 있나요?", "오늘 ~를 배워보겠습니다", "~합니다" 식의 구어체 강의 대본·인사말·서술 문단을 절대 쓰지 마세요. 박스 안은 오직 아래 4개 항목(짧은 명사형 불릿)만 허용됩니다. 문장형 대본이 들어가면 안 됩니다.\n\n' +
+        // ── 컨벤션: 수업 시간 배분 ──
+        time_allocation:
+            '이 탭의 목표 수업 시간과 분량은 "현재 작업" 지시문에 명시된 기준을 그대로 따르세요. (탭마다 목표 시간이 다릅니다 — 임의로 축소하지 마세요.)\n' +
+            '각 ## 제목 끝에 "(⏱ N분)" 형식으로 소요 시간을 분 단위로 표기하고, 모든 섹션 소요 시간의 합계가 이 탭의 목표 수업 시간과 일치하도록 조절하세요.',
 
-            '=== 강의 시간 배분 규칙 ===\n' +
-            '이 탭의 목표 수업 시간과 분량은 "현재 작업" 지시문에 명시된 기준을 그대로 따르세요. (탭마다 목표 시간이 다릅니다 — 임의로 90~120분 등으로 축소하지 마세요.)\n' +
-            '각 ## 섹션에는 ⏱️ 예상 소요 시간을 분 단위로 명시하고, 모든 섹션 소요 시간의 합계가 이 탭의 목표 수업 시간과 일치하도록 조절하세요.\n' +
-            '탭 마지막 교강사 가이드에서 전체 시간 합계를 정리하세요.\n' +
-            '각 섹션 본문은 명시된 목표 수업 시간을 채울 만큼 충분히 작성하되, 강사 스크립트(아래 callout)는 4개 항목으로 간결하게 정리하세요.\n\n' +
-
-            '=== Callout 내부 구조 (반드시 이 순서대로, 4개 항목 모두 포함) ===\n' +
-            '아래 4개 항목을 정확히 이 순서·이 제목으로 작성하세요.\n' +
-            '★ 비해당 처리 규칙: 어떤 항목에 쓸 내용이 없더라도 항목 자체를 생략하지 마세요. 제목 줄을 쓴 뒤, 내용 자리에 "-" 한 줄만 작성합니다.\n\n' +
-
-            '⏰ **예상 소요 시간:** ○○분\n' +
-            '(○○ 자리에는 반드시 실제 숫자를 기입하세요. 예: "⏰ **예상 소요 시간:** 25분". {N}·○○ 같은 기호를 그대로 출력하면 안 됩니다. 이 항목에는 별도 불릿을 만들지 않습니다.)\n\n' +
-
-            '💡 **해당 세션에서 수강생이 인지하여야 할 항목**\n' +
-            '- 이 섹션 학습 후 수강생이 반드시 알고 있어야 할 핵심 항목을 불릿(-)으로 작성 (2~4개)\n' +
-            '- 쓸 내용이 없으면 "-" 한 줄만 작성\n\n' +
-
-            '💡 **핵심 강조 항목**\n' +
-            '- 수업 중 강사가 특히 강조해서 짚어야 할 포인트를 불릿(-)으로 작성 (2~4개)\n' +
-            '- 쓸 내용이 없으면 "-" 한 줄만 작성\n\n' +
-
-            '💡 **활용 교보재**\n' +
-            '- 이 섹션에서 사용할 교재·예제 파일·실습 도구·참고 자료 등을 불릿(-)으로 작성\n' +
-            '- 쓸 내용이 없으면 "-" 한 줄만 작성\n\n' +
-
-            '=== 작성 형식 규칙 (마크다운 정확성 — 반드시 준수) ===\n' +
-            '- 각 제목(⏰/💡 **...**)은 한 줄에 단독으로 쓰고, 그 줄 끝에서 줄바꿈한 뒤 다음 줄부터 내용을 작성합니다.\n' +
-            '- 제목 줄 다음 줄부터 바로 불릿 내용을 작성합니다. (항목 사이 빈 줄은 넣지 않아도 됩니다 — 시스템이 자동 정리합니다.)\n' +
-            '- 내용은 "- "로 시작하는 불릿으로 작성하고, 각 불릿은 한 줄에 하나씩 작성합니다. 한 줄에 여러 항목을 이어붙이지 마세요.\n' +
-            '- 강조는 반드시 **굵게(별표 2개)**만 사용하세요. *별표 1개* 기울임(이탤릭)은 절대 사용하지 마세요.\n' +
-            '- callout 안에는 표(table)나 코드블록(```)을 넣지 마세요.\n\n' +
-
-            '=== 출력 예시 (★ 모든 ## 섹션마다 아래와 똑같은 순서: 제목 → 박스 → 본문) ===\n' +
-            '## 게임 기획의 기초\n' +
-            '\n' +
-            '<div class="instructor-callout">\n' +
-            '⏰ **예상 소요 시간:** 25분\n' +
-            '💡 **해당 세션에서 수강생이 인지하여야 할 항목**\n' +
-            '- 게임 기획서의 3대 구성요소(시스템·콘텐츠·밸런스)를 구분할 수 있다\n' +
-            '- 기획 의도와 목차 구조의 관계를 설명할 수 있다\n' +
-            '💡 **핵심 강조 항목**\n' +
-            '- "왜 이 기능이 필요한가"를 먼저 정의한 뒤 구현 방법을 논하도록 강조\n' +
-            '- 밸런스 수치는 반드시 근거와 함께 제시\n' +
-            '💡 **활용 교보재**\n' +
-            '- 예제 기획서 템플릿\n' +
-            '- 상용 게임 시스템 분석 사례 자료\n' +
-            '</div>\n' +
-            '\n' +
-            '게임 기획은 게임의 규칙과 플레이 경험을 설계하는 활동입니다. (…이후 본문 계속…)\n' +
-            '\n' +
-            '(★ 박스가 본문보다 먼저 나옵니다. 쓸 내용이 없는 항목은 채우지 말고 제목 줄 바로 아래에 "-" 한 줄만 두세요. 예: "💡 **활용 교보재**" 다음 줄에 "-".)\n\n' +
-
-            '=== 교강사 가이드 섹션 (탭 마지막에 필수) ===\n' +
-            '탭 마지막에는 ## 🎓 교강사 가이드 (강사 전용) 섹션을 반드시 포함하세요.\n' +
-            '이 섹션에는 다음을 포함:\n' +
-            '- **전체 시간 배분표** (섹션별 소요시간 합계, 10분 단위)\n' +
-            '- **수업 전 준비 체크리스트** (프로그램 설치, 예제 파일, 장비 등)\n' +
-            '- **예상 질문 & 답변 가이드** (FAQ 3~5개, 질문+답변 쌍)\n' +
-            '- **수업 마무리 스크립트** (오늘 배운 내용 요약, 과제 안내, 다음 차시 예고)\n' +
-            '- **평가 포인트** (이 차시에서 확인해야 할 학습 달성 기준)',
+        // ── 컨벤션: 콘텐츠 업무 설계 (교안은 무엇을 배울지, 교수안은 어떻게 가르칠지) ──
+        content_design:
+            '[콘텐츠 업무 설계 — 작성 규칙]\n' +
+            '- 교안은 무엇을 배울지를 지정합니다. 수업 진행 방법, 강사 활동, 강사용 스크립트는 교수안의 몫이므로 쓰지 않습니다.\n' +
+            '- 학습 목표는 "~할 수 있습니다"로 끝내고 관찰 가능한 행동과 수행 조건을 담습니다. "이해한다·안다·익힌다"는 쓰지 않습니다.\n' +
+            '- 다른 차시나 과정을 지칭하지 않습니다. "앞에서 배운", "앞서", "이전 시간", "다음 시간에" 대신 도메인의 상황으로 서술합니다.\n' +
+            '- 학습자를 호칭하지 않습니다. "여러분", "당신", "우리는" 대신 주어 없이 동작을 서술합니다.\n' +
+            '- 모호한 표현을 쓰지 않습니다. "경우에 따라 다릅니다", "상황에 맞게"는 판단 기준으로, "매우·아주·굉장히"는 수치로 바꾸고, "당연히·물론·쉽게"는 삭제합니다.\n' +
+            '- 버전에 의존하는 정보(툴 버전 번호, 메뉴 위치)를 본문에 흩지 않습니다.',
 
         // ── 컨벤션: Mermaid 다이어그램 제약 ──
         mermaid_rules: "Mermaid 다이어그램 허용 타입: flowchart LR/TD, sequenceDiagram, gantt만 사용. " +
@@ -1015,36 +885,6 @@ const CONTEXT_CORE = {
     - X, Y, Z 좌표를 가진 3D 공간의 점입니다.
 `
 };
-
-// 2-0.4. 강사 callout 멀티턴 Few-Shot (생성 시 contents 앞에 주입)
-// ── 모델이 "강사 스크립트"를 말하기 대본(narration)으로 출력하는 강한 prior를
-//    덮어쓰기 위해, 규칙·예시 텍스트만으로는 부족하여 실제 (user→model) 예시 turn을
-//    대화에 주입한다. 모델은 이 예시를 모방해 <div class="instructor-callout"> 4항목
-//    구조를 안정적으로 출력한다. (Gemini contents에 role 포함 가능)
-const CALLOUT_FORMAT_FEWSHOT = [
-    {
-        role: 'user',
-        parts: [{ text: "예시로 '## 3D 렌더링의 기초' 섹션 하나를 작성하세요. 강사 메모 박스를 본문 서두(## 제목 바로 다음, 본문 시작 전)에 먼저 두고, 그 아래에 본문을 작성합니다." }]
-    },
-    {
-        role: 'model',
-        parts: [{ text:
-            '## 3D 렌더링의 기초\n\n' +
-            '<div class="instructor-callout">\n' +
-            '⏰ **예상 소요 시간:** 20분\n' +
-            '💡 **해당 세션에서 수강생이 인지하여야 할 항목**\n' +
-            '- 렌더링 파이프라인의 단계\n' +
-            '- 메쉬·머티리얼·라이팅의 역할\n' +
-            '💡 **핵심 강조 항목**\n' +
-            '- 실시간 렌더링과 사전 렌더링의 차이\n' +
-            '💡 **활용 교보재**\n' +
-            '- 예제 3D 씬 파일\n' +
-            '</div>\n\n' +
-            '3D 렌더링은 3차원 데이터를 2차원 화면 이미지로 변환하는 과정입니다. 메쉬, 머티리얼, 라이팅이 결합되어 최종 화면이 만들어집니다.'
-        }]
-    }
-];
-if (typeof window !== 'undefined') window.CALLOUT_FORMAT_FEWSHOT = CALLOUT_FORMAT_FEWSHOT;
 
 // 2-0.5. 강사 어투 프리셋 (생성 시 적용)
 const INSTRUCTOR_TONE_PRESETS = [

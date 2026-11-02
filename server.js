@@ -25,7 +25,7 @@ const MIME = {
 
 const server = http.createServer((req, res) => {
     let urlPath = decodeURIComponent(req.url.split('?')[0]);
-    if (urlPath === '/') urlPath = '/디벨로켓 교안 도우미.html';
+    if (urlPath === '/') urlPath = '/index.html';
 
     const filePath = path.normalize(path.join(DIR, urlPath));
 

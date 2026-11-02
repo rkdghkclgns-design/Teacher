@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>슬라이드 스튜디오</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8D%81%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Jua&family=Gothic+A1:wght@400;500;700;800;900&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="css/kbuilder/styles.css?v=1" />
+<link rel="stylesheet" href="css/kbuilder/slides.css?v=1" />
+<style>
+  /* 스튜디오 전용 — 내보낸 HTML에 섞이지 않도록 css/kbuilder 밖에 둔다 */
+  .studio-notice { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; font-size: 15px; font-weight: 600; color: var(--ink); }
+  .studio-notice[hidden], .studio-progress[hidden], #btn-fill-stop[hidden] { display: none; }
+  .tabbar .studio-title { cursor: default; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; }
+  .studio-status { align-self: center; font-size: 12.5px; color: var(--ink-soft); }
+  .studio-status.error { color: #c0392b; font-weight: 600; }
+  .studio-progress { display: flex; align-items: center; gap: 12px; padding: 8px 22px; background: #fff; border-bottom: 1px solid var(--line); font-size: 13px; font-weight: 600; color: var(--ink); }
+  .studio-progress .gen-bar { flex: 1; min-width: 120px; }
+</style>
+</head>
+<body>
+<div class="studio-notice" id="studio-notice" role="alert" hidden></div>
+
+<div class="app" id="app" data-screen="result">
+  <section class="result" id="result">
+    <div class="tabbar">
+      <span class="tab active studio-title" id="studio-title">🎬 슬라이드</span>
+      <div class="spacer"></div>
+      <div class="tab-tools" id="tab-tools">
+        <span class="studio-status" id="studio-status" role="status"></span>
+        <select class="theme-sel" id="theme-sel" title="슬라이드 템플릿">
+          <option value="maple">🍄 메이플 월드</option>
+          <option value="dark">🌙 디벨로켓 다크</option>
+        </select>
+        <button class="btn btn-ghost" id="btn-fill-images" title="빈 이미지 칸을 모두 AI 이미지로 채웁니다 (이미지마다 비용이 듭니다)">✨ 빈 이미지 AI 채우기</button>
+        <button class="btn btn-ghost" id="btn-logo" title="로고 추가/표시">🖼 로고</button>
+        <button class="btn btn-ghost" id="btn-edit">✏️ 편집</button>
+        <button class="btn btn-ghost" id="btn-html">⤓ HTML</button>
+        <button class="btn btn-ghost" id="btn-pptx">⤓ PPTX</button>
+      </div>
+    </div>
+    <div class="studio-progress" id="studio-progress" aria-live="polite" hidden>
+      <span id="studio-progress-label"></span>
+      <div class="gen-bar"><div class="gen-bar-fill" id="studio-progress-bar"></div></div>
+      <button class="btn btn-ghost" id="btn-fill-stop">중지</button>
+    </div>
+    <div class="panes">
+      <div class="pane active" id="deck-pane">
+        <div class="deck-rail" id="deck-rail"></div>
+        <div class="deck-main">
+          <div class="deck-toolbar" id="deck-toolbar" style="display:none">
+            <select id="tb-font" title="글꼴">
+              <option value="'Gothic A1',sans-serif">Gothic A1</option>
+              <option value="'Jua',sans-serif">Jua</option>
+              <option value="system-ui,sans-serif">기본</option>
+            </select>
+            <select id="tb-size" title="크기">
+              <option>24</option><option>28</option><option>31</option><option>36</option><option>42</option><option>48</option><option>60</option><option>72</option><option>96</option><option>132</option>
+            </select>
+            <button data-cmd="bold" title="굵게"><b>B</b></button>
+            <button data-cmd="italic" title="기울임"><i>I</i></button>
+            <button data-cmd="underline" title="밑줄"><u>U</u></button>
+            <button data-cmd="strikeThrough" title="취소선"><s>S</s></button>
+            <input type="color" id="tb-color" value="#2b2240" title="글자색" />
+            <button data-cmd="hilite" data-val="#ffce2e" class="tb-hl" title="형광펜">형광</button>
+            <button data-cmd="hilite" data-val="transparent" title="형광 제거">✕</button>
+            <span class="tb-sep"></span>
+            <button data-cmd="justifyLeft" title="왼쪽 정렬">☰‹</button>
+            <button data-cmd="justifyCenter" title="가운데 정렬">☰</button>
+            <button data-cmd="justifyRight" title="오른쪽 정렬">›☰</button>
+            <button data-cmd="insertUnorderedList" title="글머리 목록">•</button>
+            <button data-cmd="insertOrderedList" title="번호 목록">1.</button>
+            <span class="tb-sep"></span>
+            <button id="btn-layout" title="레이아웃 선택">📐 레이아웃</button>
+            <button id="btn-anim" title="선택한 객체의 애니메이션 순서 지정">🎬 순서</button>
+            <button id="btn-insert-img" title="이미지 추가">🖼 이미지</button>
+            <button id="btn-del-elem" title="선택한 객체 삭제">✂ 선택 삭제</button>
+            <button id="btn-dup-slide" title="슬라이드 복제">⧉ 복제</button>
+            <button id="btn-add-slide" title="새 슬라이드">＋ 슬라이드</button>
+            <button id="btn-del-slide" title="슬라이드 삭제">🗑 삭제</button>
+          </div>
+          <div id="deck-mount"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script src="js/kbuilder/image-slot.js?v=1"></script>
+<script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js" integrity="sha256-zQeMqekcb54GHuCjwxDW/xV8OnGx3qf0D9U4GAFyZv8=" crossorigin="anonymous"></script>
+<script src="js/kbuilder/parser.js?v=1"></script>
+<script src="js/kbuilder/render-deck.js?v=1"></script>
+<script src="js/kbuilder/editor.js?v=1"></script>
+<script src="js/kbuilder/layouts.js?v=1"></script>
+<script src="js/kbuilder/export.js?v=1"></script>
+<script src="js/kbuilder/auto-images.js?v=1"></script>
+<script src="js/kbuilder/studio.js?v=1"></script>
+</body>
+</html>

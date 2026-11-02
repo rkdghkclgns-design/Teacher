@@ -794,12 +794,7 @@ window.executeDropdownExport = function (format) {
             else exportToPDF();
             break;
         case 'slide':
-            if (_exportScope === 'subject') {
-                if (typeof exportSubjectToPptx === 'function') exportSubjectToPptx();
-                else if (typeof exportToPptx === 'function') exportToPptx();
-            } else {
-                if (typeof exportToPptx === 'function') exportToPptx();
-            }
+            openCurrentSlideStudio();
             break;
         case 'html':
             if (_exportScope === 'subject') exportSubjectToHTML();
@@ -887,24 +882,6 @@ function exportSubjectToHTML() {
         URL.revokeObjectURL(url);
     });
     window.showToast(`📁 ${lessonList.length}개 차시 HTML 파일 다운로드`, 'success');
-}
-
-// 슬라이드 교과 전체 내보내기
-function exportSubjectToSlide() {
-    const subj = globalState.subjects.find(s => s.id === currentSubjectId);
-    if (!subj) return window.showAlert('교과를 먼저 선택해주세요.');
-    const lessonList = subj.lessons || [];
-    if (!lessonList.length) return window.showAlert('내보낼 차시가 없습니다.');
-    // 각 차시별로 슬라이드 HTML 생성
-    lessonList.forEach(mod => {
-        const prevMod = typeof getEditingModule === 'function' ? getEditingModule() : null;
-        // 임시로 현재 모듈 설정 후 슬라이드 내보내기
-        if (typeof currentModuleId !== 'undefined') currentModuleId = mod.id;
-        try {
-            if (typeof exportToSlideHTML === 'function') exportToSlideHTML();
-        } catch (e) { console.warn('슬라이드 내보내기 실패:', mod.title, e); }
-    });
-    window.showToast(`📁 ${lessonList.length}개 차시 슬라이드 다운로드`, 'success');
 }
 
 // 외부 클릭 시 드롭다운 닫기
@@ -2417,7 +2394,8 @@ function buildTaskContext(taskScope, additionalContext = "") {
             r.table_html_style,
             r.spacing,
             r.formatting_workflow,
-            r.instructor_callout,
+            r.time_allocation,
+            r.content_design,
             r.mermaid_rules,
             r.rubric_100,
             r.korean_period,
@@ -2605,14 +2583,12 @@ function buildTaskContext(taskScope, additionalContext = "") {
         // ─── 탭별 교안 생성 ───
         case 'tab_content': {
             // 탭별 규칙 필터링 — 학습탭에 실습/평가/강사가이드 혼입 방지
-            // v8: 학습 탭에도 강사 callout 포함 (읽기만 해도 수업 가능)
-            // "교강사 가이드 섹션"은 탭 범위 제한에서 금지하되, 각 ##섹션 뒤 인라인 callout은 허용
             const tabRuleExclusions = {
                 basicLearn: ['rubric_100', 'quiz_format'],
                 advLearn: ['rubric_100', 'quiz_format'],
                 basicPrac: ['rubric_100', 'quiz_format'],
                 advPrac: ['rubric_100', 'quiz_format'],
-                assessment: ['instructor_callout', 'image_tags', 'mermaid_rules']
+                assessment: ['time_allocation', 'image_tags', 'mermaid_rules']
             };
             const excludeKeys = tabRuleExclusions[additionalContext.tabId] || [];
 
@@ -2639,7 +2615,8 @@ function buildTaskContext(taskScope, additionalContext = "") {
                     ['table_html_style', r.table_html_style],
                     ['spacing', r.spacing],
                     ['formatting_workflow', r.formatting_workflow],
-                    ['instructor_callout', r.instructor_callout],
+                    ['time_allocation', r.time_allocation],
+                    ['content_design', r.content_design],
                     ['mermaid_rules', r.mermaid_rules],
                     ['rubric_100', r.rubric_100],
                     ['korean_period', r.korean_period]
@@ -2659,20 +2636,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
                         '  * 실습 과제, 실습 가이드, 실습 예제\n' +
                         '  * 평가 기준표, 채점 기준, 루브릭\n' +
                         '  * 일일 퀘스트, 과제 제출\n' +
-                        '- 개념 설명, 이론, 사례 분석에만 집중하세요.\n\n' +
-                        '[강사 스크립트 규칙 — 학습 탭에서도 반드시 포함]\n' +
-                        '- 각 ## 섹션은 [## 제목] → [강사 스크립트 박스] → [본문] 순서로 작성하세요. ## 제목 바로 다음 줄(본문 시작 전, 본문 서두)에 <div class="instructor-callout"> 강사 스크립트를 먼저 삽입합니다. (박스를 본문 뒤에 두지 마세요.)\n' +
-                        '- 강사 스크립트는 위 강사 Callout 규칙의 4개 항목(⏰ 예상 소요 시간 / 💡 해당 세션에서 수강생이 인지하여야 할 항목 / 💡 핵심 강조 항목 / 💡 활용 교보재)을 그 순서대로 모두 포함하세요. 쓸 내용이 없는 항목은 생략하지 말고 "-"로 표기하세요.\n' +
-                        '- 단, ## 🎓 교강사 가이드 (강사 전용) "섹션"은 학습 탭에 포함하지 마세요. (이 섹션은 기본실습/심화실습 탭에서 작성)';
-                }
-
-                // 실습 탭 전용: 강사뷰(instructor-callout) 박스 — 학습 탭과 동일한 강사뷰를 실습 탭에도 적용
-                if (additionalContext.tabId === 'basicPrac' || additionalContext.tabId === 'advPrac') {
-                    rules += '\n\n[강사뷰 규칙 — 실습 탭에서도 반드시 포함]\n' +
-                        '- "실습 목표 및 개요" 섹션과 각 실습 과제 섹션은 [제목] → [강사뷰 박스] → [본문] 순서로 작성하세요. 즉 각 섹션 제목 바로 다음 줄(본문 시작 전, 본문 서두)에 <div class="instructor-callout"> ... </div> 강사뷰(강사 스크립트)를 먼저 삽입합니다. (박스를 본문 뒤에 두지 마세요.)\n' +
-                        '- 강사뷰는 위 강사 Callout 규칙의 4개 항목을 그 순서대로 모두 포함하세요: ⏰ 예상 소요 시간 / 💡 해당 세션에서 수강생이 인지하여야 할 항목(실습 목표·달성 기준) / 💡 핵심 강조 항목(진행 요령·시간 관리·학생이 자주 막히는 지점과 대응) / 💡 활용 교보재(예제 파일·실습 도구·참고 자료). 쓸 내용이 없는 항목은 생략하지 말고 "-"로 표기하세요.\n' +
-                        '- 강사뷰는 강사 전용 안내이며, 학생용 실습 과제 본문과 명확히 구분해 작성하세요.\n' +
-                        '- 기존 ## 🎓 교강사 가이드 (강사 전용) 섹션도 그대로 유지하세요. (강사뷰 박스는 이와 별개로 각 섹션마다 추가)';
+                        '- 개념 설명, 이론, 사례 분석에만 집중하세요.';
                 }
 
                 if (keyConcepts && keyConcepts.length > 0) {
@@ -2704,7 +2668,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
                 basicLearn: '이 교안의 "기본 학습" 영역을 작성하세요. 반드시 [1.학습 목표] → [2.개요(이 차시 타임테이블 포함)] → [3.핵심 내용(개념 정의, 이론 설명, 예시, 사례 분석)] 순서로 구성합니다. 학습 목표가 교안 최상단에 오고, 그 다음 개요(타임테이블)가 옵니다. 실습 과제, 평가 루브릭, 별도 강사 가이드 섹션은 다른 탭에서 작성하므로 여기서는 포함하지 마세요. 초보자도 이해할 수 있는 수준으로 단계적으로 설명하세요.\n' +
                     '[시간 배분 — 이 탭 하나가 곧 480분(8시간) 본과정입니다]\n' +
                     '이 "기본 학습" 탭 하나가 480분(8시간) 분량의 완결된 본 교안입니다. 다른 탭(실습/심화/평가)에 의존하지 말고, 이 탭만으로 하루 8시간 수업을 끝까지 진행할 수 있도록 작성하세요.\n' +
-                    '각 ## 섹션 시작에 ⏱️ 예상 소요 시간을 명시하고, 모든 섹션의 합계가 480분(±30분)이 되도록 구성하세요.\n' +
+                    '각 ## 제목 끝에 (⏱ N분)을 명시하고, 모든 섹션의 합계가 480분(±30분)이 되도록 구성하세요.\n' +
                     '시간을 채우기 위해 각 개념을 충분히 깊고 상세하게, 다양한 예시·비유·단계적 설명으로 풀어쓰세요. 개념을 나열만 하지 말고 "왜 그런지"까지 설명하세요.\n\n' +
                     '[분량 규칙 — 절대 준수]\n' +
                     '- 순수 텍스트(마크다운 서식 제외) 최소 40,000자 이상.\n' +
@@ -2712,7 +2676,6 @@ function buildTaskContext(taskScope, additionalContext = "") {
                     '- ## 대주제 최소 8개, ### 소주제 최소 16개.\n' +
                     '- 각 소주제마다 Key Concept 불릿 최소 6개, 구체적 사례(게임명 명시) 최소 2개, 본문 설명 단락 최소 3개.\n' +
                     '- 표(Table) 최소 6개, mermaid 다이어그램 최소 3개.\n' +
-                    '- 각 ## 섹션은 제목 직후(본문 시작 전, 본문 서두)에 강사 스크립트(instructor-callout)를 4항목 구조로 먼저 넣고, 그 아래에 본문을 작성.\n' +
                     '- 짧은 교안은 불합격 처리됩니다. 480분을 채울 만큼 매우 상세하게 작성하세요.\n\n' +
                     '[분할 출력 규칙 — 절대 준수]\n' +
                     '- 내용이 매우 길어 한 번에 다 출력하지 못할 수 있습니다.\n' +
@@ -2721,7 +2684,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
                 basicPrac: '이 교안의 "기본 실습" 영역을 작성하세요. 학생이 핵심 내용을 직접 체험하는 실습 과제를 설계하세요.\n' +
                     '[시간 배분 — 이 탭: 90~120분]\n' +
                     '이 탭은 "기본 학습" 본과정을 보완하는 독립 기본 실습 모듈로, 90~120분 분량입니다.\n' +
-                    '각 ## 섹션의 ⏱️ 예상 소요 시간을 명시하고, 합계가 90~120분이 되게 하세요.\n\n' +
+                    '각 ## 제목 끝에 (⏱ N분)을 명시하고, 합계가 90~120분이 되게 하세요.\n\n' +
                     '[분량 규칙 — 절대 준수]\n' +
                     '- 순수 텍스트(마크다운 서식 제외) 최소 8,000자 이상.\n' +
                     '- 마크다운 줄 수 기준 최소 250줄 이상.\n' +
@@ -2735,12 +2698,11 @@ function buildTaskContext(taskScope, additionalContext = "") {
                     '  * ⏱️ 예상 소요시간, 🎚️ 난이도(초급)\n' +
                     '  * 예시 결과물 또는 기대 산출물 설명\n' +
                     '  * 평가 기준 (체크리스트 또는 루브릭)\n' +
-                    '- 실습 중 자주 하는 실수 및 해결 가이드\n' +
-                    '- ## 🎓 교강사 가이드 (강사 전용): 실습 진행 요령, 시간 관리 팁, 피드백 포인트',
+                    '- 실습 중 자주 하는 실수 및 해결 가이드',
                 advLearn: '이 교안의 "심화 학습" 영역을 작성하세요. 기본 학습의 개념을 더 깊이 파고들어 고급 이론, 업계 사례, 실무적 분석을 제공하세요. 실습, 평가, 강사 가이드는 다른 탭에서 작성하므로 여기서는 절대 포함하지 마세요.\n' +
                     '[시간 배분 — 이 탭: 90~120분]\n' +
                     '이 탭은 "기본 학습" 본과정 이후 진행하는 독립 심화 학습 모듈로, 90~120분 분량입니다.\n' +
-                    '각 ## 섹션의 ⏱️ 예상 소요 시간을 명시하고, 합계가 90~120분이 되게 하세요.\n\n' +
+                    '각 ## 제목 끝에 (⏱ N분)을 명시하고, 합계가 90~120분이 되게 하세요.\n\n' +
                     '[분량 규칙 — 절대 준수]\n' +
                     '- 순수 텍스트(마크다운 서식 제외) 최소 12,000자 이상.\n' +
                     '- 마크다운 줄 수 기준 최소 350줄 이상.\n' +
@@ -2750,7 +2712,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
                 advPrac: '이 교안의 "심화 실습" 영역을 작성하세요. 도전적이고 창의적인 프로젝트형 과제를 설계하세요.\n' +
                     '[시간 배분 — 이 탭: 90~120분]\n' +
                     '이 탭은 "기본 학습" 본과정을 보완하는 독립 심화 실습 모듈로, 90~120분 분량입니다.\n' +
-                    '각 ## 섹션의 ⏱️ 예상 소요 시간을 명시하고, 합계가 90~120분이 되게 하세요.\n\n' +
+                    '각 ## 제목 끝에 (⏱ N분)을 명시하고, 합계가 90~120분이 되게 하세요.\n\n' +
                     '[분량 규칙 — 절대 준수]\n' +
                     '- 순수 텍스트(마크다운 서식 제외) 최소 8,000자 이상.\n' +
                     '- 마크다운 줄 수 기준 최소 250줄 이상.\n' +
@@ -2765,8 +2727,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
                     '  * 예시 결과물 또는 기대 산출물 설명\n' +
                     '  * 평가 기준 (100점 만점 루브릭: S/A/B/C/F)\n' +
                     '- 도전 과제 또는 보너스 미션 1개\n' +
-                    '- 팀 프로젝트 진행 시 역할 분배 가이드\n' +
-                    '- ## 🎓 교강사 가이드 (강사 전용): 프로젝트 진행 요령, 발표/피드백 운영 가이드, 채점 기준 상세',
+                    '- 팀 프로젝트 진행 시 역할 분배 가이드',
                 assessment: '이 교안의 "학습 이해도 점검" 영역을 작성하세요.\n' +
                     '[시간 배분 — 이 탭: 30~60분]\n' +
                     '이 탭은 "기본 학습" 본과정의 이해도를 점검하는 독립 평가 모듈로, 30~60분 분량입니다.\n\n' +
@@ -2810,7 +2771,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
                 '- 반드시 한국어로 작성하세요. 영어로 작성하지 마세요.\n' +
                 '- 마크다운 구조(##, ###, 표, mermaid, 불릿)와 이전 청크의 문체·깊이를 그대로 유지하세요.\n' +
                 '- 이 탭의 성격에 맞지 않는 섹션을 새로 만들지 마세요. (학습 탭에 채점 루브릭·퀴즈를 추가하지 말 것)\n' +
-                '- 각 ## 섹션은 [제목] → [강사 스크립트 박스] → [본문] 순서로 작성하세요. ## 제목 바로 다음 줄(본문 시작 전)에 <div class="instructor-callout">를 먼저 넣되, 다음 4개 항목을 이 순서로 포함하세요: ⏰ **예상 소요 시간:** ○○분(실제 숫자) / 💡 **해당 세션에서 수강생이 인지하여야 할 항목** / 💡 **핵심 강조 항목** / 💡 **활용 교보재**. 쓸 내용이 없는 항목은 제목 줄 바로 아래에 "-" 한 줄만. 이미지 태그 형식도 이전 청크와 동일하게.';
+                '- 이미지 태그 형식도 이전 청크와 동일하게 유지하세요.';
             systemInstruction += '\n\n[이어쓰기 규칙]\n' +
                 '- 아래 "이전 작성 내용"의 마지막 지점부터 이어서 작성하세요. 절대 처음부터 다시 쓰지 마세요.\n' +
                 '- 이미 작성된 내용을 반복하지 마세요. 중복 헤딩이나 중복 문단을 생성하면 안 됩니다.\n' +

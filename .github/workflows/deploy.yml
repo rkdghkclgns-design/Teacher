@@ -32,7 +32,7 @@ jobs:
           # 모든 ?v=숫자 를 빌드 타임스탬프(UNIX초)로 일괄 치환 → 매 배포마다 캐시 영구 무효화
           STAMP=$(date +%s)
           echo "Build timestamp: $STAMP"
-          sed -i "s/?v=[0-9]\+/?v=$STAMP/g" index.html
+          sed -i "s/?v=[0-9]\+/?v=$STAMP/g" index.html slide-studio.html
           echo "Replaced ?v= count: $(grep -c "?v=$STAMP" index.html || echo 0)"
 
       - name: Upload artifact

@@ -145,151 +145,21 @@ function postprocessHtml(html) {
 
 // ── 교안 마크다운 → 최종 HTML 단일 렌더 파이프라인 ──────────────────────────
 // 편집기·보기 토글·이력 보기·PDF/이력 내보내기가 '동일한' 변환을 거치도록 통합한다.
-// 순서: collapse(강사 callout 빈 줄 정리) → marked → reParse(callout 재파싱)
-//       → 한국어 마침표 줄바꿈 → postprocess(공통 HTML 후처리)
+// 순서: 이전 버전 강사 callout 제거 → marked → 한국어 마침표 줄바꿈 → postprocess(공통 HTML 후처리)
 // 기존에는 편집기만 postprocessHtml을 적용하고 PDF/이력 경로는 누락되어
 // 같은 교안이 화면과 내보내기에서 다르게 렌더되는 불일치가 있었다.
 // opts.postprocess: 기본 true. (이미지 치환은 호출 측에서 미리 수행)
 function renderLessonHTML(md, opts) {
     const postprocess = !opts || opts.postprocess !== false;
-    const safe = (md == null) ? '' : String(md);
-    const src = (typeof collapseCalloutInnerBlankLines === 'function') ? collapseCalloutInnerBlankLines(safe) : safe;
+    const safe = stripInstructorCallouts((md == null) ? '' : String(md));
     let html = (typeof marked !== 'undefined')
-        ? marked.parse(src)
+        ? marked.parse(safe)
         : `<pre class="text-gray-200 whitespace-pre-wrap">${safe.replace(/</g, '&lt;')}</pre>`;
-    if (typeof reParseInstructorCallouts === 'function') html = reParseInstructorCallouts(html);
     if (typeof applyPeriodLineBreakHTML === 'function') html = applyPeriodLineBreakHTML(html);
     if (postprocess && typeof postprocessHtml === 'function') html = postprocessHtml(html);
     return html;
 }
 if (typeof window !== 'undefined') window.renderLessonHTML = renderLessonHTML;
-
-// ── instructor-callout 내부 마크다운 재파싱 ──────────────────────
-// marked.parse()는 HTML <div> 내부의 마크다운을 파싱하지 않으므로
-// .instructor-callout 요소를 찾아 내부 콘텐츠를 별도로 재파싱한다.
-
-function detectCalloutType(text) {
-    if (/스크립트|대본|말씀|설명\s*방법|이렇게\s*말/.test(text)) return 'callout-script';
-    if (/핵심|언급|강조|포인트|중요|꼭\s*설명/.test(text)) return 'callout-emphasis';
-    if (/주의|경고|실수|오류|흔한\s*실수|조심/.test(text)) return 'callout-warning';
-    if (/질문|물어|토론|생각해|학생.*에게/.test(text)) return 'callout-question';
-    if (/마무리|정리|요약|마지막|수고/.test(text)) return 'callout-closing';
-    return '';
-}
-
-function enhanceKeyPoints(html) {
-    return html.replace(
-        /(핵심\s*언급점|핵심\s*포인트|주요\s*언급|Key\s*Points?)[^<]*<\/(?:p|strong|h[1-6])>\s*<ul>/gi,
-        (match) => match.replace('<ul>', '<ul class="key-points">')
-    );
-}
-
-// v8.2: 메인 marked.parse가 강사 callout(<div>)을 빈 줄에서 조각내어 내부 마크다운을
-//   먼저(잘못) 파싱하는 문제를 방지한다. callout div 내부의 빈 줄을 모두 제거해
-//   div 전체가 하나의 raw HTML 블록으로 유지되게 하면, 이후 reParseInstructorCallouts가
-//   원본 마크다운을 그대로 받아 ensureCalloutBlockSpacing으로 올바르게 재파싱할 수 있다.
-function collapseCalloutInnerBlankLines(md) {
-    if (!md || typeof md !== 'string') return md || '';
-    return md.replace(
-        /(<div\s+class\s*=\s*["'][^"']*instructor-callout[^"']*["'][^>]*>)([\s\S]*?)(<\/div>)/gi,
-        (full, openTag, inner, closeTag) => {
-            // 방어: 비탐욕 매칭은 '첫 번째' </div>에서 멈추므로, callout 내부에 중첩 <div가 있으면
-            // inner가 엉뚱한 지점에서 끊겨 손상될 수 있다. 정상 callout은 4항목(라벨+불릿)만 — 중첩 div가 없다.
-            // 중첩 div가 감지되면 빈 줄 정리를 건너뛰고 원본을 그대로 보존한다 (손상 방지).
-            if (/<div\b/i.test(inner)) return full;
-            return openTag + '\n' + inner.split('\n').filter((l) => l.trim() !== '').join('\n') + '\n' + closeTag;
-        }
-    );
-}
-
-// v8.1: 강사 callout 내부 마크다운이 marked에서 한 문단으로 뭉개지지 않도록 빈 줄을 보정한다.
-//   - 이모지 라벨(💡/⏰/🗣️ 등) 줄 앞에 빈 줄 → 라벨이 별도 문단으로 분리
-//   - 비불릿 줄 바로 뒤 첫 불릿 앞에 빈 줄 → 불릿이 리스트로 분리 (라벨+내용이 한 줄로 합쳐지는 깨짐 방지)
-//   - 비해당 표시 단독 "-" → 앞 빈 줄 + HTML 엔티티 대시(&#45;)로 치환 (Setext 헤딩·빈 불릿 오해 방지)
-function ensureCalloutBlockSpacing(text) {
-    if (!text || typeof text !== 'string') return text || '';
-    const isLabel = (l) => /^\s*(?:⏰|⏱️|🎚️|🎬|🗣️|💡|⚠️|❓|🔗|💼|🎓|📝|🎯|📚|🔍)/.test(l);
-    const isBullet = (l) => /^\s*[-*]\s+/.test(l);
-    const isDashOnly = (l) => l.trim() === '-';
-    const lines = text.split('\n');
-    const out = [];
-    for (let i = 0; i < lines.length; i++) {
-        const cur = lines[i];
-        const prev = out.length ? out[out.length - 1] : '';
-        const prevTrim = prev.trim();
-        if (isDashOnly(cur)) {
-            if (prevTrim !== '') out.push('');   // 단독 "-" 앞 빈 줄 (Setext 헤딩 방지)
-            out.push('&#45;');                    // 리터럴 대시로 렌더
-            continue;
-        }
-        if (isLabel(cur) && prevTrim !== '') {
-            out.push('');                 // 라벨 줄 앞 빈 줄
-        } else if (isBullet(cur) && prevTrim !== '' && !isBullet(prev)) {
-            out.push('');                 // 첫 불릿 앞 빈 줄
-        }
-        out.push(cur);
-    }
-    return out.join('\n');
-}
-
-function reParseInstructorCallouts(html) {
-    try {
-        const tmp = document.createElement('div');
-        tmp.innerHTML = html;
-
-        tmp.querySelectorAll('.instructor-callout').forEach(callout => {
-            const inner = callout.innerHTML;
-
-            // v8.3: 강사 callout 내부 | 구분자를 줄바꿈으로 변환.
-            //   v8 callout은 4항목(라벨+불릿)만 — 파이프 표를 쓰지 않으므로 모든 | 를 무조건 줄바꿈으로 치환한다.
-            //   (기존 무한 룩어헤드 /\s*\|\s*(?=[\s\S]*...)/ 는 모든 | 마다 문자열 끝까지 스캔해 O(n²) 경향이 있었고,
-            //    callout에 표가 섞이면 표를 파괴할 수 있었음. 좌우 수평 공백만 흡수하고 개행은 보존.)
-            let preprocessed = inner.replace(/[^\S\n]*\|[^\S\n]*/g, '\n');
-
-            // v7.2: <br> 텍스트를 실제 줄바꿈으로 변환 (marked가 이스케이프하지 않도록)
-            preprocessed = preprocessed.replace(/&lt;br&gt;/gi, '\n').replace(/<br\s*\/?>/gi, '\n');
-
-            // v7.3: callout 내부 들여쓰기 제거 — 4칸+ 들여쓰기를 marked가 코드블록으로 인식하는 문제 방지
-            preprocessed = preprocessed.replace(/^[ \t]{4,}/gm, '');
-
-            // v7.3: callout 내부 <pre><code> 블록 풀기 — AI가 코드블록으로 감싼 경우
-            preprocessed = preprocessed.replace(/<pre><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, (_, code) => {
-                return code.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-            });
-
-            // v8.1: 이모지 라벨/불릿 사이 빈 줄 보정 — 라벨과 내용이 한 문단으로 합쳐지는 마크다운 깨짐 방지
-            preprocessed = ensureCalloutBlockSpacing(preprocessed);
-
-            // v7.1: 항상 marked.parse() 호출 — **볼드**, 리스트, 테이블 등 미파싱 방지
-            let parsedContent;
-            try {
-                parsedContent = marked.parse(preprocessed);
-            } catch {
-                parsedContent = preprocessed;
-            }
-
-            // v7.3: 파싱 후에도 남은 <pre><code> 블록 풀기 (이중 감싸짐 방지)
-            parsedContent = parsedContent.replace(/<pre><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, (_, code) => {
-                const decoded = code.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-                try { return marked.parse(decoded); } catch { return decoded; }
-            });
-
-            // 섹션 타입 자동 감지
-            const lc = inner.toLowerCase();
-            const sectionType = detectCalloutType(lc);
-            if (sectionType) callout.classList.add(sectionType);
-
-            // 핵심 언급점 목록 강화
-            parsedContent = enhanceKeyPoints(parsedContent);
-
-            callout.innerHTML = parsedContent;
-        });
-
-        return tmp.innerHTML;
-    } catch {
-        return html;
-    }
-}
 
 // v5.9 포팅: 한국어 마침표 뒤 줄바꿈 HTML 후처리
 function applyPeriodLineBreakHTML(html) {
@@ -912,7 +782,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
         // 잔여 CONTINUE 마커 정리 (MAX_CHUNKS 초과 시)
         fullContent = fullContent.replace(new RegExp(CONTINUE_MARKER, 'g'), '').trimEnd();
 
-        // 마크다운 정리 + 강사 callout 자동 래핑 (이미지 처리 전에 적용)
+        // 마크다운 정리 (이미지 처리 전에 적용)
         if (typeof sanitizeMarkdownContent === 'function') {
             fullContent = sanitizeMarkdownContent(fullContent);
         }
@@ -2756,6 +2626,7 @@ function renderEditor(mod) {
                         <button onclick="reinforceCurrentTab('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors flex items-center gap-1 shrink-0 whitespace-nowrap">
                             <i class="ph-bold ph-arrow-clockwise"></i> 보강 재생성
                         </button>
+                        <button onclick="runConventionCheck('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-rose-50 text-rose-600 border border-rose-200 rounded hover:bg-rose-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="콘텐츠 업무 설계 규칙으로 현재 탭 검사"><i class="ph-bold ph-list-checks"></i> 컨벤션 검수</button>
                         <div id="tone-loading" class="hidden items-center gap-1.5 ml-2">
                             <div class="w-3 h-3 border-2 border-accent/30 border-t-accent rounded-full animate-spin"></div>
                             <span class="text-[0.6rem] font-bold text-accent" id="tone-loading-text">재생성 중...</span>
@@ -2776,19 +2647,16 @@ function renderEditor(mod) {
                         class="px-2.5 py-1.5 text-[0.65rem] font-bold text-white bg-accent rounded hover:bg-accentHover transition-colors flex items-center gap-1 shrink-0 ml-1">
                         <i class="ph-bold ph-lightning"></i> 전체 탭
                     </button>
-                    <button onclick="openSlideEditor('${mod.id}')"
+                    <button onclick="openSlideStudio('${mod.id}')"
                         class="px-2.5 py-1.5 text-[0.65rem] font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 rounded hover:bg-indigo-100 transition-colors flex items-center gap-1 shrink-0 ml-1"
-                        title="교안을 바탕으로 편집 가능한 슬라이드 생성">
+                        title="교안을 바탕으로 만든 슬라이드를 전체 화면으로 열기">
                         <i class="ph-bold ph-presentation-chart"></i> 슬라이드
-                    </button>
-                    <button onclick="downloadSlideTemplate()"
-                        class="px-2.5 py-1.5 text-[0.65rem] font-bold text-amber-600 bg-amber-50 border border-amber-200 rounded hover:bg-amber-100 transition-colors flex items-center gap-1 shrink-0 ml-0.5"
-                        title="슬라이드 양식 HTML 다운로드 (빈 템플릿)">
-                        <i class="ph-bold ph-file-html"></i> 양식
                     </button>
                 </div>
 
                 <div class="max-w-[800px] mx-auto p-8 pb-32">
+
+                    <div id="gyosuan-view" class="gyosuan-view hidden"></div>
 
                     <div id="render-view" class="markdown-body animate-fade-in">${htmlContent}</div>
 
@@ -2807,15 +2675,11 @@ function renderEditor(mod) {
                         <div class="flex items-center gap-2">
                             <button onclick="generateSlideView('${mod.id}')" id="slide-generate-btn"
                                 class="px-3 py-1.5 text-xs font-bold text-white bg-indigo-500 rounded-lg hover:bg-indigo-600 transition-colors flex items-center gap-1">
-                                <i class="ph-bold ph-sparkle"></i> 슬라이드 생성
+                                <i class="ph-bold ph-sparkle"></i> <span id="slide-generate-label">슬라이드 생성</span>
                             </button>
                             <button onclick="regenerateSlideView('${mod.id}')" id="slide-regen-btn"
                                 class="hidden px-3 py-1.5 text-xs font-bold text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors items-center gap-1">
                                 <i class="ph-bold ph-arrow-clockwise"></i> 재생성
-                            </button>
-                            <button onclick="downloadCurrentSlide()" id="slide-download-btn"
-                                class="hidden px-3 py-1.5 text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 transition-colors flex items-center gap-1">
-                                <i class="ph-bold ph-download-simple"></i> 내려받기
                             </button>
                         </div>
                     </div>
@@ -2834,6 +2698,8 @@ function renderEditor(mod) {
 
     cmdBar.classList.remove('hidden');
     toggleEditorMode('view');
+    applyViewMode(VIEW_MODES[window.viewMode] ? window.viewMode : 'instructor');
+    syncSlidePanel(mod);
 
     // 인라인 에디팅 기능 활성화 (약간의 지연 후 렌더 트리가 안전할 때)
     setTimeout(() => initInlineEditing(), 100);
@@ -2978,6 +2844,8 @@ window.toggleEditorMode = function (mode) {
 
         btnView.classList.add('text-gray-500');
 
+        syncGyosuanView();
+
     } else {
 
         renderView.classList.remove('hidden');
@@ -2991,6 +2859,8 @@ window.toggleEditorMode = function (mode) {
         btnEdit.classList.remove('bg-white', 'text-gray-800', 'shadow-sm');
 
         btnEdit.classList.add('text-gray-500');
+
+        syncGyosuanView();
 
 
 
@@ -3721,40 +3591,46 @@ window.executeFormatConvert = function () {
 };
 
 // ─── v8: 강사/학생/분할 3모드 뷰 토글 ───
-function toggleViewMode() {
-    const btn = document.getElementById('view-mode-toggle');
-    // 순환: 강사 → 학생 → 분할 → 강사
-    if (window.viewMode === 'instructor') {
-        window.viewMode = 'student';
-        document.body.classList.add('student-view');
-        document.body.classList.remove('instructor-view', 'split-view');
-        destroySplitView();
-        if (btn) {
-            btn.innerHTML = '🎓 학생뷰';
-            btn.className = 'px-3 py-1.5 text-xs font-bold rounded-lg border-2 border-emerald-400 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-500 shadow-sm transition-all flex items-center gap-1';
-            btn.title = '강사/학생/분할 뷰 전환 — 현재: 학생뷰 (강사 가이드 숨김)';
-        }
-    } else if (window.viewMode === 'student') {
-        window.viewMode = 'split';
-        document.body.classList.remove('student-view', 'instructor-view');
-        document.body.classList.add('split-view');
-        createSplitView();
-        if (btn) {
-            btn.innerHTML = '📖 분할뷰';
-            btn.className = 'px-3 py-1.5 text-xs font-bold rounded-lg border-2 border-amber-400 bg-amber-50 text-amber-700 hover:bg-amber-100 hover:border-amber-500 shadow-sm transition-all flex items-center gap-1';
-            btn.title = '강사/학생/분할 뷰 전환 — 현재: 분할뷰 (좌:학생 / 우:강사)';
-        }
-    } else {
-        window.viewMode = 'instructor';
-        document.body.classList.remove('student-view', 'split-view');
-        document.body.classList.add('instructor-view');
-        destroySplitView();
-        if (btn) {
-            btn.innerHTML = '👨‍🏫 강사뷰';
-            btn.className = 'px-3 py-1.5 text-xs font-bold rounded-lg border-2 border-purple-400 bg-purple-50 text-purple-700 hover:bg-purple-100 hover:border-purple-500 shadow-sm transition-all flex items-center gap-1';
-            btn.title = '강사/학생/분할 뷰 전환 — 현재: 강사뷰 (강사 가이드 표시)';
-        }
+const VIEW_MODES = {
+    instructor: {
+        next: 'student',
+        label: '👨‍🏫 강사뷰',
+        title: '현재: 강사뷰 (교수안 표시)',
+        className: 'px-3 py-1.5 text-xs font-bold rounded-lg border-2 border-purple-400 bg-purple-50 text-purple-700 hover:bg-purple-100 hover:border-purple-500 shadow-sm transition-all flex items-center gap-1'
+    },
+    student: {
+        next: 'split',
+        label: '🎓 학생뷰',
+        title: '현재: 학생뷰 (교안 표시)',
+        className: 'px-3 py-1.5 text-xs font-bold rounded-lg border-2 border-emerald-400 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-500 shadow-sm transition-all flex items-center gap-1'
+    },
+    split: {
+        next: 'instructor',
+        label: '📖 분할뷰',
+        title: '현재: 분할뷰 (좌:교안 / 우:교수안)',
+        className: 'px-3 py-1.5 text-xs font-bold rounded-lg border-2 border-amber-400 bg-amber-50 text-amber-700 hover:bg-amber-100 hover:border-amber-500 shadow-sm transition-all flex items-center gap-1'
     }
+};
+
+function applyViewMode(mode) {
+    const view = VIEW_MODES[mode];
+    window.viewMode = mode;
+    document.body.classList.toggle('student-view', mode === 'student');
+    document.body.classList.toggle('instructor-view', mode === 'instructor');
+    document.body.classList.toggle('split-view', mode === 'split');
+    if (mode === 'split') createSplitView();
+    else destroySplitView();
+    const btn = document.getElementById('view-mode-toggle');
+    if (btn) {
+        btn.innerHTML = view.label;
+        btn.className = view.className;
+        btn.title = `강사/학생/분할 뷰 전환 — ${view.title}`;
+    }
+    syncGyosuanView();
+}
+
+function toggleViewMode() {
+    applyViewMode(VIEW_MODES[window.viewMode]?.next || 'instructor');
 }
 
 // ─── v8: 분할 뷰 생성/해제 ───
@@ -3771,7 +3647,7 @@ function createSplitView() {
     container.id = 'split-view-container';
     container.className = 'split-view-container';
 
-    // 왼쪽: 수강생 뷰 (강사 callout은 CSS로 투명화 + 공간 유지)
+    // 왼쪽: 수강생 뷰
     const leftPane = document.createElement('div');
     leftPane.className = 'split-view-pane split-student-pane';
     leftPane.id = 'split-left';
@@ -3779,19 +3655,22 @@ function createSplitView() {
         '<div class="split-view-label student">📘 수강생 뷰</div>' +
         '<div class="split-pane-content"><div class="markdown-body">' + renderView.innerHTML + '</div></div>';
 
-    // 오른쪽: 강사 뷰 (스크립트 포함)
+    // 오른쪽: 강사 뷰 (교수안, 없으면 스크립트가 포함된 교안)
+    const gyosuanHtml = gyosuanDocHtml(getEditingModule());
     const rightPane = document.createElement('div');
     rightPane.className = 'split-view-pane';
     rightPane.id = 'split-right';
     rightPane.innerHTML =
-        '<div class="split-view-label instructor">📙 강사 뷰 (스크립트 포함)</div>' +
-        '<div class="split-pane-content"><div class="markdown-body">' + renderView.innerHTML + '</div></div>';
+        '<div class="split-view-label instructor">📙 강사 뷰 (교수안)</div>' +
+        '<div class="split-pane-content">' + (gyosuanHtml
+            ? '<div class="gyosuan-view">' + gyosuanHtml + '</div>'
+            : '<div class="markdown-body">' + renderView.innerHTML + '</div>') + '</div>';
 
     container.appendChild(leftPane);
     container.appendChild(rightPane);
     parent.insertBefore(container, renderView);
 
-    // 동기 스크롤 (pixel-based — 같은 높이이므로 1:1)
+    // 동기 스크롤 (pixel-based — 같은 높이이므로 1:1). 교수안은 교안과 분량이 달라 스크롤을 묶지 않는다
     let syncing = false;
     const syncScroll = (source, target) => {
         if (syncing) return;
@@ -3801,8 +3680,10 @@ function createSplitView() {
     };
     leftPane._scrollHandler = () => syncScroll(leftPane, rightPane);
     rightPane._scrollHandler = () => syncScroll(rightPane, leftPane);
-    leftPane.addEventListener('scroll', leftPane._scrollHandler, { passive: true });
-    rightPane.addEventListener('scroll', rightPane._scrollHandler, { passive: true });
+    if (!gyosuanHtml) {
+        leftPane.addEventListener('scroll', leftPane._scrollHandler, { passive: true });
+        rightPane.addEventListener('scroll', rightPane._scrollHandler, { passive: true });
+    }
 
     // Mermaid 재렌더링
     if (window.mermaid) {

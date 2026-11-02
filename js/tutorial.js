@@ -82,7 +82,7 @@ AI가 생성한 교안을 확인하고 편집하는 핵심 영역입니다.<br><
 • <strong>보기/수정</strong> — 마크다운 직접 편집 가능<br>
 • <strong>강사/학생 뷰</strong> — 강사 전용 코멘트 표시/숨김<br>
 • <strong>보강 재생성</strong> — 추가 명령으로 내용 개선<br>
-• <strong>슬라이드</strong> — 교안을 슬라이드로 미리보기/수정/내려받기<br>
+• <strong>슬라이드</strong> — 교안으로 만든 슬라이드를 편집하고 PPTX·HTML로 내보내기<br>
 • <strong>이미지 저장</strong> — 교안 이미지를 JPG로 일괄 다운로드`,
         position: 'left'
     }

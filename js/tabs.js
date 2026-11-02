@@ -33,6 +33,7 @@ function renderTabBar(mod) {
 
 function switchLessonTab(tabId) {
     currentLessonTab = tabId;
+    if (window.viewMode === 'instructor') window.viewMode = 'student';
     const mod = getEditingModule();
     if (mod) renderEditor(mod);
 }
@@ -61,6 +62,7 @@ function migrateMonolithicContent(mod) {
 async function generateTabContent(moduleId, tabId) {
     const mod = getEditingModule(moduleId);
     if (!mod) return;
+    showLessonView();
 
     const tabMeta = LESSON_TABS.find(t => t.id === tabId);
     if (!tabMeta) return;
@@ -112,12 +114,8 @@ async function generateTabContent(moduleId, tabId) {
 
         setLoadingText(`📝 ${tabMeta.label} 작성 중입니다... (1/${MAX_CHUNKS} 단락)`);
 
-        // 강사 callout 4항목 구조를 안정적으로 유도하기 위해 Few-Shot 예시 turn을 contents 앞에 주입
-        // (규칙·예시 텍스트만으로는 모델이 "강사 스크립트"를 말하기 대본으로 출력하는 prior를 못 이김)
-        const calloutFewshot = (typeof CALLOUT_FORMAT_FEWSHOT !== 'undefined') ? CALLOUT_FORMAT_FEWSHOT : [];
-
         const firstPayload = {
-            contents: [...calloutFewshot, { role: 'user', parts: [{ text: userPrompt }] }],
+            contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
             systemInstruction: { parts: [{ text: systemInstruction }] },
             generationConfig: { maxOutputTokens: 65536 }
         };
@@ -142,11 +140,8 @@ async function generateTabContent(moduleId, tabId) {
 
             await new Promise(r => setTimeout(r, 1500));
 
-            // 이어쓰기 청크에도 few-shot을 재주입한다. (텍스트 규칙만으로는 모델이 "강사 스크립트"를
-            // 말하기 대본(narration)으로 회귀하므로, 모든 청크가 4항목 구조를 유지하려면 few-shot이 필요.
-            // 첫 청크에만 넣으면 후반 섹션이 narration으로 깨지는 문제가 있어 형식 일관성을 위해 토큰을 감수.)
             const contPayload = {
-                contents: [...calloutFewshot, { role: 'user', parts: [{ text: cont.userPrompt }] }],
+                contents: [{ role: 'user', parts: [{ text: cont.userPrompt }] }],
                 systemInstruction: { parts: [{ text: cont.systemInstruction }] },
                 generationConfig: { maxOutputTokens: 65536 }
             };
@@ -184,7 +179,7 @@ async function generateTabContent(moduleId, tabId) {
             .trimEnd();
 
         let resultText = fullText;
-        // 마크다운 정리 + 강사 callout 자동 래핑 (예상 소요 등이 학생뷰에 노출되지 않도록)
+        // 마크다운 정리
         if (typeof sanitizeMarkdownContent === 'function') {
             resultText = sanitizeMarkdownContent(resultText);
         }
@@ -243,6 +238,7 @@ async function generateTabContent(moduleId, tabId) {
 }
 
 async function generateAllTabs(moduleId) {
+    showLessonView();
     _suppressTabAlert = true;
     const total = LESSON_TABS.length;
     // 프로그레스 바 생성
