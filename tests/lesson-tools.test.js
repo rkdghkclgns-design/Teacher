@@ -5,7 +5,7 @@ const vm = require('vm');
 const path = require('path');
 const assert = require('assert');
 const root = path.join(__dirname, '..', 'js') + path.sep;
-const FILES = ['kbuilder/ncs-catalog.js', 'lesson-lint.js', 'course-ncs.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'course-art.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js', 'course-refs.js'];
+const FILES = ['kbuilder/ncs-catalog.js', 'lesson-lint.js', 'course-ncs.js', 'course-ncs-ref.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'course-elements.js', 'course-list.js', 'course-art.js', 'course-illustrations.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js', 'course-refs.js'];
 
 function makeContext(callGemini, keys = { gemini: '' }) {
     const ctx = {
@@ -140,20 +140,22 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
         assert.strictEqual(same.history.length, 1, '변경이 없으면 이력을 늘리지 않음');
     });
 
-    await run('능력단위요소: 목록 안에서만 추천', async () => {
+    await run('능력단위요소: 등록한 요소를 참조 목록으로 추천', async () => {
         const prompts = [];
         const aiCtx = makeContext(async (m, p) => {
             prompts.push(p.contents[0].parts[0].text);
-            return reply([{ index: 2, fit: 88, reason: '근거' }, { index: 9, fit: 99, reason: '없는 번호' }, { index: 1, fit: 40, reason: '낮음' }]);
+            return reply({ recs: [
+                { unitCode: 'U1', unitName: '단위', elementCode: 'E2', elementName: '요소 둘', fit: 88, covers: [1], reason: '근거' },
+                { unitCode: 'U1', unitName: '단위', elementCode: 'E1', elementName: '요소 하나', fit: 40, covers: [], reason: '낮음' }
+            ], note: '메모' });
         }, { gemini: 'k' });
         aiCtx.globalState.ncsElements = { U1: [{ code: 'E1', name: '요소 하나' }, { code: 'E2', name: '요소 둘' }] };
+        aiCtx.globalState.ncsCustomUnits = [{ code: 'U1', name: '단위', level: 3, path: ['', '', '', '직접 추가'], verified: true, custom: true }];
         const subject = { title: '교과', ncs: { units: [{ code: 'U1', name: '단위' }] } };
-        const options = vm.runInContext('subjectElementOptions', aiCtx)(subject);
-        const recs = await vm.runInContext('recommendLessonElements', aiCtx)(subject, { title: '차시' }, options);
-        assert.deepStrictEqual(plain(recs).map(rec => rec.option.code), ['E2', 'E1']);
-        assert.deepStrictEqual(plain(vm.runInContext('pickLessonElements', aiCtx)(recs)).map(option => option.code), ['E2'], '적합도 70 미만은 고르지 않음');
-        assert.ok(prompts[0].includes('2 | 단위 | E2 요소 둘'));
-        await assert.rejects(call('recommendLessonElements')(subject, { title: '차시' }, []), /먼저 등록/);
+        const { recs } = await vm.runInContext('recommendLessonElements', aiCtx)(subject, { title: '차시', objectives: ['목표'] });
+        assert.deepStrictEqual(plain(recs).map(rec => rec.elementCode), ['E2', 'E1']);
+        assert.deepStrictEqual(plain(vm.runInContext('pickLessonElements', aiCtx)(recs)).map(rec => rec.elementCode), ['E2'], '적합도 70 미만은 고르지 않음');
+        assert.ok(prompts[0].includes('  - E2|요소 둘'));
     });
 
     await run('필터: 상태와 검색', async () => {

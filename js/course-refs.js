@@ -1,4 +1,4 @@
-// course-refs.js - 참고 자료 읽기 보조: 이미지·스캔 PDF 글자 판독, 쪽 범위 선택
+// course-refs.js - 참고 자료 읽기 보조: 이미지·스캔 PDF 글자 판독, 쪽 범위 선택, 인코딩, 전달 분량, 추출 글자 보기
 // develocket-slide(assets/course-refs.js, course-ai-tb.js @3a7303f)의 판독과 쪽 범위 선택을 옮겼다.
 
 const REF_TRANSCRIBE_BATCH = 4;
@@ -7,10 +7,23 @@ const REF_SCAN_SCALE = 1.5;
 const REF_MAX_PAGE = 1000;
 const REF_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp'];
 const REF_PAGE_LABEL = /^\[(?:p\.|Slide\s*)(\d+)\]/;
+const REF_PAGE_SPLIT = /\n\n(?=\[(?:p\.|Slide\s*)\d+\])/;
+// 일괄 생성이 AI에 보내는 참고 자료 글자 수. 앞에서부터 잘라 보낸다.
+const REF_OUTLINE_CHARS = 3000;
+const REF_LESSON_CHARS = 2000;
 
 function dataUrlToInline(dataUrl) {
     const [head, data] = String(dataUrl).split(',');
     return { mimeType: (head.match(/data:([^;]+)/) || [])[1] || 'image/png', data };
+}
+
+// UTF-8로 읽고, 깨지면 CP949로 다시 읽는다. 한글 윈도우 메모장의 ANSI 저장 파일이 여기에 해당한다.
+function decodeTextBuffer(buffer) {
+    try {
+        return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+    } catch (err) {
+        return new TextDecoder('euc-kr').decode(buffer);
+    }
 }
 
 async function pdfPageToInline(pdf, pageNumber) {
@@ -95,7 +108,7 @@ function parsePageRange(text) {
 }
 
 function selectPages(content, pages) {
-    return String(content).split(/\n\n(?=\[(?:p\.|Slide\s*)\d+\])/)
+    return String(content).split(REF_PAGE_SPLIT)
         .filter(block => pages.has(Number((block.match(REF_PAGE_LABEL) || [])[1])))
         .join('\n\n');
 }
@@ -114,4 +127,66 @@ window.setBatchFileRange = function (index, value) {
     syncBatchLegacyVars();
     const pages = parsePageRange(value);
     if (value.trim() && (!pages.size || !selectPages(file.content, pages))) window.showToast?.('해당하는 쪽이 없어 전체 내용을 사용합니다.', 'warning');
+};
+
+/* ---------- 전달 분량 ---------- */
+// 잘리는 분량을 미리 보여 준다. 잘린 뒷부분은 AI가 보지 못한다.
+function refBudget(total) {
+    const share = limit => (total ? Math.round(Math.min(total, limit) / total * 100) : 100);
+    return { total, outline: Math.min(total, REF_OUTLINE_CHARS), lesson: Math.min(total, REF_LESSON_CHARS), outlineShare: share(REF_OUTLINE_CHARS), lessonShare: share(REF_LESSON_CHARS), cut: total > REF_LESSON_CHARS };
+}
+
+function refMeterHtml(budget) {
+    const count = number => number.toLocaleString();
+    const text = budget.cut
+        ? `추출한 ${count(budget.total)}자 가운데 AI에 보내는 분량: 목차 설계 ${count(budget.outline)}자(${budget.outlineShare}%), 차시마다 ${count(budget.lesson)}자(${budget.lessonShare}%). 앞부분만 보내므로 쪽 범위로 필요한 부분을 골라주세요.`
+        : `추출한 ${count(budget.total)}자를 모두 AI에 보냅니다.`;
+    return `
+        <div class="h-1 rounded bg-white/10 overflow-hidden"><div class="h-full ${budget.cut ? 'bg-amber-400' : 'bg-emerald-400'}" style="width:${budget.lessonShare}%"></div></div>
+        <p class="mt-1 text-[0.6rem] ${budget.cut ? 'text-amber-300' : 'text-textMuted'}">${text}</p>`;
+}
+
+function renderRefMeter() {
+    const meter = document.getElementById('batch-ref-meter');
+    if (!meter) return;
+    meter.innerHTML = batchUploadedFileContent ? refMeterHtml(refBudget(cleanForAPI(batchUploadedFileContent).length)) : '';
+}
+
+/* ---------- 파일별 추출 글자 보기 ---------- */
+// 쪽 범위에 든 블록을 표시한다. 범위가 없거나 맞는 쪽이 없으면 전체가 쓰인다.
+function refContentBlocks(content, rangeText) {
+    const pages = parsePageRange(rangeText);
+    const useAll = !pages.size || !selectPages(content, pages);
+    return String(content).split(REF_PAGE_SPLIT).map(text => ({
+        text, included: useAll || pages.has(Number((text.match(REF_PAGE_LABEL) || [])[1]))
+    }));
+}
+
+function batchFileToolsHtml(file, index) {
+    if (file.status !== 'ok') return '';
+    const range = hasPageLabels(file.content) ? `<input value="${escapeHtml(file.pageRange || '')}" onchange="setBatchFileRange(${index}, this.value)" placeholder="쪽 범위 (예: 1-5, 9)" class="mt-1 w-32 px-1.5 py-0.5 text-[0.6rem] bg-black/30 border border-white/10 rounded text-white">` : '';
+    return `${range}<button type="button" onclick="viewBatchFile(${index})" class="ml-1 text-[0.6rem] underline text-textMuted hover:text-white">글자 보기</button>`;
+}
+
+window.viewBatchFile = function (index) {
+    const file = batchUploadedFiles[index];
+    if (!file || document.getElementById('ref-view-dialog')) return;
+    const blocks = refContentBlocks(file.content, file.pageRange).map(block => `
+        <pre class="whitespace-pre-wrap text-[0.65rem] text-textLight p-2 rounded border ${block.included ? 'border-accent/60' : 'border-white/10 opacity-50'}">${escapeHtml(block.text || '(글자 없음)')}</pre>`).join('');
+    const overlay = document.createElement('div');
+    overlay.id = 'ref-view-dialog';
+    overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9000]';
+    overlay.innerHTML = `
+        <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[640px] max-h-[84vh] flex flex-col shadow-2xl">
+            <div class="p-4 border-b border-white/10 flex items-start gap-2">
+                <div class="min-w-0"><h2 class="text-sm font-bold text-textLight truncate">${escapeHtml(file.name)}</h2>
+                    <p class="text-[0.65rem] text-textMuted mt-1">뽑아낸 글자 ${String(file.content || '').length.toLocaleString()}자입니다. 쓰는 범위는 파란 테두리로 표시합니다. 잘못 읽힌 곳이 많으면 다른 형식으로 올려주세요.</p></div>
+                <button data-ref-view-close class="ml-auto px-3 py-1 text-xs font-bold text-textLight bg-white/10 rounded hover:bg-white/20">닫기</button>
+            </div>
+            <div class="flex-1 overflow-y-auto p-4 space-y-2">${blocks}</div>
+        </div>`;
+    overlay.addEventListener('click', event => {
+        if (event.target === overlay || event.target.dataset?.refViewClose !== undefined) overlay.remove();
+    });
+    document.body.appendChild(overlay);
 };
