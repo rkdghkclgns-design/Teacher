@@ -50,7 +50,7 @@ body {
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
-}/* 우상단 교과목 NCS 코드 */
+}
 
 .btn {
   font-family: var(--font-ui);
@@ -92,7 +92,9 @@ body {
 /* ============================================================
    결과 영역 + 탭
    ============================================================ */
-.result { flex: 1; flex-direction: column; overflow: hidden; }/* 화면 전환 (data-screen) */
+.result { flex: 1; flex-direction: column; overflow: hidden; }
+
+/* 화면 전환 (data-screen) */
 
 .intro, .review, .result { display: none; }
 .app[data-screen="intro"] .intro { display: flex; }
@@ -165,21 +167,20 @@ body {
   position: absolute; bottom: 18px; right: 22px;
   color: #fff; font-weight: 700; font-size: 13px; background: rgba(0,0,0,.32);
   padding: 6px 14px; border-radius: 999px; z-index: 10; font-variant-numeric: tabular-nums;
-}/* ---- 공통 슬라이드 요소 ---- */
-/* 흐름 칩 */
-/* 칩 나열 */
-/* 단계 (numbered) */
-/* 핵심 메시지 푸터 */
-/* 이미지 제안 카드 */
-/* 활동 배지 */
+}
+
 /* ---- 표지 ---- */
 
 .cover-course { display: inline-block; font-size: 30px; font-weight: 700; color: var(--maple-deep); background: rgba(255,255,255,.7); padding: 10px 26px; border-radius: 999px; margin-bottom: 30px; }
 .cover-title { font-family: var(--font-display); font-size: 150px; line-height: 1.04; margin: 0; color: var(--ink); letter-spacing: -.03em; text-shadow: 0 4px 0 rgba(255,255,255,.5); }
-.cover-sub { font-size: 46px; color: #2c5478; margin: 28px 0 0; font-weight: 600; }/* ---- 목차 ---- */
+.cover-sub { font-size: 46px; color: #2c5478; margin: 28px 0 0; font-weight: 600; }
+
+/* ---- 목차 ---- */
 /* ---- 클로징 ---- */
 
-.closing-title { font-family: var(--font-display); font-size: 100px; line-height: 1.1; margin: 0 0 30px; color: var(--ink); letter-spacing: -.02em; }/* ---- 슬라이드 등장 애니메이션 ---- */
+.closing-title { font-family: var(--font-display); font-size: 100px; line-height: 1.1; margin: 0 0 30px; color: var(--ink); letter-spacing: -.02em; }
+
+/* ---- 슬라이드 등장 애니메이션 ---- */
 
 @keyframes slideUp { from { opacity: 0; transform: translateY(22px); } to { opacity: 1; transform: none; } }
 

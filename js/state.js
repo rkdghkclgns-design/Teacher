@@ -479,9 +479,9 @@ async function renderHistoryUI(area) {
     lastHistoryIdx = -1;
 
     area.innerHTML = `
-        <div class="max-w-[800px] mx-auto p-8 flex flex-col h-full animate-fade-in bg-[#12121e]" style="min-height:100%;">
-            <div class="flex justify-between items-end mb-6">
-                <h2 class="text-2xl font-bold text-white/90 flex items-center gap-2"><i class="ph-bold ph-clock-counter-clockwise text-accent"></i> 교안 아카이브 (히스토리)</h2>
+        <div class="p-2 flex flex-col h-full animate-fade-in bg-[#12121e]" style="min-height:100%;">
+            <div class="flex flex-wrap justify-between items-center gap-2 mb-3">
+                <h2 class="text-sm font-bold text-white/90 flex items-center gap-2"><i class="ph-bold ph-clock-counter-clockwise text-accent"></i> 교안 아카이브 (히스토리)</h2>
                 <div class="text-xs text-textMuted bg-black/30 px-3 py-1.5 rounded-lg border border-white/10 flex items-center gap-2" id="history-capacity-info">
                     <i class="ph ph-spinner animate-spin"></i> DB 용량 계산중...
                 </div>
