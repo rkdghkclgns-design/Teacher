@@ -422,6 +422,19 @@ const LESSON_MD = [
         assert.strictEqual(toasts.length, 0, '성공 알림을 띄우지 않는다');
     });
 
+    await run('전체 생성: 교수안이 실패해도 문제은행은 만든다', async () => {
+        const lesson = { id: 1, title: '재미', tabContents: { basicLearn: '## 학습 목표\n\n- 비교할 수 있습니다.', basicPrac: '- 내용', advLearn: '- 내용', advPrac: '- 내용', assessment: '- 내용' } };
+        ctx.globalState.subjects = [{ id: 's1', title: '기획', lessons: [lesson] }];
+        ctx.courseData = ctx.globalState.subjects[0].lessons;
+        ctx.alerts.length = 0;
+        ctx.runGyosuanGeneration = async () => ({ ok: false, error: '호출 한도' });
+        const asked = [];
+        ctx.generateQuestions = async (mod, spec) => { asked.push(spec.objective); return []; };
+        await call('runLessonPipeline')(1);
+        assert.deepStrictEqual(asked, [1]);
+        assert.ok(ctx.alerts.at(-1).includes('호출 한도') && !ctx.alerts.at(-1).includes('건너뛴'));
+    });
+
     await run('전체 생성: 만드는 차시에만 진행 표시를 한다', async () => {
         ctx.globalState.subjects = [{ id: 's1', title: '기획', lessons: [{ id: 1, title: '재미', tabContents: {} }] }];
         ctx.courseData = ctx.globalState.subjects[0].lessons;
@@ -450,6 +463,9 @@ const LESSON_MD = [
         keep(['- 5~10분 안에 장애 원인을 찾아야 합니다.']);
         keep(['| 구분 | 설명 |', '|---|---|', '| 가 | 나 |']);
         keep(['| 응답 시간 | 설명 |', '|---|---|', '| 2초 | 나 |']);
+        keep(['| 분류 | 설명 |', '|---|---|', '| 가 | 나 |']);
+        keep(['| 시간복잡도 | 설명 |', '|---|---|', '| O(n) | 나 |']);
+        assert.ok(!clean(['## 개요', '', '| 시간 | 주제 |', '|---|---|', '| 0~30분 | 개념 |', '', '## 구조', '', '- 내용입니다.'].join('\n')).includes('## 개요'), '시간표뿐인 개요는 제목도 뺀다');
         keep(['- **문제 상황**', '    - 응답이 2배로 늘어납니다.']);
         const coded = ['## 개요', '', '- 문제입니다.', '', '```text', '- 0~10분: 준비', '| 시간 | 주제 |', '```'].join('\n');
         assert.strictEqual(clean(coded), coded);

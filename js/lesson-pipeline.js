@@ -118,7 +118,8 @@ function pipelineSummary(run) {
         run.skipped.length ? `교안 탭이 모두 있어야 해서 건너뛴 항목: ${run.skipped.join(', ')}` : '',
         run.partial.length ? `일부 내용이 빠졌을 수 있는 항목: ${run.partial.join(', ')}` : ''
     ].filter(Boolean);
-    if (notes.length) return { alert: `${notes.join('\n\n')}\n\n이 차시에서 전체 생성을 다시 누르면 빠진 항목만 만듭니다.` };
+    const retry = run.moved || run.failed.length || run.skipped.length ? '이 차시에서 전체 생성을 다시 누르면 빠진 항목만 만듭니다.' : '내용이 빠진 탭은 해당 탭에서 다시 생성해주세요.';
+    if (notes.length) return { alert: `${notes.join('\n\n')}\n\n${retry}` };
     return run.stopped ? { toast: '전체 생성을 중지했습니다. 만든 내용은 저장했습니다.', kind: 'warning' } : { toast: '전체 생성을 마쳤습니다.', kind: 'success' };
 }
 
@@ -159,7 +160,7 @@ window.runLessonPipeline = async function (moduleId, { lockedByTab = {}, continu
             run.moved = !mod && !run.stopped;
             if (!mod || run.stopped) break;
             if (!steps[i].needed(mod)) continue;
-            if (steps[i].afterTabs && run.failed.length) {
+            if (steps[i].afterTabs && lessonMissingTabs(mod).length) {
                 run.skipped.push(steps[i].label);
                 continue;
             }

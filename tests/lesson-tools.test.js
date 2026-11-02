@@ -302,6 +302,8 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
         assert.ok(csv.includes("'=차시"), '수식 실행 방지');
         assert.ok(csv.includes('"해설 문장\n여러 줄 해설"'));
         assert.ok(csv.includes('검수 통과'));
+        assert.ok(call('questionsCsv')(questions, ['목표 하나'], { subject: '교과', lesson: '차시', checklist: [] }).includes('위반 1건'), '없는 목표 번호는 CSV에서도 위반');
+        assert.ok(!call('questionsCsv')(questions, [], { subject: '교과', lesson: '차시', checklist: [] }).includes('위반'), '목표를 모르면 번호 범위는 보지 않는다');
     });
 
     await run('문제은행: AI 생성은 검수 지적을 한 번 고쳐 받음', async () => {

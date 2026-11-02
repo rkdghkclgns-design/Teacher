@@ -6,7 +6,7 @@
 const OPENING_IMAGE_LINE = /<!--\s*\[IMG:|^\s*!\[[^\]]*\]\(|<div class="image-(?:wrapper|placeholder)"/;
 const OPENING_TIME_LINE = /^\s*[-*]\s+\**\s*\d+\s*분?\s*[~∼～-]\s*\d+\s*분/;
 const OPENING_TIME_HEAD = /^\s*(?:#{3,6}\s*|\*\*)?\s*(?:타임\s*테이블|시간표|시간\s*배분|수업\s*흐름)\s*(?:\*\*)?\s*:?\s*(?:\*\*)?\s*$/;
-const OPENING_TIME_TABLE = /^\s*\|\s*(?:시간|소요\s*시간|분|구간|타임)[^|]*\|/;
+const OPENING_TIME_TABLE = /^\s*\|\s*(?:시간|소요\s*시간|분|구간|타임\s*테이블)\s*(?:\([^)|]*\))?\s*\|/;
 const OPENING_KEYWORD_LINE = /^\s*[-*]\s+\*\*[^*]+\*\*\s*:?\s*$/;
 const OPENING_FILLER_LINE = /^\s*(?:$|[-*+]\s|\d+[.)]\s|\||<br|\*\*[^*]+\*\*\s*:?\s*$)/;
 const OPENING_GAP_LINE = /^\s*(?:<br\s*\/?>\s*)*$/;
@@ -83,9 +83,10 @@ function withoutKeywordGroups(lines) {
 
 const hasOverviewBody = lines => lines.slice(1).some(line => !OPENING_GAP_LINE.test(line));
 
-// 특징 묶음밖에 없는 개요는 비우지 않고 남긴다. 예전 프롬프트가 개요를 이 형식으로 쓰게 했다
+// 특징 묶음밖에 없는 개요는 비우지 않고 남긴다. 예전 프롬프트가 개요를 이 형식으로 쓰게 했다. 시간표뿐이면 제목도 뺀다
 function cleanedOverview(lines) {
     const noTable = withoutTimeTable(withoutImages(lines));
+    if (!hasOverviewBody(noTable)) return [];
     const noGroups = withoutKeywordGroups(noTable);
     return withoutRepeatedGaps(hasOverviewBody(noGroups) ? noGroups : noTable);
 }

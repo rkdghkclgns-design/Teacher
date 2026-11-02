@@ -231,7 +231,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         // 진행도 표기: 로딩 오버레이의 안내 문구를 단계별로 갱신해 사용자가 현재 진행 상황을 알 수 있게 함
         const setLoadingText = (txt) => {
             const el = document.getElementById('editor-loading-text');
-            if (el) el.textContent = txt;
+            if (el && !opts.background) el.textContent = txt; // 다른 작업이 쓰는 로딩 문구를 건드리지 않는다
             opts.onStatus?.(txt);
         };
 

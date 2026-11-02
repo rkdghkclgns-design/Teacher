@@ -38,6 +38,7 @@ const GYOSUAN_STOP_LABELS = { idle: '교수안 생성 중지', pending: '받고 
 
 let _gyosuanRunning = false;
 let _gyosuanOnStatus = null;
+let _gyosuanBackground = false;
 let _gyosuanEditing = null; // 강사뷰에서 MD를 고치는 중인 { id, field }
 let _gyosuanSaveTimer = null;
 
@@ -415,7 +416,7 @@ function assembleGyosuanDeck(info, meta, results) {
 /* ---------- 생성 진입점 ---------- */
 function setGyosuanProgress(text) {
     const el = document.getElementById('editor-loading-text');
-    if (el) el.textContent = text;
+    if (el && !_gyosuanBackground) el.textContent = text; // 화면을 막지 않을 때는 다른 작업의 문구를 건드리지 않는다
     _gyosuanOnStatus?.(text);
 }
 
@@ -529,6 +530,7 @@ async function runGyosuanGeneration(moduleId, opts = {}) {
 
     _gyosuanRunning = true;
     _gyosuanOnStatus = opts.onStatus || null;
+    _gyosuanBackground = !!opts.background;
     if (loading && !opts.background) loading.style.display = 'flex';
     if (!opts.background) window.beginGenerationStop?.(GYOSUAN_STOP_LABELS);
     try {
@@ -554,6 +556,7 @@ async function runGyosuanGeneration(moduleId, opts = {}) {
     } finally {
         _gyosuanRunning = false;
         _gyosuanOnStatus = null;
+        _gyosuanBackground = false;
         if (!opts.background) {
             if (loading) loading.style.display = 'none';
             window.endGenerationStop?.();

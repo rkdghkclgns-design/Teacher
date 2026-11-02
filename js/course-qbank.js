@@ -178,7 +178,7 @@ const QBANK_CSV_HEAD = ['번호', '교과', '차시', '목표번호', '학습목
 
 function questionCsvRows(questions, objectives, context) {
     return questions.map(q => {
-        const issues = lintQuestion(q, context.checklist);
+        const issues = lintQuestion(q, context.checklist, objectives.length || Infinity);
         return [
             q.no, context.subject, context.lesson, q.objective ?? '', (q.objective && objectives[q.objective - 1]) || '', q.band, q.type, q.multi ? 'Y' : '', q.title, q.stem,
             ...Array.from({ length: 5 }, (_, i) => q.choices[i]?.text ?? ''), q.answer, q.accepted, q.rubric, q.code, q.tests, q.explanation, q.review, issues.length ? `위반 ${issues.length}건` : '검수 통과'
@@ -306,7 +306,7 @@ async function draftQuestions(mod, spec) {
     const draft = await askQuestionModel(prompt);
     const first = parseGeneratedQuestions(draft, spec);
     if (!first.length) throw new Error('문항을 읽지 못했습니다. 다시 생성해주세요.');
-    const issues = first.flatMap(q => lintQuestion(q, checklist).map(msg => `- ${q.title}: ${msg}`));
+    const issues = first.flatMap(q => lintQuestion(q, checklist, objectives.length || Infinity).map(msg => `- ${q.title}: ${msg}`));
     if (!issues.length) return first;
     const repaired = parseGeneratedQuestions(await askQuestionModel(`${prompt}\n\n[초안]\n${draft}\n\n[자동 검수 지적]\n${issues.join('\n')}\n\n지적을 모두 고친 전체 문항을 같은 형식으로 다시 출력합니다.`), spec);
     return repaired.length === first.length ? repaired : first;
