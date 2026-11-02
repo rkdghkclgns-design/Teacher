@@ -813,6 +813,10 @@
                     class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent transition-all appearance-none cursor-pointer"
                     style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22%238a8ab5%22><path d=%22M7 10l5 5 5-5z%22/></svg>');background-repeat:no-repeat;background-position:right 10px center;">
                 </select>
+                <label class="flex items-center gap-2 text-[0.55rem] text-textMuted/70 mt-1">
+                    <input type="checkbox" id="settings-auto-task-effort" onchange="updateAutoTaskEffort(this.checked)">
+                    보조 작업은 낮은 강도로 실행 (NCS·문항·판독, 교안 본문은 위 설정 유지)
+                </label>
                 <p class="text-[0.55rem] text-textMuted/50 mt-1">높을수록 품질이 좋아지고 시간과 비용이 늘어납니다. Gemini는 '높음'이 상한입니다.</p>
             </div>
             <div>
@@ -1570,6 +1574,7 @@
                 // 모델 콤보박스 초기화
                 populateModelSelect('settings-text-model', typeof TEXT_MODEL_OPTIONS !== 'undefined' ? TEXT_MODEL_OPTIONS : [], typeof TEXT_MODEL !== 'undefined' ? TEXT_MODEL : '');
                 populateModelSelect('settings-image-model', typeof IMAGE_MODEL_OPTIONS !== 'undefined' ? IMAGE_MODEL_OPTIONS : [], typeof IMAGE_MODEL !== 'undefined' ? IMAGE_MODEL : '');
+                document.getElementById('settings-auto-task-effort').checked = AUTO_TASK_EFFORT;
                 populateModelSelect('settings-reasoning-effort', typeof REASONING_EFFORT_OPTIONS !== 'undefined' ? REASONING_EFFORT_OPTIONS : [], typeof REASONING_EFFORT !== 'undefined' ? REASONING_EFFORT : '');
 
                 // [Phase F10] 구글 검색 이미지 설정 초기화

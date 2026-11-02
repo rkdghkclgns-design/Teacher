@@ -468,6 +468,10 @@ let TEXT_MODEL = 'gemini-4-argon';
 let IMAGE_MODEL = 'gemini-nano-banana-2.1';
 // 추론 강도: Claude는 output_config.effort, Gemini는 thinkingLevel로 변환되어 적용
 let REASONING_EFFORT = 'max';
+// 보조 작업 강도 절감: 켜면 분류·판독처럼 정해진 형식의 작업만 낮춰 시간과 비용을 줄인다. 교안 본문은 항상 위 설정을 쓴다.
+// 작업 구분은 develocket-slide(assets/ai-client.js @3a7303f)의 역할별 강도를 따른다.
+let AUTO_TASK_EFFORT = false;
+const TASK_EFFORTS = { plan: 'medium', review: 'medium', qgen: 'low', fast: 'low' };
 // 이미지 규격: 교안 레이아웃 기준 16:9. 4K는 교안 저장·내보내기 용량 부담이 커서 2K 사용
 const IMAGE_ASPECT_RATIO = '16:9';
 const IMAGE_SIZE = '2K';
@@ -515,6 +519,13 @@ function updateTextModel(val) {
 function updateImageModel(val) {
     if (val) { IMAGE_MODEL = val; try { localStorage.setItem('gemini_image_model', val); } catch (e) { } }
 }
+function updateAutoTaskEffort(enabled) {
+    AUTO_TASK_EFFORT = !!enabled;
+    try { localStorage.setItem('auto_task_effort', AUTO_TASK_EFFORT ? '1' : '0'); } catch (e) { }
+}
+function taskEffort(taskRole) {
+    return (AUTO_TASK_EFFORT && TASK_EFFORTS[taskRole]) || REASONING_EFFORT;
+}
 function updateReasoningEffort(val) {
     if (val) { REASONING_EFFORT = val; try { localStorage.setItem('reasoning_effort', val); } catch (e) { } }
 }
@@ -527,6 +538,7 @@ try {
     if (savedText && TEXT_MODEL_OPTIONS.some(o => o.value === savedText)) TEXT_MODEL = savedText;
     if (savedImage && IMAGE_MODEL_OPTIONS.some(o => o.value === savedImage)) IMAGE_MODEL = savedImage;
     if (savedEffort && REASONING_EFFORT_OPTIONS.some(o => o.value === savedEffort)) REASONING_EFFORT = savedEffort;
+    AUTO_TASK_EFFORT = localStorage.getItem('auto_task_effort') === '1';
 
     // [Phase F10] 구글 검색 상태 복원
     googleSearchCx = localStorage.getItem('google_search_cx') || '';

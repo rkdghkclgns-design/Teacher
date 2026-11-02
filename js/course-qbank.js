@@ -164,6 +164,7 @@ function buildQuestionPrompt(mod, spec, objectives, questions) {
 
 async function askQuestionModel(prompt) {
     const data = await callGemini(TEXT_MODEL, {
+        taskRole: 'qgen',
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         systemInstruction: { parts: [{ text: '평가 문항 출제 전문가로서 지정된 마크다운 형식만 출력합니다.' }] }
     });
@@ -194,6 +195,7 @@ async function crossReviewQuestions(mod, questions, objectives) {
     if (!model) return questions;
     try {
         const data = await callGemini(model, {
+            taskRole: 'review',
             contents: [{ role: 'user', parts: [{ text: buildReviewPrompt(mod, questions, objectives) }] }],
             systemInstruction: { parts: [{ text: '평가 문항 검수자로서 지정된 JSON만 출력합니다.' }] },
             generationConfig: { responseMimeType: 'application/json' }

@@ -182,6 +182,7 @@ function crossCheckModel() {
 
 async function askNcsJson(prompt, model = TEXT_MODEL) {
     const data = await callGemini(model, {
+        taskRole: 'plan',
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         systemInstruction: { parts: [{ text: 'NCS 기반 교육과정 설계 전문가로서 지정된 JSON만 출력합니다.' }] },
         generationConfig: { responseMimeType: 'application/json' }

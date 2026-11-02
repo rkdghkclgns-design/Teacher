@@ -30,6 +30,7 @@ function buildTranscribePrompt(count) {
 async function transcribeBatch(images) {
     if (!textModelHasKey()) throw new Error('이미지의 글자를 읽으려면 AI 키가 필요합니다.');
     const data = await callGemini(TEXT_MODEL, {
+        taskRole: 'fast',
         contents: [{ role: 'user', parts: [{ text: buildTranscribePrompt(images.length) }, ...images.map(inlineData => ({ inlineData }))] }],
         systemInstruction: { parts: [{ text: '문서의 글자를 그대로 옮겨 적는 판독 담당자로서 지정된 JSON만 출력합니다.' }] },
         generationConfig: { responseMimeType: 'application/json' }

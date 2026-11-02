@@ -463,6 +463,21 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
         assert.deepStrictEqual(inline, { mimeType: 'image/png', data: 'QUJD' });
     });
 
+    await run('작업별 추론 강도: 기본은 설정값 유지', async () => {
+        const settings = { window: {}, console: { warn() {} }, localStorage: { getItem: () => null, setItem() {} } };
+        vm.createContext(settings);
+        vm.runInContext(fs.readFileSync(root + 'data.js', 'utf8'), settings);
+        vm.runInContext(fs.readFileSync(root + 'claude.js', 'utf8'), settings);
+        const effort = name => vm.runInContext(`taskEffort(${JSON.stringify(name)})`, settings);
+        const request = role => vm.runInContext('buildClaudeRequest', settings)('claude-opus-5-5', { taskRole: role, contents: [{ role: 'user', parts: [{ text: '질문' }] }] });
+        assert.strictEqual(effort('fast'), 'max', '끄면 사용자의 최대 설정을 유지');
+        assert.strictEqual(request('fast').output_config.effort, 'max');
+        vm.runInContext('updateAutoTaskEffort(true)', settings);
+        assert.deepStrictEqual(['plan', 'review', 'qgen', 'fast', undefined].map(effort), ['medium', 'medium', 'low', 'low', 'max'], '교안 본문은 낮추지 않는다');
+        assert.strictEqual(request('qgen').output_config.effort, 'low');
+        assert.ok(!('taskRole' in request('qgen')), '앱 내부 값은 요청에 싣지 않는다');
+    });
+
     await run('AI 수정 비교', async () => {
         const html = call('wordDiffHtml')('재미를 매우 쉽게 설계합니다', '재미를 단계별로 설계합니다');
         assert.ok(html.includes('line-through">매우 쉽게</del>') && html.includes('단계별로</ins>') && html.includes('설계합니다'));

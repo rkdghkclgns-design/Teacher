@@ -267,12 +267,12 @@ async function fetchWithRetry(url, options, retries = 5, onRetry = null) {
 }
 
 // REASONING_EFFORT → Gemini thinkingLevel 변환 (Gemini는 HIGH가 상한)
-const GEMINI_THINKING_LEVELS = { max: 'HIGH', xhigh: 'HIGH', high: 'HIGH', medium: 'MEDIUM' };
+const GEMINI_THINKING_LEVELS = { max: 'HIGH', xhigh: 'HIGH', high: 'HIGH', medium: 'MEDIUM', low: 'LOW' };
 
 // thinkingConfig를 지원하지 않는 이미지 모델에 보내면 오류이므로 텍스트 모델에만 적용
-function withGeminiThinking(modelName, payload) {
+function withGeminiThinking(modelName, { taskRole, ...payload }) {
     if (!TEXT_MODEL_OPTIONS.some(o => o.value === modelName)) return payload;
-    const thinkingConfig = { thinkingLevel: GEMINI_THINKING_LEVELS[REASONING_EFFORT] };
+    const thinkingConfig = { thinkingLevel: GEMINI_THINKING_LEVELS[taskEffort(taskRole)] };
     return { ...payload, generationConfig: { ...payload.generationConfig, thinkingConfig } };
 }
 

@@ -50,7 +50,7 @@ function buildClaudeRequest(modelName, payload) {
         model: modelName,
         max_tokens: CLAUDE_MAX_TOKENS,
         thinking: { type: 'adaptive' },
-        output_config: { effort: REASONING_EFFORT },
+        output_config: { effort: taskEffort(payload.taskRole) },
         messages: payload.contents.map(c => ({
             role: c.role === 'model' ? 'assistant' : 'user',
             content: toClaudeContent(c.parts)

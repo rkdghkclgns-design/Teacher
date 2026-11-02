@@ -119,6 +119,7 @@ function lintObjective(text) {
 /* ---------- AI 설계 ---------- */
 async function askDesignJson(prompt) {
     const data = await callGemini(TEXT_MODEL, {
+        taskRole: 'plan',
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         systemInstruction: { parts: [{ text: `${CONTEXT_CORE.personas.orchestrator} 직업훈련 과정을 설계하고 지정된 JSON만 출력합니다.` }] },
         generationConfig: { responseMimeType: 'application/json' }
