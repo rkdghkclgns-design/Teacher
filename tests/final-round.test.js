@@ -630,6 +630,7 @@ const LESSON_MD = [
 
     await run('교안 첫머리: 개요의 정상 내용을 지우지 않는다', async () => {
         const clean = call('cleanLessonOpening');
+        assert.ok(clean('<br>\n\n<br/>\n## 학습 목표\n\n- 비교할 수 있습니다.').startsWith('## 학습 목표'), '첫 제목 앞의 빈 간격을 뺀다');
         const keep = text => assert.ok(clean(['## 개요', '', ...text].join('\n')).includes(text[0]), text[0]);
         keep(['- 5~10분 안에 장애 원인을 찾아야 합니다.']);
         keep(['| 구분 | 설명 |', '|---|---|', '| 가 | 나 |']);

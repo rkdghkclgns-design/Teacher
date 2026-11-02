@@ -12,6 +12,7 @@ const OPENING_FILLER_LINE = /^\s*(?:$|[-*+]\s|\d+[.)]\s|\||<br|\*\*[^*]+\*\*\s*:
 const OPENING_GAP_LINE = /^\s*(?:<br\s*\/?>\s*)*$/;
 const OPENING_SENTENCE_END = /다\.?\**\s*$/;
 const OPENING_GOAL_TITLE = /학습\s*목표/;
+const OPENING_LEADING_GAP = /^(?:\s*<br\s*\/?>)+\s*/i;
 
 // 줄마다 코드 블록 안인지 표시한다. 여닫는 펜스 줄도 코드로 본다
 function openingFences(lines) {
@@ -118,5 +119,5 @@ function cleanLessonOpening(md) {
     if (!md) return md;
     const sections = withoutPreamble(openingSections(String(md).replace(/\r\n/g, '\n')));
     const firstTitle = sections.findIndex(section => section.level === 1);
-    return sections.flatMap((section, index) => cleanedSection(section, index, firstTitle)).join('\n').trimStart();
+    return sections.flatMap((section, index) => cleanedSection(section, index, firstTitle)).join('\n').trimStart().replace(OPENING_LEADING_GAP, ''); // 서식 정리가 첫 제목 앞에 넣는 간격을 뺀다
 }
