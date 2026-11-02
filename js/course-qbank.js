@@ -25,6 +25,15 @@ const QBANK_RULES = [
     '- 경어체로 쓰고 학습자를 호칭하지 않습니다.'
 ].join('\n');
 
+const QBANK_RULE_LIST = [
+    '공통: 문항 내용 작성, 학습 목표 연결, 밴드에 맞는 유형 사용, 체크리스트 문장 재사용 금지, 버전 정보 금지, 학습자 호칭 금지',
+    '객관식: 정답 지정, 같은 보기 금지, 보기 4개 이상, 단일 선택은 정답 하나, 복수 정답은 정답 2개 이상과 오답 포함',
+    '단답식: 정답 작성, 정답은 단어나 값 하나',
+    '서술형: 요소별 채점 기준 작성',
+    '코드제출: 기대 출력이나 테스트 케이스 작성',
+    '파일제출: 관찰 가능한 기준과 충족·부분·미흡 조건의 루브릭 작성'
+];
+
 let _qbank = null;
 
 const qbankMod = () => getEditingModule(_qbank?.moduleId);
@@ -76,7 +85,7 @@ function serializeQuestion(q, no) {
         ...(q.stem ? [q.stem, ''] : []),
         ...(q.choices.length ? [...q.choices.map(choiceLine), ''] : []),
         ...field('💡', '힌트', q.hint), ...field('✅', '정답', q.answer), ...field('🔤', '허용 표기', q.accepted),
-        ...field('📝', '해설', q.explanation), ...field('📏', '채점 기준', q.rubric), ...field('🧪', '테스트', q.tests),
+        ...field('📝', '해설', q.explanation), ...field('📏', '채점 기준', q.rubric), ...field('🧪', '테스트', q.tests), ...field('🔍', '교차 검수', q.review),
         '---'
     ].join('\n');
 }
@@ -114,16 +123,29 @@ function csvCell(value) {
     return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 
-function questionsCsv(questions, objectives, context) {
-    const head = ['번호', '교과', '차시', '목표번호', '학습목표', '밴드', '유형', '복수정답', '제목', '문항', '보기1', '보기2', '보기3', '보기4', '보기5', '정답', '허용표기', '채점기준', '테스트', '해설', '검수'];
-    const rows = questions.map(q => {
+const QBANK_CSV_HEAD = ['번호', '교과', '차시', '목표번호', '학습목표', '밴드', '유형', '복수정답', '제목', '문항', '보기1', '보기2', '보기3', '보기4', '보기5', '정답', '허용표기', '채점기준', '테스트', '해설', '교차검수', '검수'];
+
+function questionCsvRows(questions, objectives, context) {
+    return questions.map(q => {
         const issues = lintQuestion(q, context.checklist);
         return [
             q.no, context.subject, context.lesson, q.objective ?? '', (q.objective && objectives[q.objective - 1]) || '', q.band, q.type, q.multi ? 'Y' : '', q.title, q.stem,
-            ...Array.from({ length: 5 }, (_, i) => q.choices[i]?.text ?? ''), q.answer, q.accepted, q.rubric, q.tests, q.explanation, issues.length ? `위반 ${issues.length}건` : '검수 통과'
+            ...Array.from({ length: 5 }, (_, i) => q.choices[i]?.text ?? ''), q.answer, q.accepted, q.rubric, q.tests, q.explanation, q.review, issues.length ? `위반 ${issues.length}건` : '검수 통과'
         ];
     });
-    return `﻿${[head, ...rows].map(row => row.map(csvCell).join(',')).join('\r\n')}`;
+}
+
+const toCsv = rows => `\uFEFF${[QBANK_CSV_HEAD, ...rows].map(row => row.map(csvCell).join(',')).join('\r\n')}`;
+
+function questionsCsv(questions, objectives, context) {
+    return toCsv(questionCsvRows(questions, objectives, context));
+}
+
+function courseQuestionsCsv() {
+    const rows = globalState.subjects.flatMap(subject => (subject.lessons || []).flatMap(lesson => (lesson.tabContents?.assessment
+        ? questionCsvRows(qbankQuestions(lesson), qbankObjectives(lesson), { subject: subject.title, lesson: lesson.title, checklist: qbankChecklist(lesson) })
+        : [])));
+    return { rows: rows.length, csv: toCsv(rows) };
 }
 
 /* ---------- AI 문항 생성 ---------- */
@@ -156,8 +178,48 @@ function parseGeneratedQuestions(text, spec) {
         .map(q => ({ ...q, objective: spec.objective, band: spec.band, type: spec.type, typed: true }));
 }
 
+function buildReviewPrompt(mod, questions, objectives) {
+    return [
+        '당신은 평가 문항 검수자입니다. 다른 출제자가 만든 문항을 아래 기준으로 엄격히 검수하세요.',
+        `[차시] ${mod.title}`, `[학습 목표]\n${objectives.map((text, i) => `${i + 1}. ${text}`).join('\n')}`,
+        '[기준] 1) 태그한 학습 목표를 실제로 묻는가 2) 밴드 정의에 맞는가(L1 수업과 같은 상황 / L2 같은 구조·다른 맥락 / L3 요구사항만 제시) 3) 정답이 확정되는가 4) 해설과 채점 기준이 정답과 맞는가', '',
+        JSON.stringify(questions.map((q, i) => ({ i, objective: q.objective, band: q.band, type: q.type, title: q.title, stem: q.stem, choices: q.choices, answer: q.answer, rubric: q.rubric, tests: q.tests, explanation: q.explanation }))), '',
+        'JSON 배열만 출력합니다: [{"i": 0, "ok": true, "notes": "문제가 있으면 무엇을 고쳐야 하는지 경어체 1문장, 없으면 빈 문자열"}]'
+    ].join('\n');
+}
+
+// 두 공급자의 키가 있으면 출제하지 않은 모델이 검수한다. 실패해도 문항은 버리지 않는다.
+async function crossReviewQuestions(mod, questions, objectives) {
+    const model = crossCheckModel();
+    if (!model) return questions;
+    try {
+        const data = await callGemini(model, {
+            contents: [{ role: 'user', parts: [{ text: buildReviewPrompt(mod, questions, objectives) }] }],
+            systemInstruction: { parts: [{ text: '평가 문항 검수자로서 지정된 JSON만 출력합니다.' }] },
+            generationConfig: { responseMimeType: 'application/json' }
+        });
+        const parsed = safeJSONParse(extractText(data));
+        const rows = Array.isArray(parsed) ? parsed : (parsed?.results || parsed?.items || []);
+        const reviews = new Map(rows.map(row => [Number(row.i), row]));
+        return questions.map((q, i) => {
+            const row = reviews.get(i);
+            if (!row) return q;
+            const notes = String(row.notes || '').replace(/\s+/g, ' ').trim();
+            return { ...q, review: row.ok === false ? `수정 필요 · ${notes} · ${model}` : `통과 · ${model}` };
+        });
+    } catch (err) {
+        console.warn('[문제은행] 교차 검수 실패:', err);
+        return questions;
+    }
+}
+
 // 자동 검수에 걸린 문항은 한 번 더 고쳐 받는다
 async function generateQuestions(mod, spec) {
+    const questions = await draftQuestions(mod, spec);
+    return crossReviewQuestions(mod, questions, qbankObjectives(mod));
+}
+
+async function draftQuestions(mod, spec) {
     const objectives = qbankObjectives(mod);
     const existing = qbankQuestions(mod);
     const checklist = qbankChecklist(mod);
@@ -263,8 +325,10 @@ function renderQbank() {
             <select data-qbank-filter="band" class="${select} ml-auto">${qbankOption('', '전체 밴드', _qbank.band)}${Object.keys(QBANK_BANDS).map(band => qbankOption(band, band, _qbank.band)).join('')}</select>
             <select data-qbank-filter="objective" class="${select}">${qbankOption('', '전체 목표', _qbank.objective)}${objectives.map((_, i) => qbankOption(i + 1, `목표 ${i + 1}`, _qbank.objective)).join('')}</select>
             <button data-qbank-action="csv" class="px-2 py-1 text-xs font-bold text-textLight bg-white/10 rounded hover:bg-white/20">CSV 저장</button>
+            <button data-qbank-action="course-csv" class="px-2 py-1 text-xs font-bold text-textLight bg-white/10 rounded hover:bg-white/20">과정 전체 CSV</button>
         </div>
-        <div class="space-y-2">${shown.map(({ q, index }) => (_qbank.editing === index ? qbankEditHtml(q, index, objectives) : qbankCardHtml(q, index, checklist))).join('') || '<p class="text-xs text-textMuted p-2">문항이 없습니다. 학습이해도 탭을 생성하거나 AI로 문항을 만들어주세요.</p>'}</div>`;
+        <div class="space-y-2">${shown.map(({ q, index }) => (_qbank.editing === index ? qbankEditHtml(q, index, objectives) : qbankCardHtml(q, index, checklist))).join('') || '<p class="text-xs text-textMuted p-2">문항이 없습니다. 학습이해도 탭을 생성하거나 AI로 문항을 만들어주세요.</p>'}</div>
+        <details class="text-[0.65rem] text-textMuted"><summary class="cursor-pointer">검사 규칙 목록</summary><ul class="mt-1 space-y-0.5">${QBANK_RULE_LIST.map(rule => `<li>• ${escapeHtml(rule)}</li>`).join('')}</ul></details>`;
 }
 
 window.openQuestionBank = function (moduleId) {
@@ -324,18 +388,28 @@ function readQuestionForm(original) {
         objective: Number(value('objective')) || null, band: value('band'), type, typed: original.typed || type !== original.type,
         title: value('title'), stem: value('stem'),
         choices: !type || type === '객관식' ? texts.slice(0, marks.length).map((text, i) => ({ mark: marks[i], text })) : [],
-        answer: value('answer'), accepted: value('accepted'), rubric: value('rubric'), tests: value('tests'), explanation: value('explanation')
+        answer: value('answer'), accepted: value('accepted'), rubric: value('rubric'), tests: value('tests'), explanation: value('explanation'),
+        review: '' // 사람이 고친 문항은 AI 검수 결과를 무효화한다
     };
+}
+
+function downloadCsv(csv, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    a.download = `${String(name).replace(/[^\w가-힣]/g, '_')}_문제은행.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
 }
 
 function saveQbankCsv(mod) {
     const subject = globalState.subjects.find(item => item.id === currentSubjectId);
-    const csv = questionsCsv(qbankQuestions(mod), qbankObjectives(mod), { subject: subject?.title || '', lesson: mod.title, checklist: qbankChecklist(mod) });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    a.download = `${String(mod.title).replace(/[^\w가-힣]/g, '_')}_문제은행.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    downloadCsv(questionsCsv(qbankQuestions(mod), qbankObjectives(mod), { subject: subject?.title || '', lesson: mod.title, checklist: qbankChecklist(mod) }), mod.title);
+}
+
+function saveCourseCsv() {
+    const { rows, csv } = courseQuestionsCsv();
+    if (!rows) return window.showAlert('내려받을 문항이 없습니다.');
+    downloadCsv(csv, globalState.courseTitle);
 }
 
 async function runQuestionGenerate(mod) {
@@ -381,6 +455,7 @@ async function onQbankClick(event) {
     if (action === 'edit') _qbank = { ..._qbank, editing: index };
     if (action === 'cancel') _qbank = { ..._qbank, editing: null };
     if (action === 'csv') saveQbankCsv(mod);
+    if (action === 'course-csv') saveCourseCsv();
     if (action === 'generate') return runQuestionGenerate(mod);
     if (action === 'delete') return window.showConfirm('이 문항을 삭제할까요? 삭제 전 내용은 히스토리에 보관됩니다.', () => commitQbankMarkdown(mod, removeQuestionMd(qbankMarkdown(mod), index)));
     if (action === 'save') return commitQbankMarkdown(mod, updateQuestionMd(qbankMarkdown(mod), index, readQuestionForm(qbankQuestions(mod)[index])));

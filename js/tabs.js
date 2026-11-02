@@ -66,6 +66,7 @@ async function generateTabContent(moduleId, tabId) {
 
     const tabMeta = LESSON_TABS.find(t => t.id === tabId);
     if (!tabMeta) return;
+    const lockedBlocks = lockedSectionBlocks(mod, tabId);
 
     // Cross-tab context
     const tabContents = mod.tabContents || {};
@@ -115,7 +116,7 @@ async function generateTabContent(moduleId, tabId) {
         setLoadingText(`📝 ${tabMeta.label} 작성 중입니다... (1/${MAX_CHUNKS} 단락)`);
 
         const firstPayload = {
-            contents: [{ role: 'user', parts: [{ text: userPrompt + lessonDesignBrief(mod) }] }],
+            contents: [{ role: 'user', parts: [{ text: userPrompt + lessonDesignBrief(mod) + lockedSectionPrompt(lockedBlocks) }] }],
             systemInstruction: { parts: [{ text: systemInstruction }] },
             generationConfig: { maxOutputTokens: 65536 }
         };
@@ -185,6 +186,7 @@ async function generateTabContent(moduleId, tabId) {
         }
 
         if (!mod.tabContents) mod.tabContents = { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null };
+        resultText = restoreLockedSections(resultText, lockedBlocks);
         mod.tabContents[tabId] = resultText;
         mod.status = 'done';
 
@@ -204,7 +206,7 @@ async function generateTabContent(moduleId, tabId) {
                 console.warn(`[TabGen] ⚠️ ${tabMeta.label} 에 이미지 태그가 없음. 자동 주입 로직이 활성화됩니다.`);
             }
             try {
-                const processed = await processImageTags(mod, resultText);
+                const processed = restoreLockedSections(await processImageTags(mod, resultText), lockedBlocks);
                 if (processed !== resultText) {
                     mod.tabContents[tabId] = processed;
                     mod.content = LESSON_TABS.map(t => (mod.tabContents[t.id] || '')).filter(Boolean).join('\n\n---\n\n');
@@ -309,6 +311,7 @@ async function reinforceCurrentTab(moduleId) {
 
     const reinforceInput = document.getElementById('reinforce-input');
     const reinforceCmd = (reinforceInput?.value || '').trim();
+    const lockedBlocks = lockedSectionBlocks(mod, tabId);
     if (!reinforceCmd) return window.showAlert('보강 명령을 입력해주세요.');
 
     const tabMeta = LESSON_TABS.find(t => t.id === tabId);
@@ -324,13 +327,13 @@ async function reinforceCurrentTab(moduleId) {
         const userPrompt = `[현재 작업: ${tabMeta.label} 보강 재생성]\n모듈명: ${mod.title}\n\n[사용자 보강 명령]\n${reinforceCmd}\n\n[기존 교안 내용 — 이 내용을 기반으로 보강하세요]\n${existingContent}`;
 
         const payload = {
-            contents: [{ parts: [{ text: userPrompt }] }],
+            contents: [{ parts: [{ text: userPrompt + lockedSectionPrompt(lockedBlocks) }] }],
             systemInstruction: { parts: [{ text: systemInstruction }] }
         };
 
         const data = await callGemini(TEXT_MODEL, payload);
 
-        const resultText = extractText(data);
+        const resultText = restoreLockedSections(extractText(data), lockedBlocks);
         mod.tabContents[tabId] = resultText;
         mod.content = LESSON_TABS.map(t => (mod.tabContents[t.id] || '')).filter(Boolean).join('\n\n---\n\n');
 

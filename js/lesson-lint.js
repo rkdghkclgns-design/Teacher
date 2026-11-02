@@ -25,8 +25,8 @@ const LESSON_LINT_RULES = [
 const LESSON_LINT_BANNED_OBJECTIVE = /이해한다|이해합니다|이해할 수|안다(?=[.\s]|$)|알 수 있|익힌다|익힙니다|익힐 수/;
 const LESSON_LINT_PLAIN_ENDING = /([가-힣])다\.(?=\s|$)/g;
 const LESSON_QUESTION_LABEL = /학습\s*목표\s*(\d+)\s*·\s*밴드\s*(L[1-3])(?:\s*·\s*(객관식|단답식|서술형|코드제출|파일제출))?/;
-const LESSON_QUESTION_FIELD = /^\s*(?:[^\s\w가-힣*]+\s*)?\*{0,2}\s*(힌트|정답|허용 표기|해설|채점 기준|테스트)\s*\*{0,2}\s*[:：]\s*\*{0,2}\s*(.*)$/;
-const LESSON_QUESTION_FIELD_KEYS = { 힌트: 'hint', 정답: 'answer', '허용 표기': 'accepted', 해설: 'explanation', '채점 기준': 'rubric', 테스트: 'tests' };
+const LESSON_QUESTION_FIELD = /^\s*(?:[^\s\w가-힣*]+\s*)?\*{0,2}\s*(힌트|정답|허용 표기|해설|채점 기준|테스트|교차 검수)\s*\*{0,2}\s*[:：]\s*\*{0,2}\s*(.*)$/;
+const LESSON_QUESTION_FIELD_KEYS = { 힌트: 'hint', 정답: 'answer', '허용 표기': 'accepted', 해설: 'explanation', '채점 기준': 'rubric', 테스트: 'tests', '교차 검수': 'review' };
 const LESSON_QUESTION_HEAD = /^###\s*문제\s*\d+/;
 const LESSON_QUESTION_TAIL = /^\s*(?:<table\b|\*\*[^*]+\*\*\s*$)/; // 문항 뒤에 이어지는 채점 기준표 등
 const LESSON_INLINE_SPAN = /<\/?span[^>]*>/g; // 교안 프롬프트가 정답 보기를 색 강조 span으로 감싼다
@@ -42,7 +42,8 @@ function lessonLintText(md) {
         .replace(/```[\s\S]*?```/g, ' ')
         .replace(/`[^`]*`/g, ' ')
         .replace(/<!--[\s\S]*?-->/g, ' ')
-        .replace(/<[^>]+>/g, ' ');
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/^.*교차 검수\s*\**\s*[:：].*$/gm, ' ');
 }
 
 // 제목 앞의 이모지는 허용한다 (예: ## ✅ 학습 후 체크리스트). 들여쓴 세부 불릿은 항목으로 세지 않는다.
@@ -168,7 +169,8 @@ function parseQuestionBlock(block) {
         hint: fields.hint || '',
         explanation: fields.explanation || '',
         rubric: fields.rubric || '',
-        tests: fields.tests || ''
+        tests: fields.tests || '',
+        review: fields.review || ''
     };
 }
 
@@ -210,7 +212,8 @@ function lintQuestion(q, checklist = []) {
         (!q.objective || !q.band) && '문제마다 학습 목표와 밴드를 표기합니다.',
         q.typed && q.band && !QUESTION_BAND_TYPES[q.band].includes(q.type) && `${q.band} 밴드에는 ${QUESTION_BAND_TYPES[q.band].join('·')} 유형을 씁니다.`,
         ...lintQuestionByType(q),
-        checklist.some(item => textSimilarity(item, text) > LESSON_LINT_SIMILAR_TEXT) && '체크리스트 문장을 그대로 쓰지 않습니다.'
+        checklist.some(item => textSimilarity(item, text) > LESSON_LINT_SIMILAR_TEXT) && '체크리스트 문장을 그대로 쓰지 않습니다.',
+        q.review.startsWith('수정 필요') && `AI 교차 검수: ${q.review}`
     ].filter(Boolean);
 }
 

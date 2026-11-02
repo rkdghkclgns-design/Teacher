@@ -5,7 +5,7 @@ const vm = require('vm');
 const path = require('path');
 const assert = require('assert');
 const root = path.join(__dirname, '..', 'js') + path.sep;
-const FILES = ['kbuilder/ncs-catalog.js', 'lesson-lint.js', 'course-ncs.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'course-art.js', 'course-qbank.js', 'ai-edit-preview.js'];
+const FILES = ['kbuilder/ncs-catalog.js', 'lesson-lint.js', 'course-ncs.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'course-art.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js', 'course-refs.js'];
 
 function makeContext(callGemini, keys = { gemini: '' }) {
     const ctx = {
@@ -27,7 +27,7 @@ function makeContext(callGemini, keys = { gemini: '' }) {
         escapeHtml: s => (typeof s === 'string' ? s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') : ''),
         safeJSONParse: t => JSON.parse(t),
         extractText: d => d.candidates[0].content.parts[0].text,
-        document: { getElementById: () => null, createElement: () => ({}), querySelectorAll: () => [], head: { appendChild() {} } },
+        document: { getElementById: () => null, createElement: () => ({}), querySelectorAll: () => [], addEventListener() {}, head: { appendChild() {} } },
         callGemini
     };
     ctx.window = ctx;
@@ -336,6 +336,131 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
         assert.strictEqual(result.replaced, 2);
         const prompt = call('buildSvgPrompt')({ ...plain(call('ART_DEFAULT')), anchorSvg: '<svg>기준</svg>' }, '게임 루프');
         assert.ok(prompt.includes('#3D5FC4') && prompt.includes('[기준 삽화 SVG') && prompt.includes('게임 루프'));
+    });
+
+    await run('섹션 고정: 다시 생성해도 원문 유지', async () => {
+        const md = '# 제목\n\n## 학습 목표\n\n- 목표\n\n## 🎯 핵심 내용 (⏱ 30분)\n\n사용자가 다듬은 본문입니다.\n\n```md\n## 코드 안 제목\n```\n\n## 정리\n\n끝\n';
+        const titles = plain(call('mdSections')(md)).map(section => section.title);
+        assert.deepStrictEqual(titles, ['', '학습 목표', '🎯 핵심 내용 (⏱ 30분)', '정리'], '코드 안의 ## 은 나누지 않는다');
+        const key = call('lockTitleKey')('🎯 핵심 내용 (⏱ 30분)');
+        const mod = { tabContents: { basicLearn: md }, lockedSections: { basicLearn: [key] } };
+        const blocks = call('lockedSectionBlocks')(mod, 'basicLearn');
+        assert.strictEqual(blocks.length, 1);
+        assert.ok(call('lockedSectionPrompt')(blocks).includes('사용자가 다듬은 본문입니다.'));
+        const rewritten = call('restoreLockedSections')('## 학습 목표\n\n- 새 목표\n\n## 핵심 내용 (⏱ 45분)\n\n모델이 바꾼 본문입니다.\n', blocks);
+        assert.ok(rewritten.includes('사용자가 다듬은 본문입니다.') && !rewritten.includes('모델이 바꾼 본문') && rewritten.includes('- 새 목표'));
+        const missing = call('restoreLockedSections')('## 학습 목표\n\n- 새 목표\n', blocks);
+        assert.ok(missing.includes('사용자가 다듬은 본문입니다.'), '모델이 빠뜨려도 복원');
+        assert.strictEqual(call('restoreLockedSections')('그대로', []), '그대로');
+        const twice = '## 실습\n\n첫 원문\n\n## 실습\n\n둘째 원문\n';
+        const both = call('lockedSectionBlocks')({ tabContents: { t: twice }, lockedSections: { t: ['실습'] } }, 't');
+        const repeated = call('restoreLockedSections')('## 실습\n\n새 글\n\n## 실습\n\n새 글\n', both);
+        assert.ok(repeated.indexOf('첫 원문') < repeated.indexOf('둘째 원문') && repeated.includes('첫 원문') && !repeated.includes('새 글'), '같은 제목은 순서대로 짝짓는다');
+    });
+
+    await run('NCS: 두 모델 합의와 직접 추가', async () => {
+        const merged = plain(call('mergeNcsRanks')([[{ code: 'A', score: 80, reason: '근거' }, { code: 'B', score: 90, reason: '' }], [{ code: 'A', score: 90, reason: '' }]]));
+        assert.deepStrictEqual(merged.map(row => [row.code, row.score, row.agreed]), [['A', 85, true], ['B', 81, false]], '한 모델만 고르면 감점');
+        assert.deepStrictEqual(plain(call('mergeNcsRanks')([[{ code: 'A', score: 80, reason: '' }]])).map(row => row.score), [80], '모델이 하나면 감점 없음');
+        const real = plain(call('ncsSearch')('게임 기획', 1))[0];
+        const models = [];
+        const both = makeContext(async model => {
+            models.push(model);
+            return reply([{ code: real.code, score: 90, reason: '근거' }]);
+        }, { gemini: 'k', claude: 'c' });
+        const recs = plain(await vm.runInContext('rankNcsCandidates', both)('프롬프트', new Map([[real.code, real]])));
+        assert.deepStrictEqual(models, ['gemini-4-argon', 'claude-opus-5-5']);
+        assert.strictEqual(recs[0].agreed, true);
+        assert.strictEqual(call('crossCheckModel')(), '', '키가 하나면 교차 판단 없음');
+        const failing = makeContext(async model => {
+            if (model === 'claude-opus-5-5') throw new Error('장애');
+            return reply([{ code: real.code, score: 80, reason: '근거' }, { code: real.code, score: 80, reason: '중복' }]);
+        }, { gemini: 'k', claude: 'c' });
+        const solo = plain(await vm.runInContext('rankNcsCandidates', failing)('프롬프트', new Map([[real.code, real]])));
+        assert.deepStrictEqual([solo.length, solo[0].score, solo[0].agreed], [1, 80, false], '교차 모델이 실패해도 감점하지 않고 중복은 하나로 센다');
+        assert.strictEqual(plain(call('addCustomNcsUnit')({ code: real.code, name: '다른 이름', level: '' })).name, real.name, '공식 코드는 공식 단위를 쓴다');
+        const unit = plain(call('addCustomNcsUnit')({ code: ' X1 ', name: ' 직접 단위 ', level: '3' }));
+        assert.deepStrictEqual([unit.code, unit.name, unit.level, unit.verified], ['X1', '직접 단위', 3, false]);
+        assert.strictEqual(plain(call('ncsUnit')('X1')).name, '직접 단위');
+        assert.strictEqual(plain(call('ncsKeywordRows')('X1', 5))[0].code, 'X1', '코드로 바로 찾는다');
+        assert.throws(() => call('addCustomNcsUnit')({ code: '', name: '', level: '' }), /코드와 이름/);
+        ctx.globalState.ncsCustomUnits = [];
+    });
+
+    await run('문제은행: 교차 검수와 과정 전체 CSV', async () => {
+        const aiCtx = makeContext(async (m, p) => {
+            const text = p.contents[0].parts[0].text;
+            if (text.includes('평가 문항 검수자')) return reply([{ i: 0, ok: false, notes: '정답이 둘입니다.' }]);
+            return reply('### 문제 1. 첫 문항\n학습 목표 1 · 밴드 L1 · 단답식\n\n✅ **정답:** 값\n');
+        }, { gemini: 'k', claude: 'c' });
+        const mod = { title: '차시', objectives: ['목표1'], tabContents: { assessment: '' } };
+        const [question] = await vm.runInContext('generateQuestions', aiCtx)(mod, { objective: 1, band: 'L1', type: '단답식', count: 1 });
+        assert.ok(question.review.startsWith('수정 필요 · 정답이 둘입니다.'));
+        assert.ok(plain(vm.runInContext('lintQuestion', aiCtx)(question)).some(msg => msg.startsWith('AI 교차 검수')));
+        const reviewedMd = '### 문제 1. 제목\n학습 목표 1 · 밴드 L1 · 단답식\n\n✅ **정답:** 값\n\n🔍 **교차 검수:** 수정 필요 · 해석이 갈린다.\n';
+        assert.ok(!Array.from(vm.runInContext('lintLessonMarkdown', aiCtx)(reviewedMd)).some(issue => issue.msg.includes('경어체')), '검수 메모는 본문 어투 검사에서 뺀다');
+        const written = vm.runInContext('serializeQuestion', aiCtx)(question, 1);
+        assert.strictEqual(vm.runInContext('parseQuestionBlock', aiCtx)(written).review, question.review, '검수 결과도 마크다운에 남는다');
+        const silent = makeContext(async () => { throw new Error('장애'); }, { gemini: 'k', claude: 'c' });
+        assert.strictEqual((await vm.runInContext('crossReviewQuestions', silent)(mod, [question], ['목표1'])).length, 1, '검수 실패해도 문항은 유지');
+        ctx.globalState.subjects = [{ title: '교과', lessons: [{ title: '차시', objectives: ['목표'], tabContents: { assessment: QB } }, { title: '빈 차시', tabContents: {} }] }];
+        const { rows, csv } = call('courseQuestionsCsv')();
+        assert.strictEqual(rows, 2);
+        assert.ok(csv.includes('재미 판단') && csv.includes('서술 문제'));
+        ctx.globalState.subjects = [];
+    });
+
+    await run('차시별 편성안: 슬라이드 번호를 다시 매김', async () => {
+        const md = call('gyosuanSessionDecksMd')({ title: '재미', hours: 1.5, gyosuan: { docMd: DOC, deckMd: DECK } });
+        assert.ok(md.includes('# 슬라이드 편성안 - 1차시. 재미 (1/2)') && md.includes('### 슬라이드 2 - 재미 분석 슬라이드'));
+        assert.ok(md.includes('이 차시에 대응하는 슬라이드가 없습니다.'));
+        assert.ok(md.indexOf('표지') < md.indexOf('재미 분석 슬라이드'), '표지는 첫 차시에 싣는다');
+        assert.strictEqual(call('gyosuanSessionDecksMd')({ title: '없음', gyosuan: { docMd: '' } }), '');
+    });
+
+    await run('레퍼런스 스타일: 형식 확인', async () => {
+        const style = plain(call('normalizeArtStyle')({ name: '수채', palette: [{ role: '주색', hex: '#112233' }, { role: '잘못', hex: 'blue' }], stroke: '3' }));
+        assert.deepStrictEqual(style.palette, [{ role: '주색', hex: '#112233' }]);
+        assert.strictEqual(style.stroke, 3);
+        assert.ok(style.rules.length > 0, '빠진 항목은 기본값');
+        assert.strictEqual(plain(call('normalizeArtStyle')({ palette: [{ hex: '#000000' }], stroke: 40 })).stroke, 8, '선 굵기 상한');
+        assert.strictEqual(call('artBackground')([{ role: '주색', hex: '#112233' }, { role: '밝은 색', hex: '#F0F0F0' }]), '#F0F0F0', '바탕 역할이 없으면 가장 밝은 색');
+        assert.strictEqual(call('artBackground')([{ role: '배경', hex: '#223344' }, { role: '흰색', hex: '#FFFFFF' }]), '#223344');
+        assert.throws(() => call('normalizeArtStyle')({ palette: [] }), /팔레트/);
+        assert.throws(() => call('normalizeArtStyle')(null), /팔레트/);
+    });
+
+    await run('스캔 판독: 쪽 번호 유지', async () => {
+        const aiCtx = makeContext(async (m, p) => reply(['첫 쪽']), { gemini: 'k' });
+        const texts = plain(await vm.runInContext('transcribeImages', aiCtx)([{ data: 'a' }, { data: 'b' }, { data: 'c' }, { data: 'd' }, { data: 'e' }]));
+        assert.deepStrictEqual(texts, ['첫 쪽', '', '', '', '첫 쪽'], '응답이 짧아도 페이지 위치를 지킨다');
+    });
+
+    await run('휴지통: 삭제와 복원', async () => {
+        const lesson = { id: 1, title: '삭제할 차시' };
+        ctx.globalState.subjects = [{ id: 's1', title: '교과', lessons: [] }];
+        ctx.globalState.lessonTrash = [];
+        call('moveLessonsToTrash')([lesson]);
+        assert.ok(call('renderLessonTrashButton')().includes('휴지통 1'));
+        assert.strictEqual(call('restoreLesson')(0), true);
+        assert.deepStrictEqual(vm.runInContext('courseData.map(item => item.title)', ctx).length, 1);
+        assert.strictEqual(ctx.globalState.subjects[0].lessons[0].title, '삭제할 차시');
+        assert.strictEqual(ctx.globalState.lessonTrash.length, 0);
+        assert.strictEqual(call('renderLessonTrashButton')(), '');
+        ctx.globalState.subjects = [];
+    });
+
+    await run('참고 자료: 쪽 범위', async () => {
+        assert.deepStrictEqual([...call('parsePageRange')('1-3, 7, 글자, 9-9')], [1, 2, 3, 7, 9]);
+        const content = '[p.1] 하나\n\n[p.2] 둘\n\n[p.3] 셋';
+        assert.strictEqual(call('filterPageRange')(content, '2-3'), '[p.2] 둘\n\n[p.3] 셋');
+        assert.strictEqual(call('filterPageRange')(content, ''), content, '범위가 없으면 전체');
+        assert.strictEqual(call('filterPageRange')(content, '50'), content, '해당 쪽이 없으면 전체');
+        assert.strictEqual([...call('parsePageRange')('1-100000000')].length, 1000, '범위 상한');
+        assert.strictEqual(call('filterPageRange')('[Slide 1] 가\n[노트] 메모\n\n[Slide 2] 나', '1'), '[Slide 1] 가\n[노트] 메모');
+        assert.strictEqual(call('hasPageLabels')('본문만 있음'), false);
+        const inline = plain(call('dataUrlToInline')('data:image/png;base64,QUJD'));
+        assert.deepStrictEqual(inline, { mimeType: 'image/png', data: 'QUJD' });
     });
 
     await run('AI 수정 비교', async () => {

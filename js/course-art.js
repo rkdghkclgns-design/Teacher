@@ -6,6 +6,8 @@ const SVG_RENDER_WIDTH = 1280;
 const SVG_RENDER_HEIGHT = 720;
 const SVG_MAX_CHARS = 300000;
 const SVG_ANCHOR_CHARS = 14000;
+const ART_MAX_PALETTE = 8;
+const ART_MAX_STROKE = 8;
 const ART_DEFAULT = {
     name: '기본 교재 스타일',
     palette: [
@@ -146,6 +148,14 @@ function buildSvgPrompt(art, description) {
     ].filter(line => line !== null).join('\n');
 }
 
+// 추출한 가이드는 역할 이름이 다를 수 있어, 바탕 역할이 없으면 가장 밝은 색을 쓴다
+function artBackground(palette) {
+    const named = palette.find(option => /바탕|배경/.test(option.role));
+    if (named) return named.hex;
+    const brightness = option => hexChannels(option.hex).reduce((sum, channel) => sum + channel, 0);
+    return palette.reduce((best, option) => (brightness(option) > brightness(best) ? option : best)).hex;
+}
+
 // 기준 삽화가 없으면 처음 그린 삽화를 기준으로 삼아 과정 전체의 화풍을 맞춘다
 async function drawSvgIllustration(description) {
     const art = courseArt();
@@ -155,7 +165,7 @@ async function drawSvgIllustration(description) {
     });
     const { svg, replaced } = snapSvgPalette(sanitizeSvg(extractText(data)), art.palette);
     if (replaced) console.warn(`[SVG 삽화] 팔레트 밖 색 ${replaced}곳을 맞췄습니다.`);
-    const png = await svgToPng(svg, art.palette.find(option => option.role === '바탕')?.hex || '#FFFFFF');
+    const png = await svgToPng(svg, artBackground(art.palette));
     if (!art.anchorSvg) globalState.courseArt = { ...(globalState.courseArt || {}), anchorSvg: svg };
     return png;
 }
@@ -171,6 +181,36 @@ async function generateSvgIllustration(description) {
     }
 }
 
+/* ---------- 레퍼런스 이미지에서 스타일 추출 ---------- */
+const ART_EXTRACT_PROMPT = '첨부한 이미지는 교재 삽화의 화풍 견본입니다. 이 화풍을 SVG 벡터 삽화로 재현할 수 있도록 스타일 가이드를 추출합니다.\nJSON 하나만 출력:\n{"name":"가이드 이름(짧게)","palette":[{"role":"윤곽선|주색|보조색|강조색|바탕|그림자 등","hex":"#RRGGBB"}],"stroke":2.5,"corner":"모서리 처리","shading":"채색 방식","text":"이미지 안 글자 처리","rules":"형태·인물·구도 규칙 2~3문장"}\npalette는 5~8색.';
+
+function normalizeArtStyle(parsed) {
+    const palette = (parsed?.palette || [])
+        .filter(option => /^#[0-9a-f]{6}$/i.test(option?.hex))
+        .map(option => ({ role: String(option.role || '색').slice(0, 10), hex: option.hex }))
+        .slice(0, ART_MAX_PALETTE);
+    if (!palette.length) throw new Error('이미지에서 팔레트를 찾지 못했습니다.');
+    const text = (value, fallback) => String(value || '').trim() || fallback;
+    return {
+        name: text(parsed.name, '추출한 스타일'), palette, stroke: Math.min(ART_MAX_STROKE, Math.max(1, Number(parsed.stroke) || ART_DEFAULT.stroke)),
+        corner: text(parsed.corner, ART_DEFAULT.corner), shading: text(parsed.shading, ART_DEFAULT.shading),
+        text: text(parsed.text, ART_DEFAULT.text), rules: text(parsed.rules, ART_DEFAULT.rules)
+    };
+}
+
+// 새 화풍이므로 이전 기준 삽화는 쓰지 않는다
+async function extractArtStyle(file) {
+    if (!textModelHasKey()) throw new Error('스타일 추출에는 AI 키가 필요합니다.');
+    const data = await callGemini(TEXT_MODEL, {
+        contents: [{ role: 'user', parts: [{ text: ART_EXTRACT_PROMPT }, { inlineData: dataUrlToInline(await readFileAsDataUrl(file)) }] }],
+        systemInstruction: { parts: [{ text: '교재 삽화 아트 디렉터로서 지정된 JSON만 출력합니다.' }] },
+        generationConfig: { responseMimeType: 'application/json' }
+    });
+    const style = normalizeArtStyle(safeJSONParse(extractText(data)));
+    globalState.courseArt = { ...(globalState.courseArt || {}), ...style, anchorSvg: null };
+    return style;
+}
+
 /* ---------- 스타일 가이드 편집 ---------- */
 function artDialogHtml(art) {
     const field = 'w-full px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white focus:outline-none focus:border-accent';
@@ -183,7 +223,9 @@ function artDialogHtml(art) {
                 <p class="text-[0.65rem] text-textMuted mt-1">과정 전체의 SVG 삽화가 같은 화풍을 쓰도록 합니다. 팔레트 밖 색은 자동으로 맞춥니다.</p>
             </div>
             <div class="p-4 space-y-3">
-                <div class="grid grid-cols-7 gap-1">${colors}</div>
+                <div class="grid grid-cols-8 gap-1">${colors}</div>
+                <label class="block text-[0.65rem] text-textMuted">레퍼런스 이미지에서 추출<input id="art-reference" type="file" accept="image/png,image/jpeg,image/webp" class="block w-full mt-1 text-xs text-textLight"></label>
+                <p id="art-status" class="text-[0.65rem] text-accent min-h-[1em]"></p>
                 <label class="block text-[0.65rem] text-textMuted">선 굵기<input id="art-stroke" type="number" min="1" max="8" step="0.5" value="${art.stroke}" class="${field} mt-1"></label>
                 <label class="block text-[0.65rem] text-textMuted">그림 규칙<textarea id="art-rules" rows="3" class="${field} mt-1">${escapeHtml(art.rules)}</textarea></label>
                 <p class="text-[0.65rem] text-textMuted">기준 삽화: ${art.anchorSvg ? '설정됨 (처음 그린 삽화)' : '없음 (처음 그린 삽화가 기준이 됩니다)'}</p>
@@ -205,8 +247,25 @@ window.openArtStyle = function () {
     overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9100]';
     overlay.innerHTML = artDialogHtml(courseArt());
     overlay.addEventListener('click', onArtClick);
+    overlay.addEventListener('change', onArtChange);
     document.body.appendChild(overlay);
 };
+
+async function onArtChange(event) {
+    const file = event.target.id === 'art-reference' ? event.target.files?.[0] : null;
+    const dialog = document.getElementById('art-style-dialog');
+    if (!file || !dialog) return;
+    const status = document.getElementById('art-status');
+    status.textContent = '이미지에서 스타일을 추출하고 있습니다...';
+    try {
+        await extractArtStyle(file);
+        await saveState();
+        if (document.getElementById('art-style-dialog')) dialog.innerHTML = artDialogHtml(courseArt());
+    } catch (err) {
+        console.error('[삽화 스타일] 추출 실패:', err);
+        if (status.isConnected) status.textContent = `추출 실패: ${err.message}`;
+    }
+}
 
 async function onArtClick(event) {
     const action = event.target.dataset?.artAction;

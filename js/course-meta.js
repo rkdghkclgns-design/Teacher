@@ -5,6 +5,7 @@
 const LESSON_STATUSES = ['작성중', '검수중', '완료', '개선필요'];
 const LESSON_HISTORY_LIMIT = 20;
 const LESSON_ELEMENT_MIN_FIT = 70;
+const LESSON_TRASH_LIMIT = 100;
 const LESSON_STATUS_STYLES = { 작성중: 'bg-sky-500/20 text-sky-300', 검수중: 'bg-amber-500/20 text-amber-300', 완료: 'bg-emerald-500/20 text-emerald-300', 개선필요: 'bg-rose-500/20 text-rose-300' };
 
 let _lessonFilter = { status: '', query: '' };
@@ -83,6 +84,74 @@ function withMetaHistory(mod, next) {
     const changes = metaChanges(mod, next);
     if (!changes.length) return { ...next, history: mod.history || [] };
     return { ...next, history: [{ at: new Date().toISOString(), note: changes.join(', ') }, ...(mod.history || [])].slice(0, LESSON_HISTORY_LIMIT) };
+}
+
+/* ---------- 휴지통 ---------- */
+function moveLessonsToTrash(lessons) {
+    const entries = lessons.map(lesson => ({ lesson, subjectId: currentSubjectId, at: new Date().toISOString() }));
+    globalState.lessonTrash = [...entries, ...(globalState.lessonTrash || [])].slice(0, LESSON_TRASH_LIMIT);
+}
+
+function renderLessonTrashButton() {
+    const count = (globalState.lessonTrash || []).length;
+    return count ? `<button onclick="openLessonTrash()" class="text-[0.55rem] font-bold px-2 py-0.5 mr-1 rounded bg-white/10 text-textMuted hover:bg-white/20" title="삭제한 차시 복원">휴지통 ${count}</button>` : '';
+}
+
+function restoreLesson(index) {
+    const entry = globalState.lessonTrash[index];
+    const subject = globalState.subjects.find(item => item.id === entry.subjectId) || globalState.subjects.find(item => item.id === currentSubjectId);
+    if (!subject) return false;
+    if (subject.id === currentSubjectId) courseData = [...courseData, entry.lesson];
+    subject.lessons = subject.id === currentSubjectId ? courseData : [...(subject.lessons || []), entry.lesson];
+    globalState.lessonTrash = globalState.lessonTrash.filter((_, i) => i !== index);
+    return true;
+}
+
+function renderTrashRows() {
+    const rows = (globalState.lessonTrash || []).map((entry, index) => {
+        const subject = globalState.subjects.find(item => item.id === entry.subjectId);
+        return `
+            <div class="flex items-center gap-2 p-2 rounded-lg bg-white/5 text-xs text-textLight">
+                <span class="flex-1 min-w-0 truncate">${escapeHtml(entry.lesson.title)}<span class="block text-[0.6rem] text-textMuted">${escapeHtml(subject?.title || '삭제된 교과')} · ${escapeHtml(entry.at.slice(0, 16).replace('T', ' '))}</span></span>
+                <button data-trash-action="restore" data-index="${index}" class="px-2 py-1 font-bold bg-accent text-white rounded">복원</button>
+                <button data-trash-action="purge" data-index="${index}" class="px-2 py-1 font-bold bg-white/10 text-rose-300 rounded">완전 삭제</button>
+            </div>`;
+    });
+    return rows.join('') || '<p class="text-xs text-textMuted">휴지통이 비었습니다.</p>';
+}
+
+window.openLessonTrash = function () {
+    if (document.getElementById('lesson-trash-dialog')) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'lesson-trash-dialog';
+    overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9000]';
+    overlay.innerHTML = `
+        <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[480px] max-h-[80vh] flex flex-col shadow-2xl">
+            <div class="p-4 border-b border-white/10 flex items-center">
+                <h2 class="text-sm font-bold text-textLight">차시 휴지통</h2>
+                <button data-trash-action="close" class="ml-auto px-3 py-1 text-xs font-bold text-textLight bg-white/10 rounded">닫기</button>
+            </div>
+            <div id="lesson-trash-rows" class="flex-1 overflow-y-auto p-4 space-y-2">${renderTrashRows()}</div>
+        </div>`;
+    overlay.addEventListener('click', onTrashClick);
+    document.body.appendChild(overlay);
+};
+
+async function onTrashClick(event) {
+    const action = event.target.dataset?.trashAction;
+    if (!action) return;
+    if (action === 'close') return document.getElementById('lesson-trash-dialog')?.remove();
+    const index = Number(event.target.dataset.index);
+    if (action === 'restore') {
+        const entry = globalState.lessonTrash[index];
+        if (!restoreLesson(index)) return window.showAlert('복원할 교과를 찾지 못했습니다.');
+        window.showToast?.(`'${entry.lesson.title}' 차시를 복원했습니다.`, 'success');
+    }
+    if (action === 'purge') globalState.lessonTrash = globalState.lessonTrash.filter((_, i) => i !== index);
+    document.getElementById('lesson-trash-rows').innerHTML = renderTrashRows();
+    await saveState();
+    renderSidebar();
+    applyLessonFilter();
 }
 
 /* ---------- 차시 목록 ---------- */

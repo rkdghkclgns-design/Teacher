@@ -2188,7 +2188,7 @@ function renderSidebar() {
 
                     <i class="ph-fill ph-flag-pennant text-textMuted"></i>
 
-                    <h3 class="text-xs font-bold text-textMuted uppercase tracking-wider flex-1">차시 목록</h3>
+                    <h3 class="text-xs font-bold text-textMuted uppercase tracking-wider flex-1">차시 목록</h3>${renderLessonTrashButton()}
 
                     <button onclick="deleteAllModules()" class="text-[0.55rem] font-bold px-2 py-0.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20 transition-colors" title="모든 차시 일괄 삭제">
                         <i class="ph-bold ph-trash-simple"></i> 일괄 삭제
@@ -2367,6 +2367,7 @@ window.deleteModule = function (id) {
 
         if (mod && mod.content) archiveContent(mod);
 
+        if (mod) moveLessonsToTrash([mod]);
         courseData = courseData.filter(m => String(m.id) !== String(id));
 
         if (String(currentEditingModuleId) === String(id)) {
@@ -2417,6 +2418,7 @@ window.deleteAllModules = function () {
 
     document.getElementById('delete-all-confirm').onclick = () => {
         // 즉시 삭제 (보관함 저장 없이)
+        moveLessonsToTrash(courseData.filter(m => m.id !== 'mainQuest'));
         courseData = courseData.filter(m => m.id === 'mainQuest');
         currentEditingModuleId = null;
         document.getElementById('editor-content-area').innerHTML = '<div class="h-full flex items-center justify-center text-textMuted text-sm">모든 차시가 삭제되었습니다.</div>';
@@ -2433,6 +2435,7 @@ window.deleteAllModules = function () {
                 if (typeof archiveContent === 'function') archiveContent(mod);
             }
         });
+        moveLessonsToTrash(courseData.filter(m => m.id !== 'mainQuest'));
         courseData = courseData.filter(m => m.id === 'mainQuest');
         currentEditingModuleId = null;
         document.getElementById('editor-content-area').innerHTML = '<div class="h-full flex items-center justify-center text-textMuted text-sm">모든 차시가 삭제되었습니다.</div>';
@@ -2633,6 +2636,7 @@ function renderEditor(mod) {
                         <button onclick="reinforceCurrentTab('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors flex items-center gap-1 shrink-0 whitespace-nowrap">
                             <i class="ph-bold ph-arrow-clockwise"></i> 보강 재생성
                         </button>
+                        <button onclick="openSectionLocks('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-slate-50 text-slate-600 border border-slate-200 rounded hover:bg-slate-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="다시 생성해도 유지할 섹션 선택"><i class="ph-bold ph-lock-simple"></i> 섹션 고정</button>
                         <button onclick="openQuestionBank('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-violet-50 text-violet-600 border border-violet-200 rounded hover:bg-violet-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="문항 분포·검수·CSV"><i class="ph-bold ph-exam"></i> 문제은행</button>
                         <button onclick="runConventionCheck('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-rose-50 text-rose-600 border border-rose-200 rounded hover:bg-rose-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="콘텐츠 업무 설계 규칙으로 현재 탭 검사"><i class="ph-bold ph-list-checks"></i> 컨벤션 검수</button>
                         <div id="tone-loading" class="hidden items-center gap-1.5 ml-2">

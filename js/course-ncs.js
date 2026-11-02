@@ -10,6 +10,8 @@ const NCS_MAX_SUBD = 6;
 const NCS_MAX_CANDIDATES = 45;
 const NCS_MAX_RECS = 6;
 const NCS_SEARCH_LIMIT = 15;
+const NCS_SOLO_PENALTY = 0.9;
+const CROSS_MODELS = { gemini: 'gemini-4-argon', claude: 'claude-opus-5-5' };
 
 // 과정 주제에 자주 나오지만 NCS 명칭과 표현이 다른 낱말 → NCS 쪽 표현으로 확장
 const NCS_SYNONYMS = {
@@ -28,7 +30,24 @@ let _ncsOpening = false;
 
 // 카탈로그 원문에 남은 HTML 엔티티를 푼다 (화면 출력에서 다시 이스케이프한다)
 const decodeNcsText = text => String(text).replace(/&amp;/g, '&');
-const ncsKeywordRows = (query, limit) => ncsSearch(query, limit).map(unit => ({ ...unit, by: '키워드' }));
+
+// 직접 추가한 능력단위와 코드 완전 일치를 검색 결과 앞에 둔다
+function ncsKeywordRows(query, limit) {
+    const text = query.trim().toLowerCase();
+    const exact = ncsUnit(query.trim());
+    const custom = customNcsUnits().filter(unit => `${unit.code} ${unit.name}`.toLowerCase().includes(text));
+    const rows = [...(exact ? [exact] : []), ...custom, ...ncsSearch(query, limit)];
+    return rows.filter((row, index) => rows.findIndex(other => other.code === row.code) === index).slice(0, limit).map(unit => ({ ...unit, by: '키워드' }));
+}
+
+function addCustomNcsUnit({ code, name, level }) {
+    const unit = { code: code.trim(), name: name.trim(), level: Number(level) || null, path: ['', '', '', '직접 추가'], duty: '', verified: false, custom: true };
+    if (!unit.code || !unit.name) throw new Error('코드와 이름을 입력해주세요.');
+    const official = ncsCatalog().units.some(row => row[0] === unit.code) && ncsUnit(unit.code);
+    if (official) return official;
+    globalState.ncsCustomUnits = [...customNcsUnits().filter(item => item.code !== unit.code), unit];
+    return unit;
+}
 
 /* ---------- 카탈로그 ---------- */
 function ncsCatalog() {
@@ -53,10 +72,12 @@ function loadNcsCatalog() {
     return _ncsCatalogPromise;
 }
 
+const customNcsUnits = () => globalState.ncsCustomUnits || [];
+
 function ncsUnit(code) {
     const catalog = ncsCatalog();
     const unit = catalog.units.find(u => u[0] === code);
-    if (!unit) return null;
+    if (!unit) return customNcsUnits().find(custom => custom.code === code) || null;
     const subd = (catalog.subd[code.slice(0, 8)] || []).map(decodeNcsText);
     return { code: unit[0], name: decodeNcsText(unit[1]), level: unit[2], subd: code.slice(0, 8), path: subd.slice(0, 4), duty: subd[4] || '' };
 }
@@ -153,8 +174,14 @@ function textModelHasKey() {
     return isClaudeModel(TEXT_MODEL) ? !!claudeApiKey : !!apiKey;
 }
 
-async function askNcsJson(prompt) {
-    const data = await callGemini(TEXT_MODEL, {
+// 텍스트 모델과 다른 공급자의 키가 있으면 교차 판단에 쓸 모델을 돌려준다
+function crossCheckModel() {
+    if (isClaudeModel(TEXT_MODEL)) return apiKey ? CROSS_MODELS.gemini : '';
+    return claudeApiKey ? CROSS_MODELS.claude : '';
+}
+
+async function askNcsJson(prompt, model = TEXT_MODEL) {
+    const data = await callGemini(model, {
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         systemInstruction: { parts: [{ text: 'NCS 기반 교육과정 설계 전문가로서 지정된 JSON만 출력합니다.' }] },
         generationConfig: { responseMimeType: 'application/json' }
@@ -204,6 +231,38 @@ function buildNcsRankPrompt(subject, candidates) {
     ].join('\n');
 }
 
+function parseNcsRank(parsed, byCode) {
+    const rows = Array.isArray(parsed) ? parsed : (parsed?.items || parsed?.results || []);
+    return rows
+        .filter((row, index) => row && byCode.has(row.code) && rows.findIndex(other => other?.code === row.code) === index)
+        .map(row => ({
+            code: row.code,
+            score: Math.max(0, Math.min(100, Math.round(Number(row.score) || 0))),
+            reason: String(row.reason || '').trim()
+        }));
+}
+
+// 두 모델이 판단했으면 점수를 평균한다. 한 모델만 고른 항목은 소폭 감점한다.
+function mergeNcsRanks(lists) {
+    const merged = new Map();
+    lists.flat().forEach(row => {
+        const item = merged.get(row.code) || { code: row.code, scores: [], reasons: [] };
+        merged.set(row.code, { ...item, scores: [...item.scores, row.score], reasons: [...item.reasons, row.reason].filter(Boolean) });
+    });
+    return [...merged.values()].map(item => {
+        const average = item.scores.reduce((sum, score) => sum + score, 0) / item.scores.length;
+        const agreed = lists.length > 1 && item.scores.length > 1;
+        return { code: item.code, score: Math.round(lists.length > 1 && !agreed ? average * NCS_SOLO_PENALTY : average), reason: item.reasons[0] || '', agreed };
+    }).sort((a, b) => b.score - a.score);
+}
+
+async function rankNcsCandidates(prompt, byCode) {
+    const second = crossCheckModel();
+    // 교차 모델이 실패하면 단일 모델 결과로 판단한다. 합의가 없었던 것으로 감점하지 않는다.
+    const [first, other] = await Promise.all([askNcsJson(prompt), second ? askNcsJson(prompt, second).catch(() => null) : null]);
+    return mergeNcsRanks([first, other].map(parsed => parseNcsRank(parsed, byCode)).filter(list => list.length));
+}
+
 function keywordRecs(local) {
     return local.slice(0, NCS_MAX_RECS).map(unit => ({ ...unit, score: unit.match, reason: '키워드 일치 (AI 키를 저장하면 근거와 함께 추천합니다)', by: '키워드' }));
 }
@@ -219,14 +278,8 @@ async function recommendSubjectNcs(subject, onProgress = () => {}) {
     const candidates = collectNcsCandidates(query, local, subds);
     const byCode = new Map(candidates.map(unit => [unit.code, unit]));
     onProgress('능력단위 적합도를 판단하고 있습니다...');
-    const ranked = await askNcsJson(buildNcsRankPrompt(subject, candidates));
-    const rows = Array.isArray(ranked) ? ranked : (ranked?.items || ranked?.results || []);
-    const recs = rows.filter(row => row && byCode.has(row.code)).slice(0, NCS_MAX_RECS).map(row => ({
-        ...byCode.get(row.code),
-        score: Math.max(0, Math.min(100, Math.round(Number(row.score) || 0))),
-        reason: String(row.reason || '').trim(),
-        by: 'AI'
-    })).sort((a, b) => b.score - a.score);
+    const ranked = await rankNcsCandidates(buildNcsRankPrompt(subject, candidates), byCode);
+    const recs = ranked.slice(0, NCS_MAX_RECS).map(row => ({ ...byCode.get(row.code), ...row, by: 'AI' }));
     return recs.length ? recs : keywordRecs(local);
 }
 
@@ -267,7 +320,7 @@ function renderSubjectNcsCard(subject) {
 
 function ncsRowHtml(unit, checked) {
     // 점수는 AI가 매긴 적합도일 때만 보여 준다. 키워드 일치도는 상대값이라 적합도로 읽히면 안 된다.
-    const meta = [unit.path?.[3], unit.level ? `${unit.level}수준` : '', unit.by === 'AI' ? `${unit.score}점` : ''].filter(Boolean).join(' · ');
+    const meta = [unit.path?.[3], unit.level ? `${unit.level}수준` : '', unit.by === 'AI' ? `${unit.score}점` : '', unit.agreed ? '두 모델 합의' : '', unit.verified === false ? '미검증' : ''].filter(Boolean).join(' · ');
     return `
         <label class="flex items-start gap-2 p-2 rounded-lg hover:bg-white/5 cursor-pointer">
             <input type="checkbox" class="mt-0.5" data-ncs-code="${escapeHtml(unit.code)}" ${checked ? 'checked' : ''}>
@@ -322,6 +375,12 @@ window.openNcsDialog = async function () {
                     <input id="ncs-dialog-search" class="flex-1 px-3 py-1.5 text-xs bg-black/30 border border-white/10 rounded-lg text-white focus:outline-none focus:border-accent" placeholder="능력단위 검색 (예: 게임 기획)">
                     <button data-ncs-action="recommend" class="px-3 py-1.5 text-xs font-bold text-white bg-accent rounded-lg hover:bg-accentHover">AI 추천</button>
                 </div>
+                <div class="flex gap-2 mt-2">
+                    <input id="ncs-custom-code" class="w-36 px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white" placeholder="코드">
+                    <input id="ncs-custom-name" class="flex-1 px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white" placeholder="능력단위 이름 (목록에 없을 때)">
+                    <input id="ncs-custom-level" type="number" min="1" max="8" class="w-14 px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white" placeholder="수준">
+                    <button data-ncs-action="add-custom" class="px-2 py-1 text-xs font-bold text-textLight bg-white/10 rounded hover:bg-white/20">직접 추가</button>
+                </div>
                 <p id="ncs-dialog-status" class="text-[0.65rem] text-accent mt-2 min-h-[1em]"></p>
             </div>
             <div id="ncs-dialog-list" class="flex-1 overflow-y-auto p-2"></div>
@@ -357,6 +416,7 @@ async function onNcsDialogClick(event) {
     const action = event.target.dataset?.ncsAction;
     if (action === 'close') document.getElementById('ncs-dialog')?.remove();
     if (action === 'confirm') await confirmNcsDraft();
+    if (action === 'add-custom') addCustomFromDialog();
     if (action !== 'recommend') return;
     const { subject } = _ncsDraft;
     event.target.disabled = true;
@@ -371,6 +431,18 @@ async function onNcsDialogClick(event) {
         setNcsDialogStatus(`추천 실패: ${err.message}`);
     } finally {
         event.target.disabled = false;
+    }
+}
+
+function addCustomFromDialog() {
+    const value = id => document.getElementById(id).value;
+    try {
+        const unit = addCustomNcsUnit({ code: value('ncs-custom-code'), name: value('ncs-custom-name'), level: value('ncs-custom-level') });
+        _ncsDraft.selected.set(unit.code, unit);
+        setNcsDialogStatus('직접 추가한 능력단위는 ncs.go.kr에서 확인한 뒤 사용해주세요.');
+        renderNcsDialogList();
+    } catch (err) {
+        setNcsDialogStatus(err.message);
     }
 }
 

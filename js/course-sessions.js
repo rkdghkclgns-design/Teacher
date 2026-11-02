@@ -185,14 +185,17 @@ function frameGuide(step, index, title, nextTitle) {
     ].join('\n');
 }
 
+function parseDeckSlides(deckMd) {
+    return String(deckMd || '').split(/^(?=###\s*슬라이드)/m).filter(block => /^###\s*슬라이드/.test(block)).map(block => ({
+        title: block.split('\n')[0].replace(/^###\s*슬라이드\s*\d*\s*-?\s*/, '').trim(),
+        label: (block.match(/대응\s*교수안:\s*(.+)/) || [])[1]?.trim() || '',
+        body: block.split('\n').slice(1).join('\n').trim()
+    }));
+}
+
 // 편성안 슬라이드를 대응 교수안(도입·전개 N·정리)별로 묶는다
 function deckSlidesByLabel(deckMd) {
-    const slides = String(deckMd || '').split(/^(?=###\s*슬라이드)/m).filter(block => /^###\s*슬라이드/.test(block));
-    return slides.reduce((groups, block) => {
-        const title = block.split('\n')[0].replace(/^###\s*슬라이드\s*\d*\s*-?\s*/, '').trim();
-        const label = (block.match(/대응\s*교수안:\s*(.+)/) || [])[1]?.trim() || '';
-        return { ...groups, [label]: [...(groups[label] || []), title] };
-    }, {});
+    return parseDeckSlides(deckMd).reduce((groups, slide) => ({ ...groups, [slide.label]: [...(groups[slide.label] || []), slide] }), {});
 }
 
 function sessionStepBody(step, index, title, nextTitle) {
@@ -205,13 +208,12 @@ function sessionBlockLines(modules, session, index, sessions, deck) {
     const plainTitle = text => text.replace(/\s*\(\d+\/\d+\)$/, '');
     const nextTitle = sessions[index + 1] ? plainTitle(sessionTitle(modules, sessions[index + 1])) : '';
     const steps = sessionSteps(modules, session, index, sessions.length);
-    const labels = [...new Set(session.items.filter(item => !item.cont).map(item => item.step.label))];
-    const slides = labels.flatMap(label => deck[label] || []);
+    const slides = sessionLabels(session, index).flatMap(label => deck[label] || []);
     return [
         `# ${index + 1}차시. ${title}`, '',
         `- 시간: ${fmtMinutes(session.minutes)} (${index + 1}/${sessions.length}차시)`, '',
         ...steps.flatMap(step => [`## ${step.heading}`, '', sessionStepBody(step, index, plainTitle(title), nextTitle), '']),
-        ...(slides.length ? ['## 슬라이드', '', ...slides.map(slide => `- ${slide}`), ''] : [])
+        ...(slides.length ? ['## 슬라이드', '', ...slides.map(slide => `- ${slide.title}`), ''] : [])
     ];
 }
 
@@ -227,13 +229,47 @@ function gyosuanSessionsMd(mod) {
     ].join('\n');
 }
 
+// 표지·목차처럼 교수안 단계에 대응하지 않는 슬라이드는 첫 차시에 싣는다
+function sessionLabels(session, index) {
+    return [...(index === 0 ? ['-'] : []), ...new Set(session.items.filter(item => !item.cont).map(item => item.step.label))];
+}
+
+// 차시마다 슬라이드 번호를 1번부터 다시 매긴 편성안
+function gyosuanSessionDecksMd(mod) {
+    const flow = gyosuanFlow(mod);
+    if (!flow.length) return '';
+    const modules = [{ title: mod.title, minutes: flow.reduce((sum, step) => sum + step.minutes, 0), flow }];
+    const deck = deckSlidesByLabel(mod.gyosuan.deckMd);
+    const sessions = splitSessions(modules);
+    return sessions.flatMap((session, index) => {
+        const slides = sessionLabels(session, index).flatMap(label => deck[label] || []);
+        return [
+            `# 슬라이드 편성안 - ${index + 1}차시. ${sessionTitle(modules, session)}`, '', '## 슬라이드 편성', '',
+            ...slides.flatMap((slide, slideIndex) => [`### 슬라이드 ${slideIndex + 1} - ${slide.title}`, slide.body, '']),
+            ...(slides.length ? [] : ['이 차시에 대응하는 슬라이드가 없습니다.', ''])
+        ];
+    }).join('\n');
+}
+
+function downloadMd(md, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([md], { type: 'text/markdown;charset=utf-8' }));
+    a.download = `${String(name).replace(/[^\w가-힣]/g, '_')}.md`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+window.downloadGyosuanSessionDecks = function (moduleId) {
+    const mod = getEditingModule(moduleId);
+    if (!mod?.gyosuan?.deckMd) return window.showAlert('먼저 슬라이드 편성안을 생성해주세요.');
+    const md = gyosuanSessionDecksMd(mod);
+    if (!md) return window.showAlert('먼저 교수안을 생성해주세요.');
+    downloadMd(md, `${mod.title}_차시별편성안`);
+};
+
 window.downloadGyosuanSessions = function (moduleId) {
     const mod = getEditingModule(moduleId);
     const md = mod && gyosuanSessionsMd(mod);
     if (!md) return window.showAlert('먼저 교수안을 생성해주세요.');
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([md], { type: 'text/markdown;charset=utf-8' }));
-    a.download = `${String(mod.title).replace(/[^\w가-힣]/g, '_')}_차시별교수안.md`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    downloadMd(md, `${mod.title}_차시별교수안`);
 };

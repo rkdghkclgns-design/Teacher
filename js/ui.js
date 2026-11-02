@@ -1122,7 +1122,7 @@ function syncBatchLegacyVars() {
         batchUploadedFileName = null;
     } else {
         batchUploadedFileContent = batchUploadedFiles
-            .map(f => `[${f.name}]\n${f.content}`)
+            .map(f => `[${f.name}]\n${filterPageRange(f.content, f.pageRange)}`)
             .join('\n\n---\n\n');
         batchUploadedFileName = batchUploadedFiles.map(f => f.name).join(', ');
     }
@@ -1442,6 +1442,7 @@ async function extractTextFromFile(file) {
 
         }
 
+        if (!pageTexts.length) return transcribeScannedPdf(pdf);
         return pageTexts.join('\n\n');
 
     }
@@ -1492,7 +1493,8 @@ async function extractTextFromFile(file) {
 
                 .join(' ');
 
-            if (text.trim()) parts.push(`[Slide ${i + 1}] ${text}`);
+            const notes = await pptxSlideNotes(zip, slideFiles[i]);
+            if (text.trim() || notes) parts.push(`[Slide ${i + 1}] ${text}${notes ? `\n[노트] ${notes}` : ''}`);
 
         }
 
@@ -1515,6 +1517,9 @@ async function extractTextFromFile(file) {
         return paragraphs.join('\n\n');
     }
 
+    // 이미지 — AI가 글자를 옮겨 적는다
+    if (REF_IMAGE_EXTENSIONS.some(extension => lower.endsWith(extension))) return transcribeImageFile(file);
+
     // .ppt (레거시 바이너리) — 경고만
 
     if (lower.endsWith('.ppt')) {
@@ -1533,7 +1538,7 @@ async function extractTextFromFile(file) {
 
 async function handleBatchFiles(files) {
 
-    const supported = ['.md', '.txt', '.pdf', '.ppt', '.pptx', '.docx'];
+    const supported = ['.md', '.txt', '.pdf', '.ppt', '.pptx', '.docx', ...REF_IMAGE_EXTENSIONS];
 
     const rejected = [];
 
@@ -1655,7 +1660,7 @@ function renderBatchFileList() {
 
         md: 'ph-file-md', txt: 'ph-file-text', pdf: 'ph-file-pdf',
 
-        ppt: 'ph-file-ppt', pptx: 'ph-file-ppt', docx: 'ph-file-doc',
+        ppt: 'ph-file-ppt', pptx: 'ph-file-ppt', docx: 'ph-file-doc', png: 'ph-file-image', jpg: 'ph-file-image', jpeg: 'ph-file-image', webp: 'ph-file-image',
 
     })[type] || 'ph-file';
 
@@ -1684,6 +1689,7 @@ function renderBatchFileList() {
                     <div class="text-[0.7rem] font-semibold text-white truncate">${f.name}${statusBadge}</div>
 
                     <div class="text-[0.6rem] text-textMuted">${humanSize(f.size)}</div>
+                    ${hasPageLabels(f.content) ? `<input value="${escapeHtml(f.pageRange || '')}" onchange="setBatchFileRange(${i}, this.value)" placeholder="쪽 범위 (예: 1-5, 9)" class="mt-1 w-32 px-1.5 py-0.5 text-[0.6rem] bg-black/30 border border-white/10 rounded text-white">` : ''}
 
                 </div>
 

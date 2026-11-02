@@ -505,6 +505,7 @@ function gyosuanToolbarHtml(mod) {
             ${button(`toggleGyosuanEdit()`, 'ph-pencil-simple', _gyosuanEditingId === mod.id ? '보기' : 'MD 수정')}
             ${button(`downloadGyosuanMd('${mod.id}')`, 'ph-download-simple', 'MD')}
             ${button(`downloadGyosuanSessions('${mod.id}')`, 'ph-clock', '차시별 MD')}
+            ${button(`downloadGyosuanSessionDecks('${mod.id}')`, 'ph-presentation', '차시별 편성안')}
             ${button(`printGyosuan('${mod.id}')`, 'ph-printer', 'PDF')}
             ${button(`regenerateGyosuan('${mod.id}')`, 'ph-arrow-clockwise', '재생성')}
         </div>`;

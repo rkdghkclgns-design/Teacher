@@ -1006,8 +1006,8 @@ window.exportAllModules = async function () {
             subject: subj ? subj.title : '',
             timestamp: new Date().toISOString(),
             module_count: courseData.length,
-            // 전체 설정 및 현황 컨텍스트 직렬화 (API 키는 공유 파일에 남지 않도록 제외)
-            context: { ...globalState, apiKey: undefined }
+            // 전체 설정 및 현황 컨텍스트 직렬화 (API 키와 삭제한 차시는 공유 파일에 남지 않도록 제외)
+            context: { ...globalState, apiKey: undefined, lessonTrash: undefined }
         };
         rootFolder.file('save_data.yaml', JSON.stringify(metaObj, null, 2)); // 편의상 JSON 직렬화를 yaml 확장자로 보존
 
