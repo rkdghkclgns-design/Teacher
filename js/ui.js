@@ -358,7 +358,7 @@ function renderOverviewLNB() {
 
                             <span class="flex items-center justify-center w-7 h-7 rounded-lg bg-accent/20 text-accent font-bold text-xs cursor-grab active:cursor-grabbing" title="드래그하여 순서 변경">${idx + 1}</span>
 
-                            <h3 class="font-bold text-sm text-white truncate max-w-[140px]">${subj.title}</h3>
+                            <h3 class="font-bold text-sm text-white truncate max-w-[140px]">${escapeHtml(subj.title)}</h3>
 
                         </div>
 
@@ -443,6 +443,12 @@ function createNewSubject() {
 
         namingConvention: '',
 
+        referenceUrls: [],
+
+        referenceText: '',
+
+        autoSlide: false,
+
         lessonCount: 0,
 
         hasLevelTest: true,
@@ -519,9 +525,9 @@ function openSubjectDetail(id) {
 
                         <div>
 
-                            <div class="text-sm font-bold text-white group-hover:text-accent transition-colors">${l.title}</div>
+                            <div class="text-sm font-bold text-white group-hover:text-accent transition-colors">${escapeHtml(l.title)}</div>
 
-                            <div class="text-xs text-textMuted line-clamp-1">${l.description || '-'}</div>
+                            <div class="text-xs text-textMuted line-clamp-1">${escapeHtml(l.description || '-')}</div>
 
                         </div>
 
@@ -561,7 +567,7 @@ function openSubjectDetail(id) {
 
                         <label class="text-[0.65rem] font-bold text-accent uppercase tracking-widest mb-1.5 block">Subject Title</label>
 
-                        <div class="text-xl font-bold text-white">${subj.title}</div>
+                        <div class="text-xl font-bold text-white">${escapeHtml(subj.title)}</div>
 
                     </div>
 
@@ -573,7 +579,7 @@ function openSubjectDetail(id) {
 
                         <div class="text-sm text-textLight leading-relaxed bg-white/5 p-4 rounded-xl border border-white/5">
 
-                            ${subj.description}
+                            ${escapeHtml(subj.description)}
 
                         </div>
 

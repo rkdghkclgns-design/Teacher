@@ -717,7 +717,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
                         { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
                         { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
                     ],
-                    contents: [{ parts: [{ text: userPrompt }] }],
+                    contents: [{ parts: [{ text: userPrompt + lessonDesignBrief(mod) }] }],
                     systemInstruction: { parts: [{ text: systemInstruction }] }
         });
 
@@ -1029,14 +1029,14 @@ async function extractSearchIntent(keyword, context) {
    - 예시: 'A 5-stage game development pipeline infographic: planning desk, art monitors, QA controllers, rocket launch icon, live broadcast. Symbolic icons only, no text, no letters, no labels.'
 4. **다이어그램·인포그래픽 형태 권장** — 단계도·플로우차트·카드형 레이아웃 (단, 글자 없이 아이콘/색상 구분).
 5. **간결하게** — 50~120 단어 이내.
-6. **반드시 끝에 추가**: "digital art style, clean, professional, 16:9 wide composition. No text, no letters, no words, no labels, no watermark anywhere in the image."
+6. **반드시 끝에 추가**: "${LESSON_IMAGE_STYLE}, 16:9 wide composition. No text, no letters, no words, no labels, no watermark anywhere in the image."
 7. **저작권 금지**: 특정 게임·캐릭터 이름 직접 언급 금지.
 
 [출력 포맷 JSON — 반드시 준수]
 {
   "intent_type": "data_representation | visual_asset | concept_illustration | screenshot | diagram",
   "search_query": "최적화된 검색 쿼리",
-  "image_gen_prompt": "영어 전용 이미지 생성 프롬프트 (50~120 단어, 이미지 내 텍스트 없음, 끝에 'digital art style, clean, professional, 16:9 wide composition. No text, no letters, no words, no labels, no watermark anywhere in the image.' 포함)",
+  "image_gen_prompt": "영어 전용 이미지 생성 프롬프트 (50~120 단어, 이미지 내 텍스트 없음, 끝에 '${LESSON_IMAGE_STYLE}, 16:9 wide composition. No text, no letters, no words, no labels, no watermark anywhere in the image.' 포함)",
   "reasoning": "이 결정 이유 (한국어 짧게, 40자 이내)"
 }`;
 
@@ -1443,7 +1443,7 @@ async function processImageTags(mod, markdown) {
                         .replace(/\s{2,}/g, ' ')
                         .trim();
                     if (!/no text/i.test(promptText)) promptText += NO_TEXT_SUFFIX;
-                    generatePrompt = promptText;
+                    generatePrompt = withLessonImageStyle(promptText);
                     console.log(`[AI Gen] 문맥 기반 프롬프트 사용 (${generatePrompt.length}자): ${tag.keyword}`);
                 } else {
                     // 키워드에서 번호·불필요한 기호 제거하여 자연스러운 주제로 변환
@@ -1453,7 +1453,7 @@ async function processImageTags(mod, markdown) {
                         .replace(/[:：]\s*$/, '')         // 끝의 콜론 제거
                         .trim();
                     // V8: 영어 전용 + 글자 금지 (한국어 "교육용 일러스트" 제거 — 이미지에 글자가 박히던 문제 해결)
-                    generatePrompt = `Educational concept illustration representing "${cleanedKeyword}", digital art style, clean, professional, 16:9 wide composition.${NO_TEXT_SUFFIX}`;
+                    generatePrompt = `Educational concept illustration representing "${cleanedKeyword}", ${LESSON_IMAGE_STYLE}, 16:9 wide composition.${NO_TEXT_SUFFIX}`;
                     console.log(`[AI Gen] V8 텍스트 없는 프롬프트 사용 (정제된 키워드): ${cleanedKeyword}`);
                 }
                 b64Image = await generateImageAPI(generatePrompt);
@@ -1640,17 +1640,20 @@ window.sanitizeAllContent = async function () {
     }
 };
 
+// 차시 삽화는 과정 전체가 같은 화풍을 쓴다. 사용자가 직접 쓴 이미지 명령에는 붙이지 않는다.
+function withLessonImageStyle(prompt) {
+    return prompt.includes(LESSON_IMAGE_STYLE) ? prompt : `${prompt}, ${LESSON_IMAGE_STYLE}`;
+}
+
 async function generateImageAPI(prompt) {
     // 폴백 체인: 선택한 모델 → 나머지 IMAGE_MODEL_OPTIONS 순서
     // (gemini-3.1-flash-image-preview, Imagen 4는 2026년 서비스 종료로 제거)
     const geminiModels = [...new Set([IMAGE_MODEL, ...IMAGE_MODEL_OPTIONS.map(o => o.value)])];
     const errorHistory = [];
 
-    const enhancedPrompt = prompt + ", digital art style, clean, professional";
-
     for (const model of geminiModels) {
         const payload = {
-            contents: [{ parts: [{ text: enhancedPrompt }] }],
+            contents: [{ parts: [{ text: prompt }] }],
             generationConfig: {
                 responseModalities: ["TEXT", "IMAGE"],
                 imageConfig: { aspectRatio: IMAGE_ASPECT_RATIO, imageSize: IMAGE_SIZE }
@@ -1829,7 +1832,7 @@ window.doRegenerateImage = async function (submitBtn, fallbackKeyword, imgId) {
 
     try {
 
-        const newB64 = await generateImageAPI(prompt);
+        const newB64 = await generateImageAPI(withLessonImageStyle(prompt));
 
         if (newB64) {
 
@@ -2090,7 +2093,7 @@ function renderSidebar() {
 
 
 
-    let html = '';
+    let html = renderSubjectNcsCard(subj);
 
 
 
@@ -2224,9 +2227,9 @@ function renderSidebar() {
 
                         </div>
 
-                        <h3 class="font-bold text-sm text-white mb-1 outline-none focus:bg-white/10 rounded px-1 -ml-1" contenteditable="true" spellcheck="false" onblur="updateModuleMeta(${mod.id}, 'title', this.innerText)" onclick="event.stopPropagation()">${mod.title}</h3>
+                        <h3 class="font-bold text-sm text-white mb-1 outline-none focus:bg-white/10 rounded px-1 -ml-1" contenteditable="true" spellcheck="false" onblur="updateModuleMeta(${mod.id}, 'title', this.innerText)" onclick="event.stopPropagation()">${escapeHtml(mod.title)}</h3>
 
-                        <p class="text-xs text-textMuted line-clamp-2 outline-none focus:bg-white/10 rounded px-1 -ml-1" contenteditable="true" spellcheck="false" onblur="updateModuleMeta(${mod.id}, 'description', this.innerText)" onclick="event.stopPropagation()">${mod.description}</p>
+                        <p class="text-xs text-textMuted line-clamp-2 outline-none focus:bg-white/10 rounded px-1 -ml-1" contenteditable="true" spellcheck="false" onblur="updateModuleMeta(${mod.id}, 'description', this.innerText)" onclick="event.stopPropagation()">${escapeHtml(mod.description)}</p>
 
                         
 
@@ -2494,7 +2497,7 @@ function renderEditor(mod) {
 
                         <i class="ph-duotone ${mod.id === 'mainQuest' ? 'ph-crown text-yellow-400/30' : 'ph-file-dashed text-white/20'} text-6xl mb-4"></i>
 
-                        <h2 class="text-xl font-bold text-white mb-2">${mod.title}</h2>
+                        <h2 class="text-xl font-bold text-white mb-2">${escapeHtml(mod.title)}</h2>
 
                         <p class="text-textMuted text-sm mb-6">아직 교안 내용이 생성되지 않았습니다.</p>
 
@@ -2582,7 +2585,7 @@ function renderEditor(mod) {
 
                     <div class="p-4 flex justify-between items-center">
 
-                        <h2 class="font-bold text-gray-800 truncate pr-4">${mod.title}</h2>
+                        <h2 class="font-bold text-gray-800 truncate pr-4">${escapeHtml(mod.title)}</h2>
 
                         <div class="flex items-center gap-2 shrink-0">
 

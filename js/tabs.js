@@ -115,7 +115,7 @@ async function generateTabContent(moduleId, tabId) {
         setLoadingText(`📝 ${tabMeta.label} 작성 중입니다... (1/${MAX_CHUNKS} 단락)`);
 
         const firstPayload = {
-            contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+            contents: [{ role: 'user', parts: [{ text: userPrompt + lessonDesignBrief(mod) }] }],
             systemInstruction: { parts: [{ text: systemInstruction }] },
             generationConfig: { maxOutputTokens: 65536 }
         };

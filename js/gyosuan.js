@@ -196,6 +196,7 @@ function buildMetaPrompt(info, sections) {
         info.duration ? `[총 분량] ${info.duration}` : '',
         info.description ? `[차시 설명] ${info.description}` : '',
         info.intro ? `[교안 머리말]\n${info.intro.slice(0, GYOSUAN_INTRO_CHARS)}` : '',
+        info.designBrief ? info.designBrief.trim() : '',
         `[전개 목록]\n${sections.map(sectionListLine).join('\n')}`
     ].filter(Boolean).join('\n');
 }
@@ -317,6 +318,7 @@ function assembleGyosuanDoc(info, meta, openClose, results) {
     lines.push('', '## 개요', '', '| 항목 | 내용 |', '|---|---|', `| 교과목 | ${info.subject} |`, `| 주제 | ${info.topic} |`);
     if (info.duration) lines.push(`| 소요 | ${info.duration} |`);
     ['대상', '선행', '결과물', '교보제'].forEach(key => { if (meta[key]) lines.push(`| ${key} | ${meta[key]} |`); });
+    if (info.ncs) lines.push(`| NCS | ${info.ncs} |`);
     lines.push('');
     meta.개요.forEach(paragraph => lines.push(paragraph, ''));
     lines.push('## 수업 흐름 한눈에 보기', '', '| 단계 | 시간 | 핵심 |', '|---|---|---|');
@@ -375,7 +377,9 @@ async function buildGyosuanFromLesson(mod, parts) {
         subject: subject?.title || globalState.courseTitle || mod.title,
         topic: mod.title,
         description: mod.description || '',
-        duration: hours ? `${hours}시수(약 ${hours * 60}분)` : ''
+        duration: hours ? `${hours}시수(약 ${Math.round(hours * 60)}분)` : '',
+        ncs: subjectNcsText(subject),
+        designBrief: lessonDesignBrief(mod)
     };
     const { intro, sections: units } = splitLessonSections(parts);
     const sections = limitSections(units);

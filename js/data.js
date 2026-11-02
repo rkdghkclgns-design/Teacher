@@ -471,6 +471,8 @@ let REASONING_EFFORT = 'max';
 // 이미지 규격: 교안 레이아웃 기준 16:9. 4K는 교안 저장·내보내기 용량 부담이 커서 2K 사용
 const IMAGE_ASPECT_RATIO = '16:9';
 const IMAGE_SIZE = '2K';
+// 교안 삽화 화풍: 과정 전체의 그림이 같은 교재처럼 보이도록 맞춘다 (develocket-slide 아트 스타일 가이드 기준)
+const LESSON_IMAGE_STYLE = 'flat vector illustration, uniform navy outlines, simplified geometric shapes, navy, cobalt blue, pale blue and amber palette on a warm off-white background, no gradients, characters with rounded heads and no facial features';
 
 
 // [Phase F10] Google Custom Search API 설정 (다중 키 롤링용)
@@ -723,7 +725,8 @@ const CONTEXT_CORE = {
         content_design:
             '[콘텐츠 업무 설계 — 작성 규칙]\n' +
             '- 교안은 무엇을 배울지를 지정합니다. 수업 진행 방법, 강사 활동, 강사용 스크립트는 교수안의 몫이므로 쓰지 않습니다.\n' +
-            '- 학습 목표는 "~할 수 있습니다"로 끝내고 관찰 가능한 행동과 수행 조건을 담습니다. "이해한다·안다·익힌다"는 쓰지 않습니다.\n' +
+            '- 학습 목표는 3개 이하로 쓰고, "~할 수 있습니다"로 끝내며 관찰 가능한 행동과 수행 조건을 담습니다. "이해한다·안다·익힌다"는 쓰지 않습니다.\n' +
+            '- 본문 문장은 "~합니다"로 종결합니다.\n' +
             '- 다른 차시나 과정을 지칭하지 않습니다. "앞에서 배운", "앞서", "이전 시간", "다음 시간에" 대신 도메인의 상황으로 서술합니다.\n' +
             '- 학습자를 호칭하지 않습니다. "여러분", "당신", "우리는" 대신 주어 없이 동작을 서술합니다.\n' +
             '- 모호한 표현을 쓰지 않습니다. "경우에 따라 다릅니다", "상황에 맞게"는 판단 기준으로, "매우·아주·굉장히"는 수치로 바꾸고, "당연히·물론·쉽게"는 삭제합니다.\n' +

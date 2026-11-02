@@ -37,8 +37,7 @@ function makeContext(aiStub) {
     vm.createContext(ctx);
     vm.runInContext(fs.readFileSync(root + 'kbuilder/parser.js', 'utf8'), ctx);
     ctx.stripInstructorCallouts = stripCallouts;
-    vm.runInContext(fs.readFileSync(root + 'gyosuan.js', 'utf8'), ctx);
-    vm.runInContext(fs.readFileSync(root + 'lesson-lint.js', 'utf8'), ctx);
+    ['gyosuan.js', 'lesson-lint.js', 'course-ncs.js', 'course-design.js'].forEach(file => vm.runInContext(fs.readFileSync(root + file, 'utf8'), ctx));
     return ctx;
 }
 
@@ -230,6 +229,64 @@ async function run(name, fn) {
         assert.ok(bad.includes('학습 목표는 관찰 가능한 행동으로 씁니다.'));
         ['학습자를 호칭하지 않습니다.', '다른 차시를 지칭하지 않습니다.', '정도는 수치로 씁니다.', '학습자에게 당연하지 않은 표현입니다.'].forEach(m => assert.ok(bad.includes(m), m));
         assert.deepStrictEqual(Array.from(issues('```js\n// 여러분 매우\n```\n`앞에서`\n<!-- [IMG: "매우"] -->\n')), [], '코드·주석은 검사하지 않음');
+    });
+
+    await run('컨벤션 검수: 학습 목표·체크리스트 구조', async () => {
+        const ctx = makeContext(responder());
+        const issues = md => vm.runInContext('lintLessonMarkdown', ctx)(md).map(i => i.msg);
+        const goal = '주어진 양식으로 게임 기획서를 작성할 수 있습니다.';
+        const passed = `## 학습 목표\n\n- ${goal}\n\n## 본문\n\n기획서는 규칙을 정의합니다.\n\n## ✅ 학습 후 체크리스트\n\n- 기획서 항목을 설명합니다. (다시 보기: 본문)\n`;
+        assert.deepStrictEqual(Array.from(issues(passed)), []);
+        const many = `## 학습 목표\n\n${Array(4).fill(`- ${goal}`).join('\n')}\n`;
+        assert.ok(issues(many).includes('학습 목표는 3개 이하로 씁니다.'));
+        assert.ok(issues('## 학습 목표\n\n- 기획서를 쓸 수 있습니다.\n').includes('학습 목표에 수행 조건과 제약을 담습니다.'));
+        assert.deepStrictEqual(Array.from(issues(`## 학습 목표\n\n- ${goal}\n  - 세부 조건입니다\n\n## ✅ 학습 후 체크리스트\n\n- 항목 (다시 보기: 본문)\n`)), [], '세부 불릿은 세지 않는다');
+        const mismatch = issues(`## 학습 목표\n\n- ${goal}\n\n## ✅ 학습 후 체크리스트\n\n- 하나 (다시 보기: 본문)\n- 둘\n`);
+        assert.ok(mismatch.includes('체크리스트는 학습 목표와 같은 수로 씁니다.'));
+        assert.ok(mismatch.includes('체크리스트에 다시 볼 섹션을 적습니다.'));
+        assert.ok(issues('기획서는 규칙을 정의한다.\n').includes('경어체(~합니다)로 종결합니다.'));
+    });
+
+    await run('컨벤션 검수: 문항', async () => {
+        const ctx = makeContext(responder());
+        const issues = md => vm.runInContext('lintLessonMarkdown', ctx)(md).map(i => i.msg);
+        const question = (title, label, answer, choices = '① 가\n② 나\n③ 다\n④ 라\n⑤ 마') => `### 문제 1. ${title}\n${label}\n\n${choices}\n\n✅ **정답:** ${answer}\n`;
+        assert.deepStrictEqual(Array.from(issues(question('제목', '학습 목표 1 · 밴드 L1', '②'))), []);
+        assert.deepStrictEqual(Array.from(issues(question('제목 (복수정답)', '학습 목표 2 · 밴드 L2', '①, ②'))), []);
+        assert.ok(issues(question('제목', '', '②')).includes('문제마다 학습 목표와 밴드를 표기합니다.'));
+        assert.ok(issues(question('제목', '학습 목표 1 · 밴드 L1', '')).includes('정답을 표기합니다.'));
+        assert.ok(issues(question('제목', '학습 목표 1 · 밴드 L1', '①, ②')).includes('단일 선택 문제에 정답이 여러 개입니다.'));
+        assert.ok(issues(question('제목 (복수정답)', '학습 목표 1 · 밴드 L1', '①')).includes('복수 정답 문제에 정답이 하나입니다.'));
+        assert.ok(issues(question('제목 (복수정답)', '학습 목표 1 · 밴드 L1', '①, ②, ③, ④, ⑤')).includes('모든 보기가 정답입니다.'));
+        assert.ok(issues(question('제목', '학습 목표 1 · 밴드 L1', '⑥')).includes('정답 번호가 보기에 없습니다.'));
+        assert.ok(issues(question('제목', '학습 목표 1 · 밴드 L1', '①', '① 가\n② 가\n③ 다\n④ 라')).includes('같은 보기를 두지 않습니다.'));
+        assert.ok(issues(question('제목', '학습 목표 1 · 밴드 L1', '①', '① 가\n② 나')).includes('보기는 4개 이상 둡니다.'));
+        assert.deepStrictEqual(Array.from(issues(question('제목', '학습 목표 1 · 밴드 L1', '②', '① 가 ② 나 ③ 다 ④ 라'))), [], '보기를 한 줄에 써도 센다');
+        assert.deepStrictEqual(Array.from(issues(question('제목', '학습 목표 1 · 밴드 L1', '②').replace('**정답:**', '**정답**:'))), [], '콜론이 볼드 밖이어도 정답으로 읽는다');
+        assert.deepStrictEqual(Array.from(issues(question('제목', '학습 목표 1 · 밴드 L1', '②').replace(/\n/g, '\r\n'))), [], 'CRLF 입력');
+        assert.ok(!issues(`${question('제목', '학습 목표 1 · 밴드 L1', '②')}\n## 다음 섹션\n\n① 정리 항목입니다.\n`).includes('같은 보기를 두지 않습니다.'));
+        assert.deepStrictEqual(Array.from(issues('### 학습 목표 확인 질문\n\n- 무엇을 배웠습니까\n')), [], 'H3 제목은 학습 목표 섹션이 아니다');
+    });
+
+    await run('과정 설계·NCS가 교수안에 반영', async () => {
+        const ai = responder();
+        const ctx = makeContext(ai);
+        const subject = ctx.globalState.subjects[0];
+        subject.ncs = { units: [{ code: '2001020101_23v1', name: '게임 기획', level: 5 }], confirmed: true };
+        const base = lesson();
+        const longIntro = `## 개요\n\n${'긴 개요 문장입니다. '.repeat(400)}\n\n`;
+        const mod = {
+            ...base, hours: 1.5, minutes: 90, objectives: ['설계한 목표를 설명할 수 있다.'], flow: [{ phase: '도입', title: '설계한 도입', minutes: 10 }],
+            tabContents: { ...base.tabContents, basicLearn: longIntro + base.tabContents.basicLearn }
+        };
+        ctx.getEditingModule = () => mod;
+        assert.strictEqual(await ctx.generateGyosuan('m1'), true);
+        assert.ok(mod.gyosuan.docMd.includes('| NCS | 2001020101_23v1 게임 기획 (5수준) |'));
+        assert.ok(mod.gyosuan.docMd.includes('1.5시수(약 90분)'));
+        subject.ncs = { ...subject.ncs, confirmed: false };
+        assert.strictEqual(await ctx.generateGyosuan('m1'), true);
+        assert.ok(mod.gyosuan.docMd.includes('게임 기획 (5수준) (미확정) |'), '확정 전 배정은 미확정으로 표기');
+        assert.ok(ai.prompts.some(text => text.includes('설계한 목표를 설명할 수 있다.') && text.includes('도입: 설계한 도입 (10분)')));
     });
 
     await run('이전 강사 콜아웃 제거', async () => {

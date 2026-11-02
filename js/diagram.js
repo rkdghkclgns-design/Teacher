@@ -84,9 +84,9 @@
 
                                 </div>
 
-                                <div class="font-bold text-white text-[1.1rem] mb-2 truncate relative z-10" title="${subj.title}">${subj.title}</div>
+                                <div class="font-bold text-white text-[1.1rem] mb-2 truncate relative z-10" title="${escapeHtml(subj.title)}">${escapeHtml(subj.title)}</div>
 
-                                <div class="text-xs text-textMuted line-clamp-2 leading-relaxed relative z-10" title="${subj.description}">${subj.description || '교과 설명을 입력해주세요.'}</div>
+                                <div class="text-xs text-textMuted line-clamp-2 leading-relaxed relative z-10" title="${escapeHtml(subj.description)}">${escapeHtml(subj.description || '교과 설명을 입력해주세요.')}</div>
 
                                 ${subj.mainQuest && subj.mainQuest.status === 'done' ? `<div class="mt-3 text-xs text-yellow-400 font-bold"><i class="ph-fill ph-crown"></i> 메인 퀘스트 완료됨</div>` : ''}
 
@@ -106,7 +106,7 @@
 
                                             <span class="text-[0.65rem] font-bold text-textMuted group-hover:text-accent transition-colors">${lIdx + 1}</span>
 
-                                            <div class="text-sm font-bold text-textLight truncate flex-1">${lesson.title}</div>
+                                            <div class="text-sm font-bold text-textLight truncate flex-1">${escapeHtml(lesson.title)}</div>
 
                                         </div>
 
