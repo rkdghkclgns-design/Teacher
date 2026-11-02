@@ -44,7 +44,8 @@
     return pills ? '<div class="doc-meta-pills">' + pills + '</div>' : "";
   }
 
-  function buildDoc(parsed, mount) {
+  /* opts.refs: 문서 끝에 실을 참고 이미지 [{name, url}] */
+  function buildDoc(parsed, mount, opts) {
     var meta = parsed.meta || {};
     var out = [];
 
@@ -79,8 +80,8 @@
       }
     });
 
-    // 참고 이미지 — 양 모드에서 모은 이미지를 교수안 말미에 갤러리로 인용
-    out.push(refGalleryHtml());
+    // 참고 이미지 — 차시에 모은 이미지를 교수안 말미에 갤러리로 인용
+    out.push(refGalleryHtml((opts && opts.refs) || []));
 
     out.push('</div></div>');
     mount.innerHTML = '<article class="doc-page">' + out.join("") + '</article>';
@@ -89,8 +90,7 @@
     buildTocSidebar(mount, parsed);
   }
 
-  function refGalleryHtml() {
-    var refs = (window.KBuilder.getRefImages && window.KBuilder.getRefImages()) || [];
+  function refGalleryHtml(refs) {
     if (!refs.length) return "";
     var items = refs.map(function (r) {
       return '<figure class="doc-ref-item"><img src="' + esc(r.url) + '" alt="' + esc(r.name) + '" loading="lazy" />' +
