@@ -25,8 +25,8 @@ const LESSON_LINT_RULES = [
 const LESSON_LINT_BANNED_OBJECTIVE = /이해한다|이해합니다|이해할 수|안다(?=[.\s]|$)|알 수 있|익힌다|익힙니다|익힐 수/;
 const LESSON_LINT_PLAIN_ENDING = /([가-힣])다\.(?=\s|$)/g;
 const LESSON_QUESTION_LABEL = /학습\s*목표\s*(\d+)\s*·\s*밴드\s*(L[1-3])(?:\s*·\s*(객관식|단답식|서술형|코드제출|파일제출))?/;
-const LESSON_QUESTION_FIELD = /^\s*(?:[^\s\w가-힣*]+\s*)?\*{0,2}\s*(힌트|정답|허용 표기|해설|채점 기준|테스트|교차 검수)\s*\*{0,2}\s*[:：]\s*\*{0,2}\s*(.*)$/;
-const LESSON_QUESTION_FIELD_KEYS = { 힌트: 'hint', 정답: 'answer', '허용 표기': 'accepted', 해설: 'explanation', '채점 기준': 'rubric', 테스트: 'tests', '교차 검수': 'review' };
+const LESSON_QUESTION_FIELD = /^\s*(?:[^\s\w가-힣*]+\s*)?\*{0,2}\s*(힌트|시작 코드|정답|허용 표기|해설|채점 기준|테스트|교차 검수)\s*\*{0,2}\s*[:：]\s*\*{0,2}\s*(.*)$/;
+const LESSON_QUESTION_FIELD_KEYS = { 힌트: 'hint', '시작 코드': 'code', 정답: 'answer', '허용 표기': 'accepted', 해설: 'explanation', '채점 기준': 'rubric', 테스트: 'tests', '교차 검수': 'review' };
 const LESSON_QUESTION_HEAD = /^###\s*문제\s*\d+/;
 const LESSON_QUESTION_TAIL = /^\s*(?:<table\b|\*\*[^*]+\*\*\s*$)/; // 문항 뒤에 이어지는 채점 기준표 등
 const LESSON_INLINE_SPAN = /<\/?span[^>]*>/g; // 교안 프롬프트가 정답 보기를 색 강조 span으로 감싼다
@@ -35,6 +35,8 @@ const QUESTION_ANSWER_STYLE = 'color: #22c55e; font-weight: bold;';
 const QUESTION_BAND_TYPES = { L1: ['객관식', '단답식'], L2: ['서술형', '코드제출'], L3: ['파일제출'] };
 const LESSON_LINT_MULTI_ANSWER = /복수\s*정답|모두 고르/;
 const LESSON_LINT_CHOICE_MARK = /[①-⑩]/g;
+// 원본 규칙표(course-rules.js @3a7303f)에서 필수(sev: bad)로 정한 항목. 나머지는 권장이다.
+const LESSON_LINT_REQUIRED = /"~할 수 있습니다"로 끝냅니다|관찰 가능한 행동|체크리스트는 학습 목표와 같은 수|다른 차시를 지칭|문항 내용을 작성|학습 목표와 밴드를 표기|밴드에는 .+ 유형을 씁니다|체크리스트 문장을|정답을 표기|같은 보기|정답 번호가 보기에 없|단일 선택 문제에|모든 보기가 정답|채점 기준을 작성|기대 출력이나 테스트|채점 루브릭을 작성/;
 
 // 코드·주석·HTML 태그·표 구분선은 검사하지 않는다
 function lessonLintText(md) {
@@ -77,12 +79,20 @@ function lintChecklistBullets(goals, checks) {
         : missingRefs;
 }
 
+// 코드 펜스를 줄 단위로 따라간다. 여는 펜스보다 짧은 ``` 는 코드의 일부다. 펜스 밖이면 0을 돌려준다.
+function nextCodeFence(fence, line) {
+    const [, marks, rest] = line.match(/^\s*(`{3,})(.*)$/) || [];
+    if (!marks) return fence;
+    if (!fence) return marks.length;
+    return marks.length >= fence && !rest.trim() ? 0 : fence;
+}
+
 // 문제 블록의 범위를 줄 단위로 찾는다. 코드 블록 안의 # 은 제목이 아니다.
 // 다음 제목, 필드 뒤의 구분선, 필드 뒤의 표·굵은 제목에서 끝나므로 뒤따르는 본문을 건드리지 않는다.
 function lessonQuestionSpans(md) {
     const spans = [];
     let start = null;
-    let fenced = false;
+    let fence = 0;
     let lastField = '';
     let offset = 0;
     const close = end => {
@@ -92,12 +102,13 @@ function lessonQuestionSpans(md) {
     md.split('\n').forEach(line => {
         const next = Math.min(md.length, offset + line.length + 1);
         const field = line.match(LESSON_QUESTION_FIELD);
-        if (/^\s*```/.test(line)) fenced = !fenced;
-        else if (!fenced && LESSON_QUESTION_HEAD.test(line)) {
+        const wasFenced = fence;
+        fence = nextCodeFence(fence, line);
+        if (!wasFenced && !fence && LESSON_QUESTION_HEAD.test(line)) {
             close(offset);
             start = offset;
             lastField = '';
-        } else if (!fenced && start !== null) {
+        } else if (!wasFenced && !fence && start !== null) {
             if (/^#{1,3}\s/.test(line) || (lastField && lastField !== '채점 기준' && LESSON_QUESTION_TAIL.test(line))) close(offset);
             else if (lastField && /^\s*---\s*$/.test(line)) close(next);
             else if (field) lastField = field[1];
@@ -125,34 +136,53 @@ function textSimilarity(left, right) {
     return shared / (a.size + b.size - shared);
 }
 
+// 코드 블록은 줄을 그대로 둔다. 구분선이나 필드처럼 보이는 줄도 코드의 일부다.
 function parseQuestionFields(lines) {
     const fields = {};
     const stem = [];
     const media = [];
     const choiceLines = [];
     let current = null;
-    lines.filter(line => !LESSON_QUESTION_LABEL.test(line) && !/^\s*---\s*$/.test(line)).forEach(raw => {
+    let label = null;
+    let fence = 0;
+    const addLine = line => (current ? fields[current].push(line) : stem.push(line));
+    lines.forEach(raw => {
+        const wasFenced = fence;
+        fence = nextCodeFence(fence, raw);
+        if (wasFenced || fence) return addLine(raw);
+        const found = raw.match(LESSON_QUESTION_LABEL);
+        if (found || /^\s*---\s*$/.test(raw)) {
+            label = label || found;
+            return;
+        }
         const line = raw.replace(LESSON_INLINE_SPAN, '');
         const field = line.match(LESSON_QUESTION_FIELD);
         if (LESSON_HTML_BLOCK.test(line)) media.push(line.trim());
         else if (field) {
             current = LESSON_QUESTION_FIELD_KEYS[field[1]];
-            fields[current] = field[2].trim();
-        } else if (current) fields[current] = `${fields[current]}\n${line}`.trim();
-        else if (/^\s*[①-⑩]/.test(line)) choiceLines.push(line);
-        else stem.push(line);
+            fields[current] = [field[2].trim()];
+        } else if (!current && /^\s*[①-⑩]/.test(line)) choiceLines.push(line);
+        else addLine(line);
     });
-    return { fields, stem: stem.join('\n').trim(), media, choiceLines };
+    const joined = Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, value.join('\n').trim()]));
+    return { fields: joined, stem: stem.join('\n').trim(), media, choiceLines, label };
+}
+
+// 시작 코드는 코드 블록으로 저장한다. 펜스 없이 쓴 값은 코드 그대로 받는다.
+function splitCodeField(value) {
+    const text = String(value || '');
+    const match = text.match(/^(`{3,})([^\n`]*)\n([\s\S]*?)\n?\1\s*$/);
+    return match ? { code: match[3], lang: match[2].trim() } : { code: text, lang: '' };
 }
 
 // "### 문제 N. 제목" 블록을 문항 객체로 읽는다. 보기는 한 줄에 몰아 써도 나눠서 센다.
 function parseQuestionBlock(block) {
     const [titleLine, ...lines] = block.trim().split('\n');
     const heading = titleLine.replace(/^#+\s*/, '').trim();
-    const label = lines.map(line => line.match(LESSON_QUESTION_LABEL)).find(Boolean);
-    const { fields, stem, media, choiceLines } = parseQuestionFields(lines);
+    const { fields, stem, media, choiceLines, label } = parseQuestionFields(lines);
     const choices = choiceLines.flatMap(line => line.trim().split(/\s+(?=[①-⑩]\s)/))
         .map(part => ({ mark: part[0], text: part.slice(1).trim() }));
+    const { code, lang } = splitCodeField(fields.code);
     return {
         no: Number((heading.match(/^문제\s*(\d+)/) || [])[1]) || 0,
         title: heading.replace(/^문제\s*\d+[.)]?\s*/, '').replace(/\s*\(복수\s*정답\)\s*$/, '').trim(),
@@ -167,6 +197,8 @@ function parseQuestionBlock(block) {
         answer: fields.answer || '',
         accepted: fields.accepted || '',
         hint: fields.hint || '',
+        code,
+        lang,
         explanation: fields.explanation || '',
         rubric: fields.rubric || '',
         tests: fields.tests || '',
@@ -215,6 +247,14 @@ function lintQuestion(q, checklist = []) {
         checklist.some(item => textSimilarity(item, text) > LESSON_LINT_SIMILAR_TEXT) && '체크리스트 문장을 그대로 쓰지 않습니다.',
         q.review.startsWith('수정 필요') && `AI 교차 검수: ${q.review}`
     ].filter(Boolean);
+}
+
+// 차시 목록 배지에 쓴다. 탭마다 검사해 필수 규칙 위반만 센다.
+function lessonRequiredIssues(mod) {
+    const tabs = Object.values(mod.tabContents || {}).filter(Boolean);
+    return (tabs.length ? tabs : [mod.content].filter(Boolean))
+        .flatMap(md => lintLessonMarkdown(md))
+        .filter(issue => LESSON_LINT_REQUIRED.test(issue.msg));
 }
 
 function lintQuestionBlock(block, checklist) {

@@ -43,8 +43,7 @@ function ncsKeywordRows(query, limit) {
 function addCustomNcsUnit({ code, name, level }) {
     const unit = { code: code.trim(), name: name.trim(), level: Number(level) || null, path: ['', '', '', '직접 추가'], duty: '', verified: false, custom: true };
     if (!unit.code || !unit.name) throw new Error('코드와 이름을 입력해주세요.');
-    const official = ncsCatalog().units.some(row => row[0] === unit.code) && ncsUnit(unit.code);
-    if (official) return official;
+    if (isCatalogNcsCode(unit.code)) return ncsUnit(unit.code);
     globalState.ncsCustomUnits = [...customNcsUnits().filter(item => item.code !== unit.code), unit];
     return unit;
 }
@@ -80,6 +79,15 @@ function ncsUnit(code) {
     if (!unit) return customNcsUnits().find(custom => custom.code === code) || null;
     const subd = (catalog.subd[code.slice(0, 8)] || []).map(decodeNcsText);
     return { code: unit[0], name: decodeNcsText(unit[1]), level: unit[2], subd: code.slice(0, 8), path: subd.slice(0, 4), duty: subd[4] || '' };
+}
+
+const isCatalogNcsCode = code => ncsCatalog().units.some(row => row[0] === code);
+
+// 직접 추가한 단위는 확인 표시 전까지 미검증이다. 내장 단위는 사용자가 미검증으로 돌린 경우만 미검증이다.
+function ncsVerified(unit) {
+    const custom = customNcsUnits().find(item => item.code === unit.code);
+    if (custom) return custom.verified !== false;
+    return unit.verified !== false && !(globalState.ncsUnverified || {})[unit.code];
 }
 
 function ncsLine(unit) {
@@ -170,6 +178,11 @@ function subjectNcsBrief(subject) {
     return `[과정] ${ncsCourseTitle()}\n[교과] ${subject.title}\n[교과 설명] ${subject.description || '-'}\n[차시]\n${lessons || '-'}`;
 }
 
+// 교과의 학습 목표에 "차시.목표" 번호를 붙인다. 능력단위가 어느 목표를 덮는지 이 번호로 표시한다.
+function subjectObjectiveRefs(subject) {
+    return (subject.lessons || []).flatMap((lesson, lessonIndex) => qbankObjectives(lesson).map((text, index) => ({ ref: `${lessonIndex + 1}.${index + 1}`, text })));
+}
+
 function textModelHasKey() {
     return isClaudeModel(TEXT_MODEL) ? !!claudeApiKey : !!apiKey;
 }
@@ -221,47 +234,55 @@ function collectNcsCandidates(query, local, subds) {
     return candidates;
 }
 
-function buildNcsRankPrompt(subject, candidates) {
+function buildNcsRankPrompt(subject, candidates, objectives = []) {
     return [
         '아래 교과에 대응할 NCS 능력단위를 후보 목록에서 고르세요. 하나의 교과가 여러 능력단위를 묶을 수 있습니다. 분류번호는 후보에 적힌 코드를 그대로 씁니다.',
         subjectNcsBrief(subject), '',
+        `[학습 목표 — 번호는 '차시.목표']\n${objectives.map(item => `${item.ref} ${item.text}`).join('\n') || '(학습 목표 없음)'}`, '',
         '[후보: 코드 | 능력단위 | 세분류 | 수준]',
         candidates.map(u => `${u.code} | ${u.name} | ${u.path[3]} | ${u.level}수준`).join('\n'), '',
-        '최대 5개를 적합도 높은 순으로 고르고, 근거를 1문장으로 씁니다.',
-        'JSON만 출력합니다: [{"code": "...", "score": 0, "reason": "..."}] (score는 0~100 정수)'
+        '최대 5개를 적합도 높은 순으로 고르고, 각 항목이 덮는 학습 목표 번호와 근거를 1문장으로 씁니다.',
+        'JSON만 출력합니다: [{"code": "...", "score": 0, "objectives": ["1.2"], "reason": "..."}] (score는 0~100 정수)'
     ].join('\n');
 }
 
-function parseNcsRank(parsed, byCode) {
+function parseNcsRank(parsed, byCode, objectives = []) {
     const rows = Array.isArray(parsed) ? parsed : (parsed?.items || parsed?.results || []);
+    const known = new Set(objectives.map(item => item.ref));
     return rows
         .filter((row, index) => row && byCode.has(row.code) && rows.findIndex(other => other?.code === row.code) === index)
         .map(row => ({
             code: row.code,
             score: Math.max(0, Math.min(100, Math.round(Number(row.score) || 0))),
+            objectives: (Array.isArray(row.objectives) ? row.objectives : []).map(String).filter(ref => known.has(ref)),
             reason: String(row.reason || '').trim()
         }));
 }
 
-// 두 모델이 판단했으면 점수를 평균한다. 한 모델만 고른 항목은 소폭 감점한다.
+// 두 모델이 판단했으면 점수를 평균하고 덮는 학습 목표는 합친다. 한 모델만 고른 항목은 소폭 감점한다.
 function mergeNcsRanks(lists) {
     const merged = new Map();
     lists.flat().forEach(row => {
-        const item = merged.get(row.code) || { code: row.code, scores: [], reasons: [] };
-        merged.set(row.code, { ...item, scores: [...item.scores, row.score], reasons: [...item.reasons, row.reason].filter(Boolean) });
+        const item = merged.get(row.code) || { code: row.code, scores: [], reasons: [], objectives: [] };
+        merged.set(row.code, {
+            ...item,
+            scores: [...item.scores, row.score],
+            reasons: [...item.reasons, row.reason].filter(Boolean),
+            objectives: [...new Set([...item.objectives, ...(row.objectives || [])])].sort()
+        });
     });
     return [...merged.values()].map(item => {
         const average = item.scores.reduce((sum, score) => sum + score, 0) / item.scores.length;
         const agreed = lists.length > 1 && item.scores.length > 1;
-        return { code: item.code, score: Math.round(lists.length > 1 && !agreed ? average * NCS_SOLO_PENALTY : average), reason: item.reasons[0] || '', agreed };
+        return { code: item.code, score: Math.round(lists.length > 1 && !agreed ? average * NCS_SOLO_PENALTY : average), objectives: item.objectives, reason: item.reasons[0] || '', agreed };
     }).sort((a, b) => b.score - a.score);
 }
 
-async function rankNcsCandidates(prompt, byCode) {
+async function rankNcsCandidates(prompt, byCode, objectives = []) {
     const second = crossCheckModel();
     // 교차 모델이 실패하면 단일 모델 결과로 판단한다. 합의가 없었던 것으로 감점하지 않는다.
     const [first, other] = await Promise.all([askNcsJson(prompt), second ? askNcsJson(prompt, second).catch(() => null) : null]);
-    return mergeNcsRanks([first, other].map(parsed => parseNcsRank(parsed, byCode)).filter(list => list.length));
+    return mergeNcsRanks([first, other].map(parsed => parseNcsRank(parsed, byCode, objectives)).filter(list => list.length));
 }
 
 function keywordRecs(local) {
@@ -279,23 +300,59 @@ async function recommendSubjectNcs(subject, onProgress = () => {}) {
     const candidates = collectNcsCandidates(query, local, subds);
     const byCode = new Map(candidates.map(unit => [unit.code, unit]));
     onProgress('능력단위 적합도를 판단하고 있습니다...');
-    const ranked = await rankNcsCandidates(buildNcsRankPrompt(subject, candidates), byCode);
+    const objectives = subjectObjectiveRefs(subject);
+    const ranked = await rankNcsCandidates(buildNcsRankPrompt(subject, candidates, objectives), byCode, objectives);
     const recs = ranked.slice(0, NCS_MAX_RECS).map(row => ({ ...byCode.get(row.code), ...row, by: 'AI' }));
     return recs.length ? recs : keywordRecs(local);
 }
 
 // 적합도 기준을 넘는 항목을 최대 3개, 없으면 최소 기준을 넘는 1위만 고른다
-function pickAutoNcs(recs) {
-    const strong = recs.filter(rec => rec.score >= NCS_AUTO_MIN_SCORE).slice(0, NCS_AUTO_MAX);
-    return strong.length ? strong : recs.slice(0, 1).filter(rec => rec.score >= NCS_AUTO_FLOOR_SCORE);
+function topNcsPicks(list, scoreOf) {
+    const sorted = [...list].sort((a, b) => scoreOf(b) - scoreOf(a));
+    const strong = sorted.filter(item => scoreOf(item) >= NCS_AUTO_MIN_SCORE).slice(0, NCS_AUTO_MAX);
+    return strong.length ? strong : sorted.slice(0, 1).filter(item => scoreOf(item) >= NCS_AUTO_FLOOR_SCORE);
 }
 
+const pickAutoNcs = recs => topNcsPicks(recs, rec => rec.score);
+
 // 사용자가 확정한 교과는 건드리지 않는다. 키워드 일치는 적합도가 아니므로 배정하지 않고 후보로만 둔다.
+// 호출을 기다리는 사이 사용자가 저장했으면 그 선택을 지킨다.
 async function autoAssignNcs(subject, onProgress) {
     if (subject.ncs?.confirmed) return subject.ncs;
+    const startedAt = subject.ncs?.updatedAt;
     const recs = await recommendSubjectNcs(subject, onProgress);
-    subject.ncs = { units: pickAutoNcs(recs.filter(rec => rec.by === 'AI')), recs, confirmed: false, updatedAt: new Date().toISOString() };
+    if (subject.ncs?.updatedAt !== startedAt) return subject.ncs;
+    subject.ncs = { units: pickAutoNcs(recs.filter(rec => rec.by === 'AI')), recs, confirmed: false, autoTried: true, updatedAt: new Date().toISOString() };
     return subject.ncs;
+}
+
+// 과정 설계로 만들지 않은 교과는 NCS 대화상자를 처음 열 때 한 번 배정한다. 키가 없으면 키워드 후보만 보여 준다.
+function needsNcsAutoAssign(subject) {
+    const ncs = subject.ncs || {};
+    return textModelHasKey() && !ncs.autoTried && !(ncs.units || []).length && !(ncs.recs || []).length;
+}
+
+// 기다리는 사이 사용자가 체크한 내용은 그대로 두고 후보 목록만 채운다
+function applyNcsAssignToDraft(subject, ncs) {
+    if (_ncsDraft?.subject !== subject) return;
+    const selected = _ncsDraft.touched ? _ncsDraft.selected : new Map(ncs.units.map(unit => [unit.code, unit]));
+    _ncsDraft = { ..._ncsDraft, selected, recs: ncs.recs, rows: _ncsDraft.searching ? _ncsDraft.rows : ncs.recs };
+    setNcsDialogStatus(ncs.units.length ? '적합도가 높은 능력단위를 배정했습니다. 확인 후 확정해주세요.' : '자동 배정할 만한 항목을 찾지 못했습니다. 직접 선택해주세요.');
+    renderNcsDialogList();
+}
+
+// 실패해도 다시 시도하지 않도록 먼저 표시한다. 사용자는 AI 추천으로 언제든 다시 받을 수 있다.
+async function runNcsAutoAssign(subject) {
+    subject.ncs = { units: [], recs: [], confirmed: false, ...(subject.ncs || {}), autoTried: true };
+    setNcsDialogStatus('능력단위를 자동 배정하고 있습니다...');
+    try {
+        applyNcsAssignToDraft(subject, await autoAssignNcs(subject, setNcsDialogStatus));
+    } catch (err) {
+        console.error('[NCS] 자동 배정 실패:', err);
+        setNcsDialogStatus(`자동 배정 실패: ${err.message} AI 추천으로 다시 시도할 수 있습니다.`);
+    }
+    await saveState();
+    renderSidebar();
 }
 
 /* ---------- 화면 ---------- */
@@ -321,13 +378,15 @@ function renderSubjectNcsCard(subject) {
 
 function ncsRowHtml(unit, checked) {
     // 점수는 AI가 매긴 적합도일 때만 보여 준다. 키워드 일치도는 상대값이라 적합도로 읽히면 안 된다.
-    const meta = [unit.path?.[3], unit.level ? `${unit.level}수준` : '', unit.by === 'AI' ? `${unit.score}점` : '', unit.agreed ? '두 모델 합의' : '', unit.verified === false ? '미검증' : ''].filter(Boolean).join(' · ');
+    const meta = [unit.path?.[3], unit.level ? `${unit.level}수준` : '', unit.by === 'AI' ? `${unit.score}점` : '', unit.agreed ? '두 모델 합의' : '', ncsVerified(unit) ? '' : '미검증'].filter(Boolean).join(' · ');
+    const covers = unit.objectives?.length ? `학습 목표 ${unit.objectives.join(' · ')}` : '';
     return `
         <label class="flex items-start gap-2 p-2 rounded-lg hover:bg-white/5 cursor-pointer">
             <input type="checkbox" class="mt-0.5" data-ncs-code="${escapeHtml(unit.code)}" ${checked ? 'checked' : ''}>
             <span class="text-xs text-textLight">
                 <span class="font-mono text-accent">${escapeHtml(unit.code)}</span> ${escapeHtml(unit.name)}
                 <span class="block text-[0.65rem] text-textMuted">${escapeHtml(meta)}</span>
+                ${covers ? `<span class="block text-[0.65rem] text-accent/80">${escapeHtml(covers)}</span>` : ''}
                 ${unit.reason ? `<span class="block text-[0.65rem] text-textMuted/80">${escapeHtml(unit.reason)}</span>` : ''}
             </span>
         </label>`;
@@ -346,32 +405,12 @@ function setNcsDialogStatus(text) {
     if (el) el.textContent = text;
 }
 
-window.openNcsDialog = async function () {
-    const subject = globalState.subjects.find(s => s.id === currentSubjectId);
-    if (!subject || _ncsOpening || document.getElementById('ncs-dialog')) return;
-    _ncsOpening = true;
-    try {
-        await loadNcsCatalog();
-    } catch (err) {
-        return window.showAlert(err.message);
-    } finally {
-        _ncsOpening = false;
-    }
-    const recs = subject.ncs?.recs || [];
-    _ncsDraft = {
-        subject,
-        recs,
-        selected: new Map((subject.ncs?.units || []).map(unit => [unit.code, unit])),
-        rows: recs.length ? recs : ncsKeywordRows(`${subject.title} ${subject.description || ''}`, NCS_MAX_RECS)
-    };
-    const overlay = document.createElement('div');
-    overlay.id = 'ncs-dialog';
-    overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9000]';
-    overlay.innerHTML = `
+function ncsDialogHtml(subject) {
+    return `
         <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[560px] max-h-[80vh] flex flex-col shadow-2xl">
             <div class="p-4 border-b border-white/10">
                 <h2 class="text-sm font-bold text-textLight">교과 NCS 능력단위 · ${escapeHtml(subject.title)}</h2>
-                <p class="text-[0.65rem] text-textMuted mt-1">NCS ${ncsCatalog().degree}차 체계 ${ncsCatalog().units.length.toLocaleString()}개 능력단위 기준입니다. 사용 전 ncs.go.kr에서 현행 여부를 확인하세요.</p>
+                <p class="text-[0.65rem] text-textMuted mt-1">NCS ${ncsCatalog().degree}차 체계 ${ncsCatalog().units.length.toLocaleString()}개 능력단위 기준입니다. 사용 전 ncs.go.kr에서 현행 여부를 확인하세요. <button data-ncs-action="ref" class="underline text-textLight">참조 목록 보기·편집</button></p>
                 <div class="flex gap-2 mt-3">
                     <input id="ncs-dialog-search" class="flex-1 px-3 py-1.5 text-xs bg-black/30 border border-white/10 rounded-lg text-white focus:outline-none focus:border-accent" placeholder="능력단위 검색 (예: 게임 기획)">
                     <button data-ncs-action="recommend" class="px-3 py-1.5 text-xs font-bold text-white bg-accent rounded-lg hover:bg-accentHover">AI 추천</button>
@@ -390,22 +429,50 @@ window.openNcsDialog = async function () {
                 <button data-ncs-action="confirm" class="px-4 py-2 text-xs font-bold text-white bg-accent rounded-lg hover:bg-accentHover">선택 항목 확정</button>
             </div>
         </div>`;
+}
+
+window.openNcsDialog = async function () {
+    const subject = globalState.subjects.find(s => s.id === currentSubjectId);
+    if (!subject || _ncsOpening || document.getElementById('ncs-dialog')) return;
+    _ncsOpening = true;
+    try {
+        await loadNcsCatalog();
+    } catch (err) {
+        return window.showAlert(err.message);
+    } finally {
+        _ncsOpening = false;
+    }
+    const recs = subject.ncs?.recs || [];
+    _ncsDraft = {
+        subject,
+        recs,
+        touched: false,
+        searching: false,
+        selected: new Map((subject.ncs?.units || []).map(unit => [unit.code, unit])),
+        rows: recs.length ? recs : ncsKeywordRows(`${subject.title} ${subject.description || ''}`, NCS_MAX_RECS)
+    };
+    const overlay = document.createElement('div');
+    overlay.id = 'ncs-dialog';
+    overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9000]';
+    overlay.innerHTML = ncsDialogHtml(subject);
     overlay.addEventListener('click', onNcsDialogClick);
     overlay.addEventListener('change', onNcsDialogChange);
     overlay.querySelector('#ncs-dialog-search').addEventListener('input', onNcsDialogSearch);
     document.body.appendChild(overlay);
     renderNcsDialogList();
+    if (needsNcsAutoAssign(subject)) runNcsAutoAssign(subject);
 };
 
 function onNcsDialogSearch(event) {
     const query = event.target.value.trim();
-    _ncsDraft = { ..._ncsDraft, rows: query ? ncsKeywordRows(query, 20) : _ncsDraft.recs };
+    _ncsDraft = { ..._ncsDraft, searching: !!query, rows: query ? ncsKeywordRows(query, 20) : _ncsDraft.recs };
     renderNcsDialogList();
 }
 
 function onNcsDialogChange(event) {
     const code = event.target.dataset?.ncsCode;
     if (!code) return;
+    _ncsDraft = { ..._ncsDraft, touched: true };
     if (event.target.checked) {
         _ncsDraft.selected.set(code, _ncsDraft.rows.find(unit => unit.code === code) || ncsUnit(code));
     } else {
@@ -415,9 +482,10 @@ function onNcsDialogChange(event) {
 
 async function onNcsDialogClick(event) {
     const action = event.target.dataset?.ncsAction;
-    if (action === 'close') document.getElementById('ncs-dialog')?.remove();
+    if (action === 'close') closeNcsDialog();
     if (action === 'confirm') await confirmNcsDraft();
     if (action === 'add-custom') addCustomFromDialog();
+    if (action === 'ref') window.openNcsRefDialog();
     if (action !== 'recommend') return;
     const { subject } = _ncsDraft;
     event.target.disabled = true;
@@ -439,6 +507,7 @@ function addCustomFromDialog() {
     const value = id => document.getElementById(id).value;
     try {
         const unit = addCustomNcsUnit({ code: value('ncs-custom-code'), name: value('ncs-custom-name'), level: value('ncs-custom-level') });
+        _ncsDraft = { ..._ncsDraft, touched: true };
         _ncsDraft.selected.set(unit.code, unit);
         setNcsDialogStatus('직접 추가한 능력단위는 ncs.go.kr에서 확인한 뒤 사용해주세요.');
         renderNcsDialogList();
@@ -447,10 +516,15 @@ function addCustomFromDialog() {
     }
 }
 
+function closeNcsDialog() {
+    document.getElementById('ncs-dialog')?.remove();
+    _ncsDraft = null;
+}
+
 async function confirmNcsDraft() {
     const { subject, selected, recs } = _ncsDraft;
-    subject.ncs = { units: [...selected.values()], recs, confirmed: selected.size > 0, updatedAt: new Date().toISOString() };
+    subject.ncs = { units: [...selected.values()], recs, confirmed: selected.size > 0, autoTried: true, updatedAt: new Date().toISOString() };
     await saveState();
-    document.getElementById('ncs-dialog')?.remove();
+    closeNcsDialog();
     renderSidebar();
 }

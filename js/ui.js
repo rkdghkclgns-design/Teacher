@@ -1127,6 +1127,7 @@ function syncBatchLegacyVars() {
             .join('\n\n---\n\n');
         batchUploadedFileName = batchUploadedFiles.map(f => f.name).join(', ');
     }
+    renderRefMeter();
 }
 
 
@@ -1411,7 +1412,7 @@ async function extractTextFromFile(file) {
 
     if (lower.endsWith('.md') || lower.endsWith('.txt')) {
 
-        return await file.text();
+        return decodeTextBuffer(await file.arrayBuffer());
 
     }
 
@@ -1687,10 +1688,10 @@ function renderBatchFileList() {
 
                 <div class="flex-1 min-w-0">
 
-                    <div class="text-[0.7rem] font-semibold text-white truncate">${f.name}${statusBadge}</div>
+                    <div class="text-[0.7rem] font-semibold text-white truncate">${escapeHtml(f.name)}${statusBadge}</div>
 
                     <div class="text-[0.6rem] text-textMuted">${humanSize(f.size)}</div>
-                    ${hasPageLabels(f.content) ? `<input value="${escapeHtml(f.pageRange || '')}" onchange="setBatchFileRange(${i}, this.value)" placeholder="쪽 범위 (예: 1-5, 9)" class="mt-1 w-32 px-1.5 py-0.5 text-[0.6rem] bg-black/30 border border-white/10 rounded text-white">` : ''}
+                    ${batchFileToolsHtml(f, i)}
 
                 </div>
 
@@ -1814,7 +1815,7 @@ window.startBatchGeneration = async function () {
 
                     - 핵심 개념: ${concepts.length > 0 ? concepts.join(', ') : '자유롭게 구성'}
 
-                    ${batchUploadedFileContent ? `- 참고 자료 요약:\n${cleanForAPI(batchUploadedFileContent).substring(0, 3000)}` : ''}
+                    ${batchUploadedFileContent ? `- 참고 자료 요약:\n${cleanForAPI(batchUploadedFileContent).substring(0, REF_OUTLINE_CHARS)}` : ''}
 
                     응답은 반드시 순수 JSON 배열이어야 합니다. (새로 생성할 ${count}개만 반환)
 
@@ -1869,7 +1870,7 @@ window.startBatchGeneration = async function () {
 
                             ${goal ? `최종 목표 연계성: 이 차시 내용은 최종적으로 '${goal}'을(를) 달성하기 위한 빌드업 과정이어야 합니다.` : ''}
 
-                            ${batchUploadedFileContent ? `참고 자료:\n${cleanForAPI(batchUploadedFileContent).substring(0, 2000)}` : ''}
+                            ${batchUploadedFileContent ? `참고 자료:\n${cleanForAPI(batchUploadedFileContent).substring(0, REF_LESSON_CHARS)}` : ''}
 
                             
 

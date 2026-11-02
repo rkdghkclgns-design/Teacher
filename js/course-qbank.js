@@ -3,19 +3,32 @@
 // 원본은 마크다운 그대로 두고 문항만 읽고 고쳐 쓴다. 저장 형식은 학습이해도 탭과 같다.
 
 const QBANK_BANDS = {
-    L1: { name: '수업과 같은 상황', recommend: 10 },
-    L2: { name: '같은 구조, 다른 맥락', recommend: 5 },
-    L3: { name: '요구사항만 제시', recommend: 3 }
+    L1: { name: '수업과 같은 상황', desc: '수업에서 다룬 상황을 그대로 묻습니다. 배운 내용을 기억하고 있는지 확인합니다.', recommend: 10 },
+    L2: { name: '같은 구조, 다른 맥락', desc: '배운 구조를 다른 상황에 적용하게 합니다. 원리를 옮겨 쓸 수 있는지 확인합니다.', recommend: 5 },
+    L3: { name: '요구사항만 제시', desc: '해결할 요구사항만 주고 방법은 주지 않습니다. 배운 내용으로 스스로 구현할 수 있는지 확인합니다.', recommend: 3 }
 };
+const QBANK_BAND_L4 = { band: 'L4', name: '목표만 제시', desc: '최종 목표만 주고 수행 능력 전체를 평가합니다. 문제은행이 아니라 과정의 프로젝트에서 다룹니다.', types: '프로젝트에서 다룸 · 문제은행에 만들지 않음' };
+const QBANK_BAND_INTRO = '밴드는 문항이 학습자에게 얼마나 많은 것을 스스로 하도록 요구하는지를 나타내는 단계입니다. 숫자가 클수록 주어지는 정보가 적습니다. 모든 문항에 학습 목표와 밴드를 함께 붙여 두면, 오답률이 높을 때 어느 목표의 어느 수준이 무너졌는지 찾을 수 있습니다.';
 const QBANK_COUNTS = [1, 2, 3, 5, 8, 10];
 const QBANK_LESSON_CHARS = 6000;
+const QBANK_MAX_FLAGGED = 20;
+const QBANK_FLASH_MS = 1600;
+const QBANK_CHOICE_MARKS = '①②③④⑤⑥⑦⑧⑨⑩';
+const QBANK_MULTI_NOTICE = /모두|전부|있는 대로|복수/;
 const QBANK_TYPE_FORMATS = {
     객관식: '보기는 ①~⑤로 쓰고, "✅ **정답:** ②"로 정답을 표기합니다. 복수 정답이면 제목 끝에 (복수정답)을 붙이고 문항에 「모두 고르시오」를 밝힙니다.',
     단답식: '"✅ **정답:** 값" 다음 줄에 "🔤 **허용 표기:** 대소문자·띄어쓰기 변형"을 적습니다. 정답은 단어나 값 하나로 확정되어야 합니다.',
     서술형: '"✅ **정답:** 모범 답안" 다음 줄에 "📏 **채점 기준:** 요소 (점수); 요소 (점수)"를 적습니다.',
-    코드제출: '"🧪 **테스트:** 입력과 기대 출력"을 적습니다.',
+    코드제출: '시작 코드가 필요하면 "🧩 **시작 코드:**" 다음 줄에 코드 블록으로 적고, "🧪 **테스트:** 입력과 기대 출력"을 적습니다.',
     파일제출: '"📏 **채점 기준:** 평가 기준 — 충족/부분/미흡 조건과 점수"를 관찰 가능한 기준으로 적습니다.'
 };
+// 교안 코드 블록의 언어 표기를 화면에 쓰는 이름으로 바꾼다 (course-rules.js @3a7303f)
+const QBANK_LANG_NAMES = {
+    cs: 'C#', csharp: 'C#', 'c#': 'C#', cpp: 'C++', 'c++': 'C++', c: 'C', py: 'Python', python: 'Python', js: 'JavaScript', javascript: 'JavaScript',
+    ts: 'TypeScript', typescript: 'TypeScript', lua: 'Lua', java: 'Java', kotlin: 'Kotlin', swift: 'Swift', go: 'Go', rust: 'Rust', sql: 'SQL', json: 'JSON',
+    yaml: 'YAML', bash: 'Bash', sh: 'Bash', powershell: 'PowerShell', html: 'HTML', css: 'CSS', mlua: 'mLua', gdscript: 'GDScript'
+};
+const QBANK_NON_CODE_TAGS = new Set(['md', 'markdown', 'mermaid', 'text', 'txt', 'plaintext']);
 const QBANK_RULES = [
     '[문제은행 규칙 — 콘텐츠 업무 설계]',
     '- 모든 문항은 어느 학습 목표를 묻는지와 밴드를 가집니다.',
@@ -58,6 +71,24 @@ function qbankObjectives(mod) {
 
 const qbankChecklist = mod => qbankTabBullets(mod, '학습\\s*후\\s*체크리스트');
 
+function lessonCodeTags(mod) {
+    const sources = [...Object.values(mod.tabContents || {}), mod.content];
+    const tags = sources.flatMap(md => [...String(md || '').matchAll(/^[ \t]*```[ \t]*([\w#+.-]+)[ \t]*$/gm)].map(match => match[1].toLowerCase()));
+    return uniqueTexts(tags).filter(tag => !QBANK_NON_CODE_TAGS.has(tag));
+}
+
+const lessonCodeLangs = mod => uniqueTexts(lessonCodeTags(mod).map(tag => QBANK_LANG_NAMES[tag] || tag));
+
+// 사람이 직접 쓰는 빈 문항. 생성 폼에서 고른 목표·밴드·유형으로 시작한다.
+function blankQuestion(spec, mod) {
+    return {
+        no: 0, title: '', objective: spec.objective, band: spec.band, type: spec.type, typed: true,
+        multi: spec.type === '객관식' && !!spec.multi, stem: '', media: '', choices: [], answer: '', accepted: '', hint: '',
+        code: '', lang: spec.type === '코드제출' ? (lessonCodeTags(mod)[0] || '') : '',
+        explanation: '', rubric: '', tests: '', review: ''
+    };
+}
+
 function questionDistribution(questions, objectiveCount) {
     const blank = () => Object.fromEntries(Object.keys(QBANK_BANDS).map(band => [band, 0]));
     const rows = Array.from({ length: objectiveCount }, blank);
@@ -70,6 +101,14 @@ function questionDistribution(questions, objectiveCount) {
 }
 
 /* ---------- 마크다운 읽고 쓰기 ---------- */
+// 코드 안의 ``` 에 닫히지 않도록 펜스를 더 길게 만든다
+function codeFieldLines(q) {
+    if (!q.code) return [];
+    const longest = Math.max(0, ...(q.code.match(/`+/g) || []).map(run => run.length));
+    const fence = '`'.repeat(Math.max(3, longest + 1));
+    return ['🧩 **시작 코드:**', '', `${fence}${q.lang || ''}`, q.code, fence, ''];
+}
+
 function serializeQuestion(q, no) {
     const label = q.objective && q.band ? `학습 목표 ${q.objective} · 밴드 ${q.band}${q.typed ? ` · ${q.type}` : ''}` : '';
     const field = (mark, name, value) => (value ? [`${mark} **${name}:** ${value}`, ''] : []);
@@ -78,14 +117,18 @@ function serializeQuestion(q, no) {
         const text = `${choice.mark} ${choice.text}`;
         return answers.includes(choice.mark) ? `<span style="${QUESTION_ANSWER_STYLE}">${text}</span>` : text;
     };
+    const fields = [
+        ...field('💡', '힌트', q.hint), ...codeFieldLines(q), ...field('✅', '정답', q.answer), ...field('🔤', '허용 표기', q.accepted),
+        ...field('📝', '해설', q.explanation), ...field('📏', '채점 기준', q.rubric), ...field('🧪', '테스트', q.tests), ...field('🔍', '교차 검수', q.review)
+    ];
     return [
         `### 문제 ${no}. ${q.title}${q.multi ? ' (복수정답)' : ''}`,
         ...(label ? [label] : []), '',
         ...(q.media ? [q.media, ''] : []),
         ...(q.stem ? [q.stem, ''] : []),
         ...(q.choices.length ? [...q.choices.map(choiceLine), ''] : []),
-        ...field('💡', '힌트', q.hint), ...field('✅', '정답', q.answer), ...field('🔤', '허용 표기', q.accepted),
-        ...field('📝', '해설', q.explanation), ...field('📏', '채점 기준', q.rubric), ...field('🧪', '테스트', q.tests), ...field('🔍', '교차 검수', q.review),
+        // 필드가 하나도 없으면 뒤따르는 구분선이 문항 끝으로 읽히지 않으므로 빈 정답 칸을 남긴다
+        ...(fields.length ? fields : ['✅ **정답:**', '']),
         '---'
     ].join('\n');
 }
@@ -94,9 +137,12 @@ function replaceSpan(md, span, text) {
     return `${md.slice(0, span.start)}${text}${md.slice(span.end)}`;
 }
 
+// 코드 블록 안의 "### 문제 N" 줄은 번호를 매기지 않는다. 자릿수가 바뀌어도 앞 위치가 밀리지 않게 뒤에서부터 고친다.
 function renumberQuestions(md) {
-    let no = 0;
-    return md.replace(/^(###\s*문제\s*)\d+/gm, (all, prefix) => `${prefix}${no += 1}`);
+    return lessonQuestionSpans(md).reduceRight((text, span, index) => {
+        const rest = text.slice(span.start).replace(/^(###\s*문제\s*)\d+/, (all, prefix) => `${prefix}${index + 1}`);
+        return `${text.slice(0, span.start)}${rest}`;
+    }, md);
 }
 
 function updateQuestionMd(md, index, question) {
@@ -123,14 +169,14 @@ function csvCell(value) {
     return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 
-const QBANK_CSV_HEAD = ['번호', '교과', '차시', '목표번호', '학습목표', '밴드', '유형', '복수정답', '제목', '문항', '보기1', '보기2', '보기3', '보기4', '보기5', '정답', '허용표기', '채점기준', '테스트', '해설', '교차검수', '검수'];
+const QBANK_CSV_HEAD = ['번호', '교과', '차시', '목표번호', '학습목표', '밴드', '유형', '복수정답', '제목', '문항', '보기1', '보기2', '보기3', '보기4', '보기5', '정답', '허용표기', '채점기준', '시작코드', '테스트', '해설', '교차검수', '검수'];
 
 function questionCsvRows(questions, objectives, context) {
     return questions.map(q => {
         const issues = lintQuestion(q, context.checklist);
         return [
             q.no, context.subject, context.lesson, q.objective ?? '', (q.objective && objectives[q.objective - 1]) || '', q.band, q.type, q.multi ? 'Y' : '', q.title, q.stem,
-            ...Array.from({ length: 5 }, (_, i) => q.choices[i]?.text ?? ''), q.answer, q.accepted, q.rubric, q.tests, q.explanation, q.review, issues.length ? `위반 ${issues.length}건` : '검수 통과'
+            ...Array.from({ length: 5 }, (_, i) => q.choices[i]?.text ?? ''), q.answer, q.accepted, q.rubric, q.code, q.tests, q.explanation, q.review, issues.length ? `위반 ${issues.length}건` : '검수 통과'
         ];
     });
 }
@@ -141,20 +187,43 @@ function questionsCsv(questions, objectives, context) {
     return toCsv(questionCsvRows(questions, objectives, context));
 }
 
-function courseQuestionsCsv() {
-    const rows = globalState.subjects.flatMap(subject => (subject.lessons || []).flatMap(lesson => (lesson.tabContents?.assessment
+function subjectCsvRows(subject) {
+    return subjectLessons(subject).flatMap(lesson => (lesson.tabContents?.assessment
         ? questionCsvRows(qbankQuestions(lesson), qbankObjectives(lesson), { subject: subject.title, lesson: lesson.title, checklist: qbankChecklist(lesson) })
-        : [])));
+        : []));
+}
+
+function subjectQuestionsCsv(subject) {
+    const rows = subjectCsvRows(subject);
+    return { rows: rows.length, csv: toCsv(rows) };
+}
+
+function courseQuestionsCsv() {
+    const rows = globalState.subjects.flatMap(subject => subjectCsvRows(subject));
     return { rows: rows.length, csv: toCsv(rows) };
 }
 
 /* ---------- AI 문항 생성 ---------- */
+function qbankCodeRule(mod, type) {
+    const langs = lessonCodeLangs(mod);
+    if (langs.length) return `학습내용에 쓰인 언어(${langs.join(', ')})를 그대로 사용합니다.`;
+    const tools = (mod.tools || []).map(toolLabel).join(', ') || '없음';
+    const pick = type === '코드제출' ? ' 코드제출 유형이므로 학습내용과 사용 툴에 맞는 언어 하나를 골라 문항 첫 줄에 언어를 밝힙니다.' : '';
+    return `학습내용에 코드가 없습니다. 사용 툴(${tools})과 학습내용을 보고 코드가 꼭 필요한 경우에만 쓰고, 그렇지 않으면 코드 없이 출제합니다.${pick}`;
+}
+
+function qbankChoiceRule(spec) {
+    if (spec.type !== '객관식') return '';
+    return spec.multi ? '[정답 수] 정답 2개 이상, 오답 1개 이상이며 문항에 「모두 고르시오」를 밝힙니다.' : '[정답 수] 정답이 될 수 있는 보기는 정확히 하나입니다.';
+}
+
 function buildQuestionPrompt(mod, spec, objectives, questions) {
     const source = String(mod.tabContents?.basicLearn || mod.content || '').slice(0, QBANK_LESSON_CHARS);
     return [
         `아래 차시의 문제은행 문항을 ${spec.count}개 만드세요.`, '', QBANK_RULES, '',
         `[학습 목표 ${spec.objective}] ${objectives[spec.objective - 1] || mod.title}`,
-        `[밴드] ${spec.band} — ${QBANK_BANDS[spec.band].name}`, `[유형] ${spec.type}: ${QBANK_TYPE_FORMATS[spec.type]}`,
+        `[밴드] ${spec.band} — ${QBANK_BANDS[spec.band].name}`, `[유형] ${spec.type}${spec.multi ? ' (복수 정답)' : ''}: ${QBANK_TYPE_FORMATS[spec.type]}`,
+        qbankChoiceRule(spec), `[코드] ${qbankCodeRule(mod, spec.type)}`,
         questions.length ? `[겹치면 안 되는 기존 문항]\n${questions.map(q => `- ${q.title} ${q.stem}`.trim()).join('\n')}` : '',
         source ? `[교안]\n${source}` : '', '',
         '[출력 형식] 문항마다 아래 형식의 마크다운만 출력합니다.',
@@ -171,12 +240,15 @@ async function askQuestionModel(prompt) {
     return extractText(data);
 }
 
+const withMultiNotice = stem => (QBANK_MULTI_NOTICE.test(stem) ? stem : `${stem} (모두 고르시오)`.trim());
+
 // 모델이 쓴 태그와 달라도 사용자가 고른 목표·밴드·유형으로 맞춘다
 function parseGeneratedQuestions(text, spec) {
     const body = String(text || '').replace(/\r\n/g, '\n').trim().replace(/^```\w*\n/, '').replace(/\n```$/, '');
+    const multi = spec.type === '객관식' && !!spec.multi;
     return lessonLintQuestions(body)
         .map(parseQuestionBlock)
-        .map(q => ({ ...q, objective: spec.objective, band: spec.band, type: spec.type, typed: true }));
+        .map(q => ({ ...q, objective: spec.objective, band: spec.band, type: spec.type, typed: true, multi, stem: multi ? withMultiNotice(q.stem) : q.stem }));
 }
 
 function buildReviewPrompt(mod, questions, objectives) {
@@ -184,7 +256,7 @@ function buildReviewPrompt(mod, questions, objectives) {
         '당신은 평가 문항 검수자입니다. 다른 출제자가 만든 문항을 아래 기준으로 엄격히 검수하세요.',
         `[차시] ${mod.title}`, `[학습 목표]\n${objectives.map((text, i) => `${i + 1}. ${text}`).join('\n')}`,
         '[기준] 1) 태그한 학습 목표를 실제로 묻는가 2) 밴드 정의에 맞는가(L1 수업과 같은 상황 / L2 같은 구조·다른 맥락 / L3 요구사항만 제시) 3) 정답이 확정되는가 4) 해설과 채점 기준이 정답과 맞는가', '',
-        JSON.stringify(questions.map((q, i) => ({ i, objective: q.objective, band: q.band, type: q.type, title: q.title, stem: q.stem, choices: q.choices, answer: q.answer, rubric: q.rubric, tests: q.tests, explanation: q.explanation }))), '',
+        JSON.stringify(questions.map((q, i) => ({ i, objective: q.objective, band: q.band, type: q.type, multi: q.multi, title: q.title, stem: q.stem, code: q.code, choices: q.choices, answer: q.answer, rubric: q.rubric, tests: q.tests, explanation: q.explanation }))), '',
         'JSON 배열만 출력합니다: [{"i": 0, "ok": true, "notes": "문제가 있으면 무엇을 고쳐야 하는지 경어체 1문장, 없으면 빈 문자열"}]'
     ].join('\n');
 }
@@ -253,25 +325,53 @@ function qbankDistributionHtml(questions, objectives) {
         </table>`;
 }
 
-function qbankFormHtml(objectives) {
+function qbankBandCardsHtml() {
+    const cards = [
+        ...Object.entries(QBANK_BANDS).map(([band, info]) => ({ band, ...info, types: QUESTION_BAND_TYPES[band].join(' · ') })),
+        QBANK_BAND_L4
+    ];
+    return `
+        <p class="text-[0.65rem] text-textMuted mt-1">${escapeHtml(QBANK_BAND_INTRO)}</p>
+        <div class="grid grid-cols-4 gap-2 mt-1">${cards.map(card => `
+            <div class="p-2 rounded bg-white/5 text-[0.6rem] text-textMuted">
+                <p class="font-bold text-textLight"><span class="text-accent">${card.band}</span> ${escapeHtml(card.name)}</p>
+                <p class="mt-1">${escapeHtml(card.desc)}</p>
+                <p class="mt-1 text-textMuted/80">${escapeHtml(card.types)}</p>
+            </div>`).join('')}
+        </div>`;
+}
+
+function qbankFormHtml(objectives, mod) {
     const { spec } = _qbank;
     const select = 'px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white';
     const types = QUESTION_BAND_TYPES[spec.band];
+    const langs = lessonCodeLangs(mod);
     return `
         <div class="flex flex-wrap items-center gap-2">
             <select data-qbank-spec="objective" class="${select} max-w-[210px]">${(objectives.length ? objectives : ['학습 목표 없음']).map((text, i) => qbankOption(i + 1, `${i + 1}. ${text}`, spec.objective)).join('')}</select>
             <select data-qbank-spec="band" class="${select}">${Object.keys(QBANK_BANDS).map(band => qbankOption(band, band, spec.band)).join('')}</select>
             <select data-qbank-spec="type" class="${select}">${types.map(type => qbankOption(type, type, spec.type)).join('')}</select>
+            ${spec.type === '객관식' ? `<label class="text-xs text-textLight flex items-center gap-1"><input type="checkbox" data-qbank-spec="multi" ${spec.multi ? 'checked' : ''}> 복수 정답</label>` : ''}
             <select data-qbank-spec="count" class="${select}">${QBANK_COUNTS.map(count => qbankOption(count, `${count}문항`, spec.count)).join('')}</select>
             <button data-qbank-action="generate" class="px-3 py-1 text-xs font-bold text-white bg-accent rounded hover:bg-accentHover">AI로 생성</button>
-        </div>`;
+            <button data-qbank-action="add" class="px-3 py-1 text-xs font-bold text-textLight bg-white/10 rounded hover:bg-white/20">빈 문항 추가</button>
+        </div>
+        <p class="text-[0.6rem] text-textMuted mt-1">${escapeHtml(langs.length ? `코드는 학습내용에 쓰인 ${langs.join(', ')} 기준입니다.` : '학습내용에 코드가 없으면 사용 툴을 보고 꼭 필요할 때만 코드를 씁니다.')}</p>`;
+}
+
+function qbankFlaggedHtml(questions, checklist) {
+    const flagged = questions.map((q, index) => ({ q, index, issues: lintQuestion(q, checklist) })).filter(row => row.issues.length);
+    return flagged.slice(0, QBANK_MAX_FLAGGED).map(({ q, index, issues }) => `
+        <button data-qbank-action="jump" data-index="${index}" class="px-2 py-0.5 text-[0.6rem] text-left rounded bg-amber-500/10 text-amber-300 hover:bg-amber-500/20">
+            ${escapeHtml(q.band || '밴드 없음')} ${q.no}. ${escapeHtml(String(q.title || q.stem || '(빈 문항)').slice(0, 24))} · ${escapeHtml(issues[0].slice(0, 20))}${issues.length > 1 ? ` 외 ${issues.length - 1}` : ''}
+        </button>`).join('');
 }
 
 function qbankCardHtml(q, index, checklist) {
     const issues = lintQuestion(q, checklist);
     const answer = q.answer ? `<p class="text-[0.65rem] text-emerald-300 mt-1">정답: ${escapeHtml(q.answer)}${q.accepted ? ` · 허용 표기: ${escapeHtml(q.accepted)}` : ''}</p>` : '';
     return `
-        <div class="p-2 rounded-lg bg-white/5 border ${issues.length ? 'border-amber-400/40' : 'border-white/10'}">
+        <div id="qbank-q-${index}" class="p-2 rounded-lg bg-white/5 border ${issues.length ? 'border-amber-400/40' : 'border-white/10'}">
             <div class="flex items-center gap-2 text-[0.65rem]">
                 <span class="font-bold text-accent">${escapeHtml(q.band || '밴드 없음')}</span><span class="text-textLight">${escapeHtml(q.type || '유형 없음')}</span>
                 <span class="text-textMuted">${q.objective ? `목표 ${q.objective}` : '목표 없음'}</span>${q.multi ? '<span class="text-textMuted">복수 정답</span>' : ''}
@@ -281,6 +381,7 @@ function qbankCardHtml(q, index, checklist) {
             </div>
             <p class="text-xs font-bold text-textLight mt-1">${q.no}. ${escapeHtml(q.title)}</p>
             ${q.stem ? `<p class="text-xs text-textLight mt-1 whitespace-pre-wrap">${escapeHtml(q.stem)}</p>` : ''}
+            ${q.code ? `<pre class="text-[0.65rem] text-textLight mt-1 p-2 rounded bg-black/30 overflow-x-auto">${escapeHtml(q.code)}</pre>` : ''}
             ${q.choices.length ? `<p class="text-[0.65rem] text-textMuted mt-1 whitespace-pre-wrap">${escapeHtml(q.choices.map(choice => `${choice.mark} ${choice.text}`).join('\n'))}</p>` : ''}
             ${answer}
             ${issues.map(msg => `<p class="text-[0.65rem] text-amber-300 mt-0.5">• ${escapeHtml(msg)}</p>`).join('')}
@@ -293,20 +394,31 @@ function qbankEditHtml(q, index, objectives) {
     const band = q.band || 'L1';
     return `
         <div class="p-2 rounded-lg bg-white/5 border border-accent/50 space-y-1">
-            <div class="flex gap-2">
+            <div class="flex items-center gap-2">
                 <select data-qbank-field="objective" class="${field}">${(objectives.length ? objectives : ['학습 목표 없음']).map((item, i) => qbankOption(i + 1, `${i + 1}. ${item}`, q.objective || 1)).join('')}</select>
                 <select data-qbank-field="band" class="${field} w-20">${Object.keys(QBANK_BANDS).map(item => qbankOption(item, item, band)).join('')}</select>
                 <select data-qbank-field="type" class="${field} w-28">${qbankOption('', '유형 미표기', q.type)}${Object.values(QUESTION_BAND_TYPES).flat().map(item => qbankOption(item, item, q.type)).join('')}</select>
+                <label class="text-[0.65rem] text-textLight flex items-center gap-1 shrink-0"><input type="checkbox" data-qbank-field="multi" ${q.multi ? 'checked' : ''}> 복수 정답</label>
             </div>
             ${text('title', '제목', q.title, 1)}${text('stem', '문항', q.stem)}
             ${text('choices', '보기 (한 줄에 하나)', q.choices.map(choice => choice.text).join('\n'), 3)}
             ${text('answer', '정답 (객관식은 ② 또는 ①, ②)', q.answer, 1)}${text('accepted', '허용 표기', q.accepted, 1)}
-            ${text('rubric', '채점 기준·루브릭', q.rubric)}${text('tests', '기대 출력·테스트 케이스', q.tests)}${text('explanation', '해설', q.explanation)}
+            ${text('rubric', '채점 기준·루브릭', q.rubric)}
+            <label class="block text-[0.65rem] text-textMuted">코드 언어 (코드제출, 예: python)<input data-qbank-field="lang" value="${escapeHtml(q.lang || '')}" class="${field} mt-0.5"></label>
+            ${text('code', '시작 코드', q.code || '', 3)}
+            ${text('tests', '기대 출력·테스트 케이스', q.tests)}${text('explanation', '해설', q.explanation)}
             <div class="flex justify-end gap-2 pt-1">
                 <button data-qbank-action="cancel" class="px-3 py-1 text-xs font-bold text-textLight bg-white/10 rounded">취소</button>
                 <button data-qbank-action="save" data-index="${index}" class="px-3 py-1 text-xs font-bold text-white bg-accent rounded">저장</button>
             </div>
         </div>`;
+}
+
+function qbankListHtml(questions, objectives, checklist) {
+    const shown = questions.map((q, index) => ({ q, index })).filter(({ q }) => (!_qbank.band || q.band === _qbank.band) && (!_qbank.objective || q.objective === Number(_qbank.objective)));
+    const adding = _qbank.editing === 'new' ? qbankEditHtml(_qbank.draft, 'new', objectives) : '';
+    const rows = shown.map(({ q, index }) => (_qbank.editing === index ? qbankEditHtml(_qbank.draft || q, index, objectives) : qbankCardHtml(q, index, checklist))).join('');
+    return adding + rows || '<p class="text-xs text-textMuted p-2">문항이 없습니다. 학습이해도 탭을 생성하거나 AI로 문항을 만들어주세요.</p>';
 }
 
 function renderQbank() {
@@ -317,19 +429,24 @@ function renderQbank() {
     const objectives = qbankObjectives(mod);
     const checklist = qbankChecklist(mod);
     const passed = questions.filter(q => !lintQuestion(q, checklist).length).length;
-    const shown = questions.map((q, index) => ({ q, index })).filter(({ q }) => (!_qbank.band || q.band === _qbank.band) && (!_qbank.objective || q.objective === Number(_qbank.objective)));
     const select = 'px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white';
+    const button = 'px-2 py-1 text-xs font-bold text-textLight bg-white/10 rounded hover:bg-white/20';
     body.innerHTML = `
-        <div class="p-2 rounded-lg bg-black/20">${qbankDistributionHtml(questions, objectives)}<p class="text-[0.6rem] text-textMuted mt-1">권장: L1 10 · L2 5 · L3 3. L4는 프로젝트에서 다룹니다.</p></div>
-        <div class="p-2 rounded-lg bg-black/20">${qbankFormHtml(objectives)}<p id="qbank-status" class="text-[0.65rem] text-accent mt-1 min-h-[1em]">${escapeHtml(_qbank.status)}</p></div>
+        <div class="p-2 rounded-lg bg-black/20">${qbankDistributionHtml(questions, objectives)}
+            <p class="text-[0.6rem] text-textMuted mt-1">권장: L1 10 · L2 5 · L3 3. L4는 프로젝트에서 다룹니다. <button data-qbank-action="help" class="underline text-textLight">밴드란? · ${_qbank.help ? '접기' : '펼치기'}</button></p>
+            ${_qbank.help ? qbankBandCardsHtml() : ''}
+        </div>
+        <div class="p-2 rounded-lg bg-black/20">${qbankFormHtml(objectives, mod)}<p id="qbank-status" class="text-[0.65rem] text-accent mt-1 min-h-[1em]">${escapeHtml(_qbank.status)}</p></div>
         <div class="flex items-center gap-2">
             <span class="text-xs font-bold ${passed === questions.length ? 'text-emerald-400' : 'text-amber-400'}">검수 통과 ${passed}/${questions.length}</span>
             <select data-qbank-filter="band" class="${select} ml-auto">${qbankOption('', '전체 밴드', _qbank.band)}${Object.keys(QBANK_BANDS).map(band => qbankOption(band, band, _qbank.band)).join('')}</select>
             <select data-qbank-filter="objective" class="${select}">${qbankOption('', '전체 목표', _qbank.objective)}${objectives.map((_, i) => qbankOption(i + 1, `목표 ${i + 1}`, _qbank.objective)).join('')}</select>
-            <button data-qbank-action="csv" class="px-2 py-1 text-xs font-bold text-textLight bg-white/10 rounded hover:bg-white/20">CSV 저장</button>
-            <button data-qbank-action="course-csv" class="px-2 py-1 text-xs font-bold text-textLight bg-white/10 rounded hover:bg-white/20">과정 전체 CSV</button>
+            <button data-qbank-action="csv" class="${button}">CSV 저장</button>
+            <button data-qbank-action="subject-csv" class="${button}">교과 CSV</button>
+            <button data-qbank-action="course-csv" class="${button}">과정 전체 CSV</button>
         </div>
-        <div class="space-y-2">${shown.map(({ q, index }) => (_qbank.editing === index ? qbankEditHtml(q, index, objectives) : qbankCardHtml(q, index, checklist))).join('') || '<p class="text-xs text-textMuted p-2">문항이 없습니다. 학습이해도 탭을 생성하거나 AI로 문항을 만들어주세요.</p>'}</div>
+        <div class="flex flex-wrap gap-1">${qbankFlaggedHtml(questions, checklist)}</div>
+        <div class="space-y-2">${qbankListHtml(questions, objectives, checklist)}</div>
         <details class="text-[0.65rem] text-textMuted"><summary class="cursor-pointer">검사 규칙 목록</summary><ul class="mt-1 space-y-0.5">${QBANK_RULE_LIST.map(rule => `<li>• ${escapeHtml(rule)}</li>`).join('')}</ul></details>`;
 }
 
@@ -337,8 +454,8 @@ window.openQuestionBank = function (moduleId) {
     const mod = getEditingModule(moduleId);
     if (!mod?.tabContents) return window.showAlert('문제은행은 차시에서 사용할 수 있습니다.');
     if (document.getElementById('qbank-dialog')) return;
-    const spec = { objective: 1, band: 'L1', type: '객관식', count: 3 };
-    _qbank = { moduleId, band: '', objective: '', editing: null, status: '', spec, dirty: false, busy: false };
+    const spec = { objective: 1, band: 'L1', type: '객관식', multi: false, count: 3 };
+    _qbank = { moduleId, band: '', objective: '', editing: null, draft: null, help: false, status: '', spec, dirty: false, busy: false };
     const overlay = document.createElement('div');
     overlay.id = 'qbank-dialog';
     overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9000]';
@@ -356,16 +473,23 @@ window.openQuestionBank = function (moduleId) {
     renderQbank();
 };
 
+function qbankSpecValue(target, name) {
+    if (name === 'multi') return target.checked;
+    return ['objective', 'count'].includes(name) ? Number(target.value) : target.value;
+}
+
 function onQbankChange(event) {
     const { qbankSpec, qbankFilter } = event.target.dataset || {};
+    if (!qbankFilter && !qbankSpec) return;
+    keepQbankDraft();
     if (qbankFilter) _qbank = { ..._qbank, [qbankFilter]: event.target.value };
     if (qbankSpec) {
-        const value = ['objective', 'count'].includes(qbankSpec) ? Number(event.target.value) : event.target.value;
-        const spec = { ..._qbank.spec, [qbankSpec]: value };
+        const spec = { ..._qbank.spec, [qbankSpec]: qbankSpecValue(event.target, qbankSpec) };
         const types = QUESTION_BAND_TYPES[spec.band];
-        _qbank = { ..._qbank, spec: { ...spec, type: types.includes(spec.type) ? spec.type : types[0] } };
+        const type = types.includes(spec.type) ? spec.type : types[0];
+        _qbank = { ..._qbank, spec: { ...spec, type, multi: type === '객관식' && spec.multi } };
     }
-    if (qbankFilter || qbankSpec) renderQbank();
+    renderQbank();
 }
 
 // 저장이 끝날 때까지 다음 쓰기를 막아, 낡은 화면 번호로 다른 문항을 고치지 않게 한다. 바꾸기 전 내용은 히스토리에 남긴다.
@@ -376,23 +500,51 @@ async function commitQbankMarkdown(mod, md) {
     mod.tabContents = { ...mod.tabContents, assessment: md };
     await saveState();
     if (_qbank?.moduleId !== moduleId) return renderEditor(mod);
-    _qbank = { ..._qbank, busy: false, dirty: true, editing: null };
+    _qbank = { ..._qbank, busy: false, dirty: true, editing: null, draft: null, status: '' };
     renderQbank();
 }
 
 function readQuestionForm(original) {
-    const value = name => document.querySelector(`[data-qbank-field="${name}"]`)?.value.trim() ?? '';
+    const field = name => document.querySelector(`[data-qbank-field="${name}"]`);
+    const value = name => field(name)?.value.trim() ?? '';
     const type = value('type');
     const texts = value('choices').split('\n').map(text => text.trim()).filter(Boolean);
-    const marks = '①②③④⑤⑥⑦⑧⑨⑩';
+    const isChoice = !type || type === '객관식';
     return {
         ...original,
         objective: Number(value('objective')) || null, band: value('band'), type, typed: original.typed || type !== original.type,
-        title: value('title'), stem: value('stem'),
-        choices: !type || type === '객관식' ? texts.slice(0, marks.length).map((text, i) => ({ mark: marks[i], text })) : [],
+        multi: isChoice && !!field('multi')?.checked, title: value('title'), stem: value('stem'),
+        choices: isChoice ? texts.slice(0, QBANK_CHOICE_MARKS.length).map((text, i) => ({ mark: QBANK_CHOICE_MARKS[i], text })) : [],
         answer: value('answer'), accepted: value('accepted'), rubric: value('rubric'), tests: value('tests'), explanation: value('explanation'),
+        code: (field('code')?.value ?? '').replace(/\s+$/, ''), lang: value('lang'), // 코드 첫 줄의 들여쓰기는 지키고 끝 공백만 지운다
         review: '' // 사람이 고친 문항은 AI 검수 결과를 무효화한다
     };
+}
+
+// 화면을 다시 그려도 쓰던 내용이 사라지지 않게 폼 값을 초안에 옮겨 둔다
+function keepQbankDraft() {
+    if (_qbank.editing === null || !document.querySelector('[data-qbank-field="title"]')) return;
+    _qbank = { ..._qbank, draft: readQuestionForm(_qbank.draft) };
+}
+
+function jumpToQuestion(index) {
+    keepQbankDraft();
+    _qbank = { ..._qbank, band: '', objective: '' };
+    renderQbank();
+    const card = document.getElementById(`qbank-q-${index}`);
+    card?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card?.classList.add('ring-2', 'ring-amber-400');
+    setTimeout(() => card?.classList.remove('ring-2', 'ring-amber-400'), QBANK_FLASH_MS);
+}
+
+async function saveQuestionDraft(mod, index) {
+    if (index !== 'new') return commitQbankMarkdown(mod, updateQuestionMd(qbankMarkdown(mod), Number(index), readQuestionForm(_qbank.draft)));
+    const question = readQuestionForm(_qbank.draft);
+    if (!`${question.title}${question.stem}`.trim()) {
+        _qbank = { ..._qbank, draft: question, status: '제목이나 문항 내용을 입력해주세요.' };
+        return renderQbank();
+    }
+    return commitQbankMarkdown(mod, appendQuestionsMd(qbankMarkdown(mod), [question]));
 }
 
 function downloadCsv(csv, name) {
@@ -414,8 +566,16 @@ function saveCourseCsv() {
     downloadCsv(csv, globalState.courseTitle);
 }
 
+function saveSubjectCsv() {
+    const subject = globalState.subjects.find(item => item.id === currentSubjectId);
+    const { rows, csv } = subject ? subjectQuestionsCsv(subject) : { rows: 0, csv: '' };
+    if (!rows) return window.showAlert('내려받을 문항이 없습니다.');
+    downloadCsv(csv, subject.title);
+}
+
 async function runQuestionGenerate(mod) {
     const { moduleId, spec } = _qbank;
+    keepQbankDraft();
     _qbank = { ..._qbank, busy: true, status: '문항을 만들고 검수하고 있습니다...' };
     renderQbank();
     try {
@@ -448,18 +608,26 @@ function closeQbank() {
 }
 
 async function onQbankClick(event) {
-    const action = event.target.dataset?.qbankAction;
+    const button = event.target.closest?.('[data-qbank-action]');
+    const action = button?.dataset.qbankAction;
     if (!action) return;
     if (action === 'close') return closeQbank();
+    if (action === 'jump') return jumpToQuestion(Number(button.dataset.index));
     if (_qbank.busy) return;
     const mod = qbankMod();
-    const index = Number(event.target.dataset.index);
-    if (action === 'edit') _qbank = { ..._qbank, editing: index };
-    if (action === 'cancel') _qbank = { ..._qbank, editing: null };
+    const index = Number(button.dataset.index);
+    if (action === 'help') {
+        keepQbankDraft();
+        _qbank = { ..._qbank, help: !_qbank.help };
+    }
+    if (action === 'add') _qbank = { ..._qbank, editing: 'new', draft: blankQuestion(_qbank.spec, mod), status: '' };
+    if (action === 'edit') _qbank = { ..._qbank, editing: index, draft: qbankQuestions(mod)[index] };
+    if (action === 'cancel') _qbank = { ..._qbank, editing: null, draft: null };
     if (action === 'csv') saveQbankCsv(mod);
+    if (action === 'subject-csv') saveSubjectCsv();
     if (action === 'course-csv') saveCourseCsv();
     if (action === 'generate') return runQuestionGenerate(mod);
     if (action === 'delete') return window.showConfirm('이 문항을 삭제할까요? 삭제 전 내용은 히스토리에 보관됩니다.', () => commitQbankMarkdown(mod, removeQuestionMd(qbankMarkdown(mod), index)));
-    if (action === 'save') return commitQbankMarkdown(mod, updateQuestionMd(qbankMarkdown(mod), index, readQuestionForm(qbankQuestions(mod)[index])));
+    if (action === 'save') return saveQuestionDraft(mod, button.dataset.index);
     renderQbank();
 }
