@@ -1,6 +1,6 @@
 // tutorial.js — 튜토리얼 스포트라이트 시스템
 
-const TUTORIAL_KEY = 'kyoan_tutorial_done_v7';
+const TUTORIAL_KEY = 'kyoan_tutorial_done_v8';
 let tutorialStep = 0;
 
 const TUTORIAL_STEPS = [
@@ -82,6 +82,35 @@ AI가 생성한 교안을 확인하고 편집하는 핵심 영역입니다.<br><
 • <strong>보강 재생성</strong> — 추가 명령으로 내용 개선<br>
 • <strong>슬라이드</strong> — 교안으로 만든 슬라이드를 편집하고 PPTX·HTML로 내보내기<br>
 • <strong>이미지 저장</strong> — 교안 이미지를 JPG로 일괄 다운로드`,
+        position: 'left'
+    },
+    {
+        target: '#editor-content-area',
+        title: '7. 🎬 슬라이드 편집',
+        desc: `<strong>📌 무엇인가요?</strong><br>
+교수안과 함께 만든 슬라이드 편성안을 화면에서 고쳐 PPTX·HTML로 내보내는 스튜디오입니다.<br><br>
+<strong>📖 사용법</strong><br>
+① 슬라이드 패널에서 스튜디오를 엽니다. 차시를 고르면 그 차시만 엽니다.<br>
+② 글자를 눌러 고치고, 이미지 칸에 파일을 넣거나 AI로 만듭니다.<br>
+③ 고친 내용은 차시에 저장됩니다.<br><br>
+<strong>⌨️ 단축키 (편집 모드)</strong><br>
+• <strong>Ctrl+Z</strong> 되돌리기 · <strong>Ctrl+C/X/V</strong> 복사·잘라내기·붙여넣기<br>
+• <strong>Ctrl+A</strong> 전체 선택 · <strong>Delete</strong> 삭제 · <strong>Esc</strong> 선택 해제<br>
+• <strong>←/→</strong> 슬라이드 이동 (보기 모드)`,
+        position: 'left'
+    },
+    {
+        target: '#editor-content-area',
+        title: '8. 🧭 과정 전체 작업',
+        desc: `<strong>📌 무엇인가요?</strong><br>
+차시 하나를 넘어 교과와 과정 단위로 일하는 기능입니다.<br><br>
+<strong>📖 주요 기능</strong><br>
+• <strong>과정 설계</strong> — 과정을 교과와 블록으로 나눕니다<br>
+• <strong>교과 일괄 작업</strong> — 남은 차시와 교수안 생성, 차시 구성, 기존 내용 보강<br>
+• <strong>차시 정보</strong> — 학습 목표, 진행 단계, 툴·버전, NCS 요소, 변경 이력<br>
+• <strong>컨벤션 검수</strong> — 규칙 위반을 찾고 AI 수정안을 비교해 반영합니다<br>
+• <strong>문제은행</strong> — 학습 목표와 밴드별로 문항을 만들고 고칩니다<br>
+• <strong>삽화</strong> — 교안에 맞는 SVG 삽화를 만들어 본문에 넣습니다`,
         position: 'left'
     }
 ];

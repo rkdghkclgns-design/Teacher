@@ -94,7 +94,7 @@ window.attachGyosuanImages = async function (mod, texts) {
     const skip = showGyosuanImageSkip();
     try {
         const part = { title: mod.title, docMd: texts.docMd, deckMd: texts.deckMd, images: lessonImages };
-        const result = await A.run([part], (done, total, label) => setGyosuanProgress(label), () => _gyosuanImageSkip);
+        const result = await A.run([part], (done, total, label) => setGyosuanProgress(label), () => _gyosuanImageSkip || !!window.isTabGenerationStopped?.());
         const [tagged] = result.parts;
         mod.refImages = K.normalizeRefImages(K.refImages);
         return {

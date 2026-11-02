@@ -90,7 +90,7 @@
         var themeCls = inner.classList.contains("theme-dark") ? " theme-dark" : "";
         var total = clone.querySelectorAll(".slide").length; // 저장본·불러온 덱은 parsed.slides 가 비어 있거나 편집으로 달라졌다
         var doc = standaloneDoc(deck.parsed, clone.innerHTML, css, themeCls, fontCss, total);
-        download((deck.parsed.meta["주제"] || "슬라이드") + ".html", doc, "text/html");
+        download((window.KBuilder.exportFileBase || deck.parsed.meta["주제"] || "슬라이드") + ".html", doc, "text/html");
         btn.textContent = old;
       });
     }).catch(function (e) { console.error(e); alert("HTML 내보내기 실패: " + e); btn.textContent = old; });
@@ -202,7 +202,7 @@
         // 우측 하단 푸터 제거 (사용자 요청)
       });
 
-      pptx.writeFile({ fileName: (meta["주제"] || "슬라이드") + ".pptx" }).then(function () { btn.textContent = old; });
+      pptx.writeFile({ fileName: (window.KBuilder.exportFileBase || meta["주제"] || "슬라이드") + ".pptx" }).then(function () { btn.textContent = old; });
     }).catch(function (e) { console.error(e); alert("PPTX 내보내기 실패: " + e); btn.textContent = old; });
   }
   function pad2(n) { var s = String(n).replace(/[^0-9]/g, ""); return s.length < 2 ? "0" + s : s; }

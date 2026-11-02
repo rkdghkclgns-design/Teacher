@@ -333,6 +333,20 @@ const DBManager = {
 
 // Data Management Layer
 
+/* ---------- 다른 탭 변경 알림 ---------- */
+// 저장은 과정 전체를 덮어쓰므로, 다른 탭의 변경을 모른 채 저장하면 그쪽 작업이 사라진다
+const STATE_WARN_INTERVAL_MS = 60000;
+const _stateTabs = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('teacher-state');
+let _stateWarnedAt = 0;
+
+if (_stateTabs) {
+    _stateTabs.onmessage = () => {
+        if (Date.now() - _stateWarnedAt < STATE_WARN_INTERVAL_MS) return;
+        _stateWarnedAt = Date.now();
+        window.showToast?.('다른 탭에서 과정이 바뀌었습니다. 여기서 저장하면 그 변경을 덮어쓰니 새로고침해 주세요.', 'warning');
+    };
+}
+
 async function saveState() {
     try {
         if (currentSubjectId) {
@@ -345,6 +359,7 @@ async function saveState() {
         // 1. IndexedDB에 무제한 비동기 저장 시도
         const stateData = { state: globalState, history: contentHistory };
         await DBManager.setItem(STORAGE_KEY, stateData);
+        _stateTabs?.postMessage('saved');
 
     } catch (e) {
         console.error("IndexedDB 저장 실패", e);
@@ -677,7 +692,7 @@ window.exportSelectedHistoryPDF = async function () {
             // 교안 렌더 단일 파이프라인 사용 (기존엔 callout 재파싱·후처리 없이 marked만 호출해 강사 박스가 깨져 보였음)
             htmlContent += (typeof renderLessonHTML === 'function')
                 ? renderLessonHTML(resolveMarkdownImages(h.content, h.images))
-                : (typeof marked !== 'undefined' ? marked.parse(resolveMarkdownImages(h.content, h.images)) : `<pre>${resolveMarkdownImages(h.content, h.images)}</pre>`);
+                : (typeof marked !== 'undefined' ? sanitizeLessonHtml(marked.parse(resolveMarkdownImages(h.content, h.images))) : `<pre>${escapeHtml(resolveMarkdownImages(h.content, h.images))}</pre>`);
 
         } catch (e) {
 

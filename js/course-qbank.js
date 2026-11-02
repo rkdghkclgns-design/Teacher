@@ -498,6 +498,7 @@ async function commitQbankMarkdown(mod, md) {
     _qbank = { ..._qbank, busy: true };
     await archiveContent({ title: `${mod.title} · 학습이해도`, content: qbankMarkdown(mod), images: mod.images });
     mod.tabContents = { ...mod.tabContents, assessment: md };
+    Object.assign(mod, withHistoryNote(mod, `문제은행 수정 (문항 ${lessonLintQuestions(md).length}개)`));
     await saveState();
     if (_qbank?.moduleId !== moduleId) return renderEditor(mod);
     _qbank = { ..._qbank, busy: false, dirty: true, editing: null, draft: null, status: '' };
@@ -550,14 +551,14 @@ async function saveQuestionDraft(mod, index) {
 function downloadCsv(csv, name) {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    a.download = `${String(name).replace(/[^\w가-힣]/g, '_')}_문제은행.csv`;
+    a.download = `${safeFileName(name)}_문제은행.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
 }
 
 function saveQbankCsv(mod) {
     const subject = globalState.subjects.find(item => item.id === currentSubjectId);
-    downloadCsv(questionsCsv(qbankQuestions(mod), qbankObjectives(mod), { subject: subject?.title || '', lesson: mod.title, checklist: qbankChecklist(mod) }), mod.title);
+    downloadCsv(questionsCsv(qbankQuestions(mod), qbankObjectives(mod), { subject: subject?.title || '', lesson: mod.title, checklist: qbankChecklist(mod) }), lessonFileBase(mod, subject));
 }
 
 function saveCourseCsv() {

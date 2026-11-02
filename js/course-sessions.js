@@ -552,7 +552,7 @@ function gyosuanSessionDecksMd(mod) {
 function downloadMd(md, name) {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([md], { type: 'text/markdown;charset=utf-8' }));
-    a.download = `${String(name).replace(/[^\w가-힣]/g, '_')}.md`;
+    a.download = `${safeFileName(name)}.md`;
     a.click();
     URL.revokeObjectURL(a.href);
 }
@@ -562,12 +562,12 @@ window.downloadGyosuanSessionDecks = function (moduleId) {
     if (!mod?.gyosuan?.deckMd) return window.showAlert('먼저 슬라이드 편성안을 생성해주세요.');
     const md = gyosuanSessionDecksMd(mod);
     if (!md) return window.showAlert('먼저 교수안을 생성해주세요.');
-    downloadMd(resolveGyosuanImages(md, mod), `${mod.title}_차시별편성안`);
+    downloadMd(resolveGyosuanImages(md, mod), `${lessonFileBase(mod)}_차시별편성안`);
 };
 
 window.downloadGyosuanSessions = function (moduleId) {
     const mod = getEditingModule(moduleId);
     const md = mod && gyosuanSessionsMd(mod);
     if (!md) return window.showAlert('먼저 교수안을 생성해주세요.');
-    downloadMd(resolveGyosuanImages(md, mod), `${mod.title}_차시별교수안`);
+    downloadMd(resolveGyosuanImages(md, mod), `${lessonFileBase(mod)}_차시별교수안`);
 };

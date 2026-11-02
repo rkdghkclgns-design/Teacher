@@ -46,14 +46,41 @@ function buildFilename(mod, idx, subj) {
     return parts.join(filenameConvention.separator || '_') || 'export';
 }
 
+const safeFileName = name => String(name).replace(/[\/\\?<>:*|"]/g, '_').trim();
+
+const subjectLessonList = subj => (subj?.id === currentSubjectId ? courseData : (subj?.lessons || []));
+
 // 교과에 명명 규칙(nn 치환)이 있으면 그것을, 없으면 파일명 규칙을 쓴다
-function lessonFileName(mod, extension, subject) {
+function lessonFileBase(mod, subject) {
     const subj = subject || globalState.subjects.find(item => item.id === currentSubjectId);
-    const lessons = subj?.id === currentSubjectId ? courseData : (subj?.lessons || []);
-    const idx = lessons.findIndex(lesson => lesson.id === mod.id);
+    const idx = subjectLessonList(subj).findIndex(lesson => lesson.id === mod.id);
     const number = idx < 0 ? 'MQ' : String(idx + 1).padStart(2, '0');
-    const name = subj?.namingConvention ? subj.namingConvention.replace(/nn/g, number) : buildFilename(mod, idx, subj);
-    return `${name}.${extension}`;
+    return safeFileName(subj?.namingConvention ? subj.namingConvention.replace(/nn/g, number) : buildFilename(mod, idx, subj));
+}
+
+function lessonFileName(mod, extension, subject) {
+    return `${lessonFileBase(mod, subject)}.${extension}`;
+}
+
+// 규칙에 차시 번호가 없으면 이름이 겹친다. ZIP 안에서는 번호를 붙여 파일이 덮이지 않게 한다
+function uniqueFileBase(base, used) {
+    const name = used.has(base) ? `${base}_${used.size + 1}` : base;
+    used.add(name);
+    return name;
+}
+
+// 오늘의 퀘스트 제출 파일명: 날짜_교과-차시_제목_Ver0n_조or이름 (develocket-slide assets/course-model.js questMd @3a7303f)
+// 교안은 저장해 두고 쓰므로 날짜는 제출할 때 채우도록 YYMMDD로 둔다
+function questFileName(mod, subject) {
+    const subjectNo = globalState.subjects.findIndex(item => item.id === subject.id) + 1;
+    const lessonNo = subjectLessonList(subject).findIndex(lesson => lesson.id === mod.id) + 1;
+    const title = String(mod.title).replace(/[^\p{L}\p{N}]+/gu, '').slice(0, 12);
+    return `YYMMDD_${subjectNo}-${lessonNo}_${title}_Ver0n_조or이름`;
+}
+
+function withQuestFileName(md, mod, subject) {
+    if (!subject || /제출 파일명/.test(md)) return md;
+    return `${md.trimEnd()}\n\n- 제출 파일명: \`${questFileName(mod, subject)}\`\n`;
 }
 
 function renderFilenameConventionUI() {

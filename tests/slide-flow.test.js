@@ -7,6 +7,7 @@ const path = require('path');
 const assert = require('assert');
 const root = path.join(__dirname, '..', 'js') + path.sep;
 const FILES = [
+    'filename-convention.js',
     'kbuilder/parser.js', 'kbuilder/render-doc.js', 'kbuilder/render-deck.js', 'kbuilder/ref-images.js', 'kbuilder/import-html.js', 'kbuilder/auto-images.js',
     'kbuilder/export.js', 'kbuilder/sample-data.js', 'course-ncs.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'gyosuan.js', 'gyosuan-view.js', 'gyosuan-images.js', 'gyosuan-io.js'
 ];
@@ -27,6 +28,7 @@ function makeContext(options = {}) {
         instructorTone: 'formal',
         getReferenceContext: () => '',
         stripInstructorCallouts: text => text,
+        courseData: [],
         globalState: { subjects: [{ id: 's1', title: '게임 기획 입문' }], courseTitle: '과정' },
         currentSubjectId: 's1', currentEditingModuleId: 'm1',
         apiKey: 'k', claudeApiKey: '', isClaudeModel: () => true,

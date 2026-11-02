@@ -34,7 +34,10 @@ const GYOSUAN_SLIDE_SPECS = {
     }
 };
 
+const GYOSUAN_STOP_LABELS = { idle: '교수안 생성 중지', pending: '받고 있는 응답까지만 기다립니다...' };
+
 let _gyosuanRunning = false;
+let _gyosuanOnStatus = null;
 let _gyosuanEditing = null; // 강사뷰에서 MD를 고치는 중인 { id, field }
 let _gyosuanSaveTimer = null;
 
@@ -413,6 +416,12 @@ function assembleGyosuanDeck(info, meta, results) {
 function setGyosuanProgress(text) {
     const el = document.getElementById('editor-loading-text');
     if (el) el.textContent = text;
+    _gyosuanOnStatus?.(text);
+}
+
+// 중지하면 받은 전개를 버린다. 빈칸이 있는 교수안으로 기존 교수안을 덮지 않는다
+function stopGyosuanIfRequested() {
+    if (window.isTabGenerationStopped?.()) throw new Error('교수안 생성을 중지했습니다.');
 }
 
 async function buildGyosuanFromLesson(mod, parts, style) {
@@ -438,10 +447,12 @@ async function buildGyosuanFromLesson(mod, parts, style) {
     setGyosuanProgress('교수안 머리말을 작성하고 있습니다...');
     const meta = parseGyosuanMeta(await askGyosuanModel(buildMetaPrompt(info, sections), system));
     if (!meta.학습목표.length && !meta.개요.length) throw new Error('머리말 응답이 비어 있습니다. 다시 시도해주세요.');
+    stopGyosuanIfRequested();
 
     let done = 0;
     let lastError = null;
     const results = await mapLimited(sections, GYOSUAN_CONCURRENCY, async section => {
+        if (window.isTabGenerationStopped?.()) return { title: section.title, failed: true };
         try {
             const result = parseSectionResult(await askGyosuanModel(buildSectionPrompt(section, style), system, gyosuanFewshot(style)), section);
             if (!result.gyosuan) throw new Error('전개 응답이 비어 있습니다.');
@@ -454,6 +465,7 @@ async function buildGyosuanFromLesson(mod, parts, style) {
             setGyosuanProgress(`교수안·슬라이드 작성 중... (${++done}/${sections.length})`);
         }
     });
+    stopGyosuanIfRequested();
     if (results.every(r => r.failed)) throw lastError;
 
     setGyosuanProgress('도입과 정리를 작성하고 있습니다...');
@@ -505,38 +517,52 @@ function reportGyosuanBuilt(built, draft) {
     else if (window.showToast) window.showToast(draft.note || '교수안과 슬라이드 편성안을 생성했습니다.', 'success');
 }
 
-// opts.keepDoc: 강사가 고친 교수안은 두고 슬라이드 편성안만 교체
-window.generateGyosuan = async function (moduleId, opts = {}) {
+// 실패를 던지지 않고 결과로 돌려준다. 일괄 생성은 차시별로 모으고, 버튼에서 부르면 generateGyosuan이 알린다
+// opts.keepDoc: 강사가 고친 교수안은 두고 슬라이드 편성안만 교체 / opts.onStatus: 진행 문구를 받는다
+async function runGyosuanGeneration(moduleId, opts = {}) {
     const mod = getEditingModule(moduleId);
-    if (!mod) { window.showAlert('교안을 먼저 선택해주세요.'); return false; }
+    if (!mod) return { ok: false, error: '교안을 먼저 선택해주세요.' };
     const parts = collectLessonSource(mod);
-    if (!parts.length) { window.showAlert('교안 내용이 없습니다. 먼저 탭을 생성해주세요.'); return false; }
+    if (!parts.length) return { ok: false, error: '교안 내용이 없습니다. 먼저 탭을 생성해주세요.' };
     const loading = document.getElementById('editor-loading');
-    if (_gyosuanRunning || loading?.style.display === 'flex') { window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.'); return false; }
+    if (_gyosuanRunning || loading?.style.display === 'flex') return { ok: false, error: '진행 중인 생성이 끝난 뒤 다시 시도해주세요.' };
 
     _gyosuanRunning = true;
+    _gyosuanOnStatus = opts.onStatus || null;
     if (loading) loading.style.display = 'flex';
+    window.beginGenerationStop?.(GYOSUAN_STOP_LABELS);
     try {
         const style = gyosuanSlideStyle();
         const built = await buildGyosuanFromLesson(mod, parts, style);
+        window.endGenerationStop?.(); // 이미지 단계는 자체 건너뛰기 버튼을 쓴다
         const keepDoc = !!(opts.keepDoc && mod.gyosuan?.docMd);
         const texts = { docMd: keepDoc ? '' : built.docMd, deckMd: built.deckMd };
         const draft = window.attachGyosuanImages ? await window.attachGyosuanImages(mod, texts) : texts;
         mod.gyosuan = nextGyosuan(mod, parts, draft, style, keepDoc);
+        Object.assign(mod, withHistoryNote(mod, keepDoc ? '슬라이드 편성안 AI 생성' : '교수안·슬라이드 편성안 AI 생성'));
         _gyosuanEditing = null;
         await saveGyosuan(mod);
         if (String(currentEditingModuleId) === String(mod.id)) renderEditor(mod);
-        reportGyosuanBuilt(built, draft);
-        return true;
+        return { ok: true, built, draft, partial: built.failedCount > 0 };
     } catch (err) {
+        if (window.isTabGenerationStopped?.()) return { ok: false, stopped: true };
         console.error('[교수안] 생성 실패:', err);
-        window.showAlert('교수안 생성 실패: ' + (err && err.message ? err.message : err));
-        return false;
+        return { ok: false, error: `교수안 생성 실패: ${err && err.message ? err.message : err}` };
     } finally {
         _gyosuanRunning = false;
+        _gyosuanOnStatus = null;
         if (loading) loading.style.display = 'none';
+        window.endGenerationStop?.();
         setGyosuanProgress('AI가 상세 교안을 작성하고 있습니다...');
     }
+}
+
+window.generateGyosuan = async function (moduleId, opts = {}) {
+    const result = await runGyosuanGeneration(moduleId, opts);
+    if (result.error) window.showAlert(result.error);
+    else if (result.stopped) window.showToast?.('교수안 생성을 중지했습니다. 기존 교수안은 그대로입니다.', 'warning');
+    else reportGyosuanBuilt(result.built, result.draft);
+    return result.ok;
 };
 
 window.regenerateGyosuan = function (moduleId) {
@@ -564,6 +590,7 @@ window.getSlideStudioPayload = function (moduleId, session = null) {
         docMd: resolveGyosuanImages(whole ? gyosuan?.docMd : gyosuanSessionPlanMd(mod, index), mod),
         title: mod?.title || '',
         subject: subject?.title || '',
+        fileBase: mod ? `${lessonFileBase(mod, subject)}${whole ? '' : `_${index + 1}차시`}` : '',
         sessions,
         session: index,
         rev: gyosuan?.deckRev || 0,

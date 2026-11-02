@@ -1,0 +1,337 @@
+// 교안 HTML 정리·학습 목표 세트·교과 현황·기존 내용 보강·일괄 교수안 테스트 (실행: node tests/final-round.test.js)
+// AI 응답과 화면 갱신만 스텁으로 두고 실제 파일을 실행한다.
+const fs = require('fs');
+const vm = require('vm');
+const path = require('path');
+const assert = require('assert');
+const root = path.join(__dirname, '..', 'js') + path.sep;
+const FILES = [
+    'lesson-sanitize.js', 'filename-convention.js', 'kbuilder/ncs-catalog.js', 'lesson-lint.js', 'lesson-objectives.js', 'course-ncs.js', 'course-design.js', 'course-design-edit.js',
+    'course-sessions.js', 'course-meta.js', 'course-elements.js', 'course-art.js', 'course-illustrations.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js',
+    'tabs.js', 'course-flow.js', 'course-overview.js', 'course-backfill.js'
+];
+const TAB_IDS = ['basicLearn', 'basicPrac', 'advLearn', 'advPrac', 'assessment'];
+
+function makeContext(extra = {}) {
+    const ctx = {
+        console: { log() {}, warn() {}, error() {} },
+        setTimeout: fn => { fn(); return 0; }, clearTimeout, Promise, URL, Blob, Uint16Array, Map, Set,
+        TEXT_MODEL: 'gemini-4-argon',
+        apiKey: 'test-placeholder',
+        claudeApiKey: '',
+        isClaudeModel: m => /^claude-/.test(m),
+        CONTEXT_CORE: { personas: { orchestrator: '설계자', instructor: '강사' }, rules: {} },
+        LESSON_TABS: TAB_IDS.map(id => ({ id, label: id })),
+        globalState: { courseTitle: '과정', subjects: [] },
+        courseData: [],
+        currentSubjectId: 's1',
+        currentEditingModuleId: null,
+        localStorage: { getItem: () => null, setItem() {} },
+        saved: 0,
+        saveState: async () => { ctx.saved += 1; },
+        escapeHtml: s => (typeof s === 'string' ? s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;') : ''),
+        safeJSONParse: t => JSON.parse(t),
+        extractText: d => d.candidates[0].content.parts[0].text,
+        document: { getElementById: () => null, createElement: () => ({}), querySelectorAll: () => [], addEventListener() {}, head: { appendChild() {} } },
+        getEditingModule: id => ctx.globalState.subjects.flatMap(subject => subject.lessons).find(lesson => String(lesson.id) === String(id)),
+        openEditor() {}, renderSidebar() {}, renderOverviewLNB() {}, renderEditor() {}, showLessonView() {},
+        viewModule() {},
+        alerts: [],
+        showAlert: text => ctx.alerts.push(text),
+        callGemini: async () => { throw new Error('호출되면 안 됨'); },
+        ...extra
+    };
+    ctx.window = ctx;
+    vm.createContext(ctx);
+    FILES.forEach(file => vm.runInContext(fs.readFileSync(root + file, 'utf8'), ctx));
+    return ctx;
+}
+
+const plain = value => JSON.parse(JSON.stringify(value));
+
+async function run(name, fn) {
+    await fn();
+    console.log('PASS', name);
+}
+
+const LESSON_MD = [
+    '# 재미', '',
+    '## 개요', '', '- 문제 상황을 다룹니다.', '',
+    '## 학습 목표', '', '- 양식으로 기획서를 작성할 수 있습니다.', '- 기록으로 재미를 비교할 수 있습니다.', '',
+    '## 재미의 구조', '', '- 구조를 다룹니다.', '',
+    '## 구조 사례', '', '- 사례를 다룹니다.', '',
+    '## 플레이 분석', '', '- 기록을 다룹니다.', '',
+    '## ✅ 학습 후 체크리스트', '', '- 기획서를 설명합니다. (다시 보기: 재미의 구조)', '- 재미를 비교합니다. (다시 보기: 플레이 분석)'
+].join('\n');
+
+(async () => {
+    const ctx = makeContext();
+    const call = name => vm.runInContext(name, ctx);
+
+    await run('HTML 정리: 실행되는 주소를 막고 교안 주소는 남긴다', async () => {
+        const safe = call('isSafeLessonUrl');
+        ['javascript:alert(1)', 'JaVaScRiPt:alert(1)', 'java\tscript:alert(1)', ' \njavascript:x', 'vbscript:x', 'data:text/html,<script>1</script>'].forEach(url => assert.strictEqual(safe(url), false, url));
+        ['https://a.kr/b', 'http://a.kr', 'mailto:a@b.kr', '#section', './a.png', '문서.md', 'local:img_1', 'data:image/png;base64,AAAA', 'blob:http://a'].forEach(url => assert.strictEqual(safe(url), true, url));
+    });
+
+    await run('HTML 정리: 저장된 재생성 버튼은 값만 읽고 호출은 버린다', async () => {
+        const args = text => plain(call('legacyRegenerateArgs')(text));
+        assert.deepStrictEqual(args("promptRegenerateImage(this, '게임 화면', 'img_1')"), { keyword: '게임 화면', imgId: 'img_1' });
+        assert.deepStrictEqual(args("promptRegenerateImage(this,'플레이어\\'s 화면',null)"), { keyword: "플레이어's 화면", imgId: '' });
+        ["alert(1)", "promptRegenerateImage(this,'a');alert(1)", "promptRegenerateImage(this,'a\\', alert(1), 'b',null)", "promptRegenerateImage(this, 'a', 'b');fetch('x')", ''].forEach(code => assert.strictEqual(args(code), null, code));
+    });
+
+    await run('교안 버튼: 교안 영역 안의 data 동작만 실행한다', async () => {
+        const calls = [];
+        ctx.promptRegenerateImage = (button, keyword, imgId) => calls.push(['재생성', keyword, imgId]);
+        ctx.deleteImage = imgId => calls.push(['삭제', imgId]);
+        const button = (action, inView, dataset = {}) => ({ dataset: { lessonAction: action, ...dataset }, closest: selector => (selector === '#render-view' && !inView ? null : {}) });
+        const click = target => call('onLessonActionClick')({ target: { closest: () => target } });
+        click(button('regenerate-image', true, { keyword: '"><img src=x onerror=alert(1)>', imgId: 'img_1' }));
+        click(button('delete-image', true, { imgId: 'img_2' }));
+        click(button('delete-image', false, { imgId: 'img_3' }));
+        click(button('없는 동작', true));
+        click(null);
+        assert.deepStrictEqual(calls, [['재생성', '"><img src=x onerror=alert(1)>', 'img_1'], ['삭제', 'img_2']]);
+    });
+
+    await run('진행 단계: 줄을 읽고 합계가 차시 시간이 된다', async () => {
+        const flow = plain(call('parseFlowLines')('도입 | 문제 제시 | 10\n실습 | 만들기 | 30\n마무리 | 15\n\n정리 | 묶기 | -\n| | '));
+        assert.deepStrictEqual(flow, [
+            { phase: '도입', title: '문제 제시', minutes: 10 },
+            { phase: '전개', title: '만들기', minutes: 30 },
+            { phase: '전개', title: '마무리', minutes: 15 },
+            { phase: '정리', title: '묶기', minutes: 5 }
+        ]);
+        assert.deepStrictEqual(plain(call('parseFlowLines')(call('flowLinesText')(flow))), flow, '다시 읽어도 같다');
+        assert.deepStrictEqual(plain(call('lessonFlowPatch')(flow)), { flow, minutes: 60, hours: 1 });
+        assert.deepStrictEqual(plain(call('lessonFlowPatch')([])), { flow: [] }, '비우면 시간을 건드리지 않는다');
+        assert.ok(call('metaFlowNote')('도입 | 가 | 30', { hours: 1 }).includes('이 됩니다'));
+        assert.ok(!call('metaFlowNote')('도입 | 가 | 60', { hours: 1 }).includes('이 됩니다'));
+    });
+
+    await run('학습 목표 세트: 추가하면 검수 지적이 늘지 않는다', async () => {
+        const set = { objective: '표로 결과를 정리할 수 있습니다.', section: '## 결과 정리\n\n- 표를 다룹니다.', checklist: '결과를 정리합니다. (다시 보기: 결과 정리)' };
+        const md = call('insertObjectiveSet')(LESSON_MD, set);
+        const bullets = call('lessonLintBullets');
+        assert.strictEqual(bullets(md, '학습\\s*목표').length, 3);
+        assert.strictEqual(bullets(md, '학습\\s*후\\s*체크리스트').length, 3);
+        assert.ok(md.indexOf('## 결과 정리') < md.indexOf('학습 후 체크리스트'));
+        assert.ok(md.indexOf('## 결과 정리') > md.indexOf('## 플레이 분석'));
+        assert.ok(md.includes('- 구조를 다룹니다.'), '기존 내용 유지');
+        const bare = call('insertObjectiveSet')('# 제목\n\n본문입니다.', set);
+        assert.ok(bare.indexOf('## 학습 목표') < bare.indexOf('## 결과 정리') && bare.indexOf('# 제목') === 0);
+        assert.ok(bare.includes('## 학습 후 체크리스트'));
+    });
+
+    await run('학습 목표 세트: 다시 보기로 대응 섹션을 찾고 함께 지운다', async () => {
+        const range = (md, index) => plain(call('objectiveContentRange')(md, index));
+        assert.deepStrictEqual(range(LESSON_MD, 0).map(section => section.title), ['재미의 구조', '구조 사례'], '연속한 섹션 덩어리');
+        assert.deepStrictEqual(range(LESSON_MD, 1).map(section => section.title), ['플레이 분석']);
+        assert.deepStrictEqual(range(LESSON_MD.replace(/ \(다시 보기: [^)]+\)/g, ''), 0), [], '대응을 못 읽으면 고르지 않는다');
+        const md = call('removeObjectiveSet')(LESSON_MD, 0, range(LESSON_MD, 0).map(section => section.index));
+        const bullets = call('lessonLintBullets');
+        assert.deepStrictEqual(plain(bullets(md, '학습\\s*목표')), ['기록으로 재미를 비교할 수 있습니다.']);
+        assert.strictEqual(bullets(md, '학습\\s*후\\s*체크리스트').length, 1);
+        assert.ok(!md.includes('## 재미의 구조') && md.includes('## 플레이 분석') && md.includes('## 개요'));
+    });
+
+    await run('학습 목표 세트: 같은 제목과 비슷한 제목의 섹션을 건드리지 않는다', async () => {
+        const md = ['## 학습 목표', '', '- 첫째', '- 둘째', '', '## 사례', '', '- 앞 사례', '', '## 사례', '', '- 뒤 사례', '', '## 학습 목표별 실습', '', '- 실습 하나', '- 실습 둘', '', '## 학습 후 체크리스트', '', '- 확인 하나', '- 확인 둘'].join('\n');
+        const sections = plain(call('objectiveContentSections')(md));
+        assert.deepStrictEqual(sections.map(section => section.title), ['사례', '사례']);
+        const removed = call('removeObjectiveSet')(md, 0, [sections[0].index]);
+        assert.ok(!removed.includes('앞 사례') && removed.includes('뒤 사례'), '고른 위치의 섹션만 지운다');
+        assert.ok(removed.includes('- 실습 하나') && removed.includes('- 실습 둘'), '접두사가 같은 섹션의 불릿은 남긴다');
+        assert.ok(!removed.includes('- 첫째') && !removed.includes('- 확인 하나'));
+        assert.strictEqual(call('withoutBullet')('- \n- 첫째\n- 둘째', 0), '- \n- 둘째', '빈 불릿은 세지 않는다');
+    });
+
+    await run('학습 목표 세트: 세부 불릿은 항목과 함께 움직인다', async () => {
+        const text = '## 학습 목표\n\n- 첫째\n  - 세부\n- 둘째';
+        assert.strictEqual(call('withoutBullet')(text, 0), '## 학습 목표\n\n- 둘째');
+        assert.strictEqual(call('withBullet')(text, '셋째'), `${text}\n- 셋째`);
+        assert.strictEqual(call('withBullet')('## 학습 목표', '첫째'), '## 학습 목표\n\n- 첫째');
+    });
+
+    await run('학습 목표 세트: 문항 연결 번호를 새 순서로 고친다', async () => {
+        const question = (no, objective) => [`### 문제 ${no}. 문항${no}`, `학습 목표 ${objective} · 밴드 L1 · 객관식`, '', '내용', '', '① 가', '② 나', '③ 다', '④ 라', '', '✅ **정답:** ①', '', '---'].join('\n');
+        const md = `${[question(1, 1), question(2, 2)].join('\n\n')}\n`;
+        const remap = call('remappedAssessment');
+        const before = ['가', '나'];
+        const kept = remap(md, before, ['나'], false);
+        const parse = text => plain(call('lessonLintQuestions')(text).map(call('parseQuestionBlock')));
+        assert.deepStrictEqual(parse(kept).map(q => q.objective), [null, 1], '지운 목표는 연결만 해제, 뒤 번호는 당긴다');
+        const dropped = parse(remap(md, before, ['나'], true));
+        assert.deepStrictEqual(dropped.map(q => [q.title, q.objective]), [['문항2', 1]], '문항도 함께 삭제');
+        assert.strictEqual(remap(md, before, before, false), md, '바뀐 번호가 없으면 그대로');
+        const stray = `${question(1, 5)}\n`;
+        assert.strictEqual(remap(stray, before, ['나'], true), stray, '번호가 어긋난 문항은 지우지 않는다');
+    });
+
+    await run('학습 목표 세트: AI 응답을 검증한다', async () => {
+        assert.throws(() => call('parseObjectiveSet')({ objective: '가' }), /모두/);
+        assert.strictEqual(call('parseObjectiveSet')({ objective: '가', section: '제목만', checklist: '나' }).section, '## 제목만');
+    });
+
+    await run('파일명: 위험한 글자를 빼고 겹치면 번호를 붙인다', async () => {
+        const subject = { id: 's1', title: '게임 기획', namingConvention: 'GD/nn:교안', lessons: [{ id: 1, title: '재미' }, { id: 2, title: '분석' }] };
+        ctx.globalState.subjects = [subject];
+        ctx.courseData = subject.lessons;
+        assert.strictEqual(call('lessonFileBase')({ id: 2, title: '분석' }, subject), 'GD_02_교안');
+        const used = new ctx.Set();
+        const unique = call('uniqueFileBase');
+        assert.deepStrictEqual([unique('가', used), unique('가', used), unique('나', used)], ['가', '가_2', '나']);
+    });
+
+    await run('오늘의 퀘스트: 제출 파일명을 한 번만 넣는다', async () => {
+        const subject = { id: 's1', title: '게임', lessons: [{ id: 1, title: '재미' }, { id: 2, title: '재미 분석: 플레이 로그와 사례' }] };
+        ctx.globalState.subjects = [{ id: 's0', title: '앞', lessons: [] }, subject];
+        ctx.courseData = subject.lessons;
+        const name = call('questFileName')(subject.lessons[1], subject);
+        assert.strictEqual(name, 'YYMMDD_2-2_재미분석플레이로그와사례_Ver0n_조or이름'.replace('재미분석플레이로그와사례', '재미분석플레이로그와사례'.slice(0, 12)));
+        const md = call('withQuestFileName')('## 과제\n\n- 만듭니다.', subject.lessons[1], subject);
+        assert.ok(md.includes(`\`${name}\``));
+        assert.strictEqual(call('withQuestFileName')(md, subject.lessons[1], subject), md);
+        assert.strictEqual(call('lintLessonMarkdown')(md, 'basicPrac').filter(issue => /버전/.test(issue.msg)).length, 0, '버전 규칙에 걸리지 않는다');
+    });
+
+    await run('교과 현황: 시간 비율과 배지', async () => {
+        const subjects = [
+            { id: 's1', title: '기획', ncs: { units: [{ code: 'a' }], confirmed: false }, lessons: [{ id: 1, title: '가', hours: 3, reviewStatus: '완료', gyosuan: { docMd: '#' } }, { id: 2, title: '나', hours: 3 }] },
+            { id: 's2', title: '개발', ncs: { units: [{ code: 'b' }], confirmed: true }, lessons: [{ id: 3, title: '다', hours: 2 }] }
+        ];
+        ctx.globalState.subjects = subjects;
+        ctx.courseData = subjects[0].lessons;
+        ctx.globalState.courseDesign = { totalHours: 10 };
+        const chips = call('subjectOverviewChips')(subjects[0]);
+        ['75%', '교수안 1/2', 'NCS 1 확정 전', '완료 1/2'].forEach(text => assert.ok(chips.includes(text), text));
+        assert.ok(call('subjectOverviewChips')(subjects[1]).includes('25%'));
+        const bar = call('renderCourseTimeBar')();
+        assert.ok(bar.includes('fitSubjectHours') && bar.includes('목표'), '목표와 다르면 맞추기 버튼을 보여 준다');
+        ctx.globalState.courseDesign = { totalHours: 8 };
+        assert.ok(!call('renderCourseTimeBar')().includes('fitSubjectHours'));
+    });
+
+    await run('교과 현황: 비율대로 맞추면 합계가 목표가 되고 진행 단계도 따라간다', async () => {
+        const flow = [{ phase: '도입', title: '가', minutes: 60 }, { phase: '정리', title: '나', minutes: 120 }];
+        const subjects = [
+            { id: 's1', title: '기획', lessons: [{ id: 'mainQuest', title: '퀘스트' }, { id: 1, title: '가', hours: 3, flow }, { id: 2, title: '나', hours: 3 }] },
+            { id: 's2', title: '개발', lessons: [{ id: 3, title: '다', hours: 2 }] }
+        ];
+        ctx.globalState.subjects = subjects;
+        ctx.globalState.courseDesign = { totalHours: 16 };
+        ctx.courseData = subjects[0].lessons;
+        await call('applySubjectHours')();
+        assert.strictEqual(call('courseLessonMinutes')(subjects[0]) + call('courseLessonMinutes')(subjects[1]), 960);
+        assert.strictEqual(subjects[0].lessons[0].id, 'mainQuest', '메인 퀘스트는 그대로');
+        assert.strictEqual(ctx.courseData, subjects[0].lessons, '현재 교과 목록도 함께 바뀐다');
+        const lesson = subjects[0].lessons[1];
+        assert.strictEqual(lesson.flow.reduce((sum, step) => sum + step.minutes, 0), call('lessonMinutes')(lesson));
+    });
+
+    await run('차시 구성: 잘못된 값은 저장 전에 막는다', async () => {
+        ctx.globalState.subjects = [{ id: 's1', title: '기획', lessons: [{ id: 1, title: '가', hours: 1 }, { id: 2, title: '나', hours: 1 }] }];
+        ctx.courseData = ctx.globalState.subjects[0].lessons;
+        const problem = call('blockRowProblem');
+        const lesson = ctx.courseData[0];
+        assert.ok(problem({ lesson, title: '', hours: '1' }).includes('제목'));
+        assert.ok(problem({ lesson, title: '나', hours: '1' }).includes('이미 있습니다'));
+        const swap = [{ lesson, title: '나', hours: '1' }, { lesson: ctx.courseData[1], title: '가', hours: '1' }];
+        assert.strictEqual(swap.map(row => problem(row, swap)).find(Boolean), undefined, '맞바꾸는 제목은 허용');
+        const clash = [{ lesson, title: '새 제목', hours: '1' }, { lesson: ctx.courseData[1], title: '새 제목', hours: '1' }];
+        assert.ok(clash.map(row => problem(row, clash)).find(Boolean).includes('이미 있습니다'), '한 번에 같은 새 제목으로 바꾸면 막는다');
+        assert.ok(problem({ lesson, title: '가', hours: '-1' }).includes('0보다'));
+        assert.strictEqual(problem({ lesson, title: '가', hours: '' }), '');
+        const moved = plain(call('blockRowLesson')({ lesson, title: '새 제목', hours: '2' }));
+        assert.deepStrictEqual([moved.title, moved.hours, moved.minutes], ['새 제목', 2, 120]);
+        assert.strictEqual(call('blockRowLesson')({ lesson, title: '가', hours: '1' }), lesson, '바뀐 값이 없으면 그대로');
+    });
+
+    await run('NCS: 차시 요소에서 교과 후보가 올라온다', async () => {
+        const subject = { id: 's1', title: '기획', lessons: [
+            { id: 1, title: '가', ncsElements: [{ code: 'x.1', name: '요소', unitCode: 'U1', unitName: '단위' }, { code: 'x.2', name: '요소2', unitCode: 'U1', unitName: '단위' }] },
+            { id: 2, title: '나', ncsElements: [{ code: 'x.3', name: '요소3', unitCode: 'U1', unitName: '단위' }, { name: '코드 없음' }] }
+        ] };
+        ctx.globalState.subjects = [subject];
+        ctx.courseData = subject.lessons;
+        const rows = plain(call('elementUnitRows')(subject));
+        assert.strictEqual(rows.length, 1);
+        assert.strictEqual(rows[0].code, 'U1');
+        assert.ok(rows[0].reason.includes('가, 나'));
+    });
+
+    await run('기존 내용 보강: 대상을 고르고 실패와 중지를 모은다', async () => {
+        const body = { basicLearn: LESSON_MD };
+        const subject = { id: 's1', title: '기획', ncs: { autoTried: true }, lessons: [
+            { id: 'mainQuest', title: '퀘스트', tabContents: body },
+            { id: 1, title: '가', tabContents: body },
+            { id: 2, title: '나', tabContents: body, ncsAutoTried: true, artAutoDone: true },
+            { id: 3, title: '다', tabContents: {} }
+        ] };
+        ctx.globalState.subjects = [subject];
+        ctx.courseData = subject.lessons;
+        const withArt = plain(call('backfillWork')([subject], true));
+        assert.deepStrictEqual(withArt.lessons.map(row => row.lesson.id), [1]);
+        assert.strictEqual(withArt.units.length, 0, '이미 배정해 본 교과는 빼고');
+        const work = call('backfillWork');
+        assert.strictEqual(plain(work([{ ...subject, ncs: {} }], false)).units.length, 1, '처음 보는 교과는 넣는다');
+        const order = [];
+        const runner = call('runBackfillSteps');
+        const live = { stopped: false };
+        const report = plain(await runner([
+            { label: '성공', task: async () => { order.push('성공'); } },
+            { label: '실패', task: async () => { throw new Error('장애'); } },
+            { label: '중지', task: async () => { live.stopped = true; } },
+            { label: '남음', task: async () => { order.push('남음'); } }
+        ], live, () => {}));
+        assert.deepStrictEqual([report.done, report.failed[0].error, report.left], [2, '장애', 1]);
+        assert.deepStrictEqual(order, ['성공']);
+    });
+
+    await run('기존 내용 보강: 삽화가 실패하면 다시 시도할 수 있다', async () => {
+        const failing = { id: 1, title: '가', tabContents: { basicLearn: LESSON_MD } };
+        ctx.suggestIllustrationIdeas = async () => [{ section: 0, description: '그림' }];
+        ctx.drawLessonSvg = async () => { throw new Error('호출 한도'); };
+        await assert.rejects(call('fillLessonArt')(failing, () => false), /호출 한도/);
+        assert.strictEqual(call('lessonNeedsArt')(failing), true);
+        await call('fillLessonArt')(failing, () => true);
+        assert.strictEqual(call('lessonNeedsArt')(failing), true, '중지해도 다시 할 수 있다');
+        ctx.suggestIllustrationIdeas = async () => [];
+        await call('fillLessonArt')(failing, () => false);
+        assert.strictEqual(call('lessonNeedsArt')(failing), false, '끝까지 돌면 다시 하지 않는다');
+    });
+
+    await run('일괄 생성: 교수안 옵션은 탭이 찬 차시도 넣고 교수안까지 만든다', async () => {
+        const tabs = Object.fromEntries(TAB_IDS.map(id => [id, '내용']));
+        const subject = { id: 's1', title: '기획', lessons: [{ id: 1, title: '가', tabContents: tabs }, { id: 2, title: '나', tabContents: tabs, gyosuan: { docMd: '#' } }] };
+        ctx.globalState.subjects = [subject];
+        ctx.courseData = subject.lessons;
+        assert.strictEqual(plain(call('runnableLessons')([subject])).length, 0);
+        assert.deepStrictEqual(plain(call('runnableLessons')([subject], true)).map(item => item.lessonId), [1]);
+        const calls = [];
+        ctx.runGyosuanGeneration = async (id, opts) => { calls.push(id); opts.onStatus('진행'); return { ok: true, partial: true, built: {}, draft: {} }; };
+        const attempt = call('attemptLesson');
+        const item = { subject, lessonId: 1, title: '가' };
+        assert.deepStrictEqual(plain(await attempt(item, { stopped: false, withGyosuan: false })), { ok: true, partial: false });
+        assert.deepStrictEqual(calls, [], '옵션을 끄면 부르지 않는다');
+        assert.deepStrictEqual(plain(await attempt(item, { stopped: false, withGyosuan: true })), { ok: true, partial: true });
+        assert.deepStrictEqual(calls, [1]);
+        const stopped = plain(await attempt(item, { stopped: true, withGyosuan: true }));
+        assert.strictEqual(stopped.ok, false);
+        assert.strictEqual(stopped.stopped, true);
+        await attempt({ ...item, lessonId: 2 }, { stopped: false, withGyosuan: true });
+        assert.deepStrictEqual(calls, [1], '교수안이 있는 차시는 다시 만들지 않는다');
+    });
+
+    await run('일괄 생성: 안내 화면에 옵션이 보인다', async () => {
+        const html = call('lessonRunIntroHtml')([], [], true);
+        assert.ok(html.includes('lesson-run-gyosuan') && /id="lesson-run-gyosuan" type="checkbox" checked/.test(html));
+        assert.ok(html.includes('생성할 차시가 없습니다'));
+    });
+
+    console.log('ALL PASSED');
+})().catch(err => {
+    console.error('FAIL', err);
+    process.exit(1);
+});

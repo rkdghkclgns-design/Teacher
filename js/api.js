@@ -157,7 +157,7 @@ function renderLessonHTML(md, opts) {
         : `<pre class="text-gray-200 whitespace-pre-wrap">${safe.replace(/</g, '&lt;')}</pre>`;
     if (typeof applyPeriodLineBreakHTML === 'function') html = applyPeriodLineBreakHTML(html);
     if (postprocess && typeof postprocessHtml === 'function') html = postprocessHtml(html);
-    return html;
+    return sanitizeLessonHtml(html); // 후처리가 글자를 지워 태그가 이어 붙을 수 있으므로 맨 끝에서 거른다
 }
 if (typeof window !== 'undefined') window.renderLessonHTML = renderLessonHTML;
 
@@ -424,7 +424,7 @@ if (typeof marked !== 'undefined') {
                 <div class="relative group my-6 flex justify-center" data-imgid="${imgIdToPass}">
                     <img src="${href}" alt="${text}" title="${title}" class="rounded-xl shadow-lg max-w-full h-auto max-h-[450px] object-contain transition-transform duration-500 group-hover:scale-[1.01]">
                     <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
-                        <button onclick="deleteImage('${imgIdToPass}', this)" class="px-3 py-1.5 bg-red-500/80 hover:bg-red-600 text-white text-xs font-bold rounded-lg shadow-lg flex items-center gap-1 backdrop-blur-sm">
+                        <button data-lesson-action="delete-image" data-img-id="${escapeHtml(imgIdToPass)}" class="px-3 py-1.5 bg-red-500/80 hover:bg-red-600 text-white text-xs font-bold rounded-lg shadow-lg flex items-center gap-1 backdrop-blur-sm">
                             <i class="ph-bold ph-trash"></i> 삭제
                         </button>
                     </div>
@@ -480,7 +480,7 @@ window.generateQuiz = async function () {
 
         const quizMd = extractText(data);
 
-        showModal('AI 생성 퀴즈', marked.parse(quizMd));
+        showModal('AI 생성 퀴즈', sanitizeLessonHtml(marked.parse(quizMd)));
 
     } catch (e) {
 
@@ -616,11 +616,16 @@ async function generateModuleContent(moduleId, keyConcepts) {
         mod.keyConcepts = keyConcepts;
     }
 
+    // 탭을 비우기 전에 고정 섹션을 챙겨 재생성 뒤 되돌린다
+    const lockedByTab = Object.fromEntries(LESSON_TABS.map(tab => [tab.id, lockedSectionBlocks(mod, tab.id)]));
+    const lockedBlocks = lockedByTab.basicLearn;
+
     // [재생성 중복 방지] 재생성인 경우 기존 tabContents·images 초기화
     // 이전엔 status==='done'이면 tabContents가 남아있어 5탭 자동생성이 스킵되고
     // mod.content와 tabContents가 어긋나 같은 내용이 2회 이상 보이는 문제 발생.
     if (mod.status === 'done' || (mod.tabContents && Object.values(mod.tabContents).some(v => v))) {
         console.log('[Regeneration] tabContents·images 초기화하여 중복 생성 방지');
+        if (mod.content) await archiveContent({ title: mod.title, content: mod.content, images: mod.images }); // 중단하거나 실패해도 이전 교안을 되찾을 수 있게 한다
         mod.tabContents = { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null };
         // 재생성 시 옛 이미지 캐시도 비움 (새 본문에 맞는 이미지로 갱신)
         mod.images = {};
@@ -672,6 +677,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
     const loadingText = document.getElementById('editor-loading-text');
     loadingEl.style.display = 'flex';
     loadingText.textContent = 'AI가 상세 교안을 작성하고 있습니다...';
+    window.beginGenerationStop?.();
 
 
 
@@ -717,7 +723,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
                         { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
                         { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
                     ],
-                    contents: [{ parts: [{ text: userPrompt + lessonDesignBrief(mod) }] }],
+                    contents: [{ parts: [{ text: userPrompt + lessonDesignBrief(mod) + lockedSectionPrompt(lockedBlocks) }] }],
                     systemInstruction: { parts: [{ text: systemInstruction }] }
         });
 
@@ -727,7 +733,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
         chunkCount = 1;
 
         // ── Chunk 2~N: 이어쓰기 루프 ──
-        while (fullContent.includes(CONTINUE_MARKER) && chunkCount < MAX_CHUNKS) {
+        while (fullContent.includes(CONTINUE_MARKER) && chunkCount < MAX_CHUNKS && !window.isTabGenerationStopped?.()) {
             chunkCount++;
             // CONTINUE 마커 제거
             fullContent = fullContent.replace(CONTINUE_MARKER, '').trimEnd();
@@ -787,15 +793,27 @@ async function generateModuleContent(moduleId, keyConcepts) {
             fullContent = sanitizeMarkdownContent(fullContent);
         }
 
-        // ── 이미지 태그 처리 ──
-        loadingText.textContent = chunkCount > 1
-            ? `이미지 생성 중... (${chunkCount}단계 완료)`
-            : '이미지 생성 중...';
+        fullContent = restoreLockedSections(fullContent, lockedBlocks);
 
-        fullContent = await processImageTags(mod, fullContent);
+        // 중단하면 끝까지 받지 못한 글이므로 자동 수정과 이미지 생성 비용을 쓰지 않는다
+        const stopped = !!window.isTabGenerationStopped?.();
+        if (!stopped) {
+            window.endGenerationStop?.();
+            if (moduleId !== 'mainQuest') {
+                fullContent = await autoFixGeneratedTab({ tabId: 'basicLearn', md: fullContent, lockedBlocks, onStatus: text => { loadingText.textContent = text; } });
+            }
+
+            // ── 이미지 태그 처리 ──
+            loadingText.textContent = chunkCount > 1
+                ? `이미지 생성 중... (${chunkCount}단계 완료)`
+                : '이미지 생성 중...';
+
+            fullContent = restoreLockedSections(await processImageTags(mod, fullContent), lockedBlocks);
+        }
 
         mod.content = fullContent;
         mod.status = 'done';
+        Object.assign(mod, withHistoryNote(mod, 'AI 교안 생성'));
         currentEditingModuleId = mod.id;
 
         // 5탭 마이그레이션: 기본학습 탭에 콘텐츠 저장
@@ -805,9 +823,14 @@ async function generateModuleContent(moduleId, keyConcepts) {
         renderSidebar();
         renderEditor(mod);
 
+        if (stopped) {
+            window.showAlert('교안 생성을 중단했습니다. 받은 내용까지 저장했습니다. 이전 교안은 히스토리에 있습니다.');
+            return;
+        }
+
         // 나머지 4탭 자동 생성 (기본학습은 이미 완료)
         if (typeof generateRemainingTabs === 'function') {
-            await generateRemainingTabs(mod.id);
+            await generateRemainingTabs(mod.id, lockedByTab);
         } else if (chunkCount > 1) {
             window.showAlert(`✅ 교안이 ${chunkCount}단계에 걸쳐 생성되었습니다.`);
         }
@@ -841,6 +864,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
 
         loadingEl.style.display = 'none';
         loadingText.textContent = 'AI가 상세 교안을 작성하고 있습니다...';
+        window.endGenerationStop?.();
 
     }
 
@@ -1479,7 +1503,7 @@ async function processImageTags(mod, markdown) {
                 const captionText = (intent && intent.reasoning && /[가-힣]/.test(intent.reasoning))
                     ? intent.reasoning.replace(/'/g, "\\'").replace(/"/g, '&quot;').slice(0, 80)
                     : (/[가-힣]/.test(tag.keyword) ? tag.keyword.replace(/'/g, "\\'").replace(/"/g, '&quot;').slice(0, 80) : safeKoreanDesc.slice(0, 80));
-                const imgHTML = `\n<div class="image-wrapper"><img src="local:${imgId}" alt="${safeKoreanDesc}" class="rounded-lg border-2 border-accent/30 shadow-md max-w-full"><button class="image-regenerate-btn px-3 py-1.5 text-xs text-white font-bold rounded flex items-center gap-1 border border-accent/50 hover:bg-accent transition-colors" onclick="promptRegenerateImage(this, '${tag.keyword}', '${imgId}')"><i class="ph-bold ph-arrows-clockwise"></i> 다시 찾기</button><div class="image-caption" style="margin-top:8px;text-align:center;font-size:0.85rem;color:#6b7280;font-style:italic;font-weight:500;letter-spacing:-0.01em;line-height:1.4;max-width:100%;">${captionText}</div></div>\n`;
+                const imgHTML = `\n<div class="image-wrapper"><img src="local:${imgId}" alt="${safeKoreanDesc}" class="rounded-lg border-2 border-accent/30 shadow-md max-w-full"><button class="image-regenerate-btn px-3 py-1.5 text-xs text-white font-bold rounded flex items-center gap-1 border border-accent/50 hover:bg-accent transition-colors" data-lesson-action="regenerate-image" data-keyword="${escapeHtml(tag.keyword)}" data-img-id="${imgId}"><i class="ph-bold ph-arrows-clockwise"></i> 다시 찾기</button><div class="image-caption" style="margin-top:8px;text-align:center;font-size:0.85rem;color:#6b7280;font-style:italic;font-weight:500;letter-spacing:-0.01em;line-height:1.4;max-width:100%;">${captionText}</div></div>\n`;
 
                 successCount++;
                 console.log(`[Image Pipeline] (${index + 1}/${filteredTags.length}) ✅ ${tag.keyword} → ${vendorLabel}`);
@@ -1487,7 +1511,7 @@ async function processImageTags(mod, markdown) {
             } else {
                 failCount++;
                 console.warn(`[Image Pipeline] (${index + 1}/${filteredTags.length}) ⚠️ 이미지 미확보: ${tag.keyword}`);
-                return { fullMatch: tag.fullMatch, html: `\n<div class="image-placeholder" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:24px;margin:12px 0;border:2px dashed rgba(156,163,175,0.4);border-radius:8px;background:rgba(31,41,55,0.3);color:#9ca3af;font-size:0.85rem;"><i class="ph-bold ph-image" style="font-size:1.4rem;opacity:0.6;"></i> <span>이미지 영역: ${safeKoreanDesc}</span> <button onclick="promptRegenerateImage(this,'${tag.keyword.replace(/'/g, "\\'")}',null)" class="ml-2 px-2 py-1 text-xs bg-accent/20 text-accent border border-accent/40 rounded hover:bg-accent/30 transition-colors" style="cursor:pointer;">🔄 다시 검색</button></div>\n` };
+                return { fullMatch: tag.fullMatch, html: `\n<div class="image-placeholder" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:24px;margin:12px 0;border:2px dashed rgba(156,163,175,0.4);border-radius:8px;background:rgba(31,41,55,0.3);color:#9ca3af;font-size:0.85rem;"><i class="ph-bold ph-image" style="font-size:1.4rem;opacity:0.6;"></i> <span>이미지 영역: ${safeKoreanDesc}</span> <button data-lesson-action="regenerate-image" data-keyword="${escapeHtml(tag.keyword)}" class="ml-2 px-2 py-1 text-xs bg-accent/20 text-accent border border-accent/40 rounded hover:bg-accent/30 transition-colors" style="cursor:pointer;">🔄 다시 검색</button></div>\n` };
             }
 
         } catch (e) {
@@ -1740,13 +1764,16 @@ window.promptRegenerateImage = function (btn, fallbackKeyword, imgId) {
 
                         <button class="px-3 py-1.5 text-xs font-bold text-white bg-white/10 hover:bg-white/20 rounded-lg transition-colors" onclick="this.closest('.prompt-overlay').remove()">취소</button>
 
-                        <button class="px-3 py-1.5 text-xs font-bold text-white bg-accent hover:bg-accentHover rounded-lg transition-colors" onclick="doRegenerateImage(this, '${fallbackKeyword}', '${imgId}')">생성하기</button>
+                        <button class="px-3 py-1.5 text-xs font-bold text-white bg-accent hover:bg-accentHover rounded-lg transition-colors" data-regen-submit>생성하기</button>
 
                     </div>
 
                 </div>
 
             `;
+
+    // 키워드는 교안에서 온 값이므로 HTML에 끼우지 않고 호출 인자로만 넘긴다
+    overlay.querySelector('[data-regen-submit]').onclick = event => window.doRegenerateImage(event.currentTarget, fallbackKeyword, imgId);
 
     wrapper.appendChild(overlay);
 
@@ -1824,7 +1851,7 @@ window.doRegenerateImage = async function (submitBtn, fallbackKeyword, imgId) {
 
                     <p class="text-sm text-white font-bold animate-pulse drop-shadow-md">새로운 이미지를 생성 중입니다...</p>
 
-                    <p class="text-xs text-textLight/60 mt-2 max-w-[280px] text-center truncate px-4" title="${prompt}">프롬프트: ${prompt}</p>
+                    <p class="text-xs text-textLight/60 mt-2 max-w-[280px] text-center truncate px-4" title="${escapeHtml(prompt)}">프롬프트: ${escapeHtml(prompt)}</p>
 
                 </div>
 
@@ -2731,7 +2758,9 @@ window.initInlineEditing = function () {
 
 function handleInlineEditDblClick(e) {
     const mod = getEditingModule();
-    if (!mod || !mod.content || typeof marked === 'undefined') return;
+    const source = getActiveTabContent(mod); // 화면에 보이는 탭의 글이다. 탭을 합친 mod.content와는 블록 순서가 다르다
+    const tabId = currentLessonTab;
+    if (!source || typeof marked === 'undefined') return;
 
     // 최상위 블록 엘리먼트 찾기 (p, h1~6, ul/ol, blockquote, table 등)
     const topLevelTarget = e.target.closest('#render-view > *');
@@ -2743,7 +2772,7 @@ function handleInlineEditDblClick(e) {
     if (targetIndex === -1) return;
 
     try {
-        const tokens = marked.lexer(mod.content);
+        const tokens = marked.lexer(source);
         let blockIndex = 0;
         let targetToken = null;
 
@@ -2777,7 +2806,10 @@ function handleInlineEditDblClick(e) {
             topLevelTarget.isEditing = false;
 
             const newMarkdown = ta.value.trimEnd();
-            if (newMarkdown !== rawMarkdownText && newMarkdown) {
+            // 편집하는 사이 탭이나 내용이 바뀌었으면 옛 글로 다른 탭을 덮지 않는다
+            const unchanged = currentLessonTab === tabId && getActiveTabContent(mod) === source;
+            if (newMarkdown !== rawMarkdownText && !unchanged) window.showToast?.('탭 내용이 바뀌어 고친 내용을 반영하지 않았습니다.', 'warning');
+            if (newMarkdown !== rawMarkdownText && newMarkdown && unchanged) {
                 // 원문을 AST 기반으로 완벽 재구성 (해당 블록만 새 문구로 치환)
                 let newContent = "";
                 let bIdx = 0;
@@ -2787,7 +2819,7 @@ function handleInlineEditDblClick(e) {
 
                     if (generatesElem) {
                         if (bIdx === targetIndex) {
-                            newContent += newMarkdown + (t.raw.endsWith('\\n') ? '' : '\\n');
+                            newContent += newMarkdown + t.raw.slice(t.raw.trimEnd().length);
                         } else {
                             newContent += t.raw;
                         }
@@ -2797,7 +2829,7 @@ function handleInlineEditDblClick(e) {
                     }
                 }
 
-                mod.content = newContent;
+                setTabMarkdown(mod, tabId, newContent);
                 saveState().then(() => renderEditor(mod)); // 전체 리렌더링
                 return;
             }
@@ -2809,8 +2841,8 @@ function handleInlineEditDblClick(e) {
 
         ta.onblur = saveAndRestore;
         ta.onkeydown = (ev) => {
-            // Shift + Enter 를 허용하고, 그냥 Enter 는 저장
-            if (ev.key === 'Enter' && !ev.shiftKey) {
+            // Shift + Enter 를 허용하고, 그냥 Enter 는 저장. 한글 조합을 끝내는 Enter는 저장이 아니다
+            if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing) {
                 ev.preventDefault();
                 ta.blur();
             } else if (ev.key === 'Escape') {
@@ -3185,7 +3217,7 @@ window.executeAICommand = async function () {
                 mod.images[imgId] = b64;
 
                 const safeCmd = String(command).replace(/'/g, "\\'").replace(/"/g, '&quot;').slice(0, 80);
-                const imgTag = `\n<div class="image-wrapper"><img src="local:${imgId}" alt="${command}" class="rounded-lg border-2 border-accent/30 shadow-md max-w-full"><span class="absolute bottom-3 left-3 bg-black/80 text-white text-[0.6rem] px-2 py-1 rounded border border-white/20 flex items-center gap-1 pointer-events-none"><i class="ph-fill ph-sparkle text-accent"></i> AI 생성 이미지</span><button class="image-regenerate-btn px-3 py-1.5 text-xs text-white font-bold rounded flex items-center gap-1 border border-accent/50 hover:bg-accent transition-colors" onclick="promptRegenerateImage(this, '${command}', '${imgId}')"><i class="ph-bold ph-arrows-clockwise"></i> 다시 생성</button><div class="image-caption" style="margin-top:8px;text-align:center;font-size:0.85rem;color:#6b7280;font-style:italic;font-weight:500;letter-spacing:-0.01em;line-height:1.4;max-width:100%;">${safeCmd}</div></div>\n`;
+                const imgTag = `\n<div class="image-wrapper"><img src="local:${imgId}" alt="${command}" class="rounded-lg border-2 border-accent/30 shadow-md max-w-full"><span class="absolute bottom-3 left-3 bg-black/80 text-white text-[0.6rem] px-2 py-1 rounded border border-white/20 flex items-center gap-1 pointer-events-none"><i class="ph-fill ph-sparkle text-accent"></i> AI 생성 이미지</span><button class="image-regenerate-btn px-3 py-1.5 text-xs text-white font-bold rounded flex items-center gap-1 border border-accent/50 hover:bg-accent transition-colors" data-lesson-action="regenerate-image" data-keyword="${escapeHtml(command)}" data-img-id="${imgId}"><i class="ph-bold ph-arrows-clockwise"></i> 다시 생성</button><div class="image-caption" style="margin-top:8px;text-align:center;font-size:0.85rem;color:#6b7280;font-style:italic;font-weight:500;letter-spacing:-0.01em;line-height:1.4;max-width:100%;">${safeCmd}</div></div>\n`;
 
                 const text = rawView.value;
                 // 보기 모드에서 진입한 경우 커서가 0이므로 문서 끝에 삽입
@@ -3211,31 +3243,43 @@ window.executeAICommand = async function () {
     }
 }
 
+// 화면에는 이미지가 data URL로 풀려 있으므로 저장된 키를 되찾는다
+function lessonImageTargets(mod, imgId) {
+    const images = mod.images || {};
+    let source = imgId;
+    try {
+        source = decodeURIComponent(imgId);
+    } catch (err) {
+        console.warn('[이미지 삭제] 주소를 읽지 못해 그대로 씁니다:', err.message);
+    }
+    const key = images[imgId] ? imgId : Object.keys(images).find(id => images[id] === source);
+    return { key, refs: [key && `local:${key}`, source].filter(Boolean) };
+}
+
+function withoutMdImages(md, refs) {
+    return refs.reduce((text, ref) => text.replace(new RegExp(`!\\[[^\\]]*\\]\\(${ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`, 'g'), ''), md);
+}
+
 // v7.2: 이미지 삭제 — 보기모드에서 이미지 제거
 window.deleteImage = function (imgId, btnEl) {
     if (!confirm('이 이미지를 삭제하시겠습니까?')) return;
     const mod = getEditingModule();
     if (!mod) return;
 
-    // Base64 캐시에서 제거
-    if (mod.images && mod.images[imgId]) {
-        delete mod.images[imgId];
-    }
+    const { key, refs } = lessonImageTargets(mod, imgId);
 
-    // 마크다운에서 이미지 참조 제거 (local:imgId 또는 data:image 형태)
+    // Base64 캐시에서 제거
+    if (key) delete mod.images[key];
+
+    // 마크다운에서 이 이미지의 참조만 제거한다
     const tabId = typeof currentLessonTab !== 'undefined' ? currentLessonTab : null;
     if (tabId && mod.tabContents && mod.tabContents[tabId]) {
-        mod.tabContents[tabId] = mod.tabContents[tabId]
-            .replace(new RegExp(`!\\[[^\\]]*\\]\\(local:${imgId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`, 'g'), '')
-            .replace(new RegExp(`!\\[[^\\]]*\\]\\(data:image[^)]+\\)`, 'g'), '');
+        mod.tabContents[tabId] = withoutMdImages(mod.tabContents[tabId], refs);
         // 숨겨진 편집기가 지운 참조를 다시 저장하지 않게 맞춘다
         const rawView = document.getElementById('raw-view');
         if (rawView) rawView.value = mod.tabContents[tabId];
     }
-    if (mod.content) {
-        mod.content = mod.content
-            .replace(new RegExp(`!\\[[^\\]]*\\]\\(local:${imgId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`, 'g'), '');
-    }
+    if (mod.content) mod.content = withoutMdImages(mod.content, refs);
 
     // DOM에서 이미지 wrapper 제거
     const wrapper = btnEl?.closest('[data-imgid]');
@@ -3246,7 +3290,7 @@ window.deleteImage = function (imgId, btnEl) {
         setTimeout(() => wrapper.remove(), 300);
     }
 
-    if (typeof saveGlobalState === 'function') saveGlobalState();
+    saveState();
     if (window.showToast) window.showToast('이미지가 삭제되었습니다.', 'success');
 };
 

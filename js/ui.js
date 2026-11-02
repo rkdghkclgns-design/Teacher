@@ -339,7 +339,7 @@ function renderOverviewLNB() {
 
 
 
-    list.innerHTML = globalState.subjects.map((subj, idx) => `
+    list.innerHTML = renderCourseTimeBar() + globalState.subjects.map((subj, idx) => `
 
                 <div class="bg-white/5 border border-white/10 rounded-xl overflow-hidden group hover:border-accent/50 transition-colors shadow-sm"
                      draggable="true" data-subj-idx="${idx}"
@@ -380,7 +380,7 @@ function renderOverviewLNB() {
 
                     </div>
 
-                    <div class="px-3.5 pb-3.5 pt-1 flex gap-2">
+                    <div class="px-3.5 pb-3.5 pt-1 flex flex-wrap gap-2">
 
                         <span class="text-[0.65rem] font-bold bg-white/10 text-textLight px-2 py-1 rounded-md flex items-center gap-1">
 
@@ -388,6 +388,7 @@ function renderOverviewLNB() {
 
                         </span>
 
+                        ${subjectOverviewChips(subj)}
                         ${subj.hasLevelTest ? `<span class="text-[0.65rem] font-bold bg-yellow-500/20 text-yellow-300 px-2 py-1 rounded-md flex items-center gap-1"><i class="ph-fill ph-crown"></i> 메인 퀘스트</span>` : ''}
 
                     </div>
@@ -800,8 +801,8 @@ window.executeDropdownExport = function (format) {
             else exportToPDF();
             break;
         case 'slide':
-            if (_exportScope === 'subject') window.showToast('슬라이드는 차시 단위로 열립니다. 현재 차시를 엽니다.', 'warning');
-            openCurrentSlideStudio();
+            if (_exportScope === 'subject') window.downloadSubjectBundle();
+            else openCurrentSlideStudio();
             break;
         case 'html':
             if (_exportScope === 'subject') exportSubjectToHTML();
@@ -857,7 +858,7 @@ function exportCurrentToHTML() {
     }
     const renderView = document.getElementById('render-view');
     if (!renderView) return;
-    const htmlDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${mod.title || '교안'}</title><style>body{font-family:'Noto Sans KR',sans-serif;max-width:900px;margin:0 auto;padding:40px;line-height:1.8;color:#1a1a2e;}h1,h2,h3{margin-top:1.5em;}table{border-collapse:collapse;width:100%;}th,td{border:1px solid #ddd;padding:8px 12px;text-align:left;}th{background:#f0f0f0;}img{max-width:100%;border-radius:8px;}</style></head><body>${renderView.innerHTML}</body></html>`;
+    const htmlDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(mod.title || '교안')}</title><style>body{font-family:'Noto Sans KR',sans-serif;max-width:900px;margin:0 auto;padding:40px;line-height:1.8;color:#1a1a2e;}h1,h2,h3{margin-top:1.5em;}table{border-collapse:collapse;width:100%;}th,td{border:1px solid #ddd;padding:8px 12px;text-align:left;}th{background:#f0f0f0;}img{max-width:100%;border-radius:8px;}</style></head><body>${renderView.innerHTML}</body></html>`;
     const blob = new Blob([htmlDoc], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -875,11 +876,11 @@ function exportSubjectToHTML() {
     lessonList.forEach(mod => {
         const allContent = Object.entries(mod.tabContents || {}).map(([k, v]) => {
             if (!v) return '';
-            const parsed = typeof marked !== 'undefined' ? marked.parse(v) : v;
+            const parsed = sanitizeLessonHtml(typeof marked !== 'undefined' ? marked.parse(v) : v);
             return `<h1>${k}</h1>${parsed}`;
         }).filter(Boolean).join('<hr>');
         if (!allContent) return;
-        const htmlDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${mod.title || '교안'}</title><style>body{font-family:'Noto Sans KR',sans-serif;max-width:900px;margin:0 auto;padding:40px;line-height:1.8;color:#1a1a2e;}h1,h2,h3{margin-top:1.5em;}table{border-collapse:collapse;width:100%;}th,td{border:1px solid #ddd;padding:8px 12px;}th{background:#f0f0f0;}img{max-width:100%;}</style></head><body>${allContent}</body></html>`;
+        const htmlDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(mod.title || '교안')}</title><style>body{font-family:'Noto Sans KR',sans-serif;max-width:900px;margin:0 auto;padding:40px;line-height:1.8;color:#1a1a2e;}h1,h2,h3{margin-top:1.5em;}table{border-collapse:collapse;width:100%;}th,td{border:1px solid #ddd;padding:8px 12px;}th{background:#f0f0f0;}img{max-width:100%;}</style></head><body>${allContent}</body></html>`;
         const blob = new Blob([htmlDoc], { type: 'text/html;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -944,9 +945,10 @@ window.exportSelectedToZip = async function () {
         const subjFolder = zip.folder(subjName);
 
         const lessonList = subj.lessons || subj.modules || [];
-        lessonList.forEach((mod, modIdx) => {
+        const usedNames = new Set();
+        lessonList.forEach(mod => {
             if (mod.id === 'mainQuest') return;
-            const modName = `${String(modIdx + 1).padStart(2, '0')}_${(mod.title || '차시').replace(/[^\w가-힣\s]/g, '').trim()}`;
+            const modName = uniqueFileBase(lessonFileBase(mod, subj), usedNames);
             const modFolder = subjFolder.folder(modName);
             const tabs = mod.tabContents || {};
             const tabNames = { basicLearn: '01_기본학습', basicPrac: '02_기본실습', advLearn: '03_심화학습', advPrac: '04_심화실습', assessment: '05_학습이해도' };
@@ -1030,10 +1032,11 @@ window.exportAllToZip = async function () {
     const subjectName = (subj.title || subj.name || '교과').replace(/[^\w가-힣\s]/g, '').trim();
     const rootFolder = zip.folder(subjectName);
     let totalFiles = 0;
+    const usedNames = new Set();
 
-    lessonList.forEach((mod, modIdx) => {
+    lessonList.forEach(mod => {
         if (mod.id === 'mainQuest') return;
-        const modName = `${String(modIdx + 1).padStart(2, '0')}_${(mod.title || '차시').replace(/[^\w가-힣\s]/g, '').trim()}`;
+        const modName = uniqueFileBase(lessonFileBase(mod, subj), usedNames);
         const modFolder = rootFolder.folder(modName);
 
         // 각 탭의 마크다운 저장

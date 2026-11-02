@@ -7,6 +7,7 @@ const LESSON_HISTORY_LIMIT = 20;
 const LESSON_TRASH_LIMIT = 100;
 const LESSON_TRASH_DAYS = 30;
 const DAY_MS = 86400000;
+const FLOW_PHASES = ['도입', '전개', '정리'];
 const LESSON_STATUS_STYLES = { 작성중: 'bg-sky-500/20 text-sky-300', 검수중: 'bg-amber-500/20 text-amber-300', 완료: 'bg-emerald-500/20 text-emerald-300', 개선필요: 'bg-rose-500/20 text-rose-300' };
 
 let _lessonFilter = { status: '', query: '', ncs: [], group: false };
@@ -57,10 +58,40 @@ function elementLabel(element) {
     return `${element.code ? `${element.code} ` : ''}${element.name}${element.auto ? ' (미확정)' : ''}`;
 }
 
+// 형식: "단계 | 내용 | 분". 단계를 빼고 "내용 | 분"만 적으면 전개로 본다
+function parseFlowLines(text) {
+    return String(text || '').split('\n')
+        .map(line => line.split('|').map(part => part.trim()))
+        .filter(parts => parts.some(Boolean))
+        .map(parts => {
+            const [phase, title, minutes] = parts.length > 2 ? parts : ['전개', ...parts];
+            return { phase: FLOW_PHASES.includes(phase) ? phase : '전개', title: title || '', minutes: Math.max(1, Number.parseInt(minutes, 10) || DESIGN_FLOW_STEP_MINUTES) };
+        })
+        .filter(step => step.title);
+}
+
+const flowLinesText = flow => (flow || []).map(step => `${step.phase} | ${step.title} | ${step.minutes}`).join('\n');
+const flowTotal = flow => flow.reduce((sum, step) => sum + step.minutes, 0);
+
+// 진행 단계 합계가 차시 시간이 된다. 단계를 비우면 시간은 그대로 둔다
+function lessonFlowPatch(flow) {
+    if (!flow.length) return { flow };
+    const minutes = flowTotal(flow);
+    return { flow, minutes, hours: Math.round(minutes / 60 * 100) / 100 };
+}
+
+function metaFlowNote(text, mod) {
+    const flow = parseFlowLines(text);
+    if (!flow.length) return '';
+    const total = flowTotal(flow);
+    const current = lessonMinutes(mod);
+    return !current || total === current ? `합계 ${fmtMinutes(total)}` : `합계 ${fmtMinutes(total)}. 저장하면 차시 시간이 ${fmtMinutes(current)}에서 ${fmtMinutes(total)}이 됩니다.`;
+}
+
 function metaChanges(mod, next) {
     const changed = (key, label, empty = []) => (JSON.stringify(mod[key] ?? empty) !== JSON.stringify(next[key] ?? empty) ? label : '');
     const status = lessonStatus(mod) !== next.reviewStatus ? `상태: ${lessonStatus(mod)} → ${next.reviewStatus}` : '';
-    return [changed('title', '제목', ''), status, changed('category', '카테고리', ''), changed('tools', '툴·버전'), changed('prereqs', '선행 차시'), changed('ncsElements', 'NCS 요소'), changed('gen', '생성 옵션', {})].filter(Boolean);
+    return [changed('title', '제목', ''), status, changed('category', '카테고리', ''), changed('objectives', '학습 목표'), changed('flow', '진행 단계'), changed('tools', '툴·버전'), changed('prereqs', '선행 차시'), changed('ncsElements', 'NCS 요소'), changed('gen', '생성 옵션', {})].filter(Boolean);
 }
 
 function withHistoryNote(mod, note) {
@@ -313,6 +344,16 @@ function metaDialogHtml(subject, mod) {
             <div class="p-4 border-b border-white/10"><h2 class="text-sm font-bold text-textLight">차시 정보 · ${escapeHtml(mod.title)}</h2></div>
             <div class="flex-1 overflow-y-auto p-4 space-y-3">
                 ${metaBasicsHtml(subject, mod, label, field)}
+                <div>
+                    <label class="${label}">학습 목표 (한 줄에 하나, 교안 생성과 교수안에 씁니다)</label>
+                    <textarea id="meta-objectives" rows="3" class="${field}">${escapeHtml((mod.objectives || []).join('\n'))}</textarea>
+                    <button data-meta-action="objective-sets" class="mt-1 px-2 py-0.5 text-[0.65rem] font-bold text-textLight bg-white/10 rounded hover:bg-white/20">교안의 학습 목표 세트 추가·삭제</button>
+                </div>
+                <div>
+                    <label class="${label}">진행 단계 (단계 | 내용 | 분, 한 줄에 하나)</label>
+                    <textarea id="meta-flow" rows="4" class="${field}">${escapeHtml(flowLinesText(mod.flow))}</textarea>
+                    <p id="meta-flow-note" class="text-[0.6rem] text-textMuted min-h-[1em]">${escapeHtml(metaFlowNote(flowLinesText(mod.flow), mod))}</p>
+                </div>
                 <div><label class="${label}">사용 툴과 버전 (이름 | 버전, 버전 의존 정보는 본문이 아니라 여기서 관리합니다)</label><textarea id="meta-tools" rows="2" class="${field}">${escapeHtml((mod.tools || []).map(tool => `${tool.name}${tool.version ? ` | ${tool.version}` : ''}`).join('\n'))}</textarea></div>
                 <div><label class="${label}">교안 생성 옵션 (지정하지 않으면 과정 기본값을 씁니다)</label>${lessonGenFieldsHtml('meta', mod.gen)}</div>
                 <div><label class="${label}">선행 차시 (메타데이터 전용, 본문에서는 언급하지 않습니다)</label><div class="space-y-1 max-h-28 overflow-y-auto">${metaPrereqRows(mod)}</div></div>
@@ -391,6 +432,7 @@ function metaTitleBlocked(title, mod) {
 }
 
 function onMetaInput(event) {
+    if (event.target.id === 'meta-flow') document.getElementById('meta-flow-note').textContent = metaFlowNote(event.target.value, _metaDraft.mod);
     if (event.target.id !== 'meta-title') return;
     const title = event.target.value.trim();
     const { mod } = _metaDraft;
@@ -480,6 +522,8 @@ async function saveLessonMeta() {
         title,
         category: document.getElementById('meta-category').value.trim(),
         reviewStatus: document.getElementById('meta-status').value,
+        objectives: parseObjectiveLines(document.getElementById('meta-objectives').value),
+        ...lessonFlowPatch(parseFlowLines(document.getElementById('meta-flow').value)),
         tools: parseToolLines(document.getElementById('meta-tools').value),
         gen: readLessonGenFields('meta'),
         prereqs: readMetaPrereqs(dialog, mod),
@@ -510,6 +554,11 @@ async function onMetaClick(event) {
     if (action === 'register') registerElements();
     if (action === 'recommend') await runElementRecommend(event.target);
     if (action === 'add-note') await addMetaHistoryNote();
+    if (action === 'objective-sets') {
+        const { mod } = _metaDraft;
+        closeLessonMeta();
+        return window.openObjectiveSets(mod.id);
+    }
     if (action === 'rename-category') await renameCategoryFromDialog(event.target.dataset.category);
     if (action === 'delete-category') deleteCategoryFromDialog(event.target.dataset.category);
     if (action === 'save') await saveLessonMeta();

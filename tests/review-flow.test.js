@@ -346,6 +346,7 @@ function generationContext(callGemini, mod) {
             call(stopping, 'requestTabGenerationStop')();
             return reply('## 본문\n\n조각\n<!-- CONTINUE -->');
         }, previous);
+        answerPreview(stopping, 'apply', [[0, true]]);
         await call(stopping, 'generateTabContent')(1, 'basicLearn');
         assert.ok(stopping.archived[0].content.includes('이전에 완성한 글입니다.'), '완성본을 덮기 전에 히스토리에 남긴다');
         assert.ok(stopping.alerts.at(-1).includes('히스토리에 보관'));
@@ -354,6 +355,43 @@ function generationContext(callGemini, mod) {
         Object.defineProperty(counting.elements['editor-loading-text'], 'textContent', { set: value => labels.push(value), get: () => '' });
         await call(counting, 'generateTabContent')(1, 'basicLearn');
         assert.ok(labels.some(label => /2\/6 단락, \d+자 수신/.test(label)), '수신 글자 수');
+    });
+
+    await run('탭 재생성: 미리보기에서 고르면 반영하고 취소하면 그대로 둔다', async () => {
+        const answer = async () => reply('## 완성본\n\n새로 쓴 글입니다.');
+        const kept = { id: 1, title: '차시', tabContents: { basicPrac: '## 완성본\n\n이전 글입니다.' } };
+        const cancelling = generationContext(answer, kept);
+        answerPreview(cancelling, 'cancel');
+        const cancelled = await call(cancelling, 'generateTabContent')(1, 'basicPrac');
+        assert.strictEqual(cancelled.cancelled, true);
+        assert.ok(kept.tabContents.basicPrac.includes('이전 글입니다.'));
+        assert.strictEqual(cancelling.archived.length, 0, '바꾸지 않았으면 히스토리에 남기지 않는다');
+        const changed = { id: 1, title: '차시', tabContents: { basicPrac: '## 완성본\n\n이전 글입니다.' } };
+        const applying = generationContext(answer, changed);
+        answerPreview(applying, 'apply');
+        await call(applying, 'generateTabContent')(1, 'basicPrac');
+        assert.ok(changed.tabContents.basicPrac.includes('새로 쓴 글입니다.'));
+        assert.ok(applying.archived[0].content.includes('이전 글입니다.'));
+        assert.ok(changed.history[0].note.includes('재생성'), '변경 이력');
+        const fresh = { id: 1, title: '차시', tabContents: {} };
+        await call(generationContext(answer, fresh), 'generateTabContent')(1, 'basicPrac');
+        assert.ok(fresh.history[0].note.includes('AI 생성'));
+    });
+
+    await run('탭 생성: 전체 재생성 전에 챙긴 고정 섹션을 다시 넣는다', async () => {
+        const mod = { id: 1, title: '차시', tabContents: {}, lockedSections: { basicPrac: ['고정'] } };
+        const aiCtx = generationContext(async () => reply('## 고정\n\n모델이 바꾼 글입니다.\n\n## 새 글\n\n내용입니다.'), mod);
+        await call(aiCtx, 'generateTabContent')(1, 'basicPrac', { lockedBlocks: [{ title: '고정', text: '## 고정\n\n원래 글입니다.' }] });
+        assert.ok(mod.tabContents.basicPrac.includes('원래 글입니다.') && !mod.tabContents.basicPrac.includes('모델이 바꾼 글'));
+    });
+
+    await run('탭 생성: 중단한 글은 일부 누락으로 돌려준다', async () => {
+        const mod = { id: 1, title: '차시', tabContents: {} };
+        const aiCtx = generationContext(async () => {
+            call(aiCtx, 'requestTabGenerationStop')();
+            return reply('## 본문\n\n앞입니다.\n<!-- CONTINUE -->');
+        }, mod);
+        assert.strictEqual((await call(aiCtx, 'generateTabContent')(1, 'basicLearn', { quiet: true })).partial, true);
     });
 
     await run('탭 생성: 일괄 생성은 중단하면 남은 탭과 다음 차시로 넘어가지 않는다', async () => {

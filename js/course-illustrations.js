@@ -294,6 +294,7 @@ function setLessonArtStatus(status) {
 
 // 대화상자를 닫아도 비용을 들여 만든 결과는 저장한다. 그사이 다른 차시로 옮겼으면 편집기를 되돌리지 않는다.
 async function finishLessonArtChange(mod, moduleId, status) {
+    Object.assign(mod, withHistoryNote(mod, `삽화: ${status}`));
     await saveState();
     if (_lessonArt?.moduleId === moduleId) {
         _lessonArt = { ..._lessonArt, dirty: true, busy: false, status };

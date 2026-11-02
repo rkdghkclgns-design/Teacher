@@ -419,6 +419,7 @@
   function start(payload) {
     session = payload.session === undefined ? null : payload.session;
     deckRev = payload.rev || 0;
+    K.exportFileBase = payload.fileBase || "";
     buildSessionPicker(payload.sessions);
     if (isSample) { $("btn-import-html").hidden = true; $("btn-fill-images").hidden = true; }
     var parsed = K.parseDeck(String(payload.deckMd || ""));

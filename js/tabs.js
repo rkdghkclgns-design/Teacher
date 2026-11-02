@@ -3,6 +3,8 @@
 let currentLessonTab = 'basicLearn';
 let _suppressTabAlert = false;
 let _tabGenStop = false; // 중단을 누르면 받고 있는 단락까지만 저장하고 다음 단락과 다음 탭을 건너뛴다
+const TAB_STOP_LABELS = { idle: '이 단락까지만 받고 중단', pending: '받고 있는 단락까지만 저장합니다...' };
+let _tabStopLabels = TAB_STOP_LABELS;
 
 const TAB_COLORS = {
     blue:    { active: 'bg-blue-500 border-blue-500 text-white shadow-md', inactive: 'bg-gray-100 text-gray-500 border-transparent hover:bg-gray-200' },
@@ -79,13 +81,22 @@ function setTabMarkdown(mod, tabId, md) {
     mod.content = LESSON_TABS.map(tab => mod.tabContents[tab.id] || '').filter(Boolean).join('\n\n---\n\n');
 }
 
-function showTabGenStop(visible) {
+function showTabGenStop(visible, labels = TAB_STOP_LABELS) {
+    _tabStopLabels = labels;
     const btn = document.getElementById('editor-loading-stop');
     if (!btn) return;
     btn.classList.toggle('hidden', !visible);
     btn.disabled = false;
-    btn.textContent = '이 단락까지만 받고 중단';
+    btn.textContent = labels.idle;
 }
+
+// 교안 전체 생성과 교수안 생성도 같은 중단 버튼을 쓴다
+window.beginGenerationStop = function (labels) {
+    _tabGenStop = false;
+    showTabGenStop(true, labels);
+};
+
+window.endGenerationStop = () => showTabGenStop(false);
 
 // 차시를 묶어 생성하는 쪽도 중단을 알아야 다음 차시로 넘어가지 않는다
 window.isTabGenerationStopped = () => _tabGenStop;
@@ -95,10 +106,11 @@ window.requestTabGenerationStop = function () {
     const btn = document.getElementById('editor-loading-stop');
     if (!btn) return;
     btn.disabled = true;
-    btn.textContent = '받고 있는 단락까지만 저장합니다...';
+    btn.textContent = _tabStopLabels.pending;
 };
 
 // opts.quiet: 알림 없이 결과만 돌려준다 / opts.onStatus: 진행 문구를 받는다 (일괄 생성용)
+// opts.lockedBlocks: 탭을 비운 뒤 다시 만들 때 미리 챙겨 둔 고정 섹션
 async function generateTabContent(moduleId, tabId, opts = {}) {
     const mod = getEditingModule(moduleId);
     if (!mod) return { ok: false, error: '차시를 찾지 못했습니다.' };
@@ -106,7 +118,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
 
     const tabMeta = LESSON_TABS.find(t => t.id === tabId);
     if (!tabMeta) return { ok: false, error: '알 수 없는 탭입니다.' };
-    const lockedBlocks = lockedSectionBlocks(mod, tabId);
+    const lockedBlocks = opts.lockedBlocks || lockedSectionBlocks(mod, tabId);
 
     // Cross-tab context
     const tabContents = mod.tabContents || {};
@@ -238,11 +250,26 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             showTabGenStop(false);
             resultText = await autoFixGeneratedTab({ tabId, md: resultText, lockedBlocks, onStatus: setLoadingText, onRetry });
         }
-        // 끝까지 받지 못한 글이 완성된 기존 탭을 덮으므로 기존 내용을 히스토리에 남긴다
-        const archivePartial = (stoppedEarly || partialDueToError) && !!mod.tabContents[tabId];
-        if (archivePartial) await archiveContent({ title: `${mod.title} · ${tabMeta.label}`, content: mod.tabContents[tabId], images: mod.images });
+        if (tabId === 'basicPrac' && typeof withQuestFileName === 'function') resultText = withQuestFileName(resultText, mod, subj);
+        // 기존 탭을 다시 만들면 바뀐 섹션을 보고 고른다. 묶어서 생성할 때는 묻지 않고 기존 글을 히스토리에 남긴다
+        const previous = mod.tabContents[tabId];
+        const previewed = !!previous && !_suppressTabAlert && !opts.quiet;
+        if (previewed) {
+            document.getElementById('editor-loading').style.display = 'none';
+            const truncated = stoppedEarly || partialDueToError;
+            resultText = await previewAiChange(previous, resultText, {
+                title: `${tabMeta.label} 재생성 미리보기`, tabId, truncated,
+                note: truncated ? '끝까지 받지 못한 글입니다. 마지막 섹션은 기본으로 고르지 않았습니다.' : ''
+            });
+            if (resultText === null || resultText.trim() === previous.trim()) return { ok: true, cancelled: true };
+            document.getElementById('editor-loading').style.display = 'flex';
+        }
+        // 끝까지 받지 못한 글, 미리보기로 고른 글, 전체 탭 재생성이 기존 탭을 덮으므로 기존 내용을 히스토리에 남긴다
+        const archivePartial = !!previous && (stoppedEarly || partialDueToError || previewed || _suppressTabAlert);
+        if (archivePartial) await archiveContent({ title: `${mod.title} · ${tabMeta.label}`, content: previous, images: mod.images });
         mod.tabContents[tabId] = resultText;
         mod.status = 'done';
+        Object.assign(mod, withHistoryNote(mod, `${tabMeta.label} ${previous ? 'AI 재생성' : 'AI 생성'}`));
 
         // content 필드도 업데이트 (역호환)
         mod.content = LESSON_TABS
@@ -281,7 +308,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
                 ? `${tabMeta.label} 탭이 생성되었지만, API 호출 한도로 일부 단락이 누락되었을 수 있습니다. 잠시 후(1~2분) 다시 생성하면 전체 분량이 완성됩니다.`
                 : doneText);
         }
-        return { ok: true, partial: partialDueToError };
+        return { ok: true, partial: partialDueToError || stoppedEarly };
     } catch (err) {
         console.error(`[TabGen] ${tabMeta.label} 실패:`, err);
         // 429(호출 한도)는 원인과 대처법을 명확히 안내해 사용자가 무한 재시도하지 않도록 함
@@ -305,6 +332,7 @@ async function generateAllTabs(moduleId) {
     _suppressTabAlert = true;
     _tabGenStop = false;
     const total = LESSON_TABS.length;
+    const failed = [];
     // 프로그레스 바 생성
     let progressBar = document.getElementById('gen-progress-bar');
     if (!progressBar) {
@@ -325,7 +353,8 @@ async function generateAllTabs(moduleId) {
                     </div>
                 </div>
                 <span style="font-size:20px;min-width:50px;text-align:right;">${pct}%</span>`;
-            await generateTabContent(moduleId, tab.id);
+            const result = await generateTabContent(moduleId, tab.id);
+            if (!result.ok) failed.push(tab.label);
             if (_tabGenStop) break;
             await new Promise(r => setTimeout(r, 2000));
         }
@@ -337,7 +366,7 @@ async function generateAllTabs(moduleId) {
         // 완료 표시
         progressBar.innerHTML = `
             <div style="flex:1;text-align:center;">
-                <span style="font-size:18px;">✅ 전체 5탭 교안 생성 완료!</span>
+                <span style="font-size:18px;">${failed.length ? `⚠️ ${escapeHtml(failed.join(', '))} 탭을 만들지 못했습니다` : '✅ 전체 5탭 교안 생성 완료!'}</span>
                 <div style="width:100%;height:6px;background:rgba(255,255,255,0.15);border-radius:4px;overflow:hidden;margin-top:6px;">
                     <div style="width:100%;height:100%;background:linear-gradient(90deg,#22c55e,#10b981);border-radius:4px;"></div>
                 </div>
@@ -353,19 +382,22 @@ async function generateAllTabs(moduleId) {
     }
 }
 
-// 이미 생성된 탭을 건너뛰고 나머지만 생성
-async function generateRemainingTabs(moduleId) {
+// 이미 생성된 탭을 건너뛰고 나머지만 생성. lockedByTab: 전체 재생성 전에 챙겨 둔 고정 섹션
+async function generateRemainingTabs(moduleId, lockedByTab = {}) {
     _suppressTabAlert = true;
     _tabGenStop = false;
+    const failed = [];
     try {
         for (const tab of LESSON_TABS) {
             const mod = getEditingModule(moduleId);
             if (mod?.tabContents?.[tab.id]) continue;
-            await generateTabContent(moduleId, tab.id);
+            const result = await generateTabContent(moduleId, tab.id, { lockedBlocks: lockedByTab[tab.id] });
+            if (!result.ok) failed.push(tab.label);
             if (_tabGenStop) break;
             await new Promise(r => setTimeout(r, 2000));
         }
-        window.showAlert(_tabGenStop ? '탭 생성을 중단했습니다. 받은 내용까지 저장했습니다.' : '전체 5탭 교안 생성이 완료되었습니다!');
+        const doneText = failed.length ? `${failed.join(', ')} 탭을 만들지 못했습니다. 해당 탭에서 다시 생성해주세요.` : '전체 5탭 교안 생성이 완료되었습니다!';
+        window.showAlert(_tabGenStop ? '탭 생성을 중단했습니다. 받은 내용까지 저장했습니다.' : doneText);
     } finally {
         _suppressTabAlert = false;
     }

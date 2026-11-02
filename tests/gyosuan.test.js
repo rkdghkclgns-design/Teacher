@@ -37,7 +37,7 @@ function makeContext(aiStub) {
     vm.createContext(ctx);
     vm.runInContext(fs.readFileSync(root + 'kbuilder/parser.js', 'utf8'), ctx);
     ctx.stripInstructorCallouts = stripCallouts;
-    ['gyosuan.js', 'lesson-lint.js', 'course-ncs.js', 'course-design.js', 'course-sessions.js', 'course-meta.js'].forEach(file => vm.runInContext(fs.readFileSync(root + file, 'utf8'), ctx));
+    ['gyosuan.js', 'filename-convention.js', 'lesson-lint.js', 'course-ncs.js', 'course-design.js', 'course-sessions.js', 'course-meta.js'].forEach(file => vm.runInContext(fs.readFileSync(root + file, 'utf8'), ctx));
     return ctx;
 }
 

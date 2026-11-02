@@ -392,10 +392,22 @@ function ncsRowHtml(unit, checked) {
         </label>`;
 }
 
+// 차시에서 고른 능력단위요소가 속한 능력단위는 교과의 대응 후보다
+function elementUnitRows(subject) {
+    const units = new Map();
+    subjectLessons(subject).forEach(lesson => (lesson.ncsElements || []).filter(element => element.unitCode).forEach(element => {
+        const row = units.get(element.unitCode) || { name: element.unitName || '', lessons: [] };
+        units.set(element.unitCode, { ...row, lessons: [...new Set([...row.lessons, lesson.title])] });
+    }));
+    return [...units].map(([code, { name, lessons }]) => ({ code, name, ...ncsUnit(code), reason: `차시 요소에서 올라온 후보: ${lessons.join(', ')}` }));
+}
+
 function renderNcsDialogList() {
     const list = document.getElementById('ncs-dialog-list');
     if (!list || !_ncsDraft) return;
-    const shown = new Map([..._ncsDraft.selected.values(), ..._ncsDraft.rows].map(unit => [unit.code, unit]));
+    const candidates = _ncsDraft.searching ? [] : _ncsDraft.candidates;
+    const rows = _ncsDraft.rows.filter(unit => !candidates.some(item => item.code === unit.code));
+    const shown = new Map([..._ncsDraft.selected.values(), ...candidates, ...rows].map(unit => [unit.code, unit]));
     list.innerHTML = [...shown.values()].map(unit => ncsRowHtml(unit, _ncsDraft.selected.has(unit.code))).join('')
         || '<p class="text-xs text-textMuted p-3">AI 추천을 누르거나 능력단위를 검색해주세요.</p>';
 }
@@ -448,6 +460,7 @@ window.openNcsDialog = async function () {
         recs,
         touched: false,
         searching: false,
+        candidates: elementUnitRows(subject),
         selected: new Map((subject.ncs?.units || []).map(unit => [unit.code, unit])),
         rows: recs.length ? recs : ncsKeywordRows(`${subject.title} ${subject.description || ''}`, NCS_MAX_RECS)
     };
@@ -474,7 +487,7 @@ function onNcsDialogChange(event) {
     if (!code) return;
     _ncsDraft = { ..._ncsDraft, touched: true };
     if (event.target.checked) {
-        _ncsDraft.selected.set(code, _ncsDraft.rows.find(unit => unit.code === code) || ncsUnit(code));
+        _ncsDraft.selected.set(code, [..._ncsDraft.rows, ..._ncsDraft.candidates].find(unit => unit.code === code) || ncsUnit(code));
     } else {
         _ncsDraft.selected.delete(code);
     }

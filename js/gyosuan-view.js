@@ -222,7 +222,7 @@ window.downloadGyosuanMd = function (moduleId, field = 'docMd') {
     const mod = getEditingModule(moduleId);
     const md = mod?.gyosuan?.[field];
     if (!md) return;
-    downloadMd(resolveGyosuanImages(md, mod), `${mod.title}_${field === 'deckMd' ? '슬라이드편성안' : '교수안'}`);
+    downloadMd(resolveGyosuanImages(md, mod), `${lessonFileBase(mod)}_${field === 'deckMd' ? '슬라이드편성안' : '교수안'}`);
 };
 
 window.printGyosuan = function (moduleId) {
