@@ -1181,18 +1181,43 @@ async function searchImageAPI(query) {
 }
 
 // [Phase F10] 무료 스톡 이미지 (Pixabay) API 연동 (Fallback)
-async function searchPixabayAPI(query) {
-    if (!pixabayApiKey) {
-        return null; // 설정되어있지 않으면 스킵
+const PIXABAY_QUERY_MAX = 100; // Pixabay API는 q가 100자를 넘으면 400으로 거절한다
+let _pixabayRejectedKey = null; // 거절된 키로는 다시 요청하지 않는다. 키를 바꾸면 다시 시도한다
+
+// 검색어 정리가 실패하면 이미지 태그의 긴 설명이 그대로 오므로 낱말 경계에서 자른다
+function pixabayQuery(query) {
+    const text = String(query || '').replace(/\s+/g, ' ').trim();
+    if (text.length <= PIXABAY_QUERY_MAX) return text;
+    const cut = text.slice(0, PIXABAY_QUERY_MAX);
+    const space = cut.lastIndexOf(' ');
+    return (space > PIXABAY_QUERY_MAX / 2 ? cut.slice(0, space) : cut).trim();
+}
+
+// 400의 이유는 응답 본문에 적혀 온다. 키 문제면 한 번만 알리고 이후 요청을 멈춘다
+async function reportPixabayError(res) {
+    const reason = (await res.text().catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 160);
+    console.error(`[Pixabay API] HTTP 에러: ${res.status} ${reason}`);
+    if (res.status === 400 && /key/i.test(reason) && _pixabayRejectedKey !== pixabayApiKey) {
+        _pixabayRejectedKey = pixabayApiKey;
+        window.showToast?.(`Pixabay가 API 키를 거절했습니다. 설정에서 키를 확인해주세요. (${escapeHtml(reason)})`, 'error');
     }
+}
+
+async function searchPixabayAPI(query) {
+    if (!pixabayApiKey || _pixabayRejectedKey === pixabayApiKey) {
+        return null; // 설정되어있지 않거나 거절된 키면 스킵
+    }
+    const q = pixabayQuery(query);
+    if (!q) return null;
 
     try {
-        // pixabay는 기본 영어 검색, 사진(photo) 우선
-        const endpoint = `https://pixabay.com/api/?key=${encodeURIComponent(pixabayApiKey)}&q=${encodeURIComponent(query)}&image_type=photo&per_page=3&safesearch=true`;
+        // pixabay는 기본 영어 검색, 사진(photo) 우선. 한글 검색어는 한국어로 찾는다
+        const lang = /[가-힣]/.test(q) ? '&lang=ko' : '';
+        const endpoint = `https://pixabay.com/api/?key=${encodeURIComponent(pixabayApiKey)}&q=${encodeURIComponent(q)}${lang}&image_type=photo&per_page=3&safesearch=true`;
 
         const res = await fetch(endpoint);
         if (!res.ok) {
-            console.error(`[Pixabay API] HTTP 에러: ${res.status}`);
+            await reportPixabayError(res);
             return null;
         }
 

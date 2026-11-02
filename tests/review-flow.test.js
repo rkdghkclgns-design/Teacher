@@ -697,5 +697,27 @@ function generationContext(callGemini, mod) {
         assert.strictEqual(call(ctx, 'AI_EDIT_CHIPS').length, 8);
     });
 
+    await run('Pixabay: 검색어를 100자로 자르고 거절 이유를 알린 뒤 같은 키로 다시 부르지 않는다', async () => {
+        const ctx = makeContext();
+        const cut = call(ctx, 'pixabayQuery');
+        const long = Array.from({ length: 30 }, (_, i) => `낱말${i}`).join(' ');
+        assert.ok(cut(long).length <= 100 && !cut(long).endsWith(' '));
+        assert.strictEqual(cut('  게임   루프 '), '게임 루프');
+        const urls = [];
+        ctx.fetch = async url => { urls.push(String(url)); return { ok: false, status: 400, text: async () => '[ERROR 400] "key" is invalid' }; };
+        vm.runInContext('pixabayApiKey = "test-placeholder"', ctx);
+        const search = call(ctx, 'searchPixabayAPI');
+        assert.strictEqual(await search(long), null);
+        assert.ok(decodeURIComponent(urls[0].match(/[?&]q=([^&]+)/)[1]).length <= 100, '보내는 q는 100자 이하');
+        assert.ok(urls[0].includes('&lang=ko'), '한글 검색어는 한국어로 찾는다');
+        assert.ok(ctx.toasts.at(-1).includes('키를 거절'));
+        assert.strictEqual(await search('game loop'), null);
+        assert.strictEqual(urls.length, 1, '거절된 키로 다시 요청하지 않는다');
+        vm.runInContext('pixabayApiKey = "test-placeholder-2"', ctx);
+        await search('game loop');
+        assert.strictEqual(urls.length, 2, '키를 바꾸면 다시 시도한다');
+        assert.ok(!urls[1].includes('lang=ko'));
+    });
+
     console.log('ALL PASSED');
 })().catch(e => { console.error('FAIL', e.message, e.stack); process.exit(1); });
