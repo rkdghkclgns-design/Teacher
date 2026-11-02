@@ -804,6 +804,9 @@ window.executeDropdownExport = function (format) {
             if (_exportScope === 'subject') window.downloadSubjectBundle();
             else openCurrentSlideStudio();
             break;
+        case 'material':
+            window.downloadLessonMaterial(_exportScope);
+            break;
         case 'html':
             if (_exportScope === 'subject') exportSubjectToHTML();
             else exportCurrentToHTML();
@@ -1092,10 +1095,7 @@ window.exportAllToZip = async function () {
     if (totalFiles === 0) return window.showAlert('내보낼 내용이 없습니다.');
 
     try {
-        const blob = await zip.generateAsync({ type: 'blob' }, (metadata) => {
-            // 진행률 (선택적)
-            console.log(`[ZIP] ${Math.round(metadata.percent)}% 완료`);
-        });
+        const blob = await zip.generateAsync({ type: 'blob' });
         saveAs(blob, `${subjectName}_전체교안.zip`);
         if (window.showToast) window.showToast(`📦 ${totalFiles}개 파일이 ZIP으로 다운로드되었습니다.`, 'success');
     } catch (e) {
@@ -1877,7 +1877,7 @@ window.startBatchGeneration = async function () {
 
                             
 
-                            위 내용을 바탕으로 우리 교안 규격(1.학습 목표, 2.개요(이 차시 타임테이블 포함), 3.핵심 내용, 4.실습/예제, 5.요약) 순서에 맞게 마크다운 교안을 작성하세요.
+                            위 내용을 바탕으로 우리 교안 규격(1.학습 목표, 2.개요, 3.핵심 내용, 4.실습/예제, 5.요약) 순서에 맞게 마크다운 교안을 작성하세요.
                             [중요 지침] 본문 작성 시 단순한 이론 나열을 금지합니다. 반드시 최근 업계 트렌드에 부합하는 실제 고유명사 게임 사례나 명확한 실제 데이터를 적극적으로 예시로 들어 설명하세요. (단, 존재하지 않는 허위 데이터나 사례를 지어내는 환각은 절대 금지합니다.)
 
                             마지막에는 '# ⚔️ 일일 퀘스트 (실습 과제)'를 포함하세요.
@@ -2065,9 +2065,7 @@ window.startBatchGeneration = async function () {
                     const lesson = doneLessons[ti];
                     progressSpan.innerText = `5탭 생성 중... (${ti + 1}/${doneLessons.length}: ${lesson.title})`;
                     try {
-                        if (typeof generateAllTabs === 'function') {
-                            await generateAllTabs(lesson.id);
-                        }
+                        await window.runLessonPipeline(lesson.id);
                     } catch (tabErr) {
                         console.warn(`[5탭 생성 실패] ${lesson.title}:`, tabErr.message);
                     }
@@ -2262,8 +2260,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // v5.9: 어투 선택기 복원
     setInstructorTone(instructorTone);
 
-    // v5.9: 강사/학생 뷰 상태 (기본: 강사)
-    window.viewMode = 'instructor';
+    // 탭 교안을 기본으로 보여 준다. 교수안 항목을 고르면 강사뷰로 바뀐다
+    window.viewMode = 'student';
 
     // v5.9: 키보드 단축키
     document.addEventListener('keydown', (e) => {
@@ -2447,7 +2445,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
             '3. 사실 기반 여부: 근거 없는 단정이나 추측이 포함되지 않았는가?\n' +
             '4. 분량 기준: 기본 학습(학습목표+개요+핵심내용) 영역은 공백과 서식(마크다운 기호, HTML 태그)을 제외한 순수 텍스트 기준 최소 7,000자를 충족하는가? 기본 실습·심화는 필요한 항목만 포함되면 분량 무관.\n' +
             '5. 서식 준수: 헤딩 위계, 아이콘, 간격, 이미지 태그 규칙을 모두 지켰는가?\n' +
-            '6. 구조 연결성: 학습목표→개요(타임테이블)→핵심→실습→심화의 흐름이 자연스러운가? 학습 목표가 최상단, 그다음 개요(타임테이블)인가?\n' +
+            '6. 구조 연결성: 학습목표→개요→핵심→실습→심화의 흐름이 자연스러운가? 학습 목표가 최상단, 그다음 개요인가?\n' +
             '7. 용어 일관성: 과정/교과/차시/레벨테스트/기본실습 등 glossary 정의와 일치하는가?\n' +
             '8. 서식 워크플로우 준수: 파싱→타이포매핑→아이콘주입→들여쓰기→간격적용→톤적용 순서를 따랐는가?';
 
@@ -2509,7 +2507,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
 
                 const safeMd = cleanForAPI(additionalContext.uploadedMdContent);
 
-                userPrompt = `${thinkingPrefix}[현재 작업: 사용자 제공 문서 기반 교안 재구성]\n모듈명: ${additionalContext.title}\n설명: ${additionalContext.description}\n\n[사용자 제공 원본 마크다운 데이터]\n${safeMd}\n\n위 원본 데이터를 철저히 분석하여, 제공된 내용을 바탕으로 우리 교안 규격(1.학습 목표, 2.개요(이 차시 타임테이블 포함), 3.핵심 내용, 4.실습/예제, 5.심화) 순서에 맞게 다듬고 재구성해 주세요. 원본의 핵심 내용과 의도를 절대 누락하지 말고 최우선으로 반영해야 합니다.`;
+                userPrompt = `${thinkingPrefix}[현재 작업: 사용자 제공 문서 기반 교안 재구성]\n모듈명: ${additionalContext.title}\n설명: ${additionalContext.description}\n\n[사용자 제공 원본 마크다운 데이터]\n${safeMd}\n\n위 원본 데이터를 철저히 분석하여, 제공된 내용을 바탕으로 우리 교안 규격(1.학습 목표, 2.개요, 3.핵심 내용, 4.실습/예제, 5.심화) 순서에 맞게 다듬고 재구성해 주세요. 원본의 핵심 내용과 의도를 절대 누락하지 말고 최우선으로 반영해야 합니다.`;
 
             } else {
 
@@ -2682,7 +2680,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
                 '- 출력 한도에 도달하여 미완성인 경우: 자연스러운 문단/섹션 끝에서 멈추고 <!-- CONTINUE -->를 붙이세요. 문장 중간에서 끊지 마세요.';
 
             const tabPrompts = {
-                basicLearn: '이 교안의 "기본 학습" 영역을 작성하세요. 반드시 [1.학습 목표] → [2.개요(이 차시 타임테이블 포함)] → [3.핵심 내용(개념 정의, 이론 설명, 예시, 사례 분석)] 순서로 구성합니다. 학습 목표가 교안 최상단에 오고, 그 다음 개요(타임테이블)가 옵니다. 실습 과제, 평가 루브릭, 별도 강사 가이드 섹션은 다른 탭에서 작성하므로 여기서는 포함하지 마세요. 초보자도 이해할 수 있는 수준으로 단계적으로 설명하세요.\n' +
+                basicLearn: '이 교안의 "기본 학습" 영역을 작성하세요. 반드시 [1.학습 목표] → [2.개요] → [3.핵심 내용(개념 정의, 이론 설명, 예시, 사례 분석)] 순서로 구성합니다. 학습 목표가 교안 최상단에 오고, 그 다음 개요가 옵니다. 실습 과제, 평가 루브릭, 별도 강사 가이드 섹션은 다른 탭에서 작성하므로 여기서는 포함하지 마세요. 초보자도 이해할 수 있는 수준으로 단계적으로 설명하세요.\n' +
                     '[시간 배분 — 이 탭 하나가 곧 480분(8시간) 본과정입니다]\n' +
                     '이 "기본 학습" 탭 하나가 480분(8시간) 분량의 완결된 본 교안입니다. 다른 탭(실습/심화/평가)에 의존하지 말고, 이 탭만으로 하루 8시간 수업을 끝까지 진행할 수 있도록 작성하세요.\n' +
                     '각 ## 제목 끝에 (⏱ N분)을 명시하고, 모든 섹션의 합계가 480분(±30분)이 되도록 구성하세요.\n' +
@@ -2754,7 +2752,8 @@ function buildTaskContext(taskScope, additionalContext = "") {
                     '3. 각 문제에 **힌트** 1줄 제공 (예: "💡 힌트: ○○ 섹션을 복습하세요").\n' +
                     '4. **정답 표기**: 정답 선택지는 <span style="color: #22c55e; font-weight: bold;"> 태그로 감싸서 녹색 강조.\n' +
                     '5. 각 문제 하단에 **해설** 포함.\n' +
-                    '6. 마지막에 **채점 기준표**를 100점 만점 루브릭(S/A/B/C/F)으로 작성.\n' +
+                    '6. 각 문제 제목(### 문제 N. 제목) 바로 다음 줄에 "학습 목표 번호 · 밴드 · 유형"을 적으세요. 예: 학습 목표 1 · 밴드 L1 · 객관식. 밴드는 L1(수업과 같은 상황), L2(같은 구조를 다른 맥락에 적용), L3(요구사항만 제시) 중 하나입니다.\n' +
+                    '7. 마지막에 **채점 기준표**를 100점 만점 루브릭(S/A/B/C/F)으로 작성.\n' +
                     '   - [필수] 채점 기준표는 반드시 인라인 스타일 HTML <table>로 출력하세요. 마크다운 파이프 표(| ... |)나 줄글로 작성하지 마세요.\n' +
                     '   - 표 구조: 1열 "등급"(S/A/B/C/F), 2열 "점수 범위"(예: 90~100점), 3열 "평가 기준 설명". 5개 등급을 각각 한 행으로 작성.\n' +
                     '   - 표 양식 예시: <table style="border-collapse: collapse; width: 100%;"><thead><tr><th style="border: 1px solid black; padding: 10px; background-color: #f2f2f2; text-align: center; width: 100px;">등급</th><th style="border: 1px solid black; padding: 10px; background-color: #f2f2f2; text-align: center; width: 140px;">점수 범위</th><th style="border: 1px solid black; padding: 10px; background-color: #f2f2f2; text-align: center;">평가 기준</th></tr></thead><tbody><tr><td style="border: 1px solid black; padding: 10px; font-weight: bold; text-align: center;">S</td><td style="border: 1px solid black; padding: 10px; text-align: center;">90~100점</td><td style="border: 1px solid black; padding: 10px; text-align: left;">설명...</td></tr></tbody></table>\n\n' +

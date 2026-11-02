@@ -87,10 +87,10 @@ function gyosuanNoteText(mod) {
     const gyosuan = mod.gyosuan;
     if (isGyosuanForeignChanged(mod)) return '⚠️ 다른 탭에서 이 차시가 바뀌었습니다. 새로고침하면 최신 내용을 불러옵니다.';
     if (gyosuan.deckDirty) return '⚠️ 편성안이 바뀌었습니다. 슬라이드를 다시 만들면 반영됩니다.';
-    if (!gyosuan.sourceKey) return '불러온 교수안입니다. 탭별 교안은 학생뷰에서 볼 수 있습니다.';
+    if (!gyosuan.sourceKey) return '불러온 교수안입니다. 탭별 교안은 위 탐색줄에서 볼 수 있습니다.';
     return gyosuan.sourceKey !== hashSource(collectLessonSource(mod))
         ? '⚠️ 교안이 바뀌었습니다. 교수안을 다시 생성하면 반영됩니다.'
-        : '차시 전체 기준 교수안입니다. 탭별 교안은 학생뷰에서 볼 수 있습니다.';
+        : '차시 전체 기준 교수안입니다. 탭별 교안은 위 탐색줄에서 볼 수 있습니다.';
 }
 
 function gyosuanToolbarHtml(mod) {
@@ -167,6 +167,7 @@ window.syncGyosuanView = function () {
 
 // 탭 교안은 학생뷰에서 보여 주므로 강사뷰에서 탭을 다루면 학생뷰로 옮긴다
 window.showLessonView = function () {
+    window.clearLessonPanel?.();
     if (window.viewMode === 'instructor') applyViewMode('student');
 };
 

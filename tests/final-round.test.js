@@ -6,7 +6,7 @@ const path = require('path');
 const assert = require('assert');
 const root = path.join(__dirname, '..', 'js') + path.sep;
 const FILES = [
-    'lesson-sanitize.js', 'filename-convention.js', 'kbuilder/ncs-catalog.js', 'lesson-lint.js', 'lesson-objectives.js', 'course-ncs.js', 'course-design.js', 'course-design-edit.js',
+    'lesson-sanitize.js', 'filename-convention.js', 'kbuilder/ncs-catalog.js', 'lesson-lint.js', 'lesson-opening.js', 'lesson-objectives.js', 'lesson-material.js', 'lesson-pipeline.js', 'course-ncs.js', 'course-design.js', 'course-design-edit.js',
     'course-sessions.js', 'course-meta.js', 'course-elements.js', 'course-art.js', 'course-illustrations.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js',
     'tabs.js', 'course-flow.js', 'course-overview.js', 'course-backfill.js'
 ];
@@ -32,8 +32,9 @@ function makeContext(extra = {}) {
         escapeHtml: s => (typeof s === 'string' ? s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;') : ''),
         safeJSONParse: t => JSON.parse(t),
         extractText: d => d.candidates[0].content.parts[0].text,
-        document: { getElementById: () => null, createElement: () => ({}), querySelectorAll: () => [], addEventListener() {}, head: { appendChild() {} } },
+        document: { getElementById: () => null, createElement: () => ({}), querySelectorAll: () => [], addEventListener() {}, head: { appendChild() {} }, body: { appendChild() {} } },
         getEditingModule: id => ctx.globalState.subjects.flatMap(subject => subject.lessons).find(lesson => String(lesson.id) === String(id)),
+        resolveMarkdownImages: (md, images) => Object.entries(images || {}).reduce((text, [id, url]) => text.split(`local:${id}`).join(url), md),
         openEditor() {}, renderSidebar() {}, renderOverviewLNB() {}, renderEditor() {}, showLessonView() {},
         viewModule() {},
         alerts: [],
@@ -322,6 +323,99 @@ const LESSON_MD = [
         assert.strictEqual(stopped.stopped, true);
         await attempt({ ...item, lessonId: 2 }, { stopped: false, withGyosuan: true });
         assert.deepStrictEqual(calls, [1], '교수안이 있는 차시는 다시 만들지 않는다');
+    });
+
+    await run('교안 첫머리: 머리말의 목표·시간표·특징 목록과 이미지를 뺀다', async () => {
+        const clean = call('cleanLessonOpening');
+        const shot = ['- 기획의 본질을 설명할 수 있습니다.', '', '- **0분 ~ 60분** 게임 기획의 본질', '- **60분 ~ 120분** 기획자의 마인드셋', '', '- **게임 기획의 기초**', '    - 기초부터 접근합니다.', '', '<!-- [IMG: "lightbulb"] -->', '', '# 📝 1. 게임 기획의 본질과 역할', '', '## 학습 목표', '', '- 차이를 비교할 수 있습니다.', '', '## 개요', '', '- 문제 상황입니다.', '', '## 재미의 구조', '', '- 내용입니다.'].join('\n');
+        const md = clean(shot);
+        assert.ok(md.startsWith('# 📝 1. 게임 기획의 본질과 역할'), md.slice(0, 80));
+        ['기획의 본질을 설명', '0분 ~ 60분', '게임 기획의 기초', 'IMG:'].forEach(text => assert.ok(!md.includes(text), text));
+        assert.ok(md.includes('- 차이를 비교할 수 있습니다.') && md.includes('## 재미의 구조'));
+    });
+
+    await run('교안 첫머리: 개요에는 문제 상황만 남기고 본문 이미지는 그대로 둔다', async () => {
+        const clean = call('cleanLessonOpening');
+        const md = clean(['<!-- [IMG: "cover"] -->', '', '# 📝 재미', '', '<!-- [IMG: "title"] -->', '', '## 학습 목표', '', '<!-- [IMG: "goal"] -->', '- 비교할 수 있습니다.', '', '## 개요', '', '<!-- [IMG: "road"] -->', '- 문제 상황입니다.', '- **핵심 개념:**', '  - 정의를 다룹니다.', '', '**타임테이블**', '- 0~20분: 개념', '- 20~55분: 모델', '', '| 시간 | 주제 |', '|---|---|', '| 0~30분 | 개념 |', '', '## 재미의 구조', '', '<!-- [IMG: "body"] -->', '- 내용입니다.', '', '| 구분 | 설명 |', '|---|---|', '| 가 | 나 |'].join('\n'));
+        ['cover', 'title', 'goal', 'road', '핵심 개념', '타임테이블', '0~20분', '0~30분'].forEach(text => assert.ok(!md.includes(text), text));
+        ['# 📝 재미', '- 비교할 수 있습니다.', '- 문제 상황입니다.', '[IMG: "body"]', '| 구분 | 설명 |'].forEach(text => assert.ok(md.includes(text), text));
+        assert.strictEqual(clean(md), md, '두 번 지나도 같다');
+    });
+
+    await run('교안 첫머리: 끝에 큰 제목이 붙은 교안을 머리말로 오해하지 않는다', async () => {
+        const clean = call('cleanLessonOpening');
+        const body = ['## 학습 목표', '', '- 비교할 수 있습니다.', '', '## 재미의 구조', '', '- 내용입니다.', '', '# ⚔️ 일일 퀘스트', '', '- 과제입니다.'].join('\n');
+        assert.strictEqual(clean(body), body);
+        const noGoalAfter = ['## 학습 목표', '', '- 비교할 수 있습니다.', '', '# 📝 재미', '', '## 구조', '', '- 내용입니다.'].join('\n');
+        assert.ok(clean(noGoalAfter).includes('- 비교할 수 있습니다.'), '차시에 목표가 없으면 남긴다');
+        const code = ['## 개요', '', '- 문제입니다.', '', '## 예시', '', '```md', '![그림](a.png)', '# 제목', '```'].join('\n');
+        assert.strictEqual(clean(code), code, '코드 블록은 그대로');
+    });
+
+    await run('전체 생성: 빈 항목을 순서대로 만들고 문제은행까지 채운다', async () => {
+        const goal = '- 비교할 수 있습니다.';
+        const lesson = { id: 1, title: '재미', tabContents: { basicLearn: `## 학습 목표\n\n${goal}\n\n## 개요\n\n- 문제입니다.` } };
+        const subject = { id: 's1', title: '기획', lessons: [lesson] };
+        ctx.globalState.subjects = [subject];
+        ctx.courseData = subject.lessons;
+        const order = [];
+        const options = [];
+        ctx.generateTabContent = async (id, tabId, opts) => { order.push(tabId); options.push(opts); lesson.tabContents[tabId] = `## ${tabId}\n\n- 내용입니다.`; return { ok: true }; };
+        ctx.runGyosuanGeneration = async () => { order.push('gyosuan'); lesson.gyosuan = { docMd: '#' }; return { ok: true }; };
+        ctx.generateQuestions = async (mod, spec) => { order.push(`qbank:${spec.objective}`); return [{ no: 0, title: '문항', objective: spec.objective, band: 'L1', type: '객관식', typed: true, multi: false, stem: '내용', media: '', choices: [{ mark: '①', text: '가' }], answer: '①', accepted: '', hint: '', code: '', lang: '', explanation: '', rubric: '', tests: '', review: '' }]; };
+        const toasts = [];
+        ctx.showToast = text => toasts.push(text);
+        await call('runLessonPipeline')(1);
+        assert.deepStrictEqual(order, ['basicPrac', 'advLearn', 'advPrac', 'assessment', 'gyosuan', 'qbank:1']);
+        assert.ok(options.every(opts => opts.background && opts.quiet), '화면을 막지 않는다');
+        assert.ok(lesson.tabContents.assessment.includes('학습 목표 1'), '문제은행은 학습이해도 탭에 저장한다');
+        assert.ok(lesson.history.some(row => row.note.includes('문제은행')));
+        assert.ok(toasts.at(-1).includes('마쳤습니다'));
+        assert.strictEqual(call('isLessonPipelineRunning')(), false);
+        order.length = 0;
+        const asked = [];
+        ctx.showConfirm = message => asked.push(message);
+        await call('startLessonGeneration')(1);
+        assert.deepStrictEqual(order, [], '빈 항목이 없으면 다시 만들지 않는다');
+        assert.ok(asked[0].includes('다시 만들까요'));
+    });
+
+    await run('전체 생성: 실패한 항목을 건너뛰고 끝까지 간 뒤 알린다, 중지하면 멈춘다', async () => {
+        const lesson = { id: 1, title: '재미', tabContents: {} };
+        ctx.globalState.subjects = [{ id: 's1', title: '기획', lessons: [lesson] }];
+        ctx.courseData = ctx.globalState.subjects[0].lessons;
+        const order = [];
+        ctx.generateTabContent = async (id, tabId) => { order.push(tabId); if (tabId === 'basicPrac') throw new Error('호출 한도'); lesson.tabContents[tabId] = '- 내용'; return { ok: true }; };
+        ctx.runGyosuanGeneration = async () => { order.push('gyosuan'); return { ok: false, error: '교수안 실패' }; };
+        ctx.alerts.length = 0;
+        await call('runLessonPipeline')(1);
+        assert.deepStrictEqual(order, ['basicLearn', 'basicPrac', 'advLearn', 'advPrac', 'assessment', 'gyosuan']);
+        assert.ok(ctx.alerts.at(-1).includes('호출 한도') && ctx.alerts.at(-1).includes('교수안 실패'));
+        const stopped = { id: 1, title: '재미', tabContents: {} };
+        ctx.globalState.subjects = [{ id: 's1', title: '기획', lessons: [stopped] }];
+        ctx.courseData = ctx.globalState.subjects[0].lessons;
+        order.length = 0;
+        ctx.generateTabContent = async (id, tabId) => { order.push(tabId); call('requestLessonPipelineStop')(); return { ok: true }; };
+        await call('runLessonPipeline')(1);
+        assert.deepStrictEqual(order, ['basicLearn'], '다음 항목으로 넘어가지 않는다');
+    });
+
+    await run('교육 자료 양식: 탭 마크다운을 내보낼 때만 바꾼다', async () => {
+        const basic = ['# 재미', '', '## 학습 목표', '', '- 비교할 수 있습니다.', '', '## 개요', '', '- 문제 상황입니다.', '', '## 재미의 구조 (⏱ 30분)', '', '- 코어 루프: 반복 구조입니다.', '', '### 사례', '', '- 내용입니다. ![그림](local:img_1)', '', '```md', '## 코드 속 제목', '- 용어: 설명', '```', '', '## ✅ 학습 후 체크리스트', '', '- 비교합니다. (다시 보기: 재미의 구조)'].join('\n');
+        const lesson = { id: 1, title: '재미 분석', hours: 1, tools: [{ name: '엑셀', version: '365' }], images: { img_1: 'data:image/png;base64,AAAA' }, tabContents: { basicLearn: basic, basicPrac: '## 과제\n\n- 만듭니다.', advLearn: '## 심화 주제\n\n- 심화입니다.', advPrac: null, assessment: '### 문제 1. 비밀\n\n정답 표기' } };
+        const subject = { id: 's1', title: '기획', lessons: [lesson] };
+        ctx.globalState.subjects = [subject];
+        ctx.globalState.courseTitle = '게임 과정';
+        ctx.courseData = subject.lessons;
+        const before = JSON.stringify(lesson);
+        const md = call('materialDocMd')(subject, [lesson], [subject]);
+        ['# 📝 기획', '## 게임 과정 교육 목차', '| 기획 | 재미 분석 |', '## 사용 툴 버전', '- 엑셀 : 365', '## 재미 분석', '### ■ 재미의 구조', '- **코어 루프** | 반복 구조입니다.', '#### ▣ 사례', '### ■ 심화 학습: 심화 주제', '- [ ] 비교합니다. → 다시 보기: 재미의 구조', '### ■ ❗오늘의 퀘스트(기본 실습)', '#### ▣ 과제', '(data:image/png;base64,AAAA)', '- 용어: 설명', '## 코드 속 제목'].forEach(text => assert.ok(md.includes(text), text));
+        assert.ok(!md.includes('비밀'), '학습이해도 문항과 정답은 넣지 않는다');
+        assert.ok(!md.includes('⏱'));
+        assert.ok(md.includes('<!--\n차시 정보') && md.includes('예상 소요 시간: 1시간'));
+        assert.strictEqual(JSON.stringify(lesson), before, '저장된 교안은 그대로');
+        const course = call('materialCourseMd')();
+        assert.ok(course.includes('교육 목차') && course.includes('## 재미 분석'));
     });
 
     await run('일괄 생성: 안내 화면에 옵션이 보인다', async () => {

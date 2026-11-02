@@ -450,17 +450,19 @@ function renderQbank() {
         <details class="text-[0.65rem] text-textMuted"><summary class="cursor-pointer">검사 규칙 목록</summary><ul class="mt-1 space-y-0.5">${QBANK_RULE_LIST.map(rule => `<li>• ${escapeHtml(rule)}</li>`).join('')}</ul></details>`;
 }
 
-window.openQuestionBank = function (moduleId) {
+// opts.inline: 대화상자 대신 탐색줄의 문제은행 자리에 넣는다
+window.openQuestionBank = function (moduleId, opts = {}) {
     const mod = getEditingModule(moduleId);
     if (!mod?.tabContents) return window.showAlert('문제은행은 차시에서 사용할 수 있습니다.');
     if (document.getElementById('qbank-dialog')) return;
     const spec = { objective: 1, band: 'L1', type: '객관식', multi: false, count: 3 };
-    _qbank = { moduleId, band: '', objective: '', editing: null, draft: null, help: false, status: '', spec, dirty: false, busy: false };
+    const host = opts.inline ? document.getElementById('lesson-inline-panel') : null;
+    _qbank = { moduleId, band: '', objective: '', editing: null, draft: null, help: false, status: '', spec, dirty: false, busy: false, inline: !!host };
     const overlay = document.createElement('div');
     overlay.id = 'qbank-dialog';
-    overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9000]';
+    overlay.className = host ? '' : 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9000]';
     overlay.innerHTML = `
-        <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[720px] max-h-[88vh] flex flex-col shadow-2xl">
+        <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl ${host ? 'w-full' : 'w-[720px] max-h-[88vh]'} flex flex-col shadow-2xl">
             <div class="p-4 border-b border-white/10 flex items-center">
                 <h2 class="text-sm font-bold text-textLight">문제은행 · ${escapeHtml(mod.title)}</h2>
                 <button data-qbank-action="close" class="ml-auto px-3 py-1 text-xs font-bold text-textLight bg-white/10 rounded hover:bg-white/20">닫기</button>
@@ -469,8 +471,12 @@ window.openQuestionBank = function (moduleId) {
         </div>`;
     overlay.addEventListener('click', onQbankClick);
     overlay.addEventListener('change', onQbankChange);
-    document.body.appendChild(overlay);
+    (host || document.body).appendChild(overlay);
     renderQbank();
+};
+
+window.forgetInlineQbank = function () {
+    if (_qbank?.inline) _qbank = null;
 };
 
 function qbankSpecValue(target, name) {
@@ -601,11 +607,12 @@ async function writeQuestionsIfOpen(mod, moduleId, questions) {
 }
 
 function closeQbank() {
-    const { dirty } = _qbank;
+    const { dirty, inline } = _qbank;
     const mod = qbankMod();
     document.getElementById('qbank-dialog')?.remove();
     _qbank = null;
-    if (dirty && mod && typeof renderEditor === 'function') renderEditor(mod);
+    if (inline) window.clearLessonPanel();
+    if ((dirty || inline) && mod && typeof renderEditor === 'function') renderEditor(mod);
 }
 
 async function onQbankClick(event) {

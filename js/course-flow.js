@@ -9,10 +9,10 @@ let _replanRun = 0;
 
 /* ---------- 일괄 생성 대기열 ---------- */
 // 업로드한 MD는 탭 생성이 읽지 않으므로 그 차시는 대기열에서 빼고 안내한다 (차시 카드의 '교안 생성'이 읽는다)
-// withGyosuan: 탭이 다 찼어도 교수안이 없는 차시를 넣는다
+// withGyosuan: 탭이 다 찼어도 교수안이나 문제은행이 빈 차시를 넣는다
 function pendingLessons(subjects, withGyosuan = false) {
     return subjects.flatMap(subject => (subject.lessons || [])
-        .filter(lesson => lesson.id !== 'mainQuest' && (lessonMissingTabs(lesson).length || (withGyosuan && lessonNeedsGyosuan(lesson))))
+        .filter(lesson => lesson.id !== 'mainQuest' && (lessonMissingTabs(lesson).length || (withGyosuan && (lessonNeedsGyosuan(lesson) || questionBankGaps(lesson).length))))
         .map(lesson => ({ subject, lessonId: lesson.id, title: lesson.title, uploaded: !!lesson.uploadedMdContent })));
 }
 
@@ -75,10 +75,13 @@ async function attemptLesson(item, run) {
         onTab: (tab, index, total) => setLessonRunStatus(`${tab.label} (${index + 1}/${total})`),
         onStatus: setLessonRunStatus
     });
-    if (!tabs.ok || !run.withGyosuan || !lessonNeedsGyosuan(getEditingModule(item.lessonId))) return tabs;
+    if (!tabs.ok || !run.withGyosuan) return tabs;
     if (run.stopped) return { ...tabs, ok: false, stopped: true };
-    const gyosuan = await runGyosuanGeneration(item.lessonId, { onStatus: setLessonRunStatus });
-    return { ok: gyosuan.ok, stopped: gyosuan.stopped, error: gyosuan.error, partial: !!(tabs.partial || gyosuan.partial) };
+    const needsGyosuan = lessonNeedsGyosuan(getEditingModule(item.lessonId));
+    const gyosuan = needsGyosuan ? await runGyosuanGeneration(item.lessonId, { onStatus: setLessonRunStatus }) : { ok: true };
+    const partial = !!(tabs.partial || gyosuan.partial);
+    if (!gyosuan.ok) return { ok: false, stopped: gyosuan.stopped, error: gyosuan.error, partial };
+    return { ...(await fillQuestionBank(item.lessonId, { isStopped: () => run.stopped, onStatus: setLessonRunStatus })), partial };
 }
 
 /* ---------- 일괄 생성 화면 ---------- */
@@ -111,7 +114,7 @@ function lessonRunIntroHtml(queue, uploaded, withGyosuan = false) {
         <div id="lesson-run-queue" class="space-y-2">${lessonRunQueueHtml(queue, uploaded)}</div>
         <label class="flex items-start gap-2 text-xs text-textLight">
             <input id="lesson-run-gyosuan" type="checkbox" ${withGyosuan ? 'checked' : ''}>
-            <span>교수안과 슬라이드 편성안도 만들기<span class="block text-[0.6rem] text-textMuted">교수안이 없는 차시만 만듭니다. 차시마다 호출이 늘고, 슬라이드 자동 이미지를 켜 두면 이미지 비용도 듭니다.</span></span>
+            <span>교수안, 슬라이드, 문제은행까지 만들기<span class="block text-[0.6rem] text-textMuted">빠진 항목만 만듭니다. 차시마다 호출이 늘고, 슬라이드 자동 이미지를 켜 두면 이미지 비용도 듭니다.</span></span>
         </label>
         ${lessonGenFieldsHtml('run', globalState.courseDesign?.genOptions)}
         <p class="text-[0.6rem] text-textMuted">생성 옵션은 과정 기본값으로 저장됩니다. 차시 정보에서 따로 정한 값이 있으면 그 값을 씁니다.</p>`;
@@ -163,7 +166,7 @@ window.openLessonRun = function (scope) {
     if (!textModelHasKey()) return window.showAlert('교안 생성에는 AI 키가 필요합니다. 설정에서 키를 입력해주세요.');
     if (generationBusy()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
     if (!runnableLessons(runSubjects(scope), true).length) return window.showToast?.('생성할 차시가 없습니다. 모든 차시에 내용과 교수안이 있습니다.', 'success');
-    const withGyosuan = !!globalState.courseDesign?.runGyosuan || !runnableLessons(runSubjects(scope)).length; // 탭이 다 찼으면 교수안만 남은 것이다
+    const withGyosuan = globalState.courseDesign?.runGyosuan !== false || !runnableLessons(runSubjects(scope)).length; // 탭이 다 찼으면 교수안이나 문제은행만 남은 것이다
     const pending = pendingLessons(runSubjects(scope), withGyosuan);
     const overlay = document.createElement('div');
     overlay.id = 'lesson-run-dialog';
@@ -379,6 +382,8 @@ function renderSubjectFlowCard(subject) {
                 <button onclick="openSubjectBlocks()" class="${button}" title="차시 제목과 시간을 한눈에 보고 고침">차시 구성</button>
                 <button onclick="openSubjectReplan()" class="${button}" title="AI로 이 교과의 차시를 새로 나눔">블록 다시 설계</button>
                 <button onclick="downloadSubjectBundle()" class="${button}" title="모든 차시의 교수안과 슬라이드 편성안을 한 파일로 내려받기">교수안·편성안 묶음</button>
+                <button onclick="downloadLessonMaterial('subject')" class="${button}" title="이 교과를 학습자용 직무 교육 자료 양식으로 내려받기">교육 자료</button>
+                <button onclick="downloadLessonMaterial('course')" class="${button}" title="과정 전체를 학습자용 직무 교육 자료 양식으로 내려받기">과정 교육 자료</button>
                 <button onclick="openLessonBackfill()" class="${button}" title="예전에 만든 교과와 차시에 NCS와 삽화를 채움">기존 내용 보강</button>
             </div>
         </div>`;

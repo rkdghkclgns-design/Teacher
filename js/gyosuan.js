@@ -529,7 +529,7 @@ async function runGyosuanGeneration(moduleId, opts = {}) {
 
     _gyosuanRunning = true;
     _gyosuanOnStatus = opts.onStatus || null;
-    if (loading) loading.style.display = 'flex';
+    if (loading && !opts.background) loading.style.display = 'flex';
     window.beginGenerationStop?.(GYOSUAN_STOP_LABELS);
     try {
         const style = gyosuanSlideStyle();
@@ -591,6 +591,7 @@ window.getSlideStudioPayload = function (moduleId, session = null) {
         title: mod?.title || '',
         subject: subject?.title || '',
         fileBase: mod ? `${lessonFileBase(mod, subject)}${whole ? '' : `_${index + 1}차시`}` : '',
+        ncs: { list: (subject?.ncs?.units || []).map(unit => ({ code: unit.code, name: unit.name })), auto: !subject?.ncs?.confirmed },
         sessions,
         session: index,
         rev: gyosuan?.deckRev || 0,

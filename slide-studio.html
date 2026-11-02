@@ -15,6 +15,8 @@
   .studio-notice { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; font-size: 15px; font-weight: 600; color: var(--ink); }
   .studio-notice[hidden], .studio-progress[hidden], #btn-fill-stop[hidden], #btn-fill-images[hidden], #btn-import-html[hidden], #session-sel[hidden] { display: none; }
   .tabbar .studio-title { cursor: default; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; }
+  .studio-ncs { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: #fff; border: 1px solid var(--line); max-width: 36vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .studio-ncs[hidden] { display: none; }
   .studio-status { align-self: center; font-size: 12.5px; color: var(--ink-soft); }
   .studio-status.error { color: #c0392b; font-weight: 600; }
   .studio-progress { display: flex; align-items: center; gap: 12px; padding: 8px 22px; background: #fff; border-bottom: 1px solid var(--line); font-size: 13px; font-weight: 600; color: var(--ink); }
@@ -44,6 +46,7 @@
   <section class="result" id="result">
     <div class="tabbar">
       <span class="tab active studio-title" id="studio-title">🎬 슬라이드</span>
+      <span class="studio-ncs" id="studio-ncs" hidden></span>
       <div class="spacer"></div>
       <div class="tab-tools" id="tab-tools">
         <span class="studio-status" id="studio-status" role="status"></span>

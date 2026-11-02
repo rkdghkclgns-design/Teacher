@@ -416,10 +416,22 @@
       "교과목": meta["교과목"] || payload.subject || ""
     });
   }
+  /* 교과 NCS 표시 — 코드는 모두, 이름은 하나일 때만 (develocket-slide main.js setNcs) */
+  function showNcs(ncs) {
+    var el = $("studio-ncs");
+    var list = (ncs && ncs.list) || [];
+    if (!el) return;
+    el.hidden = !list.length;
+    var codes = list.map(function (n) { return n.code; }).join(" · ");
+    var name = list.length === 1 && list[0].name ? " " + list[0].name : "";
+    el.textContent = list.length ? "NCS " + codes + name + (ncs.auto ? " (확정 전)" : "") : "";
+    el.title = list.map(function (n) { return n.code + " " + (n.name || ""); }).join("\n");
+  }
   function start(payload) {
     session = payload.session === undefined ? null : payload.session;
     deckRev = payload.rev || 0;
     K.exportFileBase = payload.fileBase || "";
+    showNcs(payload.ncs);
     buildSessionPicker(payload.sessions);
     if (isSample) { $("btn-import-html").hidden = true; $("btn-fill-images").hidden = true; }
     var parsed = K.parseDeck(String(payload.deckMd || ""));

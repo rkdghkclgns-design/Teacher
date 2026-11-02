@@ -487,46 +487,6 @@
         .tutorial-dont-show { display:flex; align-items:center; gap:5px; font-size:0.72rem; color:#8888a8; cursor:pointer; }
 
         /* v8: 분할 뷰 (좌: 수강생, 우: 강사) */
-        .split-view-container {
-            display: flex;
-            gap: 0;
-            height: calc(100vh - 180px);
-            overflow: hidden;
-            position: relative;
-        }
-        .split-view-pane {
-            flex: 1;
-            overflow-y: auto;
-            position: relative;
-        }
-        .split-view-pane:first-child {
-            border-right: 3px solid #d1d5db;
-        }
-        .split-view-pane .split-pane-content {
-            padding: 1rem 2rem 4rem 2rem;
-        }
-        /* 라벨: 상단 완전 고정 */
-        .split-view-label {
-            position: sticky;
-            top: 0;
-            z-index: 20;
-            padding: 8px 16px;
-            font-size: 0.7rem;
-            font-weight: 800;
-            text-transform: uppercase;
-            letter-spacing: 1.5px;
-            text-align: center;
-        }
-        .split-view-label.student {
-            background: linear-gradient(135deg, #dbeafe, #ede9fe);
-            color: #4338ca;
-            border-bottom: 2px solid #818cf8;
-        }
-        .split-view-label.instructor {
-            background: linear-gradient(135deg, #fef3c7, #fce7f3);
-            color: #b45309;
-            border-bottom: 2px solid #f59e0b;
-        }
         </style>
 
     <link rel="stylesheet" href="./css/gyosuan-doc.css?v=125">
@@ -639,6 +599,10 @@
                     <button onclick="executeDropdownExport('slide')"
                         class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
                         <i class="ph-fill ph-presentation-chart text-purple-400 text-sm"></i> 슬라이드 (PPTX·HTML)
+                    </button>
+                    <button onclick="executeDropdownExport('material')"
+                        class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
+                        <i class="ph-fill ph-book-open-text text-amber-400 text-sm"></i> 교육 자료 양식 (.md)
                     </button>
                     <button onclick="executeDropdownExport('html')"
                         class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
@@ -1724,6 +1688,9 @@
     <script src="./js/gyosuan-io.js?v=125"></script>
     <script src="./js/lesson-lint.js?v=125"></script>
     <script src="./js/lesson-objectives.js?v=125"></script>
+    <script src="./js/lesson-opening.js?v=125"></script>
+    <script src="./js/lesson-pipeline.js?v=125"></script>
+    <script src="./js/lesson-material.js?v=125"></script>
     <script src="./js/course-ncs.js?v=125"></script>
     <script src="./js/course-ncs-ref.js?v=125"></script>
     <script src="./js/course-design.js?v=125"></script>
@@ -1763,11 +1730,9 @@
 
             try {
 
-                // 기본 뷰 모드: 강사뷰 (학생뷰는 토글 시 활성화)
-                if (typeof window.viewMode === 'undefined') window.viewMode = 'instructor';
-                if (!document.body.classList.contains('student-view') && !document.body.classList.contains('split-view')) {
-                    document.body.classList.add('instructor-view');
-                }
+                // 기본 뷰 모드: 탭 교안 (교수안 항목을 고르면 강사뷰로 바뀐다)
+                if (typeof window.viewMode === 'undefined') window.viewMode = 'student';
+                if (!document.body.classList.contains('instructor-view')) document.body.classList.add('student-view');
 
                 // Initialize IndexedDB first
                 if (typeof DBManager !== 'undefined') {

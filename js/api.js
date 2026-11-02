@@ -439,62 +439,9 @@ if (typeof marked !== 'undefined') {
 // AI Logic & Other Editor Functions
 // ------------------------------------------------------------------------
 
-// [Step 3] 퀴즈 생성 로직 (generateQuiz)
-
-window.generateQuiz = async function () {
-
-    const mod = getEditingModule();
-
-    const tabContent = mod && mod.tabContents ? Object.values(mod.tabContents).find(v => v) : null;
-    if (!mod || (!mod.content && !tabContent)) return window.showAlert('교안 내용이 생성되지 않았습니다.');
 
 
 
-    const btn = document.getElementById('quiz-btn');
-
-    const origHTML = btn.innerHTML;
-
-    btn.innerHTML = '<i class="ph-bold ph-spinner animate-spin"></i> 생성중...';
-
-    btn.disabled = true;
-
-
-
-    const { systemInstruction, userPrompt } = buildTaskContext('quiz', mod.content);
-
-
-
-    const payload = {
-
-        contents: [{ parts: [{ text: userPrompt }] }],
-
-        systemInstruction: { parts: [{ text: systemInstruction }] }
-
-    };
-
-
-
-    try {
-
-        const data = await callGemini(TEXT_MODEL, payload);
-
-        const quizMd = extractText(data);
-
-        showModal('AI 생성 퀴즈', sanitizeLessonHtml(marked.parse(quizMd)));
-
-    } catch (e) {
-
-        window.showAlert('퀴즈 생성 실패: ' + e.message);
-
-    } finally {
-
-        btn.innerHTML = origHTML;
-
-        btn.disabled = false;
-
-    }
-
-};
 
 
 
@@ -624,7 +571,6 @@ async function generateModuleContent(moduleId, keyConcepts) {
     // 이전엔 status==='done'이면 tabContents가 남아있어 5탭 자동생성이 스킵되고
     // mod.content와 tabContents가 어긋나 같은 내용이 2회 이상 보이는 문제 발생.
     if (mod.status === 'done' || (mod.tabContents && Object.values(mod.tabContents).some(v => v))) {
-        console.log('[Regeneration] tabContents·images 초기화하여 중복 생성 방지');
         if (mod.content) await archiveContent({ title: mod.title, content: mod.content, images: mod.images }); // 중단하거나 실패해도 이전 교안을 되찾을 수 있게 한다
         mod.tabContents = { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null };
         // 재생성 시 옛 이미지 캐시도 비움 (새 본문에 맞는 이미지로 갱신)
@@ -673,11 +619,11 @@ async function generateModuleContent(moduleId, keyConcepts) {
 
 
 
-    const loadingEl = document.getElementById('editor-loading');
-    const loadingText = document.getElementById('editor-loading-text');
-    loadingEl.style.display = 'flex';
-    loadingText.textContent = 'AI가 상세 교안을 작성하고 있습니다...';
-    window.beginGenerationStop?.();
+    // 화면을 막지 않고 진행 막대로 보여 준다. 끝난 항목을 읽으면서 기다릴 수 있다
+    window.beginLessonPipeline(moduleId);
+    const setLoadingStatus = window.setPipelineStatus;
+    setLoadingStatus('교안을 작성하고 있습니다...');
+    renderEditor(mod);
 
 
 
@@ -714,7 +660,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
             uploadedMdContent: mod.uploadedMdContent
         });
 
-        loadingText.textContent = '교안 작성 중... (1단계: 초안 생성)';
+        setLoadingStatus('교안 작성 중... (1단계: 초안 생성)');
 
         const firstData = await callGemini(TEXT_MODEL, {
                     safetySettings: [
@@ -738,7 +684,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
             // CONTINUE 마커 제거
             fullContent = fullContent.replace(CONTINUE_MARKER, '').trimEnd();
 
-            loadingText.textContent = `교안 이어쓰기 중... (${chunkCount}단계)`;
+            setLoadingStatus(`교안 이어쓰기 중... (${chunkCount}단계)`);
 
             // 이전 내용의 마지막 1500자를 컨텍스트로 전달 (토큰 절약)
             const contextTail = fullContent.length > 1500 ? fullContent.slice(-1500) : fullContent;
@@ -793,20 +739,17 @@ async function generateModuleContent(moduleId, keyConcepts) {
             fullContent = sanitizeMarkdownContent(fullContent);
         }
 
-        fullContent = restoreLockedSections(fullContent, lockedBlocks);
+        fullContent = cleanLessonOpening(restoreLockedSections(fullContent, lockedBlocks));
 
         // 중단하면 끝까지 받지 못한 글이므로 자동 수정과 이미지 생성 비용을 쓰지 않는다
         const stopped = !!window.isTabGenerationStopped?.();
         if (!stopped) {
-            window.endGenerationStop?.();
             if (moduleId !== 'mainQuest') {
-                fullContent = await autoFixGeneratedTab({ tabId: 'basicLearn', md: fullContent, lockedBlocks, onStatus: text => { loadingText.textContent = text; } });
+                fullContent = await autoFixGeneratedTab({ tabId: 'basicLearn', md: fullContent, lockedBlocks, onStatus: setLoadingStatus });
             }
 
             // ── 이미지 태그 처리 ──
-            loadingText.textContent = chunkCount > 1
-                ? `이미지 생성 중... (${chunkCount}단계 완료)`
-                : '이미지 생성 중...';
+            setLoadingStatus(chunkCount > 1 ? `이미지 생성 중... (${chunkCount}단계 완료)` : '이미지 생성 중...');
 
             fullContent = restoreLockedSections(await processImageTags(mod, fullContent), lockedBlocks);
         }
@@ -828,12 +771,8 @@ async function generateModuleContent(moduleId, keyConcepts) {
             return;
         }
 
-        // 나머지 4탭 자동 생성 (기본학습은 이미 완료)
-        if (typeof generateRemainingTabs === 'function') {
-            await generateRemainingTabs(mod.id, lockedByTab);
-        } else if (chunkCount > 1) {
-            window.showAlert(`✅ 교안이 ${chunkCount}단계에 걸쳐 생성되었습니다.`);
-        }
+        // 나머지 탭, 교수안·슬라이드, 문제은행을 차례로 만든다 (기본학습은 이미 완료)
+        await window.runLessonPipeline(mod.id, { lockedByTab, continuing: true });
 
     } catch (err) {
 
@@ -862,9 +801,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
 
     } finally {
 
-        loadingEl.style.display = 'none';
-        loadingText.textContent = 'AI가 상세 교안을 작성하고 있습니다...';
-        window.endGenerationStop?.();
+        window.finishLessonPipeline();
 
     }
 
@@ -874,6 +811,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
 window.promptAndGenerateModule = function (moduleId) {
     const mod = getEditingModule(moduleId);
     if (!mod) return;
+    if (window.isLessonPipelineRunning()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
     const existing = Array.isArray(mod.keyConcepts) ? mod.keyConcepts : [];
     const label = mod.status === 'done' ? `재생성: ${mod.title}` : `교안 생성: ${mod.title}`;
     showKeyConceptsPrompt(label, existing, (concepts) => {
@@ -1172,12 +1110,10 @@ async function validateImageWithVLM(base64Image, searchIntent, context) {
     };
 
     try {
-        console.log(`[VLM Validator] 이미지 검열 시작...`);
         // 이미지 검열용 모델은 안전장치가 강한 모델 사용 권장. 설정된 모델(TEXT_MODEL) 재활용
         const response = await callGemini(TEXT_MODEL, payload);
         const textResp = extractText(response);
         const result = JSON.parse(textResp);
-        console.log(`[VLM Validator] 검열 결과:`, result);
         return result;
     } catch (e) {
         console.error("[VLM Validator] 에러 발생 (기본 통과 처리):", e);
@@ -1219,7 +1155,6 @@ async function searchImageAPI(query) {
             if (data.items && data.items.length > 0) {
                 const imgUrl = data.items[0].link;
                 // Base64로 가져오기
-                console.log(`[Search API] 이미지 찾음: ${imgUrl}`);
                 const b64 = await fetchImageAsBase64(imgUrl);
                 return { b64, source: imgUrl, vendor: "Google" };
             } else {
@@ -1246,7 +1181,6 @@ async function searchPixabayAPI(query) {
     }
 
     try {
-        console.log(`[Pixabay API] 대체 스톡 이미지 검색 시도: ${query}`);
         // pixabay는 기본 영어 검색, 사진(photo) 우선
         const endpoint = `https://pixabay.com/api/?key=${encodeURIComponent(pixabayApiKey)}&q=${encodeURIComponent(query)}&image_type=photo&per_page=3&safesearch=true`;
 
@@ -1260,13 +1194,11 @@ async function searchPixabayAPI(query) {
         if (data.hits && data.hits.length > 0) {
             // 가장 첫번째 결과의 webformatURL 혹은 largeImageURL 사용
             const imgUrl = data.hits[0].webformatURL || data.hits[0].largeImageURL;
-            console.log(`[Pixabay API] 스톡 이미지 찾음: ${imgUrl}`);
 
             // CORS 우회 프록시를 통해 base64로 변환 
             const b64 = await fetchImageAsBase64(imgUrl);
             return { b64, source: imgUrl, vendor: "Pixabay" };
         } else {
-            console.log(`[Pixabay API] 결과 없음.`);
             return null;
         }
     } catch (e) {
@@ -1329,7 +1261,6 @@ function autoInjectImageTags(markdown) {
     }
 
     if (injected > 0) {
-        console.log(`[autoInjectImageTags] 누락된 단락에 이미지 태그 ${injected}개 자동 주입 (## + 긴 ### 포함)`);
     }
     return linesCopy.join('\n');
 }
@@ -1367,7 +1298,6 @@ async function processImageTags(mod, markdown) {
         if (lastHeading >= 0) {
             const sectionTitle = beforeText.substring(lastHeading, lastHeading + 60);
             if (SKIP_SECTIONS.test(sectionTitle)) {
-                console.log(`[Image] 텍스트 위주 섹션 이미지 태그 건너뜀: ${sectionTitle.split('\n')[0]} → ${tag.keyword}`);
                 return false;
             }
         }
@@ -1377,7 +1307,6 @@ async function processImageTags(mod, markdown) {
     if (filteredTags.length === 0) return result;
 
     // 시작 알림 — 사용자가 진행 상황을 인지할 수 있도록 toast 표시
-    console.log(`[Image Pipeline] 이미지 태그 ${filteredTags.length}개 처리 시작`);
     if (window.showToast) {
         window.showToast(`🎨 이미지 ${filteredTags.length}개 생성 시작 (약 ${Math.ceil(filteredTags.length * 10)}초 소요)`, 'info');
     }
@@ -1398,7 +1327,6 @@ async function processImageTags(mod, markdown) {
             const intent = await extractSearchIntent(tag.keyword, context);
             const searchQuery = (intent && intent.search_query) ? intent.search_query : tag.keyword;
 
-            console.log(`[Deep Research Agent] 원본 키워드: ${tag.keyword} -> 최적화 쿼리: ${searchQuery}`, intent);
 
             // [Phase F10] 2. Google Custom Search API 연동 (다중 키 롤링)
             let b64Image = null;
@@ -1409,7 +1337,6 @@ async function processImageTags(mod, markdown) {
             if (cached && cached.base64) {
                 b64Image = cached.base64;
                 vendorLabel = `캐시된 이미지 (${cached.format})`;
-                console.log(`[Cache Hit] 저장된 검색 결과를 불러왔습니다: ${searchQuery}`);
                 if (window.showToast) window.showToast(`로컬 캐시에서 이미지를 로드했습니다: ${searchQuery}`, 'success');
             } else {
                 // 2-2. 캐시가 없으면 구글 API 검색 수행
@@ -1425,7 +1352,6 @@ async function processImageTags(mod, markdown) {
 
                         // 검열 통과 시 IndexedDB 캐시에 영구 저장
                         await DBManager.setCache(searchQuery, b64Image, searchResult.source, vendorLabel);
-                        console.log(`[Cache Save] 검열을 통과한 새 검색 결과를 저장했습니다: ${searchQuery}`);
                     } else {
                         console.warn(`[VLM Validator] 이미지 부적합 판정 (폐기): ${validation?.reason || '이유 불명'}`);
                         if (window.showToast) window.showToast(`검색된 이미지가 부적합 판정(${validation?.reason})을 받아 우회합니다.`, 'warning');
@@ -1442,7 +1368,6 @@ async function processImageTags(mod, markdown) {
 
                     // 스톡 이미지도 다음번 빠른 로딩을 위해 캐시에 저장
                     await DBManager.setCache(searchQuery, b64Image, pixabayResult.source, vendorLabel);
-                    console.log(`[Cache Save] Pixabay 스톡 검색 결과를 저장했습니다: ${searchQuery}`);
                 }
             }
 
@@ -1468,7 +1393,6 @@ async function processImageTags(mod, markdown) {
                         .trim();
                     if (!/no text/i.test(promptText)) promptText += NO_TEXT_SUFFIX;
                     generatePrompt = withLessonImageStyle(promptText);
-                    console.log(`[AI Gen] 문맥 기반 프롬프트 사용 (${generatePrompt.length}자): ${tag.keyword}`);
                 } else {
                     // 키워드에서 번호·불필요한 기호 제거하여 자연스러운 주제로 변환
                     const cleanedKeyword = tag.keyword
@@ -1478,7 +1402,6 @@ async function processImageTags(mod, markdown) {
                         .trim();
                     // V8: 영어 전용 + 글자 금지 (한국어 "교육용 일러스트" 제거 — 이미지에 글자가 박히던 문제 해결)
                     generatePrompt = `Educational concept illustration representing "${cleanedKeyword}", ${LESSON_IMAGE_STYLE}, 16:9 wide composition.${NO_TEXT_SUFFIX}`;
-                    console.log(`[AI Gen] V8 텍스트 없는 프롬프트 사용 (정제된 키워드): ${cleanedKeyword}`);
                 }
                 b64Image = await generateImageAPI(generatePrompt);
                 vendorLabel = "AI 생성 이미지";
@@ -1506,7 +1429,6 @@ async function processImageTags(mod, markdown) {
                 const imgHTML = `\n<div class="image-wrapper"><img src="local:${imgId}" alt="${safeKoreanDesc}" class="rounded-lg border-2 border-accent/30 shadow-md max-w-full"><button class="image-regenerate-btn px-3 py-1.5 text-xs text-white font-bold rounded flex items-center gap-1 border border-accent/50 hover:bg-accent transition-colors" data-lesson-action="regenerate-image" data-keyword="${escapeHtml(tag.keyword)}" data-img-id="${imgId}"><i class="ph-bold ph-arrows-clockwise"></i> 다시 찾기</button><div class="image-caption" style="margin-top:8px;text-align:center;font-size:0.85rem;color:#6b7280;font-style:italic;font-weight:500;letter-spacing:-0.01em;line-height:1.4;max-width:100%;">${captionText}</div></div>\n`;
 
                 successCount++;
-                console.log(`[Image Pipeline] (${index + 1}/${filteredTags.length}) ✅ ${tag.keyword} → ${vendorLabel}`);
                 return { fullMatch: tag.fullMatch, html: imgHTML };
             } else {
                 failCount++;
@@ -1528,7 +1450,6 @@ async function processImageTags(mod, markdown) {
     }
 
     // 완료 토스트 — 성공/실패 카운트 표시
-    console.log(`[Image Pipeline] 완료: 성공 ${successCount}건, 실패 ${failCount}건`);
     if (window.showToast) {
         if (successCount > 0 && failCount === 0) {
             window.showToast(`✅ 이미지 ${successCount}건 생성 완료`, 'success');
@@ -1688,14 +1609,12 @@ async function generateImageAPI(prompt) {
 
         for (let retry = 0; retry < 3; retry++) {
             try {
-                console.log(`[Image Gen] Gemini ${model} 시도 (${retry > 0 ? '재시도 ' + retry : '최초'}): ${prompt.substring(0, 60)}...`);
                 const data = await callGemini(model, payload);
 
                 const parts = data?.candidates?.[0]?.content?.parts;
                 if (parts) {
                     const imgPart = parts.find(p => p.inlineData && p.inlineData.mimeType && p.inlineData.mimeType.startsWith('image/'));
                     if (imgPart) {
-                        console.log(`[Image Gen] ✅ Gemini ${model} 성공`);
                         return `data:${imgPart.inlineData.mimeType};base64,${imgPart.inlineData.data}`;
                     }
                 }
@@ -2524,17 +2443,18 @@ function renderEditor(mod) {
 
 
 
-    if (!mod.content && !mod.gyosuan) {
+    // 생성 중에는 빈 차시도 탐색줄을 보여 준다
+    if (!mod.content && !mod.gyosuan && !window.isLessonPipelineRunning()) {
 
         area.innerHTML = `
 
                     <div class="h-full flex flex-col items-center justify-center text-center animate-fade-in p-8">
 
-                        <i class="ph-duotone ${mod.id === 'mainQuest' ? 'ph-crown text-yellow-400/30' : 'ph-file-dashed text-white/20'} text-6xl mb-4"></i>
+                        <i class="ph-duotone ${mod.id === 'mainQuest' ? 'ph-crown text-yellow-400/30' : 'ph-file-dashed text-gray-300'} text-6xl mb-4"></i>
 
-                        <h2 class="text-xl font-bold text-white mb-2">${escapeHtml(mod.title)}</h2>
+                        <h2 class="text-xl font-bold text-gray-800 mb-2">${escapeHtml(mod.title)}</h2>
 
-                        <p class="text-textMuted text-sm mb-6">아직 교안 내용이 생성되지 않았습니다.</p>
+                        <p class="text-gray-500 text-sm mb-6">아직 교안 내용이 생성되지 않았습니다.</p>
 
                         <button onclick="${mod.id === 'mainQuest' ? 'promptAndGenerateMainQuest()' : `promptAndGenerateModule(${mod.id})`}" class="px-6 py-2.5 bg-accent hover:bg-accentHover text-white font-bold rounded-lg shadow-lg transition-colors flex items-center gap-2">
 
@@ -2542,7 +2462,7 @@ function renderEditor(mod) {
 
                         </button>
 
-                        <button onclick="importGyosuanMdFiles('${mod.id}')" class="mt-3 text-sm font-bold text-textMuted hover:text-white transition-colors">완성 교수안·편성안 MD로 만들기</button>
+                        <button onclick="importGyosuanMdFiles('${mod.id}')" class="mt-3 text-sm font-bold text-gray-500 hover:text-gray-800 transition-colors">완성 교수안·편성안 MD로 만들기</button>
 
                     </div>
 
@@ -2580,7 +2500,13 @@ function renderEditor(mod) {
 
     let htmlContent = '';
 
-    if (_tabEmpty) {
+    if (_tabEmpty && window.isLessonPipelineRunning()) {
+        htmlContent = `
+            <div class="flex flex-col items-center justify-center text-center py-20 px-6 select-none text-gray-500">
+                <i class="ph-bold ph-circle-notch animate-spin text-3xl text-accent mb-4"></i>
+                <p class="text-sm">이 탭은 전체 생성 순서대로 만들고 있습니다. 완성되면 여기에 나타납니다.</p>
+            </div>`;
+    } else if (_tabEmpty) {
 
         // [이슈#2] 미생성 탭 빈 화면 방지: 친절한 안내 + 생성 버튼 노출
         const _tabLabel = (typeof LESSON_TABS !== 'undefined' && Array.isArray(LESSON_TABS))
@@ -2626,21 +2552,37 @@ function renderEditor(mod) {
 
                         <div class="flex items-center gap-2 shrink-0">
 
-                            <button onclick="generateQuiz()" id="quiz-btn" class="px-3 py-1.5 text-xs font-bold bg-emerald-50 text-emerald-600 border border-emerald-200 rounded hover:bg-emerald-100 flex items-center gap-1 transition-colors"><i class="ph-fill ph-question"></i> 퀴즈 생성</button>
+                            
+
+
+                            <div class="w-px h-4 bg-gray-300 mx-1"></div>
+
+                    <button id="lesson-tab-generate" onclick="generateTabContent('${mod.id}', currentLessonTab)"
+                        class="px-2.5 py-1.5 text-[0.65rem] font-bold text-accent bg-accent/10 border border-accent/30 rounded hover:bg-accent/20 transition-colors flex items-center gap-1 shrink-0">
+                        <i class="ph-bold ph-sparkle"></i> 이 탭 생성
+                    </button>
+                    <button onclick="startLessonGeneration('${mod.id}')" title="빈 항목을 교안 탭, 교수안·슬라이드, 문제은행 순서로 만들기"
+                        class="px-2.5 py-1.5 text-[0.65rem] font-bold text-white bg-accent rounded hover:bg-accentHover transition-colors flex items-center gap-1 shrink-0 ml-1">
+                        <i class="ph-bold ph-lightning"></i> 전체 생성
+                    </button>
+                            <details id="lesson-tools-menu" class="relative">
+                                <summary class="list-none cursor-pointer px-3 py-1.5 text-xs font-bold bg-gray-50 text-gray-600 border border-gray-200 rounded hover:bg-gray-100 flex items-center gap-1"><i class="ph-bold ph-wrench"></i> 도구</summary>
+                                <div class="absolute right-0 mt-1 z-40 p-2 w-44 bg-white border border-gray-200 rounded-lg shadow-lg flex flex-col gap-1">
                             <button onclick="generateAllImagesInModule('${mod.id}')" id="img-batch-btn" class="px-3 py-1.5 text-xs font-bold bg-purple-50 text-purple-600 border border-purple-200 rounded hover:bg-purple-100 flex items-center gap-1 transition-colors hover:-translate-y-0.5"><i class="ph-bold ph-image-square"></i> 일괄 이미지 찾기</button>
                             <button onclick="sanitizeAllContent()" id="sanitize-btn" class="px-3 py-1.5 text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 flex items-center gap-1 transition-colors hover:-translate-y-0.5" title="마크다운 문법 오류 일괄 정리 + 누락 이미지 일괄 생성"><i class="ph-bold ph-sparkle"></i> 콘텐츠 정리</button>
-                            
                             <label class="cursor-pointer px-3 py-1.5 text-xs font-bold bg-blue-50 text-blue-600 border border-blue-200 rounded hover:bg-blue-100 flex items-center gap-1 transition-colors" title="에디터에 이미지 삽입">
                                 <i class="ph-bold ph-image"></i> 이미지 삽입
                                 <input type="file" accept="image/*" class="hidden" multiple onchange="handleImageInputSelect(event)">
                             </label>
-
                             <button onclick="downloadImagesAsJPG('${mod.id}')" class="px-3 py-1.5 text-xs font-bold bg-teal-50 text-teal-600 border border-teal-200 rounded hover:bg-teal-100 flex items-center gap-1 transition-colors" title="이미지 JPG 다운로드">
                                 <i class="ph-bold ph-download-simple"></i> 이미지 저장
                             </button>
-
-                            <div class="w-px h-4 bg-gray-300 mx-1"></div>
-
+                            <button onclick="insertImageSlot()" class="px-2 py-1 text-xs font-bold rounded border border-gray-200 text-gray-600 hover:text-gray-800 transition-all" title="이미지 슬롯 삽입">🖼️</button>
+                        <button onclick="openSectionLocks('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-slate-50 text-slate-600 border border-slate-200 rounded hover:bg-slate-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="다시 생성해도 유지할 섹션 선택"><i class="ph-bold ph-lock-simple"></i> 섹션 고정</button>
+                        <button onclick="openLessonArt('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-sky-50 text-sky-600 border border-sky-200 rounded hover:bg-sky-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="SVG 삽화 생성·수정·배치"><i class="ph-bold ph-paint-brush"></i> 삽화</button>
+                        <button onclick="copyTabMarkdown('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-sky-50 text-sky-600 border border-sky-200 rounded hover:bg-sky-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="현재 탭의 마크다운을 클립보드에 복사"><i class="ph-bold ph-copy"></i> 복사</button>
+                                </div>
+                            </details>
                             <div class="flex bg-gray-100 rounded p-1 border border-gray-200">
 
                                 <button onclick="toggleEditorMode('view')" id="toggle-view" class="px-3 py-1 text-xs font-bold rounded bg-white text-gray-800 shadow-sm transition-all">보기</button>
@@ -2651,9 +2593,7 @@ function renderEditor(mod) {
 
                             <div class="w-px h-4 bg-gray-300 mx-1"></div>
 
-                            <button onclick="toggleViewMode()" id="view-mode-toggle" class="px-3 py-1.5 text-xs font-bold rounded-lg border-2 border-purple-400 bg-purple-50 text-purple-700 hover:bg-purple-100 hover:border-purple-500 shadow-sm transition-all flex items-center gap-1" title="강사/학생/분할 뷰 전환 (3단 토글)">👨‍🏫 강사뷰</button>
 
-                            <button onclick="insertImageSlot()" class="px-2 py-1 text-xs font-bold rounded border border-gray-200 text-gray-600 hover:text-gray-800 transition-all" title="이미지 슬롯 삽입">🖼️</button>
 
                         </div>
 
@@ -2666,36 +2606,20 @@ function renderEditor(mod) {
                         <button onclick="reinforceCurrentTab('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors flex items-center gap-1 shrink-0 whitespace-nowrap">
                             <i class="ph-bold ph-arrow-clockwise"></i> 보강 재생성
                         </button>
-                        <button onclick="openSectionLocks('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-slate-50 text-slate-600 border border-slate-200 rounded hover:bg-slate-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="다시 생성해도 유지할 섹션 선택"><i class="ph-bold ph-lock-simple"></i> 섹션 고정</button>
-                        <button onclick="openQuestionBank('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-violet-50 text-violet-600 border border-violet-200 rounded hover:bg-violet-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="문항 분포·검수·CSV"><i class="ph-bold ph-exam"></i> 문제은행</button>
-                        <button onclick="openLessonArt('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-sky-50 text-sky-600 border border-sky-200 rounded hover:bg-sky-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="SVG 삽화 생성·수정·배치"><i class="ph-bold ph-paint-brush"></i> 삽화</button>
                         <button onclick="runConventionCheck('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-rose-50 text-rose-600 border border-rose-200 rounded hover:bg-rose-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="콘텐츠 업무 설계 규칙으로 현재 탭 검사"><i class="ph-bold ph-list-checks"></i> 컨벤션 검수<span id="convention-check-count" class="hidden"></span></button>
-                        <button onclick="copyTabMarkdown('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-sky-50 text-sky-600 border border-sky-200 rounded hover:bg-sky-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="현재 탭의 마크다운을 클립보드에 복사"><i class="ph-bold ph-copy"></i> 복사</button>
                     </div>
 
                 </div>
 
                 <!-- 5탭 바 (sticky) -->
                 <div class="sticky top-[105px] z-20 flex items-center gap-0.5 px-4 py-1 bg-white border-b border-gray-200 overflow-x-auto shadow-sm">
-                    ${typeof renderTabBar === 'function' ? renderTabBar(mod) : ''}
+                    <div id="lesson-nav-items" class="flex items-center gap-0.5">${renderTabBar(mod)}</div>
                     <div class="flex-1"></div>
-                    <button onclick="generateTabContent('${mod.id}', currentLessonTab)"
-                        class="px-2.5 py-1.5 text-[0.65rem] font-bold text-accent bg-accent/10 border border-accent/30 rounded hover:bg-accent/20 transition-colors flex items-center gap-1 shrink-0">
-                        <i class="ph-bold ph-sparkle"></i> 이 탭 생성
-                    </button>
-                    <button onclick="generateAllTabs('${mod.id}')"
-                        class="px-2.5 py-1.5 text-[0.65rem] font-bold text-white bg-accent rounded hover:bg-accentHover transition-colors flex items-center gap-1 shrink-0 ml-1">
-                        <i class="ph-bold ph-lightning"></i> 전체 탭
-                    </button>
-                    <button onclick="openSlideStudio('${mod.id}')"
-                        class="px-2.5 py-1.5 text-[0.65rem] font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 rounded hover:bg-indigo-100 transition-colors flex items-center gap-1 shrink-0 ml-1"
-                        title="교안을 바탕으로 만든 슬라이드를 전체 화면으로 열기">
-                        <i class="ph-bold ph-presentation-chart"></i> 슬라이드
-                    </button>
                 </div>
 
                 <div class="max-w-[800px] mx-auto p-8 pb-32">
 
+                    <div id="lesson-inline-panel"></div>
                     <div id="gyosuan-view" class="gyosuan-view hidden"></div>
 
                     <div id="render-view" class="markdown-body animate-fade-in">${htmlContent}</div>
@@ -2705,7 +2629,7 @@ function renderEditor(mod) {
                 </div>
 
                 <!-- v7.5: 슬라이드 뷰 영역 (기본 노출, 빈 상태) -->
-                <div id="slide-view-panel" class="border-t-2 border-indigo-500/30 bg-gradient-to-b from-gray-50 to-white">
+                <div id="slide-view-panel" class="hidden border-t-2 border-indigo-500/30 bg-gradient-to-b from-gray-50 to-white">
                     <div class="flex items-center justify-between px-6 py-3 bg-indigo-50/50 border-b border-indigo-200/50">
                         <div class="flex items-center gap-2">
                             <i class="ph-bold ph-presentation-chart text-indigo-500"></i>
@@ -2740,7 +2664,7 @@ function renderEditor(mod) {
     window.enhanceRawView?.();
     window.syncReviewBadge?.(mod);
     toggleEditorMode('view');
-    applyViewMode(VIEW_MODES[window.viewMode] ? window.viewMode : 'instructor');
+    applyLessonPanel(mod);
     syncSlidePanel(mod);
 
     // 인라인 에디팅 기능 활성화 (약간의 지연 후 렌더 트리가 안전할 때)
@@ -2913,7 +2837,7 @@ window.toggleEditorMode = function (mode) {
 
         const mod = getEditingModule();
 
-        if (mod) {
+        if (mod && rawView.value.trim()) { // 빈 탭은 renderEditor가 그린 안내를 둔다
 
             let renderText = rawView.value;
 
@@ -2950,7 +2874,6 @@ window.toggleEditorMode = function (mode) {
                         );
                         if (unrendered.length === 0) return;
 
-                        console.log(`[Mermaid] ${unrendered.length}개 다이어그램 렌더링 시작`);
 
                         // 각 다이어그램을 개별적으로 렌더링 (하나 실패해도 나머지 계속)
                         for (let i = 0; i < unrendered.length; i++) {
@@ -2978,7 +2901,6 @@ window.toggleEditorMode = function (mode) {
                             try {
                                 const { svg } = await window.mermaid.render(id, code);
                                 el.innerHTML = svg;
-                                console.log(`[Mermaid] 다이어그램 ${i + 1}/${unrendered.length} 렌더링 성공`);
                             } catch (err) {
                                 // 1차 실패 → 더 aggressive sanitize 후 재시도 (괄호/특수문자 일괄 제거)
                                 console.warn(`[Mermaid] 다이어그램 ${i + 1} 1차 실패:`, err.message);
@@ -2989,7 +2911,6 @@ window.toggleEditorMode = function (mode) {
                                         .replace(/\|([^|\n]{1,200})\|/g, (m, inner) => '|' + inner.replace(/[()"]/g, '').trim() + '|');
                                     const { svg } = await window.mermaid.render(id + '_retry', stripped);
                                     el.innerHTML = svg;
-                                    console.log(`[Mermaid] 다이어그램 ${i + 1} 재시도 성공`);
                                 } catch (err2) {
                                     console.warn(`[Mermaid] 다이어그램 ${i + 1} 최종 실패:`, err2.message);
                                     el.innerHTML = `<div style="padding:12px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:8px;color:#f87171;font-size:13px;">
@@ -3344,128 +3265,20 @@ window.downloadImagesAsJPG = function (moduleId) {
 // ── Phase F3: 최종 서식 변환 (local: → 웹 URL 일괄) ──
 
 // ─── v8: 강사/학생/분할 3모드 뷰 토글 ───
-const VIEW_MODES = {
-    instructor: {
-        next: 'student',
-        label: '👨‍🏫 강사뷰',
-        title: '현재: 강사뷰 (교수안 표시)',
-        className: 'px-3 py-1.5 text-xs font-bold rounded-lg border-2 border-purple-400 bg-purple-50 text-purple-700 hover:bg-purple-100 hover:border-purple-500 shadow-sm transition-all flex items-center gap-1'
-    },
-    student: {
-        next: 'split',
-        label: '🎓 학생뷰',
-        title: '현재: 학생뷰 (교안 표시)',
-        className: 'px-3 py-1.5 text-xs font-bold rounded-lg border-2 border-emerald-400 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-500 shadow-sm transition-all flex items-center gap-1'
-    },
-    split: {
-        next: 'instructor',
-        label: '📖 분할뷰',
-        title: '현재: 분할뷰 (좌:교안 / 우:교수안)',
-        className: 'px-3 py-1.5 text-xs font-bold rounded-lg border-2 border-amber-400 bg-amber-50 text-amber-700 hover:bg-amber-100 hover:border-amber-500 shadow-sm transition-all flex items-center gap-1'
-    }
-};
+
 
 function applyViewMode(mode) {
-    const view = VIEW_MODES[mode];
     window.viewMode = mode;
     document.body.classList.toggle('student-view', mode === 'student');
     document.body.classList.toggle('instructor-view', mode === 'instructor');
-    document.body.classList.toggle('split-view', mode === 'split');
-    if (mode === 'split') createSplitView();
-    else destroySplitView();
-    const btn = document.getElementById('view-mode-toggle');
-    if (btn) {
-        btn.innerHTML = view.label;
-        btn.className = view.className;
-        btn.title = `강사/학생/분할 뷰 전환 — ${view.title}`;
-    }
     syncGyosuanView();
 }
 
-function toggleViewMode() {
-    applyViewMode(VIEW_MODES[window.viewMode]?.next || 'instructor');
-}
 
-// ─── v8: 분할 뷰 생성/해제 ───
-function createSplitView() {
-    const renderView = document.getElementById('render-view');
-    if (!renderView) return;
-    const parent = renderView.parentElement;
-    if (!parent) return;
 
-    destroySplitView();
-    renderView.style.display = 'none';
 
-    const container = document.createElement('div');
-    container.id = 'split-view-container';
-    container.className = 'split-view-container';
 
-    // 왼쪽: 수강생 뷰
-    const leftPane = document.createElement('div');
-    leftPane.className = 'split-view-pane split-student-pane';
-    leftPane.id = 'split-left';
-    leftPane.innerHTML =
-        '<div class="split-view-label student">📘 수강생 뷰</div>' +
-        '<div class="split-pane-content"><div class="markdown-body">' + renderView.innerHTML + '</div></div>';
 
-    // 오른쪽: 강사 뷰 (교수안, 없으면 스크립트가 포함된 교안)
-    const gyosuanHtml = gyosuanDocHtml(getEditingModule());
-    const rightPane = document.createElement('div');
-    rightPane.className = 'split-view-pane';
-    rightPane.id = 'split-right';
-    rightPane.innerHTML =
-        '<div class="split-view-label instructor">📙 강사 뷰 (교수안)</div>' +
-        '<div class="split-pane-content">' + (gyosuanHtml
-            ? '<div class="gyosuan-view">' + gyosuanHtml + '</div>'
-            : '<div class="markdown-body">' + renderView.innerHTML + '</div>') + '</div>';
-
-    container.appendChild(leftPane);
-    container.appendChild(rightPane);
-    parent.insertBefore(container, renderView);
-
-    // 동기 스크롤 (pixel-based — 같은 높이이므로 1:1). 교수안은 교안과 분량이 달라 스크롤을 묶지 않는다
-    let syncing = false;
-    const syncScroll = (source, target) => {
-        if (syncing) return;
-        syncing = true;
-        target.scrollTop = source.scrollTop;
-        requestAnimationFrame(() => { syncing = false; });
-    };
-    leftPane._scrollHandler = () => syncScroll(leftPane, rightPane);
-    rightPane._scrollHandler = () => syncScroll(rightPane, leftPane);
-    if (!gyosuanHtml) {
-        leftPane.addEventListener('scroll', leftPane._scrollHandler, { passive: true });
-        rightPane.addEventListener('scroll', rightPane._scrollHandler, { passive: true });
-    }
-
-    // Mermaid 재렌더링
-    if (window.mermaid) {
-        setTimeout(async () => {
-            const divs = container.querySelectorAll('.mermaid');
-            for (let i = 0; i < divs.length; i++) {
-                const el = divs[i];
-                if (el.querySelector('svg') || !el.textContent.trim()) continue;
-                try {
-                    const { svg } = await window.mermaid.render('split-m-' + Date.now() + '-' + i, el.textContent.trim());
-                    el.innerHTML = svg;
-                } catch (e) { /* skip */ }
-            }
-        }, 200);
-    }
-}
-
-function destroySplitView() {
-    const container = document.getElementById('split-view-container');
-    if (container) {
-        const left = document.getElementById('split-left');
-        const right = document.getElementById('split-right');
-        if (left && left._scrollHandler) left.removeEventListener('scroll', left._scrollHandler);
-        if (right && right._scrollHandler) right.removeEventListener('scroll', right._scrollHandler);
-        container.remove();
-    }
-    const renderView = document.getElementById('render-view');
-    if (renderView) renderView.style.display = '';
-}
 
 // ─── v5.9 포팅: 이미지 슬롯 빠른 삽입 ───
 function insertImageSlot() {

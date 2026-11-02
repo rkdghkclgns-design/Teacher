@@ -382,7 +382,6 @@ async function restoreState() {
             const raw = localStorage.getItem(STORAGE_KEY);
             if (raw) {
                 data = JSON.parse(raw);
-                console.log("기존 localStorage 데이터를 IndexedDB로 마이그레이션합니다.");
                 await DBManager.setItem(STORAGE_KEY, data); // 마이그레이션 후 저장
                 // 마이그레이션 완료 후 쿼터 확보를 위해 삭제
                 localStorage.removeItem(STORAGE_KEY);
@@ -1784,7 +1783,6 @@ window.restoreProjectFolderConnection = async function () {
                     <i class="ph-bold ph-caret-down text-[0.6rem] text-white/50 ml-1"></i>
                 `;
                 document.getElementById('folder-connection-indicator').onclick = toggleFolderDropdown;
-                console.log(`[${storedHandle.name}] 폴더 연결이 자동 복원되었습니다.`);
             } else {
                 // 권한이 만료된 상태 -> 사용자가 버튼을 눌렀을 때만 requestPermission 호출
                 console.warn('저장된 폴더 핸들의 권한이 만료되었습니다. 클릭을 통해 재인증이 필요합니다.');

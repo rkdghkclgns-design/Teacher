@@ -1,6 +1,7 @@
 // tabs.js — 5탭 에디터 시스템
 
 let currentLessonTab = 'basicLearn';
+let _lessonPanel = null; // 탭 대신 보고 있는 항목: gyosuan | slides | qbank
 let _suppressTabAlert = false;
 let _tabGenStop = false; // 중단을 누르면 받고 있는 단락까지만 저장하고 다음 단락과 다음 탭을 건너뛴다
 const TAB_STOP_LABELS = { idle: '이 단락까지만 받고 중단', pending: '받고 있는 단락까지만 저장합니다...' };
@@ -14,17 +15,37 @@ const TAB_COLORS = {
     violet:  { active: 'bg-violet-500 border-violet-500 text-white shadow-md', inactive: 'bg-gray-100 text-gray-500 border-transparent hover:bg-gray-200' }
 };
 
+// 교안 탭 뒤에 이어지는 항목. 교수안과 슬라이드는 한 번에 만들어진다
+const LESSON_PANELS = [
+    { id: 'gyosuan', step: 'gyosuan', label: '교수안', icon: 'ph-chalkboard-teacher', color: 'violet', done: mod => !!mod.gyosuan?.docMd },
+    { id: 'slides', step: 'gyosuan', label: '슬라이드', icon: 'ph-presentation-chart', color: 'blue', done: mod => !!(mod.gyosuan?.deckMd || mod.gyosuan?.deckHtml) },
+    { id: 'qbank', step: 'qbank', label: '문제은행', icon: 'ph-list-checks', color: 'emerald', done: mod => qbankQuestions(mod).some(question => question.objective) }
+];
+
+function lessonNavDot(done, running) {
+    if (running) return '<i class="ph-bold ph-circle-notch animate-spin text-sm"></i>';
+    return `<span class="w-2 h-2 rounded-full ${done ? 'bg-current opacity-70' : 'bg-gray-300 opacity-40'}"></span>`;
+}
+
+function lessonPanelButton(mod, panel) {
+    const colors = TAB_COLORS[panel.color];
+    return `<button onclick="showLessonPanel('${panel.id}')"
+            class="px-3 py-2 text-[0.75rem] font-bold rounded-t-lg border-b-2 transition-all cursor-pointer select-none flex items-center gap-1.5 whitespace-nowrap ${_lessonPanel === panel.id ? colors.active : colors.inactive}">
+            <i class="ph-bold ${panel.icon} text-sm"></i>
+            ${panel.label}
+            ${lessonNavDot(panel.done(mod), !!window.isPipelineStep?.(panel.step))}
+        </button>`;
+}
+
 function renderTabBar(mod) {
     if (!mod || !LESSON_TABS) return '';
     const tabContents = mod.tabContents || {};
-    return LESSON_TABS.map(tab => {
-        const isActive = currentLessonTab === tab.id;
+    const tabs = LESSON_TABS.map(tab => {
+        const isActive = !_lessonPanel && currentLessonTab === tab.id;
         const hasContent = !!tabContents[tab.id];
         const colors = TAB_COLORS[tab.color] || TAB_COLORS.blue;
         const cls = isActive ? colors.active : colors.inactive;
-        const dot = hasContent
-            ? '<span class="w-2 h-2 rounded-full bg-current opacity-70"></span>'
-            : '<span class="w-2 h-2 rounded-full bg-gray-300 opacity-40"></span>';
+        const dot = lessonNavDot(hasContent, !!window.isPipelineStep?.(tab.id));
         return `<button onclick="switchLessonTab('${tab.id}')"
             class="px-3 py-2 text-[0.75rem] font-bold rounded-t-lg border-b-2 transition-all cursor-pointer select-none flex items-center gap-1.5 whitespace-nowrap ${cls}">
             <i class="ph-bold ${tab.icon} text-sm"></i>
@@ -32,23 +53,54 @@ function renderTabBar(mod) {
             ${dot}
         </button>`;
     }).join('');
+    const panels = mod.id === 'mainQuest' ? '' : `<span class="w-px h-5 bg-gray-200 mx-1 shrink-0"></span>${LESSON_PANELS.map(panel => lessonPanelButton(mod, panel)).join('')}`;
+    return `${tabs}${panels}`;
 }
 
 function switchLessonTab(tabId) {
     currentLessonTab = tabId;
-    if (window.viewMode === 'instructor') window.viewMode = 'student';
+    window.clearLessonPanel();
     const mod = getEditingModule();
     if (mod) renderEditor(mod);
 }
 
+window.clearLessonPanel = function () {
+    _lessonPanel = null;
+    window.forgetInlineQbank?.();
+};
+
+window.showLessonPanel = function (panel) {
+    window.forgetInlineQbank?.();
+    _lessonPanel = panel;
+    const mod = getEditingModule();
+    if (mod) renderEditor(mod);
+};
+
+// 탐색줄에서 고른 항목만 본문 자리에 보여 준다. renderEditor가 화면을 다시 그린 뒤 부른다
+function applyLessonPanel(mod) {
+    applyViewMode(_lessonPanel === 'gyosuan' ? 'instructor' : 'student');
+    document.getElementById('render-view')?.classList.toggle('hidden', _lessonPanel === 'slides' || _lessonPanel === 'qbank');
+    document.getElementById('slide-view-panel')?.classList.toggle('hidden', _lessonPanel !== 'slides');
+    document.getElementById('lesson-tab-generate')?.classList.toggle('hidden', !!_lessonPanel);
+    if (_lessonPanel === 'qbank') window.openQuestionBank(mod.id, { inline: true });
+}
+
+// 생성이 끝날 때 보고 있는 화면은 두고 탐색줄 표시만 고친다
+window.refreshLessonNav = function (mod) {
+    const nav = document.getElementById('lesson-nav-items');
+    if (nav && String(currentEditingModuleId) === String(mod.id)) nav.innerHTML = renderTabBar(mod);
+};
+
+const isViewingTab = (mod, tabId) => String(currentEditingModuleId) === String(mod.id) && !_lessonPanel && currentLessonTab === tabId;
+
 function getActiveTabContent(mod) {
     if (!mod) return '';
     if (mod.tabContents && mod.tabContents[currentLessonTab]) {
-        return mod.tabContents[currentLessonTab];
+        return cleanLessonOpening(mod.tabContents[currentLessonTab]);
     }
     // 폴백: 기존 content 필드 사용
     if (currentLessonTab === 'basicLearn' && mod.content) {
-        return mod.content;
+        return cleanLessonOpening(mod.content);
     }
     return '';
 }
@@ -109,12 +161,24 @@ window.requestTabGenerationStop = function () {
     btn.textContent = _tabStopLabels.pending;
 };
 
+// 학습이해도 문항을 문제은행에서 바로 쓰도록 목표 번호를 함께 준다
+function assessmentObjectivePrompt(mod, tabId) {
+    if (tabId !== 'assessment' || typeof qbankObjectives !== 'function') return '';
+    const goals = qbankObjectives(mod);
+    return goals.length ? `\n\n[학습 목표 목록 — 문제마다 이 번호를 쓰고, 모든 목표를 1문제 이상 묻습니다]\n${goals.map((goal, i) => `${i + 1}. ${goal}`).join('\n')}` : '';
+}
+
 // opts.quiet: 알림 없이 결과만 돌려준다 / opts.onStatus: 진행 문구를 받는다 (일괄 생성용)
+// opts.background: 화면을 막지 않고 만든다. 끝나도 보고 있는 화면은 그대로 둔다 (전체 생성)
 // opts.lockedBlocks: 탭을 비운 뒤 다시 만들 때 미리 챙겨 둔 고정 섹션
 async function generateTabContent(moduleId, tabId, opts = {}) {
     const mod = getEditingModule(moduleId);
     if (!mod) return { ok: false, error: '차시를 찾지 못했습니다.' };
-    showLessonView();
+    if (!opts.background && window.isLessonPipelineRunning?.()) {
+        window.showAlert('전체 생성이 끝난 뒤 다시 시도해주세요.');
+        return { ok: false, error: '전체 생성 중입니다.' };
+    }
+    if (!opts.background) showLessonView();
 
     const tabMeta = LESSON_TABS.find(t => t.id === tabId);
     if (!tabMeta) return { ok: false, error: '알 수 없는 탭입니다.' };
@@ -141,9 +205,9 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
     const { systemInstruction, userPrompt } = buildTaskContext('tab_content', baseArgs);
 
     try {
-        document.getElementById('editor-loading').style.display = 'flex';
+        if (!opts.background) document.getElementById('editor-loading').style.display = 'flex';
         if (!_suppressTabAlert) _tabGenStop = false; // 일괄 생성은 묶음 시작에서 한 번만 초기화한다
-        showTabGenStop(true);
+        showTabGenStop(!opts.background);
 
         // 진행도 표기: 로딩 오버레이의 안내 문구를 단계별로 갱신해 사용자가 현재 진행 상황을 알 수 있게 함
         const setLoadingText = (txt) => {
@@ -171,7 +235,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         setLoadingText(`📝 ${tabMeta.label} 작성 중입니다... (1/${MAX_CHUNKS} 단락)`);
 
         const firstPayload = {
-            contents: [{ role: 'user', parts: [{ text: userPrompt + lessonDesignBrief(mod) + lockedSectionPrompt(lockedBlocks) }] }],
+            contents: [{ role: 'user', parts: [{ text: userPrompt + lessonDesignBrief(mod) + lockedSectionPrompt(lockedBlocks) + assessmentObjectivePrompt(mod, tabId) }] }],
             systemInstruction: { parts: [{ text: systemInstruction }] },
             generationConfig: { maxOutputTokens: 65536 }
         };
@@ -243,7 +307,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         }
 
         if (!mod.tabContents) mod.tabContents = { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null };
-        resultText = restoreLockedSections(resultText, lockedBlocks);
+        resultText = cleanLessonOpening(restoreLockedSections(resultText, lockedBlocks));
         if (!resultText.trim()) throw new Error('AI 응답이 비어 있습니다.');
         // 끝까지 받지 못한 글은 체크리스트 누락 같은 지적이 당연히 나오므로 자동 수정하지 않는다
         if (typeof autoFixGeneratedTab === 'function' && !partialDueToError && !_tabGenStop) {
@@ -280,12 +344,6 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         // 이미지 태그 자동 처리 (딥리서치 파이프라인 활용). 중단하면 이미지 생성 비용도 쓰지 않고 태그만 남긴다.
         if (typeof processImageTags === 'function' && !_tabGenStop) {
             setLoadingText(`🖼️ ${tabMeta.label} 이미지와 서식을 정리하고 있습니다...`);
-            // LLM 응답의 이미지 태그 개수 진단 로깅 — 왜 이미지가 안 나오는지 원인 파악
-            const tagCount = (resultText.match(/<!--\s*\[IMG:/g) || []).length;
-            console.log(`[TabGen] ${tabMeta.label} 생성 완료 — LLM이 생성한 이미지 태그: ${tagCount}개`);
-            if (tagCount === 0 && tabId !== 'assessment') {
-                console.warn(`[TabGen] ⚠️ ${tabMeta.label} 에 이미지 태그가 없음. 자동 주입 로직이 활성화됩니다.`);
-            }
             try {
                 const processed = restoreLockedSections(await processImageTags(mod, resultText), lockedBlocks);
                 if (processed !== resultText) {
@@ -299,7 +357,8 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
 
         await saveState();
         renderSidebar();
-        renderEditor(mod);
+        if (!opts.background || isViewingTab(mod, tabId)) renderEditor(mod);
+        else window.refreshLessonNav(mod);
         if (!_suppressTabAlert && !opts.quiet) {
             const doneText = stoppedEarly
                 ? `${tabMeta.label} 생성을 중단했습니다. 받은 ${fullText.length.toLocaleString()}자까지 저장했습니다.${archivePartial ? ' 이전 내용은 히스토리에 보관했습니다.' : ''}`
@@ -377,27 +436,6 @@ async function generateAllTabs(moduleId) {
         if (progressBar) progressBar.innerHTML = `<span style="color:#f87171;">⚠️ 생성 중 오류 발생: ${(typeof escapeHtml === 'function' ? escapeHtml(String(e.message || e)) : String(e.message || e))}</span>`;
         setTimeout(() => progressBar?.remove(), 5000);
         throw e;
-    } finally {
-        _suppressTabAlert = false;
-    }
-}
-
-// 이미 생성된 탭을 건너뛰고 나머지만 생성. lockedByTab: 전체 재생성 전에 챙겨 둔 고정 섹션
-async function generateRemainingTabs(moduleId, lockedByTab = {}) {
-    _suppressTabAlert = true;
-    _tabGenStop = false;
-    const failed = [];
-    try {
-        for (const tab of LESSON_TABS) {
-            const mod = getEditingModule(moduleId);
-            if (mod?.tabContents?.[tab.id]) continue;
-            const result = await generateTabContent(moduleId, tab.id, { lockedBlocks: lockedByTab[tab.id] });
-            if (!result.ok) failed.push(tab.label);
-            if (_tabGenStop) break;
-            await new Promise(r => setTimeout(r, 2000));
-        }
-        const doneText = failed.length ? `${failed.join(', ')} 탭을 만들지 못했습니다. 해당 탭에서 다시 생성해주세요.` : '전체 5탭 교안 생성이 완료되었습니다!';
-        window.showAlert(_tabGenStop ? '탭 생성을 중단했습니다. 받은 내용까지 저장했습니다.' : doneText);
     } finally {
         _suppressTabAlert = false;
     }

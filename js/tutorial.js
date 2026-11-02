@@ -78,7 +78,9 @@ AI가 생성한 교안을 확인하고 편집하는 핵심 영역입니다.<br><
 • <strong>학습이해도</strong> — 5지선다 퀴즈 10문항<br><br>
 <strong>📖 편집 기능</strong><br>
 • <strong>보기/수정</strong> — 마크다운 직접 편집 가능<br>
-• <strong>강사/학생 뷰</strong> — 강사 전용 코멘트 표시/숨김<br>
+• <strong>탐색줄</strong> — 교안 탭, 교수안, 슬라이드, 문제은행을 한 줄에서 오갑니다<br>
+• <strong>전체 생성</strong> — 빈 항목을 순서대로 만듭니다. 생성 중에도 끝난 항목을 읽을 수 있습니다<br>
+• <strong>도구</strong> — 이미지, 섹션 고정, 삽화, 복사<br>
 • <strong>보강 재생성</strong> — 추가 명령으로 내용 개선<br>
 • <strong>슬라이드</strong> — 교안으로 만든 슬라이드를 편집하고 PPTX·HTML로 내보내기<br>
 • <strong>이미지 저장</strong> — 교안 이미지를 JPG로 일괄 다운로드`,
