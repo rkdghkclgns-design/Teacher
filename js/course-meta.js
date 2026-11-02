@@ -77,7 +77,7 @@ function pickLessonElements(recs) {
 function metaChanges(mod, next) {
     const changed = (key, label, empty = []) => (JSON.stringify(mod[key] ?? empty) !== JSON.stringify(next[key] ?? empty) ? label : '');
     const status = lessonStatus(mod) !== next.reviewStatus ? `상태: ${lessonStatus(mod)} → ${next.reviewStatus}` : '';
-    return [status, changed('category', '카테고리', ''), changed('tools', '툴·버전'), changed('prereqs', '선행 차시'), changed('ncsElements', 'NCS 요소')].filter(Boolean);
+    return [status, changed('category', '카테고리', ''), changed('tools', '툴·버전'), changed('prereqs', '선행 차시'), changed('ncsElements', 'NCS 요소'), changed('gen', '생성 옵션', {})].filter(Boolean);
 }
 
 function withMetaHistory(mod, next) {
@@ -87,8 +87,8 @@ function withMetaHistory(mod, next) {
 }
 
 /* ---------- 휴지통 ---------- */
-function moveLessonsToTrash(lessons) {
-    const entries = lessons.map(lesson => ({ lesson, subjectId: currentSubjectId, at: new Date().toISOString() }));
+function moveLessonsToTrash(lessons, subjectId = currentSubjectId) {
+    const entries = lessons.map(lesson => ({ lesson, subjectId, at: new Date().toISOString() }));
     globalState.lessonTrash = [...entries, ...(globalState.lessonTrash || [])].slice(0, LESSON_TRASH_LIMIT);
 }
 
@@ -160,6 +160,7 @@ function renderLessonMetaChips(mod) {
     return `
         <div class="mt-2 flex flex-wrap items-center gap-1">
             <button onclick="event.stopPropagation(); openLessonMeta(${mod.id})" class="text-[0.6rem] font-bold px-1.5 py-0.5 rounded ${LESSON_STATUS_STYLES[lessonStatus(mod)]}" title="차시 정보 편집">${lessonStatus(mod)}</button>
+            ${lessonHoursChip(mod)}
             ${mod.category ? `<span class="text-[0.6rem] px-1.5 py-0.5 rounded bg-white/10 text-textLight">${escapeHtml(mod.category)}</span>` : ''}
             ${tools ? `<span class="text-[0.6rem] text-textMuted truncate max-w-[150px]" title="${escapeHtml(tools)}">${escapeHtml(tools)}</span>` : ''}
         </div>`;
@@ -250,6 +251,7 @@ function metaDialogHtml(subject, mod) {
                     <div class="w-32"><label class="${label}">상태</label><select id="meta-status" class="${field}">${LESSON_STATUSES.map(status => `<option ${lessonStatus(mod) === status ? 'selected' : ''}>${status}</option>`).join('')}</select></div>
                 </div>
                 <div><label class="${label}">사용 툴과 버전 (이름 | 버전, 버전 의존 정보는 본문이 아니라 여기서 관리합니다)</label><textarea id="meta-tools" rows="2" class="${field}">${escapeHtml((mod.tools || []).map(tool => `${tool.name}${tool.version ? ` | ${tool.version}` : ''}`).join('\n'))}</textarea></div>
+                <div><label class="${label}">교안 생성 옵션 (지정하지 않으면 과정 기본값을 씁니다)</label>${lessonGenFieldsHtml('meta', mod.gen)}</div>
                 <div><label class="${label}">선행 차시</label><div class="space-y-1 max-h-24 overflow-y-auto">${metaPrereqRows(mod)}</div></div>
                 <div><label class="${label}">NCS 능력단위요소</label><div id="meta-elements" class="space-y-1 max-h-32 overflow-y-auto mb-2">${metaElementRows()}</div>${metaRegisterForm(subject)}<p id="meta-status-text" class="text-[0.65rem] text-accent mt-1 min-h-[1em]"></p></div>
                 <div><label class="${label}">변경 이력</label>${metaHistoryRows(mod)}</div>
@@ -332,6 +334,7 @@ async function saveLessonMeta() {
         category: document.getElementById('meta-category').value.trim(),
         reviewStatus: document.getElementById('meta-status').value,
         tools: parseToolLines(document.getElementById('meta-tools').value),
+        gen: readLessonGenFields('meta'),
         prereqs,
         // 능력단위가 바뀌어 지금 목록에 없는 요소도 사용자가 고른 기록이므로 유지한다
         ncsElements: [...(mod.ncsElements || []).filter(element => !options.some(option => elementKey(option) === elementKey(element))), ...options.filter(option => selected.has(elementKey(option)))]

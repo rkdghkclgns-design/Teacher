@@ -2095,7 +2095,7 @@ function renderSidebar() {
 
 
 
-    let html = renderSubjectNcsCard(subj);
+    let html = renderSubjectNcsCard(subj) + renderSubjectFlowCard(subj);
 
 
 

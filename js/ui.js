@@ -965,13 +965,14 @@ window.exportSelectedToZip = async function () {
                 totalFiles++;
             }
 
+            lessonGyosuanFiles(mod).forEach(file => { modFolder.file(file.name, file.content); totalFiles++; });
+
             if (mod.images && Object.keys(mod.images).length > 0) {
                 const imgFolder = modFolder.folder('images');
                 Object.entries(mod.images).forEach(([, b64], imgIdx) => {
-                    if (!b64 || !b64.startsWith('data:image')) return;
-                    const ext = (b64.match(/^data:image\/(\w+);/) || [, 'png'])[1];
-                    const base64Data = b64.replace(/^data:image\/\w+;base64,/, '');
-                    imgFolder.file(`img_${String(imgIdx + 1).padStart(2, '0')}.${ext}`, base64Data, { base64: true });
+                    const { ext, data } = zipImageParts(b64);
+                    if (!data) return;
+                    imgFolder.file(`img_${String(imgIdx + 1).padStart(2, '0')}.${ext}`, data, { base64: true });
                     totalFiles++;
                 });
             }
@@ -1064,16 +1065,15 @@ window.exportAllToZip = async function () {
             totalFiles++;
         }
 
+        lessonGyosuanFiles(mod).forEach(file => { modFolder.file(file.name, file.content); totalFiles++; });
+
         // 이미지 폴더
         if (mod.images && Object.keys(mod.images).length > 0) {
             const imgFolder = modFolder.folder('images');
             Object.entries(mod.images).forEach(([imgId, b64], imgIdx) => {
-                if (!b64 || !b64.startsWith('data:image')) return;
-                // Base64 → Blob 데이터 추출
-                const mimeMatch = b64.match(/^data:(image\/\w+);base64,/);
-                const ext = mimeMatch ? mimeMatch[1].split('/')[1] : 'png';
-                const base64Data = b64.replace(/^data:image\/\w+;base64,/, '');
-                imgFolder.file(`img_${String(imgIdx + 1).padStart(2, '0')}.${ext}`, base64Data, { base64: true });
+                const { ext, data } = zipImageParts(b64);
+                if (!data) return;
+                imgFolder.file(`img_${String(imgIdx + 1).padStart(2, '0')}.${ext}`, data, { base64: true });
                 totalFiles++;
             });
         }
