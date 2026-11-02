@@ -25,7 +25,7 @@ function makeContext(callGemini, keys = { gemini: '' }) {
     };
     ctx.window = ctx;
     vm.createContext(ctx);
-    ['kbuilder/ncs-catalog.js', 'lesson-lint.js', 'course-ncs.js', 'course-ncs-ref.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'course-qbank.js'].forEach(f => vm.runInContext(fs.readFileSync(root + f, 'utf8'), ctx));
+    ['kbuilder/ncs-catalog.js', 'lesson-lint.js', 'ai-routing.js', 'course-ncs.js', 'course-ncs-ref.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'course-qbank.js'].forEach(f => vm.runInContext(fs.readFileSync(root + f, 'utf8'), ctx));
     return ctx;
 }
 

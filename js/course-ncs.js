@@ -11,7 +11,6 @@ const NCS_MAX_CANDIDATES = 45;
 const NCS_MAX_RECS = 6;
 const NCS_SEARCH_LIMIT = 15;
 const NCS_SOLO_PENALTY = 0.9;
-const CROSS_MODELS = { gemini: 'gemini-4-argon', claude: 'claude-opus-5-5' };
 
 // 과정 주제에 자주 나오지만 NCS 명칭과 표현이 다른 낱말 → NCS 쪽 표현으로 확장
 const NCS_SYNONYMS = {
@@ -187,14 +186,10 @@ function textModelHasKey() {
     return isClaudeModel(TEXT_MODEL) ? !!claudeApiKey : !!apiKey;
 }
 
-// 텍스트 모델과 다른 공급자의 키가 있으면 교차 판단에 쓸 모델을 돌려준다
-function crossCheckModel() {
-    if (isClaudeModel(TEXT_MODEL)) return apiKey ? CROSS_MODELS.gemini : '';
-    return claudeApiKey ? CROSS_MODELS.claude : '';
-}
-
-async function askNcsJson(prompt, model = TEXT_MODEL) {
-    const data = await callGemini(model, {
+// pinned: 교차 판단처럼 모델을 일부러 고른 호출
+async function askNcsJson(prompt, pinned = '') {
+    const data = await callGemini(pinned || TEXT_MODEL, {
+        pinModel: !!pinned,
         taskRole: 'plan',
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         systemInstruction: { parts: [{ text: 'NCS 기반 교육과정 설계 전문가로서 지정된 JSON만 출력합니다.' }] },
@@ -279,7 +274,7 @@ function mergeNcsRanks(lists) {
 }
 
 async function rankNcsCandidates(prompt, byCode, objectives = []) {
-    const second = crossCheckModel();
+    const second = crossCheckModel('plan');
     // 교차 모델이 실패하면 단일 모델 결과로 판단한다. 합의가 없었던 것으로 감점하지 않는다.
     const [first, other] = await Promise.all([askNcsJson(prompt), second ? askNcsJson(prompt, second).catch(() => null) : null]);
     return mergeNcsRanks([first, other].map(parsed => parseNcsRank(parsed, byCode, objectives)).filter(list => list.length));

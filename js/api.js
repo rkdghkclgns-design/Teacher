@@ -296,9 +296,11 @@ async function requestGemini(modelName, payload, onRetry) {
 // 텍스트·이미지 공통 호출 진입점. 호출부는 Gemini payload 형식을 유지하고,
 // claude- 모델이면 어댑터(claude.js)가 요청과 응답을 변환한다.
 // onRetry: 재시도 발생 시 호출되는 선택적 콜백 ({ attempt, total, delayMs, isRateLimit })
-function callGemini(modelName, payload, onRetry = null) {
-    if (isClaudeModel(modelName)) return callClaude(modelName, payload);
-    return requestGemini(modelName, payload, onRetry);
+// 텍스트 모델 호출은 역할별 AI 분배를 따른다. 교차 판단처럼 모델을 일부러 고른 호출은 pinModel을 넘긴다
+function callGemini(modelName, { pinModel, ...payload }, onRetry = null) {
+    const model = modelName === TEXT_MODEL && !pinModel ? roleModel(payload.taskRole) : modelName;
+    if (isClaudeModel(model)) return callClaude(model, payload);
+    return requestGemini(model, payload, onRetry);
 }
 
 
@@ -2405,7 +2407,10 @@ window.addModule = function () {
 
     courseData.push({ id: newId, title: '새 차시', description: '설명을 입력하세요', status: 'waiting', content: null, images: {}, uploadedMdName: null, uploadedMdContent: null });
 
-    saveState().then(() => renderSidebar());
+    saveState().then(() => {
+        renderSidebar();
+        window.openLessonMeta?.(newId); // 제목·시간·선행·툴을 바로 정한다
+    });
 
 }
 

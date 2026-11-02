@@ -355,10 +355,12 @@ function lessonRequiredIssues(mod) {
         .filter(issue => LESSON_LINT_REQUIRED.test(issue.msg));
 }
 
+const isQuestionWarning = msg => LESSON_QUESTION_WARNINGS.includes(msg) || msg.startsWith('AI 교차 검수');
+
 function lintQuestionBlock(block, checklist) {
     const question = parseQuestionBlock(block);
     return lintQuestion(question, checklist).map(msg => ({
-        sev: LESSON_QUESTION_WARNINGS.includes(msg) || msg.startsWith('AI 교차 검수') ? 'warn' : 'bad',
+        sev: isQuestionWarning(msg) ? 'warn' : 'bad',
         where: `문제 ${question.no}`,
         msg,
         snip: `문제 ${question.no}. ${question.title}`.trim()

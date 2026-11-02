@@ -168,25 +168,54 @@ function appendQuestionsMd(md, questions) {
 }
 
 /* ---------- CSV ---------- */
-function csvCell(value) {
+// 스프레드시트 수식으로 실행되지 않게 막는다. 정답 칸은 '-1'이나 '='도 맞는 답이고 따옴표가 붙으면 LMS 채점이 틀리므로
+// 실행될 수 있는 수식(함수 호출, 외부 참조)만 막는다
+function csvCell(value, { answer = false } = {}) {
     const text = String(value ?? '');
-    const safe = /^[=+\-@]/.test(text) ? `'${text}` : text; // 스프레드시트 수식으로 실행되지 않게 막는다
+    const formula = /^[=+\-@]/.test(text) && (!answer || /[(|!]/.test(text));
+    const safe = formula ? `'${text}` : text;
     return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 
-const QBANK_CSV_HEAD = ['번호', '교과', '차시', '목표번호', '학습목표', '밴드', '유형', '복수정답', '제목', '문항', '보기1', '보기2', '보기3', '보기4', '보기5', '정답', '허용표기', '채점기준', '시작코드', '테스트', '해설', '교차검수', '검수'];
+// 열은 LMS 업로드에 쓰는 develocket-slide(assets/course-model.js questionsToCsv @3a7303f)와 같다. 단원은 교과, 학습모듈은 차시다
+const QBANK_CSV_HEAD = ['문항ID', '단원', '학습모듈', '목표번호', '학습목표', '밴드', '유형', '복수정답', '문항', '보기1', '보기2', '보기3', '보기4', '보기5', '정답', '허용표기', '모범답안', '채점기준', '시작코드', '테스트케이스', '루브릭', '해설', '검수'];
+const QBANK_CSV_ANSWER_HEADS = ['정답', '허용표기'];
+const QBANK_CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩';
+
+function choiceNumbers(answer) {
+    const marks = String(answer || '').match(/[①-⑩]/g);
+    return marks ? marks.map(mark => QBANK_CIRCLED.indexOf(mark) + 1).join(', ') : answer;
+}
+
+// 객관식 정답은 보기 번호로 쓴다. 모범답안은 서술형, 루브릭은 파일제출 칸에 넣고, 코드제출의 채점 기준도 버리지 않는다
+function questionCsvAnswers(q) {
+    const written = ['서술형', '파일제출'].includes(q.type);
+    return {
+        answer: written ? '' : (q.type === '객관식' ? choiceNumbers(q.answer) : q.answer),
+        model: q.type === '서술형' ? q.answer : '',
+        criteria: q.type === '파일제출' ? '' : q.rubric,
+        rubric: q.type === '파일제출' ? q.rubric : ''
+    };
+}
+
+function questionCsvStatus(issues) {
+    if (!issues.length) return '검수 통과';
+    return issues.every(isQuestionWarning) ? '권장 위반' : '필수 위반';
+}
 
 function questionCsvRows(questions, objectives, context) {
     return questions.map(q => {
         const issues = lintQuestion(q, context.checklist, objectives.length || Infinity);
+        const { answer, model, criteria, rubric } = questionCsvAnswers(q);
         return [
-            q.no, context.subject, context.lesson, q.objective ?? '', (q.objective && objectives[q.objective - 1]) || '', q.band, q.type, q.multi ? 'Y' : '', q.title, q.stem,
-            ...Array.from({ length: 5 }, (_, i) => q.choices[i]?.text ?? ''), q.answer, q.accepted, q.rubric, q.code, q.tests, q.explanation, q.review, issues.length ? `위반 ${issues.length}건` : '검수 통과'
+            [context.lessonId, q.no].filter(Boolean).join('-'), context.subject, context.lesson, q.objective ?? '', (q.objective && objectives[q.objective - 1]) || '', q.band, q.type, q.multi ? 'Y' : '', [q.title, q.stem].filter(Boolean).join('\n'),
+            ...Array.from({ length: 5 }, (_, i) => q.choices[i]?.text ?? ''), answer, String(q.accepted || '').split(/\n|,\s*/).filter(Boolean).join(' / '), model, criteria, q.code, q.tests, rubric, q.explanation, questionCsvStatus(issues)
         ];
     });
 }
 
-const toCsv = rows => `\uFEFF${[QBANK_CSV_HEAD, ...rows].map(row => row.map(csvCell).join(',')).join('\r\n')}`;
+const csvRow = row => row.map((cell, index) => csvCell(cell, { answer: QBANK_CSV_ANSWER_HEADS.includes(QBANK_CSV_HEAD[index]) })).join(',');
+const toCsv = rows => `\uFEFF${[QBANK_CSV_HEAD, ...rows].map(csvRow).join('\r\n')}`;
 
 function questionsCsv(questions, objectives, context) {
     return toCsv(questionCsvRows(questions, objectives, context));
@@ -194,7 +223,7 @@ function questionsCsv(questions, objectives, context) {
 
 function subjectCsvRows(subject) {
     return subjectLessons(subject).flatMap(lesson => (lesson.tabContents?.assessment
-        ? questionCsvRows(qbankQuestions(lesson), qbankObjectives(lesson), { subject: subject.title, lesson: lesson.title, checklist: qbankChecklist(lesson) })
+        ? questionCsvRows(qbankQuestions(lesson), qbankObjectives(lesson), { subject: subject.title, lesson: lesson.title, lessonId: lesson.id, checklist: qbankChecklist(lesson) })
         : []));
 }
 
@@ -268,10 +297,11 @@ function buildReviewPrompt(mod, questions, objectives) {
 
 // 두 공급자의 키가 있으면 출제하지 않은 모델이 검수한다. 실패해도 문항은 버리지 않는다.
 async function crossReviewQuestions(mod, questions, objectives) {
-    const model = crossCheckModel();
+    const model = crossCheckModel('qgen');
     if (!model) return questions;
     try {
         const data = await callGemini(model, {
+            pinModel: true,
             taskRole: 'review',
             contents: [{ role: 'user', parts: [{ text: buildReviewPrompt(mod, questions, objectives) }] }],
             systemInstruction: { parts: [{ text: '평가 문항 검수자로서 지정된 JSON만 출력합니다.' }] },
@@ -569,7 +599,7 @@ function downloadCsv(csv, name) {
 
 function saveQbankCsv(mod) {
     const subject = globalState.subjects.find(item => item.id === currentSubjectId);
-    downloadCsv(questionsCsv(qbankQuestions(mod), qbankObjectives(mod), { subject: subject?.title || '', lesson: mod.title, checklist: qbankChecklist(mod) }), lessonFileBase(mod, subject));
+    downloadCsv(questionsCsv(qbankQuestions(mod), qbankObjectives(mod), { subject: subject?.title || '', lesson: mod.title, lessonId: mod.id, checklist: qbankChecklist(mod) }), lessonFileBase(mod, subject));
 }
 
 function saveCourseCsv() {

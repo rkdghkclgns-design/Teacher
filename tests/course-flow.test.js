@@ -5,7 +5,7 @@ const vm = require('vm');
 const path = require('path');
 const assert = require('assert');
 const root = path.join(__dirname, '..', 'js') + path.sep;
-const FILES = ['kbuilder/ncs-catalog.js', 'lesson-lint.js', 'lesson-opening.js', 'course-qbank.js', 'lesson-pipeline.js', 'course-ncs.js', 'course-design.js', 'course-design-edit.js', 'course-sessions.js', 'course-meta.js', 'lesson-editor-tools.js', 'tabs.js', 'course-flow.js'];
+const FILES = ['kbuilder/ncs-catalog.js', 'lesson-lint.js', 'lesson-opening.js', 'course-qbank.js', 'lesson-pipeline.js', 'ai-routing.js', 'course-ncs.js', 'course-design.js', 'course-design-edit.js', 'course-sessions.js', 'course-meta.js', 'lesson-editor-tools.js', 'tabs.js', 'course-flow.js'];
 const TABS = [['basicLearn', '기본 학습'], ['basicPrac', '기본 실습'], ['advLearn', '심화 학습'], ['advPrac', '심화 실습'], ['assessment', '학습 이해도']].map(([id, label]) => ({ id, label }));
 const TAB_IDS = TABS.map(tab => tab.id);
 
@@ -19,7 +19,7 @@ function makeContext(callGemini = async () => reply('## 본문\n\n내용')) {
         setTimeout: fn => { fn(); return 0; }, // 탭 사이 대기를 건너뛴다
         clearTimeout() {}, Promise, URL, Blob,
         LESSON_TABS: TABS,
-        TEXT_MODEL: 'gemini-4-argon', apiKey: 'k', claudeApiKey: '', isClaudeModel: () => false,
+        TEXT_MODEL: 'gemini-4-argon', apiKey: 'k', claudeApiKey: '', isClaudeModel: () => false, needsElementAutoAssign: () => false,
         CONTEXT_CORE: { personas: { orchestrator: '설계자' } },
         globalState: { courseTitle: '과정', subjects: [] },
         courseData: [], currentSubjectId: null, currentEditingModuleId: null,
@@ -514,16 +514,30 @@ async function run(name, fn) {
         return { local, subject, filled, blank };
     }
 
+    await run('블록 다시 설계: 자동 배정한 NCS는 새 블록에 맞춰 다시 배정한다', async () => {
+        const { local, subject } = replanContext(async () => reply(PLAN));
+        local.globalState.courseDesign = { title: '게임 과정', goal: '과정 목표', target: '입문자' };
+        local.autoAssignNcs = async target => { target.ncs = { ...target.ncs, units: [{ code: 'C2' }] }; return target.ncs; };
+        await vm.runInContext('runSubjectReplan', local)({ disabled: false }, subject);
+        assert.deepStrictEqual(plain(subject.ncs.units), [{ code: 'C2' }]);
+        const failed = replanContext(async () => reply(PLAN));
+        failed.local.globalState.courseDesign = { title: '게임 과정', goal: '과정 목표', target: '입문자' };
+        failed.local.autoAssignNcs = async () => { throw new Error('호출 한도'); };
+        await vm.runInContext('runSubjectReplan', failed.local)({ disabled: false }, failed.subject);
+        assert.deepStrictEqual(plain(failed.subject.lessons).map(item => item.title), ['새 블록1', '새 블록2'], 'NCS 실패로 새 블록을 되돌리지 않는다');
+        assert.deepStrictEqual(plain(failed.subject.ncs.units), [{ code: 'C1' }]);
+    });
+
     await run('블록 다시 설계: 이전 차시는 휴지통·보관함에 남고 NCS는 유지', async () => {
         const prompts = [];
         const { local, subject, filled, blank } = replanContext(async (model, payload) => { prompts.push(payload.contents[0].parts[0].text); return reply(PLAN); });
         local.globalState.courseDesign = { title: '게임 과정', goal: '과정 목표', target: '입문자' };
         await vm.runInContext('runSubjectReplan', local)({ disabled: false }, subject);
+        assert.deepStrictEqual(plain(subject.ncs.units), [{ code: 'C1' }], '고를 단위를 못 찾으면 이전 배정을 남긴다');
         assert.deepStrictEqual(plain(subject.lessons).map(item => item.title), ['새 블록1', '새 블록2']);
         assert.strictEqual(local.courseData, subject.lessons, '현재 교과면 편집 중인 목록도 바꾼다');
         assert.strictEqual(subject.lessons[0].status, 'waiting');
         assert.strictEqual(subject.lessonCount, 2);
-        assert.deepStrictEqual(subject.ncs.units, [{ code: 'C1' }]);
         const trash = local.globalState.lessonTrash;
         assert.ok(trash[0].lesson === filled && trash[1].lesson === blank && trash.every(entry => entry.subjectId === 's1'));
         assert.strictEqual(filled.tabContents.basicLearn, '작성한 본문', '휴지통의 차시는 내용을 그대로 갖는다');

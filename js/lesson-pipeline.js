@@ -1,4 +1,4 @@
-// lesson-pipeline.js - 차시 전체 생성: 교안 탭 → 교수안·슬라이드 → 문제은행을 차례로 만든다
+// lesson-pipeline.js - 차시 전체 생성: 교안 탭 → 삽화 → NCS 요소 → 교수안·슬라이드 → 문제은행을 차례로 만든다
 // 화면을 막지 않으므로 생성하는 동안 끝난 항목을 읽을 수 있다. 진행은 아래쪽 막대와 탐색줄 표시로 보여 준다.
 // 있는 항목은 건드리지 않고 빈 항목만 채운다. 항목마다 저장하므로 멈춰도 만든 내용은 남는다.
 
@@ -36,6 +36,42 @@ async function fillQuestionBank(moduleId, { isStopped = () => false, onStatus = 
     return { ok: true };
 }
 
+/* ---------- 교안 뒤 보강 ---------- */
+// 교안 본문에는 이미지 태그 생성이 따로 돌아 호출이 겹치므로 삽화는 일괄 생성 창에서 켠 경우에만 그린다
+const lessonWantsArt = mod => !!globalState.courseDesign?.autoArt && lessonNeedsArt(mod);
+
+async function fillPipelineArt(moduleId, isStopped, onStatus) {
+    onStatus('교안에 넣을 삽화를 그리고 있습니다...');
+    await fillLessonArt(getEditingModule(moduleId), isStopped);
+    await saveState();
+    return { ok: true };
+}
+
+async function fillPipelineElements(moduleId, onStatus) {
+    onStatus('NCS 능력단위요소를 배정하고 있습니다...');
+    await assignLessonElements(globalState.subjects.find(item => item.id === currentSubjectId), getEditingModule(moduleId));
+    await saveState();
+    return { ok: true };
+}
+
+// 확정한 NCS 요소와 이미 돌린 삽화는 건드리지 않는다
+function lessonExtraSteps(moduleId, { isStopped, onStatus }) {
+    return [
+        { id: 'art', label: '삽화', afterTabs: true, needed: lessonWantsArt, run: () => fillPipelineArt(moduleId, isStopped, onStatus) },
+        { id: 'ncsElements', label: 'NCS 요소 배정', afterTabs: true, needed: needsElementAutoAssign, run: () => fillPipelineElements(moduleId, onStatus) }
+    ];
+}
+
+// 일괄 생성용. 보강이 실패해도 교안은 있으므로 차시를 실패로 치지 않고 안내만 한다. 기존 내용 보강에서 다시 채울 수 있다
+async function runLessonExtras(moduleId, options) {
+    for (const step of lessonExtraSteps(moduleId, options)) {
+        const mod = getEditingModule(moduleId);
+        if (!mod || options.isStopped()) return;
+        const result = step.needed(mod) ? await runPipelineStep(step) : { ok: true };
+        if (!result.ok) window.showToast?.(`${mod.title} · ${step.label} 실패: ${result.error}`, 'warning');
+    }
+}
+
 /* ---------- 단계 ---------- */
 function pipelineSteps(moduleId, lockedByTab) {
     const tabs = LESSON_TABS.map(tab => ({
@@ -47,6 +83,7 @@ function pipelineSteps(moduleId, lockedByTab) {
     if (moduleId === 'mainQuest') return tabs;
     return [
         ...tabs,
+        ...lessonExtraSteps(moduleId, { isStopped: () => !!_pipeline?.stopped, onStatus: window.setPipelineStatus }),
         { id: 'gyosuan', label: '교수안·슬라이드', afterTabs: true, needed: lessonNeedsGyosuan, run: () => runGyosuanGeneration(moduleId, { background: true, onStatus: window.setPipelineStatus }) },
         { id: 'qbank', label: '문제은행', afterTabs: true, needed: mod => questionBankGaps(mod).length > 0, run: () => fillQuestionBank(moduleId, { isStopped: () => !!_pipeline?.stopped, onStatus: window.setPipelineStatus }) }
     ];

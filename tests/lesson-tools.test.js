@@ -5,7 +5,7 @@ const vm = require('vm');
 const path = require('path');
 const assert = require('assert');
 const root = path.join(__dirname, '..', 'js') + path.sep;
-const FILES = ['kbuilder/ncs-catalog.js', 'lesson-lint.js', 'course-ncs.js', 'course-ncs-ref.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'course-elements.js', 'course-list.js', 'course-art.js', 'course-illustrations.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js', 'course-refs.js', 'filename-convention.js'];
+const FILES = ['kbuilder/ncs-catalog.js', 'lesson-lint.js', 'ai-routing.js', 'course-ncs.js', 'course-ncs-ref.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'course-elements.js', 'course-list.js', 'course-art.js', 'course-illustrations.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js', 'course-refs.js', 'filename-convention.js'];
 
 function makeContext(callGemini, keys = { gemini: '' }) {
     const ctx = {
@@ -298,11 +298,26 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
         assert.strictEqual(dist.rows[1].L2, 1);
         assert.deepStrictEqual(dist.total, { L1: 1, L2: 1, L3: 0 });
         const csv = call('questionsCsv')(questions, ['목표 하나', '목표 둘'], { subject: '교과', lesson: '=차시', checklist: [] });
-        assert.ok(csv.startsWith('﻿번호,교과,차시'));
+        assert.ok(csv.startsWith('﻿문항ID,단원,학습모듈,목표번호'));
+        assert.strictEqual(csv.split('\r\n')[0].split(',').length, 23);
         assert.ok(csv.includes("'=차시"), '수식 실행 방지');
         assert.ok(csv.includes('"해설 문장\n여러 줄 해설"'));
         assert.ok(csv.includes('검수 통과'));
-        assert.ok(call('questionsCsv')(questions, ['목표 하나'], { subject: '교과', lesson: '차시', checklist: [] }).includes('위반 1건'), '없는 목표 번호는 CSV에서도 위반');
+        const answers = call('questionCsvAnswers');
+        assert.strictEqual(answers({ type: '객관식', answer: '① ③' }).answer, '1, 3', '객관식 정답은 보기 번호');
+        assert.strictEqual(answers({ type: '', answer: '정답' }).answer, '정답', '유형이 없어도 정답을 버리지 않는다');
+        assert.strictEqual(answers({ type: '코드제출', rubric: '기준' }).criteria, '기준', '코드제출의 채점 기준을 버리지 않는다');
+        const cell = call('csvCell');
+        assert.strictEqual(cell('-1', { answer: true }), '-1', '정답 칸의 값은 그대로');
+        assert.strictEqual(cell('=', { answer: true }), '=');
+        assert.ok(cell('=HYPERLINK("http://x")', { answer: true }).includes("'=HYPERLINK"), '실행되는 수식은 정답 칸에서도 막는다');
+        assert.strictEqual(cell('-1'), "'-1", '다른 칸은 그대로 막는다');
+        const short = [{ no: 1, type: '단답식', band: 'L2', objective: 1, title: '값', stem: '결과는?', choices: [], answer: '-1', accepted: '-1, +1', rubric: '', code: '', tests: '', explanation: '해설', review: '' }];
+        const row = call('questionsCsv')(short, ['목표'], { subject: '교과', lesson: '차시', lessonId: 7, checklist: [] }).split('\r\n')[1];
+        assert.ok(row.startsWith('7-1,') && row.includes(',-1,-1 / +1,'), '문항ID는 차시마다 다르고 정답은 그대로');
+        assert.deepStrictEqual(plain(answers({ type: '서술형', answer: '모범', rubric: '기준' })), { answer: '', model: '모범', criteria: '기준', rubric: '' });
+        assert.deepStrictEqual(plain(answers({ type: '파일제출', answer: '', rubric: '평가표' })), { answer: '', model: '', criteria: '', rubric: '평가표' });
+        assert.ok(call('questionsCsv')(questions, ['목표 하나'], { subject: '교과', lesson: '차시', checklist: [] }).includes('필수 위반'), '없는 목표 번호는 CSV에서도 위반');
         assert.ok(!call('questionsCsv')(questions, [], { subject: '교과', lesson: '차시', checklist: [] }).includes('위반'), '목표를 모르면 번호 범위는 보지 않는다');
     });
 

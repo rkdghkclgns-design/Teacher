@@ -5,7 +5,7 @@ const vm = require('vm');
 const path = require('path');
 const assert = require('assert');
 const root = path.join(__dirname, '..', 'js') + path.sep;
-const FILES = ['kbuilder/ncs-catalog.js', 'lesson-lint.js', 'course-ncs.js', 'course-ncs-ref.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'course-elements.js', 'course-list.js', 'course-art.js', 'course-illustrations.js', 'course-qbank.js', 'lesson-editor-tools.js', 'course-refs.js'];
+const FILES = ['kbuilder/ncs-catalog.js', 'lesson-lint.js', 'ai-routing.js', 'course-ncs.js', 'course-ncs-ref.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'course-elements.js', 'course-list.js', 'course-art.js', 'course-illustrations.js', 'course-qbank.js', 'lesson-editor-tools.js', 'course-refs.js'];
 
 // 실제 escapeHtml과 같게 문자열이 아니면 빈 문자열을 돌려준다
 const escapeHtml = s => (typeof s === 'string' ? s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;') : '');

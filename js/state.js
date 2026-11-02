@@ -1291,6 +1291,12 @@ function _closePdfDropdownOnOutside(e) {
 
 
 
+// 교수안 문서는 마크다운 이미지만 되살리므로(resolveGyosuanImages) 그 칸에는 마크다운으로 넣는다
+function insertedImageTag(target, imgId) {
+    if (target.id === 'gyosuan-raw') return `\n\n![붙여넣은 이미지](local:${imgId})\n\n`;
+    return `\n<img src="local:${imgId}" alt="inserted image" style="max-width:100%; border-radius:8px;">\n`;
+}
+
 function handleImageFileInsertion(file, target) {
     const fileType = file.type; // e.g. 'image/png', 'image/gif'
     const reader = new FileReader();
@@ -1305,8 +1311,7 @@ function handleImageFileInsertion(file, target) {
             const imgId = 'img_' + Date.now() + Math.floor(Math.random() * 1000);
             mod.images[imgId] = originalB64; // 원본 B64 보존
 
-            const imgTag = `\n<img src="local:${imgId}" alt="inserted image" style="max-width:100%; border-radius:8px;">\n`;
-            insertTextAtCursor(target, imgTag);
+            insertTextAtCursor(target, insertedImageTag(target, imgId));
             return;
         }
 
@@ -1336,8 +1341,7 @@ function handleImageFileInsertion(file, target) {
             const imgId = 'img_' + Date.now() + Math.floor(Math.random() * 1000);
             mod.images[imgId] = compressedBase64;
 
-            const imgTag = `\n<img src="local:${imgId}" alt="inserted image" style="max-width:100%; border-radius:8px;">\n`;
-            insertTextAtCursor(target, imgTag);
+            insertTextAtCursor(target, insertedImageTag(target, imgId));
         };
         img.src = originalB64;
     };
@@ -1354,13 +1358,14 @@ function insertTextAtCursor(target, text) {
     if (target.id === 'raw-view') {
         if (typeof saveRawContent === 'function') saveRawContent();
     }
+    if (target.id === 'gyosuan-raw') window.saveGyosuanRaw?.();
 }
 
 function initImageInsertionHandlers() {
     const isInsertionTarget = (target) => {
         if (!target) return false;
         // 메인 에디터(#raw-view) 거나 인라인 에디팅 폼(TEXTAREA)일 경우 허용
-        return target.id === 'raw-view' || (target.tagName === 'TEXTAREA' && target.closest('#render-view'));
+        return target.id === 'raw-view' || target.id === 'gyosuan-raw' || (target.tagName === 'TEXTAREA' && target.closest('#render-view'));
     };
 
     // Paste Event

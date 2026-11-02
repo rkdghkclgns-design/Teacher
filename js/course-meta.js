@@ -281,11 +281,53 @@ function metaElementStatus() {
         </div>${note}`;
 }
 
+function metaElementSearchHtml() {
+    return `
+        <input id="meta-element-search" type="search" placeholder="코드·능력단위·요소 이름으로 직접 찾기" class="w-full px-2 py-1 mb-1 text-xs bg-black/30 border border-white/10 rounded text-white">
+        <div id="meta-element-results" class="max-h-36 overflow-y-auto mb-1"></div>`;
+}
+
+function metaSearchRowHtml(option) {
+    const key = elementKey(option);
+    const picked = _metaDraft.selected.has(key);
+    const label = option.unitLevel ? elementLabel(option) : `${option.unitName} · ${elementLabel(option)}`;
+    return `<button data-meta-action="pick-element" data-key="${escapeHtml(key)}" ${picked ? 'disabled' : ''} class="block w-full text-left px-2 py-1 text-[0.7rem] text-textLight rounded hover:bg-white/10 disabled:opacity-50">${picked ? '✓' : '+'} ${escapeHtml(label)}</button>`;
+}
+
+function renderMetaSearch() {
+    const box = document.getElementById('meta-element-results');
+    if (!box) return;
+    const { found = [], searched = false } = _metaDraft;
+    box.innerHTML = found.length || !searched ? found.map(metaSearchRowHtml).join('') : '<p class="px-2 py-1 text-[0.65rem] text-textMuted">찾는 항목이 없습니다.</p>';
+}
+
+function searchMetaElements(query) {
+    try {
+        _metaDraft = { ..._metaDraft, found: searchElementOptions(query), searched: !!query.trim() };
+        renderMetaSearch();
+    } catch (err) {
+        console.error('[차시 정보] 요소 검색 실패:', err);
+        setMetaStatus(`검색 실패: ${err.message}`);
+    }
+}
+
+// 고른 항목은 목록에 더해 체크한다. 저장은 다른 요소 선택과 같이 일어난다
+function pickSearchedElement(key) {
+    const option = (_metaDraft.found || []).find(item => elementKey(item) === key);
+    if (!option) return;
+    const known = _metaDraft.options.some(item => elementKey(item) === key);
+    _metaDraft = { ..._metaDraft, touched: true, options: known ? _metaDraft.options : [..._metaDraft.options, option] };
+    _metaDraft.selected.add(key);
+    refreshMetaElements();
+    renderMetaSearch();
+}
+
 function metaRegisterForm(subject) {
     const units = subject?.ncs?.units || [];
     const recommend = '<button data-meta-action="recommend" class="px-2 py-1 text-xs font-bold text-white bg-accent rounded hover:bg-accentHover">AI 추천</button>';
-    if (!units.length) return `<div class="flex items-center gap-2"><p class="flex-1 text-[0.65rem] text-textMuted">교과 NCS 관리에서 능력단위를 배정하면 요소를 등록할 수 있습니다.</p>${recommend}</div>`;
+    if (!units.length) return `${metaElementSearchHtml()}<div class="flex items-center gap-2"><p class="flex-1 text-[0.65rem] text-textMuted">교과 NCS 관리에서 능력단위를 배정하면 요소를 등록할 수 있습니다.</p>${recommend}</div>`;
     return `
+        ${metaElementSearchHtml()}
         <div class="flex gap-2">
             <select id="meta-element-unit" class="flex-1 px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white">${units.map(unit => `<option value="${escapeHtml(unit.code)}">${escapeHtml(unit.name)}</option>`).join('')}</select>
             <button data-meta-action="register" class="px-2 py-1 text-xs font-bold text-textLight bg-white/10 rounded hover:bg-white/20">요소 등록</button>
@@ -432,6 +474,7 @@ function metaTitleBlocked(title, mod) {
 }
 
 function onMetaInput(event) {
+    if (event.target.id === 'meta-element-search') return searchMetaElements(event.target.value);
     if (event.target.id === 'meta-flow') document.getElementById('meta-flow-note').textContent = metaFlowNote(event.target.value, _metaDraft.mod);
     if (event.target.id !== 'meta-title') return;
     const title = event.target.value.trim();
@@ -447,7 +490,9 @@ function registerElements() {
     const registry = globalState.ncsElements || {};
     const merged = [...(registry[unitCode] || []), ...added].filter((element, index, all) => all.findIndex(other => (other.code || other.name) === (element.code || element.name)) === index);
     globalState.ncsElements = { ...registry, [unitCode]: merged };
-    _metaDraft = { ..._metaDraft, options: subjectElementOptions(_metaDraft.subject) };
+    const fresh = subjectElementOptions(_metaDraft.subject);
+    const searched = _metaDraft.options.filter(item => !fresh.some(other => elementKey(other) === elementKey(item)));
+    _metaDraft = { ..._metaDraft, options: [...fresh, ...searched] };
     document.getElementById('meta-element-lines').value = '';
     refreshMetaElements();
 }
@@ -552,6 +597,7 @@ async function onMetaClick(event) {
     const action = event.target.dataset?.metaAction;
     if (action === 'close') closeLessonMeta();
     if (action === 'register') registerElements();
+    if (action === 'pick-element') pickSearchedElement(event.target.dataset.key);
     if (action === 'recommend') await runElementRecommend(event.target);
     if (action === 'add-note') await addMetaHistoryNote();
     if (action === 'objective-sets') {

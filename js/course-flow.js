@@ -75,8 +75,10 @@ async function attemptLesson(item, run) {
         onTab: (tab, index, total) => setLessonRunStatus(`${tab.label} (${index + 1}/${total})`),
         onStatus: setLessonRunStatus
     });
-    if (!tabs.ok || !run.withGyosuan) return tabs;
+    if (!tabs.ok) return tabs;
+    await runLessonExtras(item.lessonId, { isStopped: () => run.stopped, onStatus: setLessonRunStatus });
     if (run.stopped) return { ...tabs, ok: false, stopped: true };
+    if (!run.withGyosuan) return tabs;
     const needsGyosuan = lessonNeedsGyosuan(getEditingModule(item.lessonId));
     const gyosuan = needsGyosuan ? await runGyosuanGeneration(item.lessonId, { onStatus: setLessonRunStatus }) : { ok: true };
     const partial = !!(tabs.partial || gyosuan.partial);
@@ -110,11 +112,15 @@ function lessonRunQueueHtml(queue, uploaded) {
 
 function lessonRunIntroHtml(queue, uploaded, withGyosuan = false) {
     return `
-        <p class="text-xs text-textLight">내용이 비어 있는 탭만 차례로 생성합니다. 이미 있는 탭은 그대로 둡니다. 차시마다 몇 분 걸릴 수 있습니다.</p>
+        <p class="text-xs text-textLight">내용이 비어 있는 탭만 차례로 생성합니다. 이미 있는 탭은 그대로 둡니다. 차시마다 몇 분 걸릴 수 있습니다. 교안을 만든 차시에는 NCS 능력단위요소도 확정 전 상태로 배정합니다.</p>
         <div id="lesson-run-queue" class="space-y-2">${lessonRunQueueHtml(queue, uploaded)}</div>
         <label class="flex items-start gap-2 text-xs text-textLight">
             <input id="lesson-run-gyosuan" type="checkbox" ${withGyosuan ? 'checked' : ''}>
             <span>교수안, 슬라이드, 문제은행까지 만들기<span class="block text-[0.6rem] text-textMuted">빠진 항목만 만듭니다. 차시마다 호출이 늘고, 슬라이드 자동 이미지를 켜 두면 이미지 비용도 듭니다.</span></span>
+        </label>
+        <label class="flex items-start gap-2 text-xs text-textLight">
+            <input id="lesson-run-art" type="checkbox" ${globalState.courseDesign?.autoArt ? 'checked' : ''}>
+            <span>교안에 SVG 삽화 넣기<span class="block text-[0.6rem] text-textMuted">기본 학습의 섹션에 그려 넣습니다. 차시마다 호출이 늘고, 차시의 전체 생성에도 같이 적용됩니다.</span></span>
         </label>
         ${lessonGenFieldsHtml('run', globalState.courseDesign?.genOptions)}
         <p class="text-[0.6rem] text-textMuted">생성 옵션은 과정 기본값으로 저장됩니다. 차시 정보에서 따로 정한 값이 있으면 그 값을 씁니다.</p>`;
@@ -205,7 +211,7 @@ function onLessonRunClick(event) {
 // 화면 갱신이 실패해도 닫기 버튼은 나오도록 정리는 finally에서 한다
 async function startLessonRun(scope) {
     const withGyosuan = !!document.getElementById('lesson-run-gyosuan')?.checked;
-    saveCourseDesignField({ genOptions: readLessonGenFields('run'), runGyosuan: withGyosuan });
+    saveCourseDesignField({ genOptions: readLessonGenFields('run'), runGyosuan: withGyosuan, autoArt: !!document.getElementById('lesson-run-art')?.checked });
     const run = { stopped: false, withGyosuan };
     _lessonRun = run;
     setLessonRunButtons(RUN_BUTTONS.stop);
@@ -307,6 +313,24 @@ function onReplanClick(event, subject) {
     if (action === 'start') runSubjectReplan(event.target, subject);
 }
 
+// 차시는 이미 바뀌었으므로 실패해도 되돌리지 않는다. 확정한 교과는 autoAssignNcs가 건드리지 않는다
+// 고를 만한 단위를 못 찾으면 이전 배정을 지우지 않고 남긴다
+async function reassignReplannedNcs(subject) {
+    if (subject.ncs?.confirmed) return;
+    const units = subject.ncs?.units || [];
+    window.showToast?.('NCS 능력단위를 새 블록에 맞춰 다시 배정하고 있습니다.', 'info');
+    try {
+        const ncs = await autoAssignNcs(subject);
+        if (ncs && !ncs.units?.length) subject.ncs = { ...ncs, units };
+        await saveState();
+        if (subject.id === currentSubjectId) renderSidebar();
+        renderOverviewLNB();
+    } catch (err) {
+        console.error('[블록 다시 설계] NCS 재배정 실패:', err);
+        window.showToast?.('NCS 다시 배정에 실패했습니다. NCS 관리에서 다시 추천해주세요.', 'warning');
+    }
+}
+
 async function runSubjectReplan(button, subject) {
     const hours = Math.max(1, Math.round(Number(document.getElementById('replan-hours').value)) || 1);
     const status = document.getElementById('replan-status');
@@ -321,6 +345,7 @@ async function runSubjectReplan(button, subject) {
         if (subject.id === currentSubjectId) openEditor(subject.id);
         renderOverviewLNB();
         window.showToast?.(`새 블록 ${planned.modules.length}개로 바꿨습니다.${moved ? ` 이전 차시 ${moved}개는 휴지통에 있습니다.` : ''}`, 'success');
+        await reassignReplannedNcs(subject);
     } catch (err) {
         console.error('[블록 다시 설계] 실패:', err);
         if (run !== _replanRun) return;

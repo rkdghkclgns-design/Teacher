@@ -6,7 +6,7 @@ const path = require('path');
 const assert = require('assert');
 const root = path.join(__dirname, '..', 'js') + path.sep;
 const FILES = [
-    'lesson-sanitize.js', 'filename-convention.js', 'kbuilder/ncs-catalog.js', 'lesson-lint.js', 'lesson-opening.js', 'lesson-objectives.js', 'lesson-material.js', 'lesson-pipeline.js', 'course-ncs.js', 'course-design.js', 'course-design-edit.js',
+    'lesson-sanitize.js', 'filename-convention.js', 'kbuilder/ncs-catalog.js', 'lesson-lint.js', 'lesson-opening.js', 'lesson-objectives.js', 'lesson-material.js', 'lesson-pipeline.js', 'ai-routing.js', 'course-ncs.js', 'course-ncs-ref.js', 'course-design.js', 'course-design-edit.js',
     'course-sessions.js', 'course-meta.js', 'course-elements.js', 'course-art.js', 'course-illustrations.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js',
     'tabs.js', 'course-flow.js', 'course-overview.js', 'course-backfill.js'
 ];
@@ -69,6 +69,7 @@ const LESSON_MD = [
 (async () => {
     const ctx = makeContext();
     const call = name => vm.runInContext(name, ctx);
+    ctx.needsElementAutoAssign = () => false;
 
     await run('HTML 정리: 실행되는 주소를 막고 교안 주소는 남긴다', async () => {
         const safe = call('isSafeLessonUrl');
@@ -420,6 +421,89 @@ const LESSON_MD = [
         ctx.currentSubjectId = 's1';
         assert.ok(ctx.alerts.at(-1).includes('다른 교과로 옮기거나'));
         assert.strictEqual(toasts.length, 0, '성공 알림을 띄우지 않는다');
+    });
+
+    await run('전체 생성: 교안 뒤에 삽화와 NCS 요소를 채우고 실패해도 잇는다', async () => {
+        const lesson = { id: 1, title: '재미', tabContents: Object.fromEntries(TAB_IDS.map(id => [id, LESSON_MD])) };
+        ctx.globalState.subjects = [{ id: 's1', title: '기획', lessons: [lesson] }];
+        ctx.courseData = ctx.globalState.subjects[0].lessons;
+        ctx.globalState.courseDesign = { autoArt: true };
+        ctx.alerts.length = 0;
+        const order = [];
+        const original = { art: ctx.fillLessonArt, assign: ctx.assignLessonElements, gyosuan: ctx.runGyosuanGeneration, questions: ctx.generateQuestions };
+        ctx.needsElementAutoAssign = () => !order.includes('ncs');
+        ctx.fillLessonArt = async mod => { order.push('art'); mod.artAutoDone = true; };
+        ctx.assignLessonElements = async () => { order.push('ncs'); throw new Error('호출 한도'); };
+        ctx.runGyosuanGeneration = async () => { order.push('gyosuan'); lesson.gyosuan = { docMd: '#' }; return { ok: true }; };
+        ctx.generateQuestions = async () => { order.push('qbank'); return []; };
+        await call('runLessonPipeline')(1);
+        assert.deepStrictEqual(order.slice(0, 3), ['art', 'ncs', 'gyosuan'], 'NCS 요소가 교수안 프롬프트에 들어가도록 먼저 만든다');
+        assert.strictEqual(order[3], 'qbank');
+        assert.ok(ctx.alerts.at(-1).includes('NCS 요소 배정: 호출 한도'));
+        order.length = 0;
+        ctx.needsElementAutoAssign = () => !order.includes('ncs');
+        lesson.gyosuan = null;
+        lesson.artAutoDone = false;
+        ctx.globalState.courseDesign = {};
+        const toasts = [];
+        ctx.showToast = text => toasts.push(text);
+        await call('runLessonExtras')(1, { isStopped: () => false, onStatus() {} });
+        assert.deepStrictEqual(order, ['ncs'], '삽화는 켠 경우에만 그린다');
+        assert.ok(toasts[0].includes('NCS 요소 배정 실패: 호출 한도'), '일괄 생성은 실패를 안내만 하고 잇는다');
+        order.length = 0;
+        ctx.needsElementAutoAssign = () => true;
+        ctx.assignLessonElements = async () => { order.push('ncs'); };
+        ctx.fillMissingTabs = async () => ({ ok: true });
+        const queue = { subject: ctx.globalState.subjects[0], lessonId: 1, title: '재미' };
+        const stopping = { stopped: true, withGyosuan: false };
+        const stopped = await call('attemptLesson')(queue, stopping);
+        assert.strictEqual(stopped.stopped, true, '보강 중 중지하면 완료로 세지 않는다');
+        Object.assign(ctx, { fillLessonArt: original.art, assignLessonElements: original.assign, runGyosuanGeneration: original.gyosuan, generateQuestions: original.questions, needsElementAutoAssign: () => false });
+    });
+
+    await run('NCS 요소 배정: 호출이 실패하면 다음에 다시 시도한다', async () => {
+        const lesson = { id: 1, title: '재미' };
+        const original = ctx.recommendLessonElements;
+        ctx.recommendLessonElements = async () => { throw new Error('호출 한도'); };
+        await assert.rejects(call('assignLessonElements')({ id: 's1' }, lesson));
+        assert.strictEqual(lesson.ncsAutoTried, false);
+        ctx.recommendLessonElements = original;
+    });
+
+    await run('차시 정보: NCS 요소를 직접 찾는다', async () => {
+        const [unit, other] = plain(call('ncsSearch')('게임 기획', 2));
+        ctx.globalState.ncsElements = { [unit.code]: [{ code: 'E1', name: '재미 요소 분석하기' }] };
+        const search = query => plain(call('searchElementOptions')(query));
+        assert.deepStrictEqual(search('   '), []);
+        const byName = search('재미 요소').find(option => option.code === 'E1');
+        assert.strictEqual(byName.unitCode, unit.code);
+        assert.ok(!byName.unitLevel);
+        assert.strictEqual(search(other.code)[0].code, other.code, '코드를 넣으면 그 단위가 먼저');
+        assert.strictEqual(search(other.code)[0].unitLevel, true, '요소가 없으면 능력단위 수준');
+        delete ctx.globalState.ncsElements;
+    });
+
+    await run('역할별 AI 분배: 켠 경우에만 나누고 교차 검수는 다른 공급자가 맡는다', async () => {
+        const model = call('roleModel');
+        const cross = call('crossCheckModel');
+        const update = call('updateRoleRouting');
+        ctx.claudeApiKey = 'test-placeholder';
+        assert.strictEqual(model('write'), 'gemini-4-argon', '끄면 고른 모델');
+        update(true);
+        assert.strictEqual(model('write'), 'claude-opus-5-5');
+        assert.strictEqual(model(undefined), 'claude-opus-5-5', '역할을 적지 않으면 본문 작성');
+        assert.strictEqual(model('qgen'), 'gemini-4-argon');
+        assert.strictEqual(cross('qgen'), 'claude-opus-5-5', '문항은 Gemini가 쓰고 Claude가 검수');
+        assert.strictEqual(cross('plan'), 'gemini-4-argon', '구조는 Claude가 쓰고 Gemini가 교차 판단');
+        assert.ok(call('roleRouteNote')().includes('claude-opus-5-5: 구조 설계·본문 작성·교차 검수'));
+        ctx.TEXT_MODEL = 'claude-sonnet-5-5';
+        assert.strictEqual(model('write'), 'claude-sonnet-5-5', '같은 공급자 몫은 고른 모델');
+        assert.strictEqual(model('fast'), 'gemini-4-argon');
+        ctx.claudeApiKey = '';
+        ctx.TEXT_MODEL = 'gemini-4-argon';
+        assert.strictEqual(model('write'), 'gemini-4-argon', '키가 하나면 나누지 않는다');
+        assert.ok(call('roleRouteNote')().includes('모두 저장하면'));
+        update(false);
     });
 
     await run('전체 생성: 교수안이 실패해도 문제은행은 만든다', async () => {

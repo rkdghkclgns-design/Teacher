@@ -6,6 +6,7 @@ const ELEMENT_MAX_REFS = 60;
 const ELEMENT_MAX_RECS = 12;
 const ELEMENT_MAX_KEYWORD_RECS = 6;
 const ELEMENT_SEARCH_PER_SUBD = 6;
+const ELEMENT_PICK_LIMIT = 12;
 const ELEMENT_KEYWORD_FIT = 50;
 const ELEMENT_REF_CHARS = 60000;
 const ELEMENT_LESSON_CHARS = 3000;
@@ -128,7 +129,10 @@ async function assignLessonElements(subject, mod) {
     if (hasConfirmedElements(mod)) return false;
     const before = JSON.stringify(mod.ncsElements || []);
     mod.ncsAutoTried = true;
-    const { recs, note } = await recommendLessonElements(subject, mod);
+    const { recs, note } = await recommendLessonElements(subject, mod).catch(err => {
+        mod.ncsAutoTried = false; // 호출 실패는 시도로 치지 않아 다시 만들 때 재시도한다
+        throw err;
+    });
     const kept = JSON.stringify(mod.ncsElements || []) !== before;
     const picks = kept ? [] : pickLessonElements(recs);
     const elements = picks.map(rec => ({ ...recToElement(rec), auto: true }));
@@ -136,6 +140,26 @@ async function assignLessonElements(subject, mod) {
     if (elements.length) Object.assign(mod, withHistoryNote(mod, `NCS 자동 배정 ${elements.length}개 (확정 전)`));
     return elements.length > 0;
 }
+
+/* ---------- 직접 검색 ---------- */
+// 등록한 요소 이름까지 찾고, 코드를 그대로 넣으면 그 단위를 맨 앞에 둔다
+function searchElementUnits(query) {
+    const text = String(query || '').trim();
+    if (!text) return [];
+    const low = text.toLowerCase();
+    const enriched = enrichedNcsUnits().filter(unit => `${unit.code} ${unit.name} ${unit.elements.map(elementLabel).join(' ')}`.toLowerCase().includes(low));
+    const hits = ncsSearch(text, ELEMENT_PICK_LIMIT, { perSubd: ELEMENT_SEARCH_PER_SUBD }).map(unit => ncsRefInfo(unit.code, unit));
+    const units = [ncsRefInfo(text), ...enriched, ...hits].filter(Boolean);
+    return units.filter((unit, index) => units.findIndex(other => other.code === unit.code) === index).slice(0, ELEMENT_PICK_LIMIT);
+}
+
+// 요소를 등록하지 않은 단위는 능력단위 수준으로 고른다
+function unitPickOptions(unit) {
+    const owner = { unitCode: unit.code, unitName: unit.name };
+    return unit.elements.length ? unit.elements.map(element => ({ ...element, ...owner })) : [{ code: unit.code, name: unit.name, ...owner, unitLevel: true }];
+}
+
+const searchElementOptions = query => searchElementUnits(query).flatMap(unitPickOptions);
 
 /* ---------- 대화상자 목록 ---------- */
 function elementEntry(element, rec = null) {
