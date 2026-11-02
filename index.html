@@ -1269,6 +1269,7 @@
                     </div>
 
                     <div id="ai-edit-chips" class="flex flex-wrap gap-1"></div>
+                    <div id="ai-attach-list" onclick="onLessonAttachmentClick(event)" class="hidden flex flex-wrap gap-1"></div>
 
                     <div class="flex items-center gap-3 w-full">
 
@@ -1284,6 +1285,10 @@
 
                         </div>
 
+                        <label class="shrink-0 px-2 py-1.5 text-white/60 hover:text-white cursor-pointer" title="이 차시의 AI 수정과 교안 생성에 참고할 파일 붙이기 (md, txt, pdf, pptx, docx)">
+                            <i class="ph-bold ph-paperclip"></i>
+                            <input type="file" id="ai-attach-input" multiple accept=".md,.txt,.pdf,.ppt,.pptx,.docx" class="hidden" onchange="addLessonAttachments(event)">
+                        </label>
                         <input type="text" id="ai-command-input" placeholder="텍스트를 드래그 선택 후 요청사항을 입력하세요..."
                             class="flex-1 bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-accent transition-colors"
                             onkeydown="if(event.key==='Enter') executeAICommand()">
@@ -1674,6 +1679,7 @@
     <script src="./js/data.js?v=125"></script>
     <script src="./js/claude.js?v=125"></script>
     <script src="./js/ai-routing.js?v=125"></script>
+    <script src="./js/lesson-attachments.js?v=125"></script>
     <script src="./js/lesson-sanitize.js?v=125"></script>
     <script src="./js/state.js?v=125"></script>
     <script src="./js/api.js?v=125"></script>

@@ -415,21 +415,28 @@ async function loadMockData() {
 }
 
 
-async function archiveContent(mod) {
-    contentHistory.push({
-        id: Date.now(),
+// 여러 글을 한 번에 남긴다. 글마다 저장하면 이미지가 많은 과정에서 느려진다
+async function archiveContents(mods) {
+    const now = Date.now();
+    const entries = mods.map((mod, index) => ({
+        id: now + index,
         title: mod.title,
         content: mod.content,
         images: mod.images ? JSON.parse(JSON.stringify(mod.images)) : {}, // 히스토리에 이미지 레지스트리도 복사
         date: new Date().toLocaleString()
-    });
+    }));
+    contentHistory.push(...entries);
 
     await saveState();
 
     // 연결된 폴더의 히스토리 디렉토리에도 저장
     if (projectFolderHandle) {
-        syncHistoryItemToFolder(contentHistory[contentHistory.length - 1]).catch(e => console.warn('히스토리 폴더 동기화 경고:', e.message));
+        entries.forEach(entry => syncHistoryItemToFolder(entry).catch(e => console.warn('히스토리 폴더 동기화 실패:', e)));
     }
+}
+
+async function archiveContent(mod) {
+    await archiveContents([mod]);
 }
 
 // --- History UI ---

@@ -491,6 +491,7 @@ function onDesignChange(event) {
     if (!_designDraft || _designBusy) return;
     if (data.designGoal !== undefined) _designDraft = { ..._designDraft, goal: target.value.trim(), edited: true };
     if (data.designHours !== undefined) onDesignHoursChange(target);
+    if (data.designUnitTitle !== undefined) onDesignUnitTitleChange(target);
     if (data.designField || data.designStep) onDesignFieldChange(target);
 }
 

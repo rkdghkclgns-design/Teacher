@@ -557,6 +557,16 @@ function downloadMd(md, name) {
     URL.revokeObjectURL(a.href);
 }
 
+// 고른 값은 "doc:차시 번호" 또는 "deck:차시 번호"다
+window.downloadGyosuanSession = function (moduleId, picked) {
+    const mod = getEditingModule(moduleId);
+    const [kind, index] = String(picked).split(':');
+    const deck = kind === 'deck';
+    const md = mod && (deck ? gyosuanSessionDeckMd(mod, Number(index)) : gyosuanSessionPlanMd(mod, Number(index)));
+    if (!md) return window.showAlert('차시를 찾지 못했습니다. 교수안을 확인해주세요.');
+    downloadMd(resolveGyosuanImages(md, mod), `${lessonFileBase(mod)}_${Number(index) + 1}차시_${deck ? '편성안' : '교수안'}`);
+};
+
 window.downloadGyosuanSessionDecks = function (moduleId) {
     const mod = getEditingModule(moduleId);
     if (!mod?.gyosuan?.deckMd) return window.showAlert('먼저 슬라이드 편성안을 생성해주세요.');

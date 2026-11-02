@@ -312,6 +312,9 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
         assert.strictEqual(cell('=', { answer: true }), '=');
         assert.ok(cell('=HYPERLINK("http://x")', { answer: true }).includes("'=HYPERLINK"), '실행되는 수식은 정답 칸에서도 막는다');
         assert.strictEqual(cell('-1'), "'-1", '다른 칸은 그대로 막는다');
+        const cells = Array.from({ length: 23 }, () => '');
+        cells[9] = '-1';
+        assert.ok(!call('csvRow')(cells).includes("'-1"), '보기 칸의 값도 그대로');
         const short = [{ no: 1, type: '단답식', band: 'L2', objective: 1, title: '값', stem: '결과는?', choices: [], answer: '-1', accepted: '-1, +1', rubric: '', code: '', tests: '', explanation: '해설', review: '' }];
         const row = call('questionsCsv')(short, ['목표'], { subject: '교과', lesson: '차시', lessonId: 7, checklist: [] }).split('\r\n')[1];
         assert.ok(row.startsWith('7-1,') && row.includes(',-1,-1 / +1,'), '문항ID는 차시마다 다르고 정답은 그대로');

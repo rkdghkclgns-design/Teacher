@@ -2286,6 +2286,8 @@ window.viewModule = function (id) {
 
         renderEditor(mod);
 
+        renderLessonAttachments();
+
     }
 
 }
@@ -2472,12 +2474,18 @@ function renderEditor(mod) {
                         </button>
 
                         <button onclick="importGyosuanMdFiles('${mod.id}')" class="mt-3 text-sm font-bold text-gray-500 hover:text-gray-800 transition-colors">완성 교수안·편성안 MD로 만들기</button>
+                        <label class="mt-3 text-sm font-bold text-gray-500 hover:text-gray-800 transition-colors cursor-pointer" title="이 차시의 교안 생성에 참고할 파일 (md, txt, pdf, pptx, docx)">
+                            <i class="ph-bold ph-paperclip"></i> 참고 파일 붙이기
+                            <input type="file" multiple accept=".md,.txt,.pdf,.ppt,.pptx,.docx" class="hidden" onchange="addLessonAttachments(event)">
+                        </label>
+                        <div id="empty-attach-list" onclick="onLessonAttachmentClick(event)" class="hidden mt-2 flex flex-wrap justify-center gap-1"></div>
 
                     </div>
 
                 `;
 
         cmdBar.classList.add('hidden');
+        renderLessonAttachments();
 
         return;
 
@@ -3129,7 +3137,7 @@ window.executeAICommand = async function () {
             const { systemInstruction, userPrompt } = buildTaskContext('edit', { context, selectedText, command });
 
             const res = await callGemini(TEXT_MODEL, {
-                        contents: [{ parts: [{ text: userPrompt }] }],
+                        contents: [{ parts: [{ text: userPrompt + lessonAttachmentPrompt(currentEditingModuleId) }] }],
                         systemInstruction: { parts: [{ text: systemInstruction }] }
             });
 

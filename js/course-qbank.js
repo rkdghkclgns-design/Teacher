@@ -168,7 +168,7 @@ function appendQuestionsMd(md, questions) {
 }
 
 /* ---------- CSV ---------- */
-// 스프레드시트 수식으로 실행되지 않게 막는다. 정답 칸은 '-1'이나 '='도 맞는 답이고 따옴표가 붙으면 LMS 채점이 틀리므로
+// 스프레드시트 수식으로 실행되지 않게 막는다. 보기와 정답 칸은 '-1'이나 '='도 맞는 값이고 따옴표가 붙으면 LMS 채점이 틀리므로
 // 실행될 수 있는 수식(함수 호출, 외부 참조)만 막는다
 function csvCell(value, { answer = false } = {}) {
     const text = String(value ?? '');
@@ -179,7 +179,7 @@ function csvCell(value, { answer = false } = {}) {
 
 // 열은 LMS 업로드에 쓰는 develocket-slide(assets/course-model.js questionsToCsv @3a7303f)와 같다. 단원은 교과, 학습모듈은 차시다
 const QBANK_CSV_HEAD = ['문항ID', '단원', '학습모듈', '목표번호', '학습목표', '밴드', '유형', '복수정답', '문항', '보기1', '보기2', '보기3', '보기4', '보기5', '정답', '허용표기', '모범답안', '채점기준', '시작코드', '테스트케이스', '루브릭', '해설', '검수'];
-const QBANK_CSV_ANSWER_HEADS = ['정답', '허용표기'];
+const QBANK_CSV_ANSWER_HEADS = ['보기1', '보기2', '보기3', '보기4', '보기5', '정답', '허용표기'];
 const QBANK_CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩';
 
 function choiceNumbers(answer) {

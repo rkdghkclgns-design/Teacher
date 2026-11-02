@@ -8,7 +8,7 @@ const root = path.join(__dirname, '..', 'js') + path.sep;
 const FILES = [
     'lesson-sanitize.js', 'filename-convention.js', 'kbuilder/ncs-catalog.js', 'lesson-lint.js', 'lesson-opening.js', 'lesson-objectives.js', 'lesson-material.js', 'lesson-pipeline.js', 'ai-routing.js', 'course-ncs.js', 'course-ncs-ref.js', 'course-design.js', 'course-design-edit.js',
     'course-sessions.js', 'course-meta.js', 'course-elements.js', 'course-art.js', 'course-illustrations.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js',
-    'tabs.js', 'course-flow.js', 'course-overview.js', 'course-backfill.js'
+    'lesson-attachments.js', 'tabs.js', 'course-flow.js', 'course-overview.js', 'course-backfill.js'
 ];
 const TAB_IDS = ['basicLearn', 'basicPrac', 'advLearn', 'advPrac', 'assessment'];
 
@@ -481,6 +481,80 @@ const LESSON_MD = [
         assert.strictEqual(search(other.code)[0].code, other.code, '코드를 넣으면 그 단위가 먼저');
         assert.strictEqual(search(other.code)[0].unitLevel, true, '요소가 없으면 능력단위 수준');
         delete ctx.globalState.ncsElements;
+    });
+
+    await run('일괄 생성 덮어쓰기: 이전 내용을 남기고 비운 뒤 재시도에서는 다시 지우지 않는다', async () => {
+        const lesson = { id: 1, title: '재미', content: LESSON_MD, tabContents: Object.fromEntries(TAB_IDS.map(id => [id, LESSON_MD])), images: { a: 'data:a', b: 'data:b' }, gyosuan: { docMd: '# 교수안\n\n![도표](local:g)', deckMd: '# 편성안', images: { g: 'data:g' } }, questions: [] };
+        const subject = { id: 's1', title: '기획', lessons: [lesson] };
+        ctx.globalState.subjects = [subject];
+        ctx.courseData = subject.lessons;
+        assert.strictEqual(plain(call('runnableLessons')([subject])).length, 0, '모두 만들었으면 평소에는 대기열이 없다');
+        assert.strictEqual(call('runnableLessons')([subject], true, true).length, 1, '덮어쓰기면 대기열에 넣는다');
+        const archived = [];
+        const items = [];
+        const original = { archive: ctx.archiveContents, fill: ctx.fillMissingTabs, locked: ctx.lockedSectionBlocks };
+        ctx.archiveContents = async list => { items.push(...list); archived.push(...list.map(item => item.title)); };
+        ctx.lockedSectionBlocks = (mod, tabId) => (tabId === 'basicLearn' && mod.tabContents?.basicLearn ? ['고정 섹션'] : []);
+        let fills = 0;
+        let locked = null;
+        ctx.fillMissingTabs = async (id, opts) => { fills += 1; locked = opts.lockedByTab; if (fills === 1) lesson.tabContents.basicLearn = '새 내용'; return { ok: false, error: '한도' }; };
+        const run = { stopped: false, withGyosuan: true, overwrite: true, cleared: new Map() };
+        const item = { subject, lessonId: 1, title: '재미' };
+        await call('attemptLesson')(item, run);
+        assert.strictEqual(lesson.gyosuan, null);
+        assert.deepStrictEqual(archived.slice(-2), ['재미 · 교수안', '재미 · 슬라이드 편성안']);
+        assert.strictEqual(archived.length, TAB_IDS.length + 2, '탭마다 따로 남긴다');
+        assert.deepStrictEqual(plain(items.at(-2).images), { g: 'data:g' }, '교수안 이미지까지 남겨 복원한 글의 그림이 살아 있다');
+        assert.deepStrictEqual(plain(items[0].images), {}, '그 글이 쓰지 않는 이미지는 담지 않는다');
+        assert.deepStrictEqual(plain(locked.basicLearn), ['고정 섹션'], '고정 섹션은 비우기 전에 챙긴다');
+        await call('attemptLesson')(item, run);
+        assert.strictEqual(lesson.tabContents.basicLearn, '새 내용', '재시도는 먼저 만든 탭을 지우지 않는다');
+        assert.strictEqual(archived.length, TAB_IDS.length + 2);
+        assert.deepStrictEqual(plain(locked.basicLearn), ['고정 섹션'], '재시도에도 고정 섹션을 넘긴다');
+        const legacy = { id: 2, title: '옛 차시', content: '옛 본문입니다.', tabContents: null };
+        subject.lessons.push(legacy);
+        archived.length = 0;
+        await call('attemptLesson')({ subject, lessonId: 2, title: '옛 차시' }, { ...run, withGyosuan: false });
+        assert.deepStrictEqual(archived, ['옛 차시 · basicLearn'], '옛 단일 본문도 지우기 전에 남긴다');
+        assert.strictEqual(items.at(-1).content, '옛 본문입니다.');
+        Object.assign(ctx, { archiveContents: original.archive, fillMissingTabs: original.fill, lockedSectionBlocks: original.locked });
+    });
+
+    await run('과정 설계: 단원명과 블록을 초안에서 고친다', async () => {
+        const draft = { units: [{ title: '단원', hours: 2, modules: [{ title: '블록', minutes: 120, objectives: [], flow: [], isDefault: true }] }] };
+        const named = call('setDesignUnitTitle')(draft, 0, ' 새 단원 ');
+        assert.strictEqual(named.units[0].title, '새 단원');
+        assert.strictEqual(call('setDesignUnitTitle')(draft, 0, '  ').units[0].title, '단원', '빈 제목은 되돌린다');
+        assert.strictEqual(draft.units[0].title, '단원', '초안을 바꾸지 않고 새로 돌려준다');
+        const added = call('designEditAction')(draft, 'add-block', { unit: '0' });
+        assert.strictEqual(added.units[0].modules.length, 2);
+        assert.strictEqual(call('designFlowMatches')(added.units[0].modules[1]), true);
+        assert.strictEqual(added.edited, true);
+        const kept = call('designEditAction')(added, 'del-block', { unit: '0', module: '1' });
+        assert.strictEqual(kept.units[0].modules[0].isDefault, false, '지운 블록이 시간 맞추기로 되살아나지 않는다');
+        const removed = call('designEditAction')(added, 'del-block', { unit: '0', module: '0' });
+        assert.deepStrictEqual(plain(removed.units[0].modules).map(block => block.title), ['새 블록']);
+        assert.strictEqual(call('designEditAction')(removed, 'del-block', { unit: '0', module: '0' }).units[0].modules.length, 1, '마지막 블록은 지우지 않는다');
+        const html = call('designUnitHtml')({ ...draft.units[0], title: '"><script>' }, 0);
+        assert.ok(!html.includes('"><script>') && html.includes('data-design-action="add-block"') && html.includes('data-design-action="del-block"'));
+    });
+
+    await run('참고 파일: 그 차시의 프롬프트에만 붙는다', async () => {
+        const originalRead = ctx.extractTextFromFile;
+        ctx.extractTextFromFile = async file => `${file.name} 본문`;
+        ctx.currentEditingModuleId = 1;
+        const input = { files: [{ name: 'a.md' }, { name: 'b.md' }, { name: 'c.md' }, { name: 'd.md' }], value: 'x' };
+        const toasts = [];
+        ctx.showToast = text => toasts.push(text);
+        await call('addLessonAttachments')({ target: input });
+        const prompt = call('lessonAttachmentPrompt');
+        assert.ok(prompt(1).includes('### a.md\na.md 본문') && prompt(1).includes('c.md') && !prompt(1).includes('d.md'), '3개까지만 붙인다');
+        assert.ok(toasts[0].includes('3개'));
+        assert.strictEqual(prompt(2), '', '다른 차시에는 붙지 않는다');
+        assert.strictEqual(input.value, '');
+        call('onLessonAttachmentClick')({ target: { dataset: { attachRemove: '0' } } });
+        assert.ok(!prompt(1).includes('a.md') && prompt(1).includes('b.md'));
+        ctx.extractTextFromFile = originalRead;
     });
 
     await run('역할별 AI 분배: 켠 경우에만 나누고 교차 검수는 다른 공급자가 맡는다', async () => {

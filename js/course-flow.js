@@ -10,14 +10,15 @@ let _replanRun = 0;
 /* ---------- 일괄 생성 대기열 ---------- */
 // 업로드한 MD는 탭 생성이 읽지 않으므로 그 차시는 대기열에서 빼고 안내한다 (차시 카드의 '교안 생성'이 읽는다)
 // withGyosuan: 탭이 다 찼어도 교수안이나 문제은행이 빈 차시를 넣는다
-function pendingLessons(subjects, withGyosuan = false) {
+// overwrite: 내용이 있어도 모두 다시 만든다
+function pendingLessons(subjects, withGyosuan = false, overwrite = false) {
     return subjects.flatMap(subject => (subject.lessons || [])
-        .filter(lesson => lesson.id !== 'mainQuest' && (lessonMissingTabs(lesson).length || (withGyosuan && (lessonNeedsGyosuan(lesson) || questionBankGaps(lesson).length))))
+        .filter(lesson => lesson.id !== 'mainQuest' && (overwrite || lessonMissingTabs(lesson).length || (withGyosuan && (lessonNeedsGyosuan(lesson) || questionBankGaps(lesson).length))))
         .map(lesson => ({ subject, lessonId: lesson.id, title: lesson.title, uploaded: !!lesson.uploadedMdContent })));
 }
 
 const lessonNeedsGyosuan = lesson => !lesson.gyosuan?.docMd;
-const runnableLessons = (subjects, withGyosuan = false) => pendingLessons(subjects, withGyosuan).filter(item => !item.uploaded);
+const runnableLessons = (subjects, withGyosuan = false, overwrite = false) => pendingLessons(subjects, withGyosuan, overwrite).filter(item => !item.uploaded);
 
 async function attemptSafely(attempt, item, tryNumber) {
     try {
@@ -65,12 +66,41 @@ async function runLessonQueue(queue, attempt, { isStopped = () => false, onLesso
     return report;
 }
 
+const referencedImages = (text, images) => Object.fromEntries(Object.entries(images).filter(([id]) => text.includes(`local:${id}`)));
+
+// 작업 히스토리의 복원은 글 하나 단위이므로 탭과 교수안을 따로 남기고, 글마다 그 글이 쓰는 이미지만 담는다
+function rewriteArchiveItems(mod, withGyosuan) {
+    const images = { ...mod.images, ...(withGyosuan ? mod.gyosuan?.images : {}) };
+    const parts = [
+        ...LESSON_TABS.map(tab => [tab.label, mod.tabContents?.[tab.id]]),
+        ...(withGyosuan ? [['교수안', mod.gyosuan?.docMd], ['슬라이드 편성안', mod.gyosuan?.deckMd]] : [])
+    ];
+    return parts.filter(([, text]) => text).map(([label, content]) => ({ title: `${mod.title} · ${label}`, content, images: referencedImages(content, images) }));
+}
+
+// 덮어쓰기: 이전 내용은 작업 히스토리에 남기고 비운 뒤, 빈 탭을 채우는 같은 경로로 다시 만든다
+// 고정 섹션은 비우면 찾을 수 없으므로 먼저 챙겨 돌려준다. 옛 단일 본문은 탭으로 옮겨야 보관된다
+async function clearLessonForRewrite(mod, withGyosuan) {
+    migrateMonolithicContent(mod);
+    const lockedByTab = Object.fromEntries(LESSON_TABS.map(tab => [tab.id, lockedSectionBlocks(mod, tab.id)]));
+    await archiveContents(rewriteArchiveItems(mod, withGyosuan));
+    const redraw = globalState.courseDesign?.autoArt ? { illustrations: [], artAutoDone: false } : {};
+    Object.assign(mod, withHistoryNote(mod, '일괄 생성으로 내용을 다시 만듦'), { content: null, tabContents: {} }, redraw, withGyosuan ? { gyosuan: null, images: {} } : {});
+    await saveState();
+    return lockedByTab;
+}
+
 // 프롬프트의 참고 자료와 커리큘럼은 현재 교과를 읽으므로 차시마다 그 교과로 옮겨 간다
 async function attemptLesson(item, run) {
     if (currentSubjectId !== item.subject.id) openEditor(item.subject.id);
-    if (!getEditingModule(item.lessonId)) return { ok: false, error: '차시를 찾지 못했습니다. 삭제되었는지 확인해주세요.' };
+    const mod = getEditingModule(item.lessonId);
+    if (!mod) return { ok: false, error: '차시를 찾지 못했습니다. 삭제되었는지 확인해주세요.' };
+    if (run.overwrite && !run.cleared.has(item.lessonId)) { // 재시도는 먼저 만든 탭을 지우지 않는다
+        run.cleared.set(item.lessonId, await clearLessonForRewrite(mod, run.withGyosuan));
+    }
     window.viewModule(item.lessonId);
     const tabs = await fillMissingTabs(item.lessonId, {
+        lockedByTab: run.cleared?.get(item.lessonId),
         isStopped: () => run.stopped,
         onTab: (tab, index, total) => setLessonRunStatus(`${tab.label} (${index + 1}/${total})`),
         onStatus: setLessonRunStatus
@@ -117,6 +147,10 @@ function lessonRunIntroHtml(queue, uploaded, withGyosuan = false) {
         <label class="flex items-start gap-2 text-xs text-textLight">
             <input id="lesson-run-gyosuan" type="checkbox" ${withGyosuan ? 'checked' : ''}>
             <span>교수안, 슬라이드, 문제은행까지 만들기<span class="block text-[0.6rem] text-textMuted">빠진 항목만 만듭니다. 차시마다 호출이 늘고, 슬라이드 자동 이미지를 켜 두면 이미지 비용도 듭니다.</span></span>
+        </label>
+        <label class="flex items-start gap-2 text-xs text-textLight">
+            <input id="lesson-run-overwrite" type="checkbox">
+            <span>이미 만든 내용도 모두 다시 만들기<span class="block text-[0.6rem] text-textMuted">기존 글은 작업 히스토리에 남기고 고정 섹션은 유지합니다. 교수안까지 만들기를 켜면 교수안과 슬라이드도 다시 만들고, 슬라이드 화면을 직접 고친 내용은 되살릴 수 없습니다.</span></span>
         </label>
         <label class="flex items-start gap-2 text-xs text-textLight">
             <input id="lesson-run-art" type="checkbox" ${globalState.courseDesign?.autoArt ? 'checked' : ''}>
@@ -171,7 +205,7 @@ window.openLessonRun = function (scope) {
     if (_lessonRun || document.getElementById('lesson-run-dialog')) return;
     if (!textModelHasKey()) return window.showAlert('교안 생성에는 AI 키가 필요합니다. 설정에서 키를 입력해주세요.');
     if (generationBusy()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
-    if (!runnableLessons(runSubjects(scope), true).length) return window.showToast?.('생성할 차시가 없습니다. 모든 차시에 내용, 교수안, 문제은행이 있습니다.', 'success');
+    if (!runnableLessons(runSubjects(scope), true, true).length) return window.showToast?.('생성할 차시가 없습니다.', 'success');
     const withGyosuan = globalState.courseDesign?.runGyosuan !== false || !runnableLessons(runSubjects(scope)).length; // 탭이 다 찼으면 교수안이나 문제은행만 남은 것이다
     const pending = pendingLessons(runSubjects(scope), withGyosuan);
     const overlay = document.createElement('div');
@@ -186,14 +220,19 @@ window.openLessonRun = function (scope) {
     overlay.addEventListener('click', onLessonRunClick);
     overlay.addEventListener('change', event => onLessonRunChange(event, scope));
     document.body.appendChild(overlay);
+    refreshLessonRunQueue(scope); // 모두 만든 교과는 덮어쓰기를 골라야 시작할 수 있다
 };
 
-function onLessonRunChange(event, scope) {
-    if (event.target.id !== 'lesson-run-gyosuan') return;
-    const pending = pendingLessons(runSubjects(scope), event.target.checked);
+function refreshLessonRunQueue(scope) {
+    const checked = id => !!document.getElementById(id)?.checked;
+    const pending = pendingLessons(runSubjects(scope), checked('lesson-run-gyosuan'), checked('lesson-run-overwrite'));
     const queue = pending.filter(item => !item.uploaded);
     document.getElementById('lesson-run-queue').innerHTML = lessonRunQueueHtml(queue, pending.filter(item => item.uploaded));
     document.querySelector('[data-run-action="start"]').disabled = !queue.length;
+}
+
+function onLessonRunChange(event, scope) {
+    if (['lesson-run-gyosuan', 'lesson-run-overwrite'].includes(event.target.id)) refreshLessonRunQueue(scope);
 }
 
 function onLessonRunClick(event) {
@@ -208,15 +247,25 @@ function onLessonRunClick(event) {
     }
 }
 
+function rewriteConfirmText(scope, withGyosuan) {
+    const queue = runnableLessons(runSubjects(scope), withGyosuan, true);
+    const lessonOf = item => item.subject.lessons.find(lesson => lesson.id === item.lessonId);
+    const edited = withGyosuan ? queue.filter(item => lessonOf(item)?.gyosuan && gyosuanHasScreenEdits(lessonOf(item).gyosuan)).length : 0;
+    const warning = edited ? ` 슬라이드 화면을 직접 고친 차시 ${edited}개의 화면 편집은 되살릴 수 없습니다.` : '';
+    return `차시 ${queue.length}개의 내용을 지우고 다시 만듭니다. ${withGyosuan ? '탭과 교수안의' : '탭의'} 글은 작업 히스토리에서 되살릴 수 있습니다.${warning} 계속할까요?`;
+}
+
 // 화면 갱신이 실패해도 닫기 버튼은 나오도록 정리는 finally에서 한다
 async function startLessonRun(scope) {
     const withGyosuan = !!document.getElementById('lesson-run-gyosuan')?.checked;
+    const overwrite = !!document.getElementById('lesson-run-overwrite')?.checked;
+    if (overwrite && !confirm(rewriteConfirmText(scope, withGyosuan))) return;
     saveCourseDesignField({ genOptions: readLessonGenFields('run'), runGyosuan: withGyosuan, autoArt: !!document.getElementById('lesson-run-art')?.checked });
-    const run = { stopped: false, withGyosuan };
+    const run = { stopped: false, withGyosuan, overwrite, cleared: new Map() };
     _lessonRun = run;
     setLessonRunButtons(RUN_BUTTONS.stop);
     try {
-        const report = await runLessonQueue(runnableLessons(runSubjects(scope), withGyosuan), item => attemptLesson(item, run), {
+        const report = await runLessonQueue(runnableLessons(runSubjects(scope), withGyosuan, overwrite), item => attemptLesson(item, run), {
             isStopped: () => run.stopped,
             onLesson: (item, index, total) => setLessonRunBody(lessonRunProgressHtml(item, index, total)),
             onRetry: (item, error) => setLessonRunStatus(`${LESSON_RETRY_WAIT_SECONDS}초 뒤 다시 시도합니다... (${error})`)

@@ -254,7 +254,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         setLoadingText(`📝 ${tabMeta.label} 작성 중입니다... (1/${MAX_CHUNKS} 단락)`);
 
         const firstPayload = {
-            contents: [{ role: 'user', parts: [{ text: userPrompt + lessonDesignBrief(mod) + lockedSectionPrompt(lockedBlocks) + assessmentObjectivePrompt(mod, tabId) }] }],
+            contents: [{ role: 'user', parts: [{ text: userPrompt + lessonDesignBrief(mod) + lockedSectionPrompt(lockedBlocks) + assessmentObjectivePrompt(mod, tabId) + lessonAttachmentPrompt(mod.id) }] }],
             systemInstruction: { parts: [{ text: systemInstruction }] },
             generationConfig: { maxOutputTokens: 65536 }
         };
@@ -280,7 +280,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             await new Promise(r => setTimeout(r, 1500));
 
             const contPayload = {
-                contents: [{ role: 'user', parts: [{ text: cont.userPrompt + lessonGenBrief(mod) }] }],
+                contents: [{ role: 'user', parts: [{ text: cont.userPrompt + lessonGenBrief(mod) + lessonAttachmentPrompt(mod.id) }] }],
                 systemInstruction: { parts: [{ text: cont.systemInstruction }] },
                 generationConfig: { maxOutputTokens: 65536 }
             };
@@ -464,7 +464,8 @@ async function generateAllTabs(moduleId) {
 }
 
 // 일괄 생성용: 빈 탭만 순서대로 채운다. 있는 탭은 건드리지 않고 첫 실패에서 멈춰 결과를 돌려준다.
-async function fillMissingTabs(moduleId, { isStopped = () => false, onTab = () => {}, onStatus } = {}) {
+// lockedByTab: 덮어쓰기로 비우기 전에 챙겨 둔 고정 섹션
+async function fillMissingTabs(moduleId, { isStopped = () => false, onTab = () => {}, onStatus, lockedByTab = {} } = {}) {
     const mod = getEditingModule(moduleId);
     if (!mod) return { ok: false, error: '차시를 찾지 못했습니다.' };
     migrateMonolithicContent(mod); // 탭을 저장하면 mod.content를 다시 쓰므로 옛 단일 본문을 먼저 옮긴다
@@ -473,7 +474,7 @@ async function fillMissingTabs(moduleId, { isStopped = () => false, onTab = () =
     for (let i = 0; i < missing.length; i++) {
         if (isStopped()) return { ok: false, stopped: true, partial };
         onTab(LESSON_TABS.find(tab => tab.id === missing[i]), i, missing.length);
-        const result = await generateTabContent(moduleId, missing[i], { quiet: true, onStatus });
+        const result = await generateTabContent(moduleId, missing[i], { quiet: true, onStatus, lockedBlocks: lockedByTab[missing[i]] });
         if (!result.ok) return { ok: false, partial, error: result.error };
         partial = partial || !!result.partial;
         await new Promise(r => setTimeout(r, 2000));
@@ -508,7 +509,7 @@ async function reinforceCurrentTab(moduleId) {
         const userPrompt = `[현재 작업: ${tabMeta.label} 보강 재생성]\n모듈명: ${mod.title}\n\n[사용자 보강 명령]\n${reinforceCmd}\n\n[기존 교안 내용 — 이 내용을 기반으로 보강하세요]\n${existingContent}`;
 
         const payload = {
-            contents: [{ parts: [{ text: userPrompt + lockedSectionPrompt(lockedBlocks) }] }],
+            contents: [{ parts: [{ text: userPrompt + lockedSectionPrompt(lockedBlocks) + lessonAttachmentPrompt(mod.id) }] }],
             systemInstruction: { parts: [{ text: systemInstruction }] },
             generationConfig: { maxOutputTokens: 65536 }
         };

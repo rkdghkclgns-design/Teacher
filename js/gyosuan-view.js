@@ -5,6 +5,7 @@ const GYOSUAN_EDIT_LABELS = { docMd: 'MD 수정', deckMd: '편성안 수정' };
 const _gyosuanTabs = typeof BroadcastChannel === 'function' ? new BroadcastChannel('gyosuan-lesson') : null;
 let _gyosuanForeignChange = null; // 다른 탭이 고친 차시 id
 let _gyosuanSampleFor = null; // 샘플을 펼친 차시 id
+let _gyosuanDeckViewFor = null; // 편성안을 문서로 펼친 차시 id
 
 /* ---------- 다른 탭 변경 안내 ---------- */
 // 저장은 브라우저 저장소를 통째로 덮어쓴다. 다른 탭이 고친 차시를 이 탭의 낡은 내용으로 덮기 전에 알리고 묻는다
@@ -36,6 +37,24 @@ function gyosuanDocHtml(mod) {
     const parsed = window.KBuilder.parseDoc(resolveGyosuanImages(mod.gyosuan.docMd, mod));
     window.KBuilder.buildDoc(parsed, mount, { refs: mod.refImages || [] });
     return mount.innerHTML;
+}
+
+function gyosuanDeckHtml(mod) {
+    const md = stripFrontmatter(resolveGyosuanImages(mod.gyosuan.deckMd, mod));
+    return `<div class="gyosuan-deck-view">${sanitizeLessonHtml(marked.parse(md))}</div>`;
+}
+
+// 차시가 하나면 차시별 내려받기와 같으므로 보여 주지 않는다
+function gyosuanSessionPickHtml(mod) {
+    const sessions = gyosuanSessionList(mod);
+    if (sessions.length < 2) return '';
+    const options = (kind, label) => `<optgroup label="${label}">${sessions.map(session => `<option value="${kind}:${session.index}">${session.index + 1}차시 ${label}</option>`).join('')}</optgroup>`;
+    return `
+        <select aria-label="차시 하나 받기" onchange="downloadGyosuanSession('${mod.id}', this.value); this.value = ''" class="gyosuan-tool">
+            <option value="">차시 하나 받기</option>
+            ${options('doc', '교수안')}
+            ${mod.gyosuan.deckMd ? options('deck', '편성안') : ''}
+        </select>`;
 }
 
 function gyosuanOptionsHtml() {
@@ -103,11 +122,13 @@ function gyosuanToolbarHtml(mod) {
             <span class="gyosuan-note">${gyosuanNoteText(mod)}</span>
             ${editButton('docMd', 'ph-pencil-simple')}
             ${editButton('deckMd', 'ph-slideshow')}
+            ${mod.gyosuan.deckMd && !editing ? button('toggleGyosuanDeckView()', 'ph-eye', _gyosuanDeckViewFor === mod.id ? '교수안 보기' : '편성안 보기') : ''}
             ${editing === 'deckMd' || mod.gyosuan.deckDirty ? button(`rebuildGyosuanDeck('${mod.id}')`, 'ph-arrows-clockwise', '슬라이드 다시 만들기') : ''}
             ${hasDoc ? button(`downloadGyosuanMd('${mod.id}')`, 'ph-download-simple', 'MD') : ''}
             ${mod.gyosuan.deckMd ? button(`downloadGyosuanMd('${mod.id}', 'deckMd')`, 'ph-download-simple', '편성안 MD') : ''}
             ${hasDoc ? button(`downloadGyosuanSessions('${mod.id}')`, 'ph-clock', '차시별 MD') : ''}
             ${hasDoc ? button(`downloadGyosuanSessionDecks('${mod.id}')`, 'ph-presentation', '차시별 편성안') : ''}
+            ${hasDoc ? gyosuanSessionPickHtml(mod) : ''}
             ${hasDoc ? button(`printGyosuan('${mod.id}')`, 'ph-printer', 'PDF') : ''}
             ${button(`regenerateGyosuan('${mod.id}')`, 'ph-arrow-clockwise', '재생성')}
         </div>
@@ -133,6 +154,7 @@ function gyosuanSampleHtml() {
 
 function gyosuanBodyHtml(mod) {
     if (gyosuanEditField(mod)) return '<textarea id="gyosuan-raw" class="gyosuan-raw" spellcheck="false" onchange="saveGyosuanRaw()"></textarea>';
+    if (_gyosuanDeckViewFor === mod.id && mod.gyosuan.deckMd) return gyosuanDeckHtml(mod);
     return gyosuanDocHtml(mod) || '<p class="gyosuan-note">교수안이 없습니다. 완성 MD를 불러오거나 재생성으로 만들 수 있습니다.</p>';
 }
 
@@ -177,6 +199,13 @@ window.toggleGyosuanEdit = function (field = 'docMd') {
     const mod = getEditingModule();
     if (!mod) return;
     _gyosuanEditing = gyosuanEditField(mod) === field ? null : { id: mod.id, field };
+    renderGyosuanView(mod);
+};
+
+window.toggleGyosuanDeckView = function () {
+    const mod = getEditingModule();
+    if (!mod) return;
+    _gyosuanDeckViewFor = _gyosuanDeckViewFor === mod.id ? null : mod.id;
     renderGyosuanView(mod);
 };
 
