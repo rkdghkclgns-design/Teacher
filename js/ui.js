@@ -2400,7 +2400,8 @@ function buildTaskContext(taskScope, additionalContext = "") {
 
     // ── Phase 5 헬퍼: 전체 규칙 빌더 ──
     // Phase P0~P4의 모든 규칙을 하나의 문자열로 빌드
-    function buildFullRules(keyConcepts) {
+    // learning: 학습 탭(기본학습)을 쓰는 작업이면 체크리스트 규칙을 넣는다. 탭별 생성은 buildTabRules가 같은 규칙을 넣는다
+    function buildFullRules(keyConcepts, learning = false) {
         const r = CONTEXT_CORE.rules;
         let rules = [
             r.priority_rules,
@@ -2425,6 +2426,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
             r.formatting_workflow,
             r.time_allocation,
             r.content_design,
+            learning && r.learning_checklist,
             r.mermaid_rules,
             r.rubric_100,
             r.korean_period,
@@ -2493,7 +2495,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
 
         case 'module':
 
-            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildFullRules(additionalContext.keyConcepts)}`;
+            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildFullRules(additionalContext.keyConcepts, true)}`;
 
             // F2: 분할 생성 지시
             systemInstruction += '\n\n[분량 관리]\n' +
@@ -2546,7 +2548,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
 
         // ── F2: 분할 생성 이어쓰기 케이스 ──
         case 'module_continue':
-            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildFullRules(additionalContext.keyConcepts)}`;
+            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildFullRules(additionalContext.keyConcepts, true)}`;
             systemInstruction += '\n\n[이어쓰기 규칙]\n' +
                 '- 아래 "이전 작성 내용"의 마지막 부분부터 이어서 작성하세요.\n' +
                 '- 이전에 작성한 내용을 절대 반복하지 마세요. 중복 헤딩이나 중복 문단을 생성하면 안 됩니다.\n' +
@@ -2589,7 +2591,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
 
         // ─── 병합 재생성 ───
         case 'merge':
-            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildFullRules()}\n\n[병합 재생성 지시]\n- 아래 제공되는 여러 차시의 교안 내용을 하나의 통합된 교안으로 재구성하세요.\n- 중복되는 내용은 제거하고, 논리적 흐름으로 재배열하세요.\n- 모든 핵심 개념을 누락 없이 포함하세요.`;
+            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildFullRules(undefined, true)}\n\n[병합 재생성 지시]\n- 아래 제공되는 여러 차시의 교안 내용을 하나의 통합된 교안으로 재구성하세요.\n- 중복되는 내용은 제거하고, 논리적 흐름으로 재배열하세요.\n- 모든 핵심 개념을 누락 없이 포함하세요.`;
             userPrompt = `${thinkingPrefix}[현재 작업: 교안 병합 재생성]\n병합 대상 차시: ${additionalContext.titles.join(', ')}\n\n[원본 차시 내용들]\n${additionalContext.mergedContext}`;
             break;
 

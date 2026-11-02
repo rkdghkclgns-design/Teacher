@@ -570,6 +570,17 @@ const LESSON_MD = [
         assert.ok(/function toggleHistoryPanel[\s\S]{0,400}classList\.remove\('hidden'\)/.test(state), '패널이 hidden이면 여는 코드가 그것을 지워야 보인다');
     });
 
+    await run('생성 프롬프트: 기본학습 경로에 체크리스트 규칙, 학습이해도에 밴드별 유형을 준다', async () => {
+        const ui = fs.readFileSync(root + 'ui.js', 'utf8');
+        assert.ok(/learning && r\.learning_checklist/.test(ui));
+        assert.ok(/case 'module':[\s\S]{0,300}buildFullRules\([^)]*, true\)/.test(ui), '교안 생성(기본학습)은 체크리스트를 쓰게 한다');
+        assert.ok(/case 'module_continue':[\s\S]{0,300}buildFullRules\([^)]*, true\)/.test(ui), '이어쓰기에도 같은 규칙을 준다');
+        assert.ok(/case 'main_quest':[\s\S]{0,300}buildFullRules\(\)/.test(ui), '메인 퀘스트에는 체크리스트를 요구하지 않는다');
+        const data = fs.readFileSync(root + 'data.js', 'utf8');
+        assert.ok(data.includes('L1은 객관식이나 단답식, L2는 서술형이나 코드제출, L3는 파일제출'));
+        assert.ok(call('LESSON_QUESTION_LABEL').test('학습 목표 2 · 밴드 L2 · 서술형'), '프롬프트 예시 표기를 검수기가 읽는다');
+    });
+
     await run('역할별 AI 분배: 켠 경우에만 나누고 교차 검수는 다른 공급자가 맡는다', async () => {
         const model = call('roleModel');
         const cross = call('crossCheckModel');
