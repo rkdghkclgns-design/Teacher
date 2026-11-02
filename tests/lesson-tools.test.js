@@ -413,9 +413,9 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
 
     await run('차시별 편성안: 슬라이드 번호를 다시 매김', async () => {
         const md = call('gyosuanSessionDecksMd')({ title: '재미', hours: 1.5, gyosuan: { docMd: DOC, deckMd: DECK } });
-        assert.ok(md.includes('# 슬라이드 편성안 - 1차시. 재미 (1/2)') && md.includes('### 슬라이드 2 - 재미 분석 슬라이드'));
-        assert.ok(md.includes('이 차시에 대응하는 슬라이드가 없습니다.'));
-        assert.ok(md.indexOf('표지') < md.indexOf('재미 분석 슬라이드'), '표지는 첫 차시에 싣는다');
+        assert.ok(md.includes('# 슬라이드 편성안 - 1차시. 재미 (1/2)') && md.includes('### 슬라이드 3 - 재미 분석 슬라이드'));
+        assert.ok(md.includes('### 슬라이드 3 - 재미 분석 (이어서)'), '슬라이드가 없는 차시는 전개 활동마다 한 장 만든다');
+        assert.strictEqual((md.match(/^### 슬라이드 1 - 표지$/gm) || []).length, 2, '표지는 차시마다 새로 만든다');
         assert.strictEqual(call('gyosuanSessionDecksMd')({ title: '없음', gyosuan: { docMd: '' } }), '');
     });
 

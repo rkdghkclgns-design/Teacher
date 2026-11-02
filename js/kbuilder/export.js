@@ -88,19 +88,20 @@
         return fetchDataUrl(im.getAttribute("src")).then(function (d) { im.setAttribute("src", d); }).catch(function () {});
       })).then(function () {
         var themeCls = inner.classList.contains("theme-dark") ? " theme-dark" : "";
-        var doc = standaloneDoc(deck.parsed, clone.innerHTML, css, themeCls, fontCss);
+        var total = clone.querySelectorAll(".slide").length; // 저장본·불러온 덱은 parsed.slides 가 비어 있거나 편집으로 달라졌다
+        var doc = standaloneDoc(deck.parsed, clone.innerHTML, css, themeCls, fontCss, total);
         download((deck.parsed.meta["주제"] || "슬라이드") + ".html", doc, "text/html");
         btn.textContent = old;
       });
     }).catch(function (e) { console.error(e); alert("HTML 내보내기 실패: " + e); btn.textContent = old; });
   }
 
-  function standaloneDoc(parsed, innerHTML, css, themeCls, fontCss) {
+  function standaloneDoc(parsed, innerHTML, css, themeCls, fontCss, total) {
     var title = esc(parsed.meta["주제"] || "슬라이드");
     var fontPart = fontCss
       ? '<style>' + fontCss + '</style>'
       : '<link href="https://fonts.googleapis.com/css2?family=Jua&family=Gothic+A1:wght@400;500;700;800;900&display=swap" rel="stylesheet"/>';
-    // 교수안·편성안·소스 원고 MD를 내장 — '내보낸 HTML 불러오기'에서 한번에 복원·수정 가능
+    // 교수안·편성안 MD와 참고 이미지를 내장 — 'HTML 불러오기'에서 한번에 복원·수정 가능
     var src = window.KBuilder.getSource ? window.KBuilder.getSource() : null;
     var srcPart = "";
     if (src && (src.doc || src.deck || src.source)) {
@@ -116,7 +117,7 @@
       '<div class="deck-scaler"><div class="deck-stage-inner' + (themeCls || "") + '">' + innerHTML + '</div></div>' +
       '<button class="deck-nav prev" aria-label="이전">‹</button>' +
       '<button class="deck-nav next" aria-label="다음">›</button>' +
-      '<div class="deck-counter"><span class="dc-cur">1</span> / <span class="dc-tot">' + parsed.slides.length + '</span></div>' +
+      '<div class="deck-counter"><span class="dc-cur">1</span> / <span class="dc-tot">' + (total || parsed.slides.length) + '</span></div>' +
       '</div>' + srcPart + '<script>' + stageScript() + '<\/script></body></html>';
   }
 

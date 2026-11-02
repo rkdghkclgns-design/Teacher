@@ -12,7 +12,7 @@
   "use strict";
   var K = (window.KBuilder = window.KBuilder || {});
   var KEY = "kb-auto-img";
-  var OPTIONS = [["0", "끔"], ["2", "부마다 2장"], ["4", "부마다 4장"], ["8", "부마다 8장"]];
+  var OPTIONS = [["0", "끔"], ["2", "2장"], ["4", "4장"], ["8", "8장"]];
   var DEFAULT = 4;
   var MAX_SIDE = 1280;
   var REF_ROOM = 16; // 참고 이미지 칸(최대 24) 가운데 자동 이미지는 16장까지 — 나머지는 직접 올리는 자리
@@ -112,6 +112,14 @@
     tx("readwrite", function (os) { return os.delete(id); }).catch(function () {});
   }
   function has(id) { return !!store[id]; }
+  /* 교안 본문 이미지를 재사용 후보로 올린다 — 원본은 교안에 있으므로 보관소에 쓰지 않는다 */
+  function adopt(images) {
+    (images || []).forEach(function (image) {
+      if (!image || !image.id || !image.url) return;
+      store[image.id] = image.url;
+      alts[image.id] = image.title || "";
+    });
+  }
   /* 교안에 고정한 그림 가운데 keep(지금 과정이 쓰는 id 목록)에 없는 것을 지운다 — 블록·과정을 영구 삭제했을 때 */
   function releasePinned(keep) {
     var used = Object.create(null);
@@ -152,8 +160,8 @@
     return out.slice(0, 5);
   }
 
-  /* 내용 그림이 들어갈 슬라이드를 고르게 n장 — [{i, s}] (i = 편성안의 슬라이드 순번) */
-  function pick(slides, n) {
+  /* 내용 그림이 들어갈 수 있는 슬라이드 — [{i, s}] (i = 편성안의 슬라이드 순번) */
+  function candidates(slides) {
     var cands = [];
     (slides || []).forEach(function (s, i) {
       if (!s.visual || /^(cover|toc|closing)$/.test(s.kind)) return;
@@ -162,11 +170,16 @@
       if (/\[이미지:[^\]\s]+\]|!\[[^\]]*\]\(/.test(s.visual)) return; // 이미 이미지가 있음
       cands.push({ i: i, s: s });
     });
+    return cands;
+  }
+  /* 후보에서 고르게 n장 */
+  function spread(cands, n) {
     if (cands.length <= n) return cands;
     var out = [];
     for (var k = 0; k < n; k++) out.push(cands[Math.min(cands.length - 1, Math.floor((k + 0.5) * cands.length / n))]);
     return out;
   }
+  function pick(slides, n) { return spread(candidates(slides), n); }
 
   /* 편성안의 i번째 슬라이드(### 머리글 순번) '이미지/시각' 줄 끝에 [이미지:id] 를 단다 */
   function tagDeck(deckMd, tags) {
@@ -412,28 +425,36 @@
     return score >= MATCH ? best : null;
   }
 
+  /* 교안 이미지와 내용이 같은 슬라이드를 먼저 채우고, 남은 장수만 나머지 슬라이드에서 고르게 만든다
+     (원본은 고른 슬라이드만 비교해, 맞는 그림이 있어도 그 슬라이드가 뽑히지 않으면 새로 만들었다) */
+  function planPart(p, pi, n) {
+    var parsed = K.parseDeck(p.deckMd);
+    var subject = (parsed.meta && parsed.meta["주제"]) || p.title || "";
+    var used = {}, reused = [], open = [];
+    var job = function (c) {
+      var pts = pointsOf(c.s);
+      return { part: pi, slide: c.i, title: c.s.title, maps: c.s.maps, text: pts.join(" "), pts: pts, s: c.s };
+    };
+    candidates(parsed.slides).forEach(function (c) {
+      var base = job(c);
+      var reuse = bestPhoto(p.images, base.title, base.text, used);
+      if (!reuse) { open.push(c); return; }
+      used[reuse] = 1;
+      reused.push(Object.assign(base, { id: reuse, reuse: true }));
+    });
+    var fresh = spread(open, Math.max(0, n - reused.length)).map(function (c) {
+      var base = job(c), v = resolveVisual(c.s.visual).text;
+      var visual = GENERIC.test(v) ? "" : v;
+      base.prompt = K.recommendImagePrompt({ visual: visual, title: base.title, subject: subject, points: base.pts });
+      return base;
+    });
+    return reused.concat(fresh);
+  }
   /* 만들(또는 교안 이미지를 쓸) 목록 — [{part, slide, title, maps, text, prompt | id+reuse}] */
   function planJobs(list, n) {
-    var jobs = [];
-    list.forEach(function (p, pi) {
-      if (!p || !p.deckMd || !K.parseDeck) return;
-      var parsed = K.parseDeck(p.deckMd);
-      var subject = (parsed.meta && parsed.meta["주제"]) || p.title || "";
-      var used = {};
-      pick(parsed.slides, n).forEach(function (c) {
-        var pts = pointsOf(c.s), text = pts.join(" ");
-        var base = { part: pi, slide: c.i, title: c.s.title, maps: c.s.maps, text: text };
-        var reuse = bestPhoto(p.images, c.s.title, text, used);
-        if (reuse) { used[reuse] = 1; jobs.push(Object.assign(base, { id: reuse, reuse: true })); return; }
-        var v = resolveVisual(c.s.visual).text;
-        var visual = GENERIC.test(v) ? "" : v;
-        base.prompt = K.recommendImagePrompt
-          ? K.recommendImagePrompt({ visual: visual, title: c.s.title, subject: subject, points: pts })
-          : [visual, c.s.title, text].filter(Boolean).join(", ");
-        jobs.push(base);
-      });
-    });
-    return jobs;
+    return list.reduce(function (jobs, p, pi) {
+      return p && p.deckMd && K.parseDeck ? jobs.concat(planPart(p, pi, n)) : jobs;
+    }, []);
   }
   /* 새로 만들어야 하는 이미지 수 (이미 만든 프롬프트·교안 이미지로 채우는 슬라이드는 빼고) — 많으면 먼저 묻는 데 쓴다 */
   function countJobs(parts) {
@@ -491,12 +512,12 @@
 
   function summary(r) {
     if (!r || r.skipped === "off") return "";
-    if (r.skipped === "nokey") return "이미지 자동 생성은 Google API 키가 있어야 합니다 — 키를 저장하면 슬라이드 이미지와 참고 이미지가 함께 만들어집니다.";
+    if (r.skipped === "nokey") return "이미지 자동 생성은 AI 키가 있어야 합니다. 설정 패널에서 키를 넣으면 슬라이드 이미지와 참고 이미지가 함께 만들어집니다.";
     if (!r.total && !r.reused) return "";
     var tail = (r.cancelled ? " 남은 이미지는 건너뛰었습니다." : r.stopped ? " 연달아 실패해 남은 이미지는 건너뛰었습니다 — 키·할당량을 확인하세요." : "");
     var reuse = r.reused ? " 교안 본문 이미지 " + r.reused + "장을 내용이 같은 슬라이드에 넣었습니다." : "";
     if (!r.made) return (r.total ? "🖼 이미지를 만들지 못했습니다" + (r.failed ? " (실패 " + r.failed + "장)" : "") + "." : "🖼") + reuse + tail;
-    return "🖼 이미지 " + r.made + "장을 슬라이드 내용에 맞춰 만들어 슬라이드 칸과 교수안·교안 본문(대응 단계·소제목 아래), 참고 이미지에 넣었습니다" +
+    return "🖼 이미지 " + r.made + "장을 슬라이드 내용에 맞춰 만들어 슬라이드 칸과 교수안 본문, 참고 이미지에 넣었습니다" +
       (r.failed ? " (실패 " + r.failed + "장)" : "") + "." + reuse + tail;
   }
 
@@ -522,10 +543,32 @@
     });
   }
 
+  /* ---------- 이미지 생성 추천 프롬프트 (generate.js 347-365 그대로) ---------- */
+  function recommendImagePrompt(ctx) {
+    ctx = ctx || {};
+    var visual = String(ctx.visual || "").trim();
+    var title = String(ctx.title || "").trim();
+    var subject = String(ctx.subject || "").trim();
+    var points = (ctx.points || []).map(function (p) { return String(p || "").replace(/\s+/g, " ").trim().replace(/[.。]+$/, ""); }).filter(Boolean).slice(0, 5);
+    var core = visual || title || subject || "교육 내용을 상징하는 장면";
+    var parts = [core];
+    if (title && title !== core) parts.push("주제: " + title);
+    if (subject && subject !== core && subject !== title) parts.push("강의: " + subject);
+    if (points.length) parts.push("그림에 담을 핵심 내용: " + points.join(" / "));
+    parts.push("교육 자료의 설명 그림 — 위 내용을 아이콘·사물·도형·화살표로 직접 보여 주는 장면이나 도식으로, 구성 요소와 관계·순서가 한눈에 보이게. 주제와 상관없는 사람·사무실·추상 배경 그림은 피할 것");
+    // 슬라이드 톤과 어울리는 일관 아트 스타일 — 화면비는 API(imageConfig)로 정하고 글로 쓰지 않는다(글로 쓰면 검은 띠가 생김)
+    parts.push("밝고 친근한 플랫 벡터 일러스트레이션, 부드러운 파스텔 색감, 밝은 단색 배경이 그림 전체를 가득 채울 것(검은 배경·검은 여백·테두리·액자 없음), 고해상도 교육용 삽화");
+    // 이미지 모델은 한글을 깨뜨려 그리므로 글자를 아예 넣지 않게 한다 (영어로도 한 번 더 — 영어 지시를 더 잘 따름)
+    parts.push("그림 안에 글자·한글·영문·숫자·라벨·말풍선 속 글·간판·로고를 절대 넣지 말 것");
+    parts.push("STRICT: absolutely no text, letters, words, numbers, labels, captions or logos anywhere in the image (Korean text renders broken) — convey everything with icons, shapes and arrows only. Fill the whole canvas with a light background, no black bars or borders");
+    return parts.join(". ");
+  }
+
+  K.recommendImagePrompt = recommendImagePrompt;
   K.resolveVisual = resolveVisual;
   K.autoImages = { OPTIONS: OPTIONS, count: count, setCount: setCount, available: available, enabled: enabled, run: run, summary: summary, countJobs: countJobs,
     resolveVisual: resolveVisual, tagDeck: tagDeck, pick: pick, wireSelects: wireSelects, expandTags: expandTags,
-    placeDoc: placeDoc, placeText: placeText, sim: sim, genOne: genOne, put: put, remove: remove, has: has, ready: ready, GENERIC: GENERIC,
+    placeDoc: placeDoc, placeText: placeText, sim: sim, genOne: genOne, put: put, remove: remove, has: has, adopt: adopt, ready: ready, GENERIC: GENERIC,
     releasePinned: releasePinned, fenced: fenced, KEEP: KEEP, makeImage: makeImage, trimBars: trimBars,
     url: function (id) { return store[id] || ""; } };
   if (typeof document !== "undefined" && document.querySelectorAll) {

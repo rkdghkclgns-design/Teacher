@@ -1,6 +1,8 @@
 /* studio.js — boot script for slide-studio.html: the ported KBuilder deck pane, wired to the parent page.
-   Parent contract (window.parent): getSlideStudioPayload · saveSlideStudioHtml · generateImageAPI · callGemini · extractText · TEXT_MODEL.
-   Ported from develocket-slide@3a7303f: logo/theme/mount wiring from assets/main.js, recommendImagePrompt from assets/generate.js. */
+   Parent contract (window.parent): getSlideStudioPayload(moduleId, session) · saveSlideStudioHtml(moduleId, html, {rev, session}) ·
+   importGyosuanHtml · getSlideStudioSample · generateImageAPI · callGemini · extractText · TEXT_MODEL.
+   주소: ?module=id (전체 덱) · &session=n (한 차시) · ?sample=1 (저장하지 않는 샘플)
+   Ported from develocket-slide@3a7303f: logo/theme/mount wiring and html import from assets/main.js, pdf from assets/print.js. */
 (function () {
   "use strict";
   var K = (window.KBuilder = window.KBuilder || {});
@@ -16,7 +18,11 @@
   var SLOT_RUNTIME_ATTRS = ["data-filled", "data-editable", "data-over", "data-loading", "data-reframe", "data-panning"];
   var SLIDE_POINT_SEL = ".col-main li, .flow .step, .chip, .lead, .step-txt, .ct-t, .cmp-head, .keybar span:last-child";
 
-  var moduleId = new URLSearchParams(location.search).get("module");
+  var params = new URLSearchParams(location.search);
+  var moduleId = params.get("module");
+  var isSample = params.get("sample") === "1";
+  var session = params.has("session") ? Number(params.get("session")) : null;
+  var deckRev = 0;
   var ctrl = null;
   var lastSaved = null;
   var saveTimer = null;
@@ -59,7 +65,7 @@
     return Promise.resolve().then(function () {
       var model = textModel();
       if (!model) throw new Error(NO_TEXT_AI_MSG);
-      return parentFn("callGemini")(model, { contents: [{ role: "user", parts: parts }] });
+      return parentFn("callGemini")(model, { contents: [{ role: "user", parts: parts }], taskRole: opts && opts.role });
     }).then(function (data) { return parentFn("extractText")(data); });
   }
   /* generateImageAPI 는 실패하면 null 을 돌려주지만, 복사한 코드는 실패를 reject 로 받는다 */
@@ -78,28 +84,6 @@
   K.genImage = genImage;
   K.AI = { hasKey: imageReady }; // auto-images.available() 가 보는 관문
 
-  /* ---------- 이미지 생성 추천 프롬프트 (generate.js 347-365 그대로) ---------- */
-  function recommendImagePrompt(ctx) {
-    ctx = ctx || {};
-    var visual = String(ctx.visual || "").trim();
-    var title = String(ctx.title || "").trim();
-    var subject = String(ctx.subject || "").trim();
-    var points = (ctx.points || []).map(function (p) { return String(p || "").replace(/\s+/g, " ").trim().replace(/[.。]+$/, ""); }).filter(Boolean).slice(0, 5);
-    var core = visual || title || subject || "교육 내용을 상징하는 장면";
-    var parts = [core];
-    if (title && title !== core) parts.push("주제: " + title);
-    if (subject && subject !== core && subject !== title) parts.push("강의: " + subject);
-    if (points.length) parts.push("그림에 담을 핵심 내용: " + points.join(" / "));
-    parts.push("교육 자료의 설명 그림 — 위 내용을 아이콘·사물·도형·화살표로 직접 보여 주는 장면이나 도식으로, 구성 요소와 관계·순서가 한눈에 보이게. 주제와 상관없는 사람·사무실·추상 배경 그림은 피할 것");
-    // 슬라이드 톤과 어울리는 일관 아트 스타일 — 화면비는 API(imageConfig)로 정하고 글로 쓰지 않는다(글로 쓰면 검은 띠가 생김)
-    parts.push("밝고 친근한 플랫 벡터 일러스트레이션, 부드러운 파스텔 색감, 밝은 단색 배경이 그림 전체를 가득 채울 것(검은 배경·검은 여백·테두리·액자 없음), 고해상도 교육용 삽화");
-    // 이미지 모델은 한글을 깨뜨려 그리므로 글자를 아예 넣지 않게 한다 (영어로도 한 번 더 — 영어 지시를 더 잘 따름)
-    parts.push("그림 안에 글자·한글·영문·숫자·라벨·말풍선 속 글·간판·로고를 절대 넣지 말 것");
-    parts.push("STRICT: absolutely no text, letters, words, numbers, labels, captions or logos anywhere in the image (Korean text renders broken) — convey everything with icons, shapes and arrows only. Fill the whole canvas with a light background, no black bars or borders");
-    return parts.join(". ");
-  }
-  K.recommendImagePrompt = recommendImagePrompt;
-
   /* ---------- 안내 · 상태 ---------- */
   function showNotice(msg) {
     $("app").style.display = "none";
@@ -114,17 +98,13 @@
   }
 
   /* ---------- 저장 ---------- */
-  /* 스크립트·이미지가 실행되지 않는 문서에 파싱한다 (커스텀 요소도 깨어나지 않음) */
-  function inertRoot(html) {
-    return new DOMParser().parseFromString('<div id="kb-root">' + html + "</div>", "text/html").getElementById("kb-root");
-  }
   function liveSlotSrc(slot) {
     if (!slot) return "";
     return (slot._img && slot._img.src && slot._img.src.indexOf("data:") === 0) ? slot._img.src : (slot.getAttribute("src") || "");
   }
   /* 지금 덱을 저장용 HTML 로 — 끌어다 놓은 이미지는 innerHTML 에 없으므로 src 로 굽고, 편집·탐색 흔적은 지운다 */
   function serializeDeck() {
-    var root = inertRoot(ctrl.stageInner.innerHTML);
+    var root = K.inertRoot(ctrl.stageInner.innerHTML);
     qsa("image-slot", root).forEach(function (slot) {
       var src = liveSlotSrc(slot.id ? $(slot.id) : null);
       if (src) slot.setAttribute("src", src);
@@ -149,14 +129,19 @@
   function flushSave() {
     clearTimeout(saveTimer);
     saveTimer = null;
-    if (staleDeck) return; // 다른 창의 저장본을 낡은 덱으로 덮어쓰지 않는다
+    if (staleDeck || isSample) return; // 다른 창의 저장본을 낡은 덱으로 덮어쓰지 않는다
     var html = serializeDeck();
     if (html === lastSaved) return;
     var save = parentFn("saveSlideStudioHtml");
     if (!save) { saveFailed(new Error("saveSlideStudioHtml 없음")); return; }
     var result;
-    try { result = save(moduleId, html); }
+    try { result = save(moduleId, html, { rev: deckRev, session: session }); }
     catch (err) { saveFailed(err); return; }
+    if (result === false) { // 덱을 다시 만들었다 — 이 창은 이전 덱이다
+      staleDeck = true;
+      setStatus("슬라이드를 다시 만들어 이 화면은 저장하지 않습니다. 다시 열어 주세요", true);
+      return;
+    }
     lastSaved = html;
     setStatus("저장됨");
     if (saveChannel) saveChannel.postMessage("saved");
@@ -173,28 +158,10 @@
   }
   /* 같은 모듈을 인라인과 오버레이로 함께 열 수 있다 — 다른 창이 저장하면 이 덱은 낡았으므로, 다시 볼 때 새로 불러온다 */
   function watchOtherInstances() {
-    if (typeof BroadcastChannel !== "function") return;
-    saveChannel = new BroadcastChannel("slide-studio:" + moduleId);
+    if (typeof BroadcastChannel !== "function" || isSample) return;
+    saveChannel = new BroadcastChannel("slide-studio:" + moduleId + (session === null ? "" : ":" + session));
     saveChannel.onmessage = function () { staleDeck = true; };
     window.addEventListener("focus", function () { if (staleDeck && !fillRun) location.reload(); });
-  }
-
-  /* ---------- 저장본 복원 — 저장소를 거쳐 돌아온 HTML 이므로 main.js 의 불러오기와 같이 실행 요소를 지운다 ---------- */
-  function sanitizeDeckHtml(html) {
-    var root = inertRoot(html);
-    // 슬라이드는 svg·math 를 쓰지 않는다 (animate 등으로 href 를 우회하는 경로를 막는다)
-    qsa("script,iframe,object,embed,link,meta,base,form,svg,math", root).forEach(function (el) { el.remove(); });
-    qsa("*", root).forEach(function (el) {
-      var unsafe = Array.prototype.slice.call(el.attributes).filter(function (a) {
-        var name = a.name.toLowerCase();
-        if (name.indexOf("on") === 0 || name === "formaction") return true;
-        // URL 파서는 스킴 안의 탭·줄바꿈과 앞쪽 제어 문자를 무시하므로 지운 뒤 비교한다
-        var url = String(a.value || "").replace(/[\x00-\x20]+/g, "");
-        return (name === "href" || name === "src" || name === "xlink:href") && /^javascript:/i.test(url);
-      });
-      unsafe.forEach(function (a) { el.removeAttribute(a.name); });
-    });
-    return root.querySelector(".slide") ? root.innerHTML : "";
   }
 
   /* ---------- 테마 · 로고 (main.js) ---------- */
@@ -355,11 +322,80 @@
     chain.then(function () { finishFill(run, jobs.length); });
   }
 
+  /* ---------- PDF (print.js) — 슬라이드 한 장을 16:9 한 페이지로. 페이지 크기·대상은 slide-studio.html 에 고정했다 ---------- */
+  function printDeck() {
+    K.editor.setEdit(false);
+    window.print();
+  }
+
+  /* ---------- 내보낸 HTML 불러오기 — 저장은 부모가 맡고, 이 창은 저장본으로 다시 연다 ---------- */
+  function importHtmlFile(file) {
+    var restore = parentFn("importGyosuanHtml");
+    if (!file || !restore) return;
+    var reader = new FileReader();
+    reader.onerror = function () { alert("파일을 읽지 못했습니다."); };
+    reader.onload = function () {
+      Promise.resolve(restore(moduleId, String(reader.result), session)).then(function (result) {
+        if (result && result.error) alert(result.error);
+        if (!result || !result.ok) return;
+        staleDeck = true; // 지금 덱을 저장본 위에 다시 쓰지 않는다
+        location.reload();
+      }).catch(function (err) {
+        console.error("[slide-studio] import failed:", err);
+        alert("HTML을 불러오지 못했습니다.");
+      });
+    };
+    reader.readAsText(file, "utf-8");
+  }
+
+  /* ---------- 내보내기에 내장할 소스 · 슬롯 피커 목록 (지금 값을 부모에서 읽는다) ---------- */
+  function currentPayload() {
+    var get = parentFn("getSlideStudioPayload");
+    return get && moduleId ? get(moduleId, session) : null;
+  }
+  K.getRefImages = function () {
+    var payload = currentPayload();
+    return (payload && payload.refs) || [];
+  };
+  K.getSource = function () {
+    var payload = currentPayload();
+    if (!payload) return null;
+    return { doc: payload.docMd || "", deck: payload.deckMd || "", source: "", refs: payload.refs || [], session: payload.session };
+  };
+
+  /* ---------- 차시 선택 — 한 차시를 따로 연 덱. 저장도 차시별로 한다 ---------- */
+  function addSessionOption(sel, value, label) {
+    var option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    sel.appendChild(option);
+  }
+  function buildSessionPicker(sessions) {
+    var sel = $("session-sel");
+    if (!sessions || sessions.length < 2) return;
+    addSessionOption(sel, "", "전체 슬라이드");
+    sessions.forEach(function (item) { addSessionOption(sel, String(item.index), (item.index + 1) + "차시. " + item.title); });
+    sel.value = session === null ? "" : String(session);
+    sel.hidden = false;
+  }
+  function openSession(value) {
+    var query = new URLSearchParams(location.search);
+    if (value === "") query.delete("session"); else query.set("session", value);
+    location.search = query.toString(); // 대기 중인 저장은 pagehide 에서 내보낸다
+  }
+
   /* ---------- 시작 ---------- */
   function wireControls() {
     $("btn-edit").addEventListener("click", function () { K.editor.setEdit(!K.editor.isEditing()); });
     $("btn-html").addEventListener("click", function () { K.exportHTML(); });
     $("btn-pptx").addEventListener("click", function () { K.exportPPTX(); });
+    $("btn-pdf").addEventListener("click", printDeck);
+    $("btn-import-html").addEventListener("click", function () { $("file-import-html").click(); });
+    $("file-import-html").addEventListener("change", function () {
+      importHtmlFile(this.files && this.files[0]);
+      this.value = "";
+    });
+    $("session-sel").addEventListener("change", function () { openSession(this.value); });
     $("btn-dup-slide").addEventListener("click", function () { K.editor.dupSlide(); });
     $("btn-add-slide").addEventListener("click", function () { K.editor.addSlide(); });
     $("btn-del-slide").addEventListener("click", function () { K.editor.delSlide(); });
@@ -381,10 +417,14 @@
     });
   }
   function start(payload) {
+    session = payload.session === undefined ? null : payload.session;
+    deckRev = payload.rev || 0;
+    buildSessionPicker(payload.sessions);
+    if (isSample) { $("btn-import-html").hidden = true; $("btn-fill-images").hidden = true; }
     var parsed = K.parseDeck(String(payload.deckMd || ""));
     var meta = deckMeta(parsed.meta || {}, payload);
     var deck = Object.assign({}, parsed, { meta: meta });
-    var saved = payload.deckHtml ? sanitizeDeckHtml(String(payload.deckHtml)) : "";
+    var saved = payload.deckHtml ? K.sanitizeDeckHtml(String(payload.deckHtml)) : "";
     if (!saved && !deck.slides.length) { showNotice("표시할 슬라이드가 없습니다. 교안 도우미에서 슬라이드를 먼저 만들어 주세요."); return; }
 
     var mount = $("deck-mount");
@@ -409,11 +449,11 @@
     requestAnimationFrame(function () { ctrl.viewport.focus(); });
   }
   function boot() {
-    var getPayload = parentFn("getSlideStudioPayload");
+    var getPayload = parentFn(isSample ? "getSlideStudioSample" : "getSlideStudioPayload");
     if (!getPayload || !parentFn("saveSlideStudioHtml")) { showNotice("이 페이지는 교안 도우미 안에서 열어 주세요."); return; }
-    if (!moduleId) { showNotice("열 모듈을 찾지 못했습니다. 교안 도우미에서 다시 열어 주세요."); return; }
+    if (!moduleId && !isSample) { showNotice("열 모듈을 찾지 못했습니다. 교안 도우미에서 다시 열어 주세요."); return; }
     wireControls();
-    Promise.resolve().then(function () { return getPayload(moduleId); }).then(function (payload) {
+    Promise.resolve().then(function () { return getPayload(moduleId, session); }).then(function (payload) {
       if (!payload) { showNotice("이 모듈의 슬라이드를 찾지 못했습니다."); return; }
       start(payload);
     }).catch(function (err) {

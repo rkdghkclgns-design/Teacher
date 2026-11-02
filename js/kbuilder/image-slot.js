@@ -235,8 +235,8 @@
     '.ref-pick{display:none;margin-top:8px;border:1px solid #d7d2e6;background:#f4f2fb;color:#4b4470;' +
     '  font-weight:700;font-size:12px;border-radius:8px;padding:7px 12px;cursor:pointer}' +
     '.ref-pick:hover{background:#eae6f7}' +
-    ':host-context(.deck-viewport.editing) .ai-gen{display:inline-block}' +
-    ':host-context(.deck-viewport.editing) .aibtn{display:flex}' +
+    ':host-context(.deck-viewport.editing) .ai-gen,:host-context(.deck-viewport.editing) .ref-pick{display:inline-block}' +
+    ':host-context(.deck-viewport.editing) .aibtn,:host-context(.deck-viewport.editing) .refbtn{display:flex}' +
     ':host([data-loading]) .refbtn{display:none}' +
     '.busy{display:none;position:absolute;inset:0;z-index:8;flex-direction:column;gap:10px;' +
     '  align-items:center;justify-content:center;background:rgba(255,251,240,.82);color:#e8590c;' +
@@ -302,7 +302,7 @@
       this._subFn = () => this._render();
       // Shadow-DOM listeners live with the shadow DOM — bound once here so
       // disconnect/reconnect (e.g. React remount) doesn't stack handlers.
-      this._empty.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('[data-act="ai"]')) return; this._input.click(); });
+      this._empty.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('[data-act]')) return; this._input.click(); });
       root.addEventListener('click', (e) => {
         const act = e.target && e.target.getAttribute && e.target.getAttribute('data-act');
         if (act === 'ai') { e.stopPropagation(); this._aiGen(); return; }

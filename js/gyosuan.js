@@ -1,7 +1,8 @@
-// gyosuan.js - 교수안·슬라이드 편성안 생성과 강사뷰·슬라이드 스튜디오 연결
+// gyosuan.js - 교수안·슬라이드 편성안 생성과 슬라이드 스튜디오 연결 (강사뷰는 gyosuan-view.js)
 // 문서 양식과 조립은 develocket-slide(assets/generate.js @3a7303f)의 컨벤션을 따르고,
 // 생성 프롬프트는 이 앱의 교안 생성 방식(페르소나·어투·참고 자료·멀티턴 few-shot)을 쓴다.
-// 생성물은 차시에 mod.gyosuan = { docMd, deckMd, deckHtml, sourceKey, updatedAt } 으로 저장한다.
+// 생성물은 차시에 mod.gyosuan = { docMd, deckMd, deckHtml, sessionDecks, deckRev, deckDirty, images, slideStyle, sourceKey, updatedAt } 으로 저장한다.
+// images는 교수안·편성안의 ![설명](local:id)가 가리키는 래스터 data URL이고, sessionDecks는 차시별로 연 덱의 편집본이다.
 
 const GYOSUAN_MAX_SECTIONS = 14;
 const GYOSUAN_SECTION_CHARS = 8000;
@@ -17,38 +18,79 @@ const GYOSUAN_BLOCK_FORMAT =
     '**멘트 예시**: "(강사가 학생에게 건네듯 1~2문장)"\n' +
     '**학생 활동**: (학생이 할 일 한 문장)\n';
 
+// 슬라이드 형식: 값과 저장 키는 develocket-slide(main.js·generate.js)와 같다
+const GYOSUAN_SLIDE_STYLE_KEY = 'kb-slide-style';
+const GYOSUAN_SLIDE_STYLES = [['presentation', '프레젠테이션용'], ['detailed', '상세 교재형']];
+const GYOSUAN_SLIDE_SPECS = {
+    presentation: {
+        rule: '- 슬라이드 문구는 화면에 띄울 짧은 말만 쓰고, 설명 문장은 교수안에 둡니다.',
+        ask: '발표 슬라이드 1~2장',
+        lines: ['  - (화면에 띄울 짧은 문구)', "  - (핵심 키워드는 ' / '로 나열하거나 단계는 ' → '로 연결해도 됨)"]
+    },
+    detailed: {
+        rule: '- 슬라이드 문구는 수강생이 슬라이드만 읽어도 이해되도록 완결된 설명 문장으로 쓰고, 필요한 정의·예시를 함께 담습니다.',
+        ask: '교재형 슬라이드 2~4장(슬라이드마다 설명 문장 3~5개로 촘촘하게)',
+        lines: ['  - (개념을 설명하는 완결된 문장 1~2문장)', '  - (정의·예시·주의점 등 설명 문장을 3~5개 항목으로)']
+    }
+};
+
 let _gyosuanRunning = false;
-let _gyosuanEditingId = null;
+let _gyosuanEditing = null; // 강사뷰에서 MD를 고치는 중인 { id, field }
 let _gyosuanSaveTimer = null;
 
 // 형식을 안정시키기 위한 멀티턴 예시 (규칙 문장만으로는 모델이 형식을 자주 벗어난다)
-const GYOSUAN_FEWSHOT = [
-    {
-        role: 'user',
-        parts: [{ text: '[섹션 제목] 훈련과 코칭\n[원고]\n교육에는 훈련과 코칭 두 접근이 있습니다. 훈련은 교수자 중심으로 지식과 기술을 전달하고, 코칭은 학습자 중심으로 성찰을 유도합니다. 이 과정은 코칭에 가깝습니다.' }]
-    },
-    {
-        role: 'model',
-        parts: [{ text:
-            '@@GYOSUAN@@\n' +
-            '**강사 활동**: 두 접근을 비교한 표를 화면에 띄우고, 지금까지 받아 온 교육이 어느 쪽에 가까운지 묻는다.\n\n' +
-            '**설명 내용**:\n' +
-            '- 교육에는 두 가지 접근이 있다. **훈련(Training)**과 **코칭(Coaching)**이다.\n\n' +
-            '| 구분 | 훈련 | 코칭 |\n|---|---|---|\n| 중심 | 교수자 중심 | 학습자 중심 |\n| 목적 | 지식·기술 전달 | 성찰 유도 |\n\n' +
-            '- 이 과정은 코칭에 더 가까운 성격이다. 강사가 정답을 떠먹여 주기보다 학생이 스스로 답을 찾도록 돕는다.\n\n' +
-            '**멘트 예시**: "제가 정답을 다 알려 주는 수업이 아니에요. 여러분이 스스로 답을 찾도록 돕는 쪽이에요."\n\n' +
-            '**학생 활동**: 자신이 받아 온 교육이 어느 쪽에 가까웠는지 말한다.\n' +
-            '@@SLIDES@@\n' +
-            "### 슬라이드 - 이 수업은 '코칭'에 가깝습니다\n" +
-            '- 슬라이드 문구:\n' +
-            '  - 훈련: 교수자 중심 · 지식 전달 · 정답 제시\n' +
-            '  - 코칭: 학습자 중심 · 성찰 유도 · 정답 찾기\n' +
-            '  - (하단) 답은 여러분 안에. 저는 끌어내는 역할\n' +
-            '- 이미지/시각: 일방향 화살표(훈련) vs 양방향 화살표(코칭) 대비 도식\n' +
-            '- 핵심 메시지: 스스로 답을 찾는 수업이다.'
-        }]
+const GYOSUAN_FEWSHOT_INPUT = '[섹션 제목] 훈련과 코칭\n[원고]\n교육에는 훈련과 코칭 두 접근이 있습니다. 훈련은 교수자 중심으로 지식과 기술을 전달하고, 코칭은 학습자 중심으로 성찰을 유도합니다. 이 과정은 코칭에 가깝습니다.';
+const GYOSUAN_FEWSHOT_DOC =
+    '@@GYOSUAN@@\n' +
+    '**강사 활동**: 두 접근을 비교한 표를 화면에 띄우고, 지금까지 받아 온 교육이 어느 쪽에 가까운지 묻는다.\n\n' +
+    '**설명 내용**:\n' +
+    '- 교육에는 두 가지 접근이 있다. **훈련(Training)**과 **코칭(Coaching)**이다.\n\n' +
+    '| 구분 | 훈련 | 코칭 |\n|---|---|---|\n| 중심 | 교수자 중심 | 학습자 중심 |\n| 목적 | 지식·기술 전달 | 성찰 유도 |\n\n' +
+    '- 이 과정은 코칭에 더 가까운 성격이다. 강사가 정답을 떠먹여 주기보다 학생이 스스로 답을 찾도록 돕는다.\n\n' +
+    '**멘트 예시**: "제가 정답을 다 알려 주는 수업이 아니에요. 여러분이 스스로 답을 찾도록 돕는 쪽이에요."\n\n' +
+    '**학생 활동**: 자신이 받아 온 교육이 어느 쪽에 가까웠는지 말한다.\n';
+const GYOSUAN_FEWSHOT_SLIDES = {
+    presentation:
+        "### 슬라이드 - 이 수업은 '코칭'에 가깝습니다\n" +
+        '- 슬라이드 문구:\n' +
+        '  - 훈련: 교수자 중심 · 지식 전달 · 정답 제시\n' +
+        '  - 코칭: 학습자 중심 · 성찰 유도 · 정답 찾기\n' +
+        '  - (하단) 답은 여러분 안에. 저는 끌어내는 역할\n' +
+        '- 이미지/시각: 일방향 화살표(훈련) vs 양방향 화살표(코칭) 대비 도식\n' +
+        '- 핵심 메시지: 스스로 답을 찾는 수업이다.',
+    detailed:
+        '### 슬라이드 - 훈련과 코칭의 차이\n' +
+        '- 슬라이드 문구:\n' +
+        '  - 훈련은 교수자가 정한 지식과 기술을 순서대로 전달하는 교수자 중심 방식입니다.\n' +
+        '  - 코칭은 학습자가 스스로 생각하도록 질문으로 성찰을 끌어내는 학습자 중심 방식입니다.\n' +
+        '  - 예를 들어 절차를 그대로 따라 하게 하면 훈련이고, 왜 그렇게 하는지 스스로 답하게 하면 코칭입니다.\n' +
+        '  - 이 과정은 코칭에 가까우므로 강사의 답보다 자신의 답을 먼저 찾아야 합니다.\n' +
+        '- 이미지/시각: 일방향 화살표(훈련) vs 양방향 화살표(코칭) 대비 도식\n' +
+        '- 핵심 메시지: 스스로 답을 찾는 수업이다.'
+};
+
+function gyosuanFewshot(style) {
+    return [
+        { role: 'user', parts: [{ text: GYOSUAN_FEWSHOT_INPUT }] },
+        { role: 'model', parts: [{ text: `${GYOSUAN_FEWSHOT_DOC}@@SLIDES@@\n${GYOSUAN_FEWSHOT_SLIDES[style]}` }] }
+    ];
+}
+
+function gyosuanSlideStyle() {
+    try {
+        return localStorage.getItem(GYOSUAN_SLIDE_STYLE_KEY) === 'detailed' ? 'detailed' : 'presentation';
+    } catch (e) {
+        return 'presentation'; // 저장소를 못 쓰는 환경은 기본 형식으로 만든다
     }
-];
+}
+
+window.setGyosuanSlideStyle = function (style) {
+    try {
+        localStorage.setItem(GYOSUAN_SLIDE_STYLE_KEY, style === 'detailed' ? 'detailed' : 'presentation');
+    } catch (e) {
+        window.showToast?.('슬라이드 형식을 저장하지 못했습니다.', 'warning');
+    }
+};
 
 /* ---------- 원고 수집 ---------- */
 function collectLessonSource(mod) {
@@ -123,7 +165,7 @@ function hashSource(parts) {
 }
 
 /* ---------- AI 호출 ---------- */
-function gyosuanSystemInstruction() {
+function gyosuanSystemInstruction(style) {
     const tone = INSTRUCTOR_TONE_PRESETS.find(p => p.id === instructorTone);
     return [
         `${CONTEXT_CORE.personas.instructor} 직업훈련 교재 제작 전문가로서 강사가 그대로 들고 수업할 수 있는 교수안과 슬라이드 편성안을 씁니다.`,
@@ -133,7 +175,7 @@ function gyosuanSystemInstruction() {
         '- 강사 활동·설명 내용·학생 활동은 "~한다"로 끝내고, 멘트 예시만 학생에게 건네는 말로 씁니다.' + (tone ? ` 멘트 예시 어투: ${tone.label}.` : ''),
         '- 학습 목표는 "~할 수 있다"로 끝내고 "이해한다·안다·익힌다"는 쓰지 않습니다.',
         '- 모호한 표현("상황에 맞게", "경우에 따라")은 판단 기준으로 바꿉니다.',
-        '- 슬라이드 문구는 화면에 띄울 짧은 말만 쓰고, 설명 문장은 교수안에 둡니다.',
+        GYOSUAN_SLIDE_SPECS[style].rule,
         '- 원고에 없는 사실은 지어내지 않습니다.',
         '- 지정된 출력 형식만 출력하고 머리말·맺음말을 붙이지 않습니다.'
     ].join('\n') + getReferenceContext(GYOSUAN_REFERENCE_CHARS);
@@ -256,9 +298,10 @@ function parseOpenClose(text) {
 }
 
 /* ---------- 전개 섹션 ---------- */
-function buildSectionPrompt(section) {
+function buildSectionPrompt(section, style) {
+    const slides = GYOSUAN_SLIDE_SPECS[style];
     return [
-        '아래 [원고]는 강의의 한 부분입니다. 완전 초보 수강생 대상으로 (1) 강사용 교수안 블록과 (2) 발표 슬라이드 1~2장을 작성하세요.',
+        `아래 [원고]는 강의의 한 부분입니다. 완전 초보 수강생 대상으로 (1) 강사용 교수안 블록과 (2) ${slides.ask}을 작성하세요.`,
         '아래 형식만 출력합니다.',
         '',
         '@@GYOSUAN@@',
@@ -267,8 +310,7 @@ function buildSectionPrompt(section) {
         '@@SLIDES@@',
         '### 슬라이드 - (슬라이드 제목)',
         '- 슬라이드 문구:',
-        '  - (화면에 띄울 짧은 문구)',
-        "  - (핵심 키워드는 ' / '로 나열하거나 단계는 ' → '로 연결해도 됨)",
+        ...slides.lines,
         '- 이미지/시각: (어울리는 이미지 한 줄 제안)',
         '- 핵심 메시지: (이 슬라이드의 한 줄 메시지)',
         '',
@@ -373,7 +415,7 @@ function setGyosuanProgress(text) {
     if (el) el.textContent = text;
 }
 
-async function buildGyosuanFromLesson(mod, parts) {
+async function buildGyosuanFromLesson(mod, parts, style) {
     const subject = globalState.subjects.find(s => s.id === currentSubjectId);
     const hours = Number(mod.hours) || 0;
     const info = {
@@ -392,7 +434,7 @@ async function buildGyosuanFromLesson(mod, parts) {
     if (!sections.length) throw new Error('교안에서 섹션(## 제목)을 찾지 못했습니다.');
 
     // 생성 중 다른 교과로 이동해도 같은 참고 자료를 쓰도록 시작할 때 한 번만 만든다
-    const system = gyosuanSystemInstruction();
+    const system = gyosuanSystemInstruction(style);
     setGyosuanProgress('교수안 머리말을 작성하고 있습니다...');
     const meta = parseGyosuanMeta(await askGyosuanModel(buildMetaPrompt(info, sections), system));
     if (!meta.학습목표.length && !meta.개요.length) throw new Error('머리말 응답이 비어 있습니다. 다시 시도해주세요.');
@@ -401,7 +443,7 @@ async function buildGyosuanFromLesson(mod, parts) {
     let lastError = null;
     const results = await mapLimited(sections, GYOSUAN_CONCURRENCY, async section => {
         try {
-            const result = parseSectionResult(await askGyosuanModel(buildSectionPrompt(section), system, GYOSUAN_FEWSHOT), section);
+            const result = parseSectionResult(await askGyosuanModel(buildSectionPrompt(section, style), system, gyosuanFewshot(style)), section);
             if (!result.gyosuan) throw new Error('전개 응답이 비어 있습니다.');
             return result;
         } catch (err) {
@@ -423,6 +465,46 @@ async function buildGyosuanFromLesson(mod, parts) {
     };
 }
 
+// 덱이 바뀌면 화면 편집본은 더 쓰지 않는다. 번호를 올려 이전 덱을 연 스튜디오의 늦은 저장을 막는다
+function freshDeckState(gyosuan) {
+    return { deckHtml: null, sessionDecks: {}, deckDirty: false, deckRev: (gyosuan?.deckRev || 0) + 1 };
+}
+
+function usedGyosuanImages(gyosuan) {
+    const text = `${gyosuan.docMd || ''}\n${gyosuan.deckMd || ''}`;
+    return Object.fromEntries(Object.entries(gyosuan.images || {}).filter(([id]) => text.includes(`local:${id}`)));
+}
+
+// 교수안·편성안의 ![설명](local:id)를 data URL로 바꾼다. 찾지 못한 이미지는 줄에서 뺀다
+function resolveGyosuanImages(md, mod) {
+    const images = { ...(mod?.images || {}), ...(mod?.gyosuan?.images || {}) };
+    return String(md || '').replace(/!\[([^\]]*)\]\(local:([^)\s]+)\)/g, (match, alt, id) => (images[id] ? `![${alt}](${images[id]})` : ''));
+}
+
+async function saveGyosuan(mod) {
+    await saveState();
+    window.announceGyosuanChange?.(mod.id);
+}
+
+function nextGyosuan(mod, parts, draft, style, keepDoc) {
+    const base = mod.gyosuan;
+    const next = {
+        docMd: keepDoc ? base.docMd : draft.docMd,
+        deckMd: draft.deckMd,
+        ...freshDeckState(base),
+        images: { ...(keepDoc ? base.images : {}), ...draft.images },
+        slideStyle: style,
+        sourceKey: keepDoc ? base.sourceKey : hashSource(parts),
+        updatedAt: new Date().toISOString()
+    };
+    return { ...next, images: usedGyosuanImages(next) };
+}
+
+function reportGyosuanBuilt(built, draft) {
+    if (built.failedCount) window.showAlert(`전개 ${built.failedCount}개를 생성하지 못해 빈칸으로 두었습니다. 다시 생성하거나 직접 작성해 주세요.`);
+    else if (window.showToast) window.showToast(draft.note || '교수안과 슬라이드 편성안을 생성했습니다.', 'success');
+}
+
 // opts.keepDoc: 강사가 고친 교수안은 두고 슬라이드 편성안만 교체
 window.generateGyosuan = async function (moduleId, opts = {}) {
     const mod = getEditingModule(moduleId);
@@ -435,20 +517,16 @@ window.generateGyosuan = async function (moduleId, opts = {}) {
     _gyosuanRunning = true;
     if (loading) loading.style.display = 'flex';
     try {
-        const built = await buildGyosuanFromLesson(mod, parts);
-        const keepDoc = opts.keepDoc && mod.gyosuan?.docMd;
-        mod.gyosuan = {
-            docMd: keepDoc ? mod.gyosuan.docMd : built.docMd,
-            deckMd: built.deckMd,
-            deckHtml: null,
-            sourceKey: keepDoc ? mod.gyosuan.sourceKey : hashSource(parts),
-            updatedAt: new Date().toISOString()
-        };
-        _gyosuanEditingId = null;
-        await saveState();
+        const style = gyosuanSlideStyle();
+        const built = await buildGyosuanFromLesson(mod, parts, style);
+        const keepDoc = !!(opts.keepDoc && mod.gyosuan?.docMd);
+        const texts = { docMd: keepDoc ? '' : built.docMd, deckMd: built.deckMd };
+        const draft = window.attachGyosuanImages ? await window.attachGyosuanImages(mod, texts) : texts;
+        mod.gyosuan = nextGyosuan(mod, parts, draft, style, keepDoc);
+        _gyosuanEditing = null;
+        await saveGyosuan(mod);
         if (String(currentEditingModuleId) === String(mod.id)) renderEditor(mod);
-        if (built.failedCount) window.showAlert(`전개 ${built.failedCount}개를 생성하지 못해 빈칸으로 두었습니다. 다시 생성하거나 직접 작성해 주세요.`);
-        else if (window.showToast) window.showToast('교수안과 슬라이드 편성안을 생성했습니다.', 'success');
+        reportGyosuanBuilt(built, draft);
         return true;
     } catch (err) {
         console.error('[교수안] 생성 실패:', err);
@@ -467,156 +545,66 @@ window.regenerateGyosuan = function (moduleId) {
     }
 };
 
-/* ---------- 강사뷰 ---------- */
-function gyosuanDocHtml(mod) {
-    if (!mod?.gyosuan?.docMd) return null;
-    const mount = document.createElement('div');
-    window.KBuilder.buildDoc(window.KBuilder.parseDoc(mod.gyosuan.docMd), mount);
-    return mount.innerHTML;
-}
-
-function gyosuanEmptyHtml(mod) {
-    return `
-        <div class="flex flex-col items-center justify-center text-center py-20 px-6 select-none">
-            <div class="w-16 h-16 mb-5 flex items-center justify-center rounded-2xl bg-orange-50 text-orange-500 text-3xl">
-                <i class="ph-bold ph-chalkboard-teacher"></i>
-            </div>
-            <h3 class="text-lg font-bold text-gray-800 mb-2">이 차시의 교수안이 아직 없습니다</h3>
-            <p class="text-sm text-gray-500 mb-6 leading-relaxed">교안을 바탕으로 AI가 강사 활동·설명 내용·멘트 예시·학생 활동을 담은 교수안과<br>슬라이드 편성안을 함께 만듭니다. 차시 분량에 따라 몇 분 걸릴 수 있습니다.</p>
-            <div class="flex items-center gap-2">
-                <button onclick="generateGyosuan('${mod.id}')"
-                    class="px-5 py-2.5 text-sm font-bold text-white bg-accent rounded-lg hover:bg-accentHover transition-colors flex items-center gap-2 shadow-sm hover:-translate-y-0.5">
-                    <i class="ph-bold ph-sparkle"></i> 교수안·슬라이드 생성
-                </button>
-                <button onclick="showLessonView()"
-                    class="px-5 py-2.5 text-sm font-bold text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
-                    교안 보기
-                </button>
-            </div>
-        </div>`;
-}
-
-function gyosuanToolbarHtml(mod) {
-    const stale = mod.gyosuan.sourceKey !== hashSource(collectLessonSource(mod));
-    const button = (action, icon, label) => `<button onclick="${action}" class="gyosuan-tool"><i class="ph-bold ${icon}"></i> ${label}</button>`;
-    return `
-        <div class="gyosuan-toolbar">
-            <span class="gyosuan-note">${stale ? '⚠️ 교안이 바뀌었습니다. 교수안을 다시 생성하면 반영됩니다.' : '차시 전체 기준 교수안입니다. 탭별 교안은 학생뷰에서 볼 수 있습니다.'}</span>
-            ${button(`toggleGyosuanEdit()`, 'ph-pencil-simple', _gyosuanEditingId === mod.id ? '보기' : 'MD 수정')}
-            ${button(`downloadGyosuanMd('${mod.id}')`, 'ph-download-simple', 'MD')}
-            ${button(`downloadGyosuanSessions('${mod.id}')`, 'ph-clock', '차시별 MD')}
-            ${button(`downloadGyosuanSessionDecks('${mod.id}')`, 'ph-presentation', '차시별 편성안')}
-            ${button(`printGyosuan('${mod.id}')`, 'ph-printer', 'PDF')}
-            ${button(`regenerateGyosuan('${mod.id}')`, 'ph-arrow-clockwise', '재생성')}
-        </div>`;
-}
-
-function renderGyosuanView(mod) {
-    const el = document.getElementById('gyosuan-view');
-    if (!el || !mod) return;
-    if (!mod.gyosuan?.docMd) {
-        el.innerHTML = gyosuanEmptyHtml(mod);
-        return;
-    }
-    el.innerHTML = gyosuanToolbarHtml(mod) + (_gyosuanEditingId === mod.id
-        ? '<textarea id="gyosuan-raw" class="gyosuan-raw" spellcheck="false" onchange="saveGyosuanRaw()"></textarea>'
-        : gyosuanDocHtml(mod));
-    const raw = document.getElementById('gyosuan-raw');
-    if (raw) raw.value = mod.gyosuan.docMd;
-}
-
-// 보기 모드에서 강사뷰이면 교안 대신 교수안을 보여 준다. 수정 모드는 기존대로 탭 교안 원문을 편집한다.
-window.syncGyosuanView = function () {
-    const docEl = document.getElementById('gyosuan-view');
-    const renderEl = document.getElementById('render-view');
-    if (!docEl || !renderEl) return;
-    const raw = document.getElementById('raw-view');
-    const show = window.viewMode === 'instructor' && (!raw || raw.classList.contains('hidden'));
-    docEl.classList.toggle('hidden', !show);
-    renderEl.classList.toggle('gyosuan-covered', show);
-    if (show) renderGyosuanView(getEditingModule());
-};
-
-// 탭 교안은 학생뷰에서 보여 주므로 강사뷰에서 탭을 다루면 학생뷰로 옮긴다
-window.showLessonView = function () {
-    if (window.viewMode === 'instructor') applyViewMode('student');
-};
-
-window.toggleGyosuanEdit = function () {
-    const mod = getEditingModule();
-    if (!mod) return;
-    _gyosuanEditingId = _gyosuanEditingId === mod.id ? null : mod.id;
-    renderGyosuanView(mod);
-};
-
-window.saveGyosuanRaw = async function () {
-    const mod = getEditingModule();
-    const raw = document.getElementById('gyosuan-raw');
-    if (!mod?.gyosuan || !raw) return;
-    mod.gyosuan.docMd = raw.value;
-    await saveState();
-};
-
-window.downloadGyosuanMd = function (moduleId) {
-    const mod = getEditingModule(moduleId);
-    if (!mod?.gyosuan?.docMd) return;
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([mod.gyosuan.docMd], { type: 'text/markdown;charset=utf-8' }));
-    a.download = `${mod.title.replace(/[^\w가-힣]/g, '_')}_교수안.md`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-};
-
-window.printGyosuan = function (moduleId) {
-    const html = gyosuanDocHtml(getEditingModule(moduleId));
-    const win = html && window.open('', '_blank');
-    if (!win) return window.showAlert('팝업이 차단되어 인쇄 창을 열 수 없습니다.');
-    const cssHref = new URL('css/gyosuan-doc.css', location.href).href;
-    win.document.write(`<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>교수안</title><link rel="stylesheet" href="${cssHref}"></head><body class="gyosuan-view">${html}</body></html>`);
-    win.document.close();
-    win.onload = () => win.print();
-};
-
-// 문서 안 '목차' 링크는 같은 제목의 헤딩으로 이동한다
-document.addEventListener('click', event => {
-    const link = event.target.closest && event.target.closest('.gyosuan-view a[href^="#"]');
-    if (!link) return;
-    event.preventDefault();
-    const label = link.textContent.trim();
-    const headings = link.closest('.gyosuan-view').querySelectorAll('.doc-h2, .doc-h3');
-    const target = Array.from(headings).find(h => h.textContent.trim() === label);
-    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-});
-
 /* ---------- 슬라이드 스튜디오 (slide-studio.html) ---------- */
-window.getSlideStudioPayload = function (moduleId) {
+function gyosuanHasDeck(mod) {
+    return !!(mod?.gyosuan?.deckMd || mod?.gyosuan?.deckHtml);
+}
+
+// session: 한 차시만 여는 번호, null이면 전체 덱. 범위를 벗어나면 전체 덱을 준다
+window.getSlideStudioPayload = function (moduleId, session = null) {
     const mod = getEditingModule(moduleId);
+    const gyosuan = mod?.gyosuan;
     const subject = globalState.subjects.find(s => s.id === currentSubjectId);
+    const sessions = gyosuan?.docMd ? gyosuanSessionList(mod) : [];
+    const index = sessions.some(item => item.index === session) ? session : null;
+    const whole = index === null;
     return {
-        deckMd: mod?.gyosuan?.deckMd || '',
-        deckHtml: mod?.gyosuan?.deckHtml || null,
+        deckMd: resolveGyosuanImages(whole ? gyosuan?.deckMd : gyosuanSessionDeckMd(mod, index), mod),
+        deckHtml: (whole ? gyosuan?.deckHtml : gyosuan?.sessionDecks?.[index]) || null,
+        docMd: resolveGyosuanImages(whole ? gyosuan?.docMd : gyosuanSessionPlanMd(mod, index), mod),
         title: mod?.title || '',
-        subject: subject?.title || ''
+        subject: subject?.title || '',
+        sessions,
+        session: index,
+        rev: gyosuan?.deckRev || 0,
+        refs: mod?.refImages || []
     };
 };
 
-window.saveSlideStudioHtml = function (moduleId, html) {
+// target: 스튜디오가 연 덱 { rev, session }. 그사이 덱을 다시 만들었으면 false를 돌려주고 저장하지 않는다
+window.saveSlideStudioHtml = function (moduleId, html, target = {}) {
     const mod = getEditingModule(moduleId);
-    if (!mod?.gyosuan) return;
-    mod.gyosuan.deckHtml = html;
+    if (!mod?.gyosuan) return false;
+    if (target.rev !== undefined && target.rev !== (mod.gyosuan.deckRev || 0)) return false;
+    mod.gyosuan = Number.isInteger(target.session)
+        ? { ...mod.gyosuan, sessionDecks: { ...mod.gyosuan.sessionDecks, [target.session]: html } }
+        : { ...mod.gyosuan, deckHtml: html };
     clearTimeout(_gyosuanSaveTimer);
-    _gyosuanSaveTimer = setTimeout(() => saveState(), 1000);
+    _gyosuanSaveTimer = setTimeout(() => saveGyosuan(mod), 1000);
+    return true;
 };
 
-function createSlideStudioFrame(moduleId) {
+function createSlideStudioFrame(query) {
     const iframe = document.createElement('iframe');
-    iframe.src = `slide-studio.html?module=${encodeURIComponent(moduleId)}`;
+    iframe.src = `slide-studio.html?${query}`;
     iframe.title = '슬라이드 스튜디오';
     return iframe;
 }
 
+const slideStudioQuery = moduleId => `module=${encodeURIComponent(moduleId)}`;
+
+function showSlideStudioOverlay(query) {
+    if (document.getElementById('slide-studio-overlay')) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'slide-studio-overlay';
+    overlay.innerHTML = '<button type="button" class="slide-studio-close" title="닫기"><i class="ph-bold ph-x"></i> 닫기</button>';
+    overlay.querySelector('button').onclick = () => overlay.remove();
+    overlay.appendChild(createSlideStudioFrame(query));
+    document.body.appendChild(overlay);
+}
+
 window.syncSlidePanel = function (mod) {
-    const hasDeck = !!mod?.gyosuan?.deckMd;
+    const hasDeck = gyosuanHasDeck(mod);
     const badge = document.getElementById('slide-status-badge');
     const regenBtn = document.getElementById('slide-regen-btn');
     const generateLabel = document.getElementById('slide-generate-label');
@@ -629,14 +617,19 @@ window.syncSlidePanel = function (mod) {
     if (generateLabel) generateLabel.textContent = hasDeck ? '슬라이드 열기' : '슬라이드 생성';
 };
 
+// 교수안만 있으면(완성 MD 변환) 그 교수안은 두고 편성안만 만든다
+async function ensureGyosuanDeck(mod) {
+    return gyosuanHasDeck(mod) || window.generateGyosuan(mod.id, { keepDoc: true });
+}
+
 window.generateSlideView = async function (moduleId) {
     const mod = getEditingModule(moduleId);
     if (!mod) return window.showAlert('교안을 먼저 선택해주세요.');
-    if (!mod.gyosuan?.deckMd && !(await window.generateGyosuan(moduleId))) return;
+    if (!(await ensureGyosuanDeck(mod))) return;
     // 생성하는 동안 다른 차시로 옮겼다면 그 차시 패널에 넣지 않는다
     const area = String(currentEditingModuleId) === String(mod.id) && document.getElementById('slide-preview-area');
     if (!area) return;
-    const iframe = createSlideStudioFrame(moduleId);
+    const iframe = createSlideStudioFrame(slideStudioQuery(moduleId));
     iframe.className = 'slide-studio-inline';
     area.innerHTML = '';
     area.appendChild(iframe);
@@ -659,12 +652,5 @@ window.openCurrentSlideStudio = function () {
 window.openSlideStudio = async function (moduleId) {
     const mod = getEditingModule(moduleId);
     if (!mod) return window.showAlert('교안을 먼저 선택해주세요.');
-    if (!mod.gyosuan?.deckMd && !(await window.generateGyosuan(moduleId))) return;
-    if (document.getElementById('slide-studio-overlay')) return;
-    const overlay = document.createElement('div');
-    overlay.id = 'slide-studio-overlay';
-    overlay.innerHTML = '<button type="button" class="slide-studio-close" title="닫기"><i class="ph-bold ph-x"></i> 닫기</button>';
-    overlay.querySelector('button').onclick = () => overlay.remove();
-    overlay.appendChild(createSlideStudioFrame(moduleId));
-    document.body.appendChild(overlay);
+    if (await ensureGyosuanDeck(mod)) showSlideStudioOverlay(slideStudioQuery(moduleId));
 };

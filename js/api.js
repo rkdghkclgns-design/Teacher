@@ -2496,7 +2496,7 @@ function renderEditor(mod) {
 
 
 
-    if (!mod.content) {
+    if (!mod.content && !mod.gyosuan) {
 
         area.innerHTML = `
 
@@ -2513,6 +2513,8 @@ function renderEditor(mod) {
                             <i class="ph-bold ph-sparkle"></i> AI 교안 생성 시작하기
 
                         </button>
+
+                        <button onclick="importGyosuanMdFiles('${mod.id}')" class="mt-3 text-sm font-bold text-textMuted hover:text-white transition-colors">완성 교수안·편성안 MD로 만들기</button>
 
                     </div>
 

@@ -13,15 +13,31 @@
 <style>
   /* 스튜디오 전용 — 내보낸 HTML에 섞이지 않도록 css/kbuilder 밖에 둔다 */
   .studio-notice { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; font-size: 15px; font-weight: 600; color: var(--ink); }
-  .studio-notice[hidden], .studio-progress[hidden], #btn-fill-stop[hidden] { display: none; }
+  .studio-notice[hidden], .studio-progress[hidden], #btn-fill-stop[hidden], #btn-fill-images[hidden], #btn-import-html[hidden], #session-sel[hidden] { display: none; }
   .tabbar .studio-title { cursor: default; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; }
   .studio-status { align-self: center; font-size: 12.5px; color: var(--ink-soft); }
   .studio-status.error { color: #c0392b; font-weight: 600; }
   .studio-progress { display: flex; align-items: center; gap: 12px; padding: 8px 22px; background: #fff; border-bottom: 1px solid var(--line); font-size: 13px; font-weight: 600; color: var(--ink); }
   .studio-progress .gen-bar { flex: 1; min-width: 120px; }
+  /* 슬롯 참고 이미지 선택 모달 (ref-images.js) */
+  .ref-pick-ov { position: fixed; inset: 0; z-index: 400; background: rgba(20, 24, 40, .5); display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .ref-pick-box { width: min(720px, 92vw); max-height: 84vh; background: #fff; border-radius: 16px; box-shadow: var(--shadow-md); display: flex; flex-direction: column; overflow: hidden; }
+  .ref-pick-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--line); font-weight: 800; color: var(--ink); }
+  .ref-pick-x { border: 0; background: rgba(32, 48, 74, .07); width: 30px; height: 30px; border-radius: 50%; font-size: 18px; cursor: pointer; color: var(--ink); }
+  .ref-pick-x:hover { background: rgba(32, 48, 74, .14); }
+  .ref-pick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; padding: 18px 20px; overflow: auto; }
+  .ref-pick-item { padding: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; cursor: pointer; background: #fff; transition: transform .12s ease; }
+  .ref-pick-item:hover { transform: translateY(-2px); border-color: var(--mushroom); box-shadow: 0 6px 16px rgba(32, 48, 74, .12); }
+  .ref-pick-item img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; }
+  /* PDF: 슬라이드 한 장이 16:9 한 페이지를 채운다 (styles.css 의 body.print-deck 규칙과 함께 쓴다) */
+  @media print {
+    @page { size: 297mm 167mm; margin: 0; }
+    .studio-progress, .studio-notice, .ref-pick-ov { display: none !important; }
+    html, body, #app { height: auto !important; overflow: visible !important; }
+  }
 </style>
 </head>
-<body>
+<body class="print-deck">
 <div class="studio-notice" id="studio-notice" role="alert" hidden></div>
 
 <div class="app" id="app" data-screen="result">
@@ -31,6 +47,7 @@
       <div class="spacer"></div>
       <div class="tab-tools" id="tab-tools">
         <span class="studio-status" id="studio-status" role="status"></span>
+        <select class="theme-sel" id="session-sel" title="한 차시만 따로 열기" hidden></select>
         <select class="theme-sel" id="theme-sel" title="슬라이드 템플릿">
           <option value="maple">🍄 메이플 월드</option>
           <option value="dark">🌙 디벨로켓 다크</option>
@@ -38,8 +55,11 @@
         <button class="btn btn-ghost" id="btn-fill-images" title="빈 이미지 칸을 모두 AI 이미지로 채웁니다 (이미지마다 비용이 듭니다)">✨ 빈 이미지 AI 채우기</button>
         <button class="btn btn-ghost" id="btn-logo" title="로고 추가/표시">🖼 로고</button>
         <button class="btn btn-ghost" id="btn-edit">✏️ 편집</button>
+        <button class="btn btn-ghost" id="btn-import-html" title="내보낸 HTML에서 슬라이드와 교수안·편성안을 되살립니다">📂 HTML 불러오기</button>
+        <input type="file" id="file-import-html" accept=".html,.htm" hidden />
         <button class="btn btn-ghost" id="btn-html">⤓ HTML</button>
         <button class="btn btn-ghost" id="btn-pptx">⤓ PPTX</button>
+        <button class="btn btn-ghost" id="btn-pdf" title="슬라이드 한 장을 한 페이지로 인쇄합니다. 인쇄 창에서 PDF로 저장을 고르세요">⤓ PDF</button>
       </div>
     </div>
     <div class="studio-progress" id="studio-progress" aria-live="polite" hidden>
@@ -48,7 +68,7 @@
       <button class="btn btn-ghost" id="btn-fill-stop">중지</button>
     </div>
     <div class="panes">
-      <div class="pane active" id="deck-pane">
+      <div class="pane active print-target" id="deck-pane">
         <div class="deck-rail" id="deck-rail"></div>
         <div class="deck-main">
           <div class="deck-toolbar" id="deck-toolbar" style="display:none">
@@ -89,14 +109,16 @@
   </section>
 </div>
 
-<script src="js/kbuilder/image-slot.js?v=1"></script>
+<script src="js/kbuilder/image-slot.js?v=3"></script>
 <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js" integrity="sha256-zQeMqekcb54GHuCjwxDW/xV8OnGx3qf0D9U4GAFyZv8=" crossorigin="anonymous"></script>
 <script src="js/kbuilder/parser.js?v=1"></script>
 <script src="js/kbuilder/render-deck.js?v=1"></script>
+<script src="js/kbuilder/ref-images.js?v=1"></script>
+<script src="js/kbuilder/import-html.js?v=1"></script>
 <script src="js/kbuilder/editor.js?v=1"></script>
 <script src="js/kbuilder/layouts.js?v=1"></script>
-<script src="js/kbuilder/export.js?v=1"></script>
-<script src="js/kbuilder/auto-images.js?v=1"></script>
-<script src="js/kbuilder/studio.js?v=1"></script>
+<script src="js/kbuilder/export.js?v=2"></script>
+<script src="js/kbuilder/auto-images.js?v=2"></script>
+<script src="js/kbuilder/studio.js?v=2"></script>
 </body>
 </html>
