@@ -2642,7 +2642,8 @@ function renderEditor(mod) {
                         <button onclick="openSectionLocks('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-slate-50 text-slate-600 border border-slate-200 rounded hover:bg-slate-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="다시 생성해도 유지할 섹션 선택"><i class="ph-bold ph-lock-simple"></i> 섹션 고정</button>
                         <button onclick="openQuestionBank('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-violet-50 text-violet-600 border border-violet-200 rounded hover:bg-violet-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="문항 분포·검수·CSV"><i class="ph-bold ph-exam"></i> 문제은행</button>
                         <button onclick="openLessonArt('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-sky-50 text-sky-600 border border-sky-200 rounded hover:bg-sky-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="SVG 삽화 생성·수정·배치"><i class="ph-bold ph-paint-brush"></i> 삽화</button>
-                        <button onclick="runConventionCheck('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-rose-50 text-rose-600 border border-rose-200 rounded hover:bg-rose-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="콘텐츠 업무 설계 규칙으로 현재 탭 검사"><i class="ph-bold ph-list-checks"></i> 컨벤션 검수</button>
+                        <button onclick="runConventionCheck('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-rose-50 text-rose-600 border border-rose-200 rounded hover:bg-rose-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="콘텐츠 업무 설계 규칙으로 현재 탭 검사"><i class="ph-bold ph-list-checks"></i> 컨벤션 검수<span id="convention-check-count" class="hidden"></span></button>
+                        <button onclick="copyTabMarkdown('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-sky-50 text-sky-600 border border-sky-200 rounded hover:bg-sky-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="현재 탭의 마크다운을 클립보드에 복사"><i class="ph-bold ph-copy"></i> 복사</button>
                     </div>
 
                 </div>
@@ -2672,7 +2673,7 @@ function renderEditor(mod) {
 
                     <div id="render-view" class="markdown-body animate-fade-in">${htmlContent}</div>
 
-                    <textarea id="raw-view" class="hidden w-full h-[600px] p-6 font-mono text-sm bg-gray-900 text-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-accent resize-y" spellcheck="false" onchange="saveRawContent()">${typeof getActiveTabContent === 'function' ? getActiveTabContent(mod) : (mod.content || '')}</textarea>
+                    <textarea id="raw-view" data-module-id="${escapeHtml(String(mod.id))}" data-tab-id="${currentLessonTab}" class="hidden w-full h-[600px] p-6 font-mono text-sm bg-gray-900 text-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-accent resize-y" spellcheck="false" onchange="saveRawContent()">${escapeHtml(typeof getActiveTabContent === 'function' ? getActiveTabContent(mod) : (mod.content || ''))}</textarea>
 
                 </div>
 
@@ -2709,6 +2710,8 @@ function renderEditor(mod) {
 
 
     cmdBar.classList.remove('hidden');
+    window.enhanceRawView?.();
+    window.syncReviewBadge?.(mod);
     toggleEditorMode('view');
     applyViewMode(VIEW_MODES[window.viewMode] ? window.viewMode : 'instructor');
     syncSlidePanel(mod);
@@ -2978,6 +2981,8 @@ window.toggleEditorMode = function (mode) {
 
     }
 
+    window.syncMdToolbar?.();
+
 }
 
 
@@ -2986,11 +2991,16 @@ window.saveRawContent = function () {
 
     const rawView = document.getElementById('raw-view');
 
-    const mod = getEditingModule();
+    // 편집기를 그릴 때의 차시·탭에 저장한다. 화면이 바뀌는 도중의 change가 다른 탭을 덮어쓰지 않게 한다.
+    const mod = getEditingModule(rawView?.dataset.moduleId || undefined);
 
     if (mod && rawView) {
 
-        mod.content = rawView.value;
+        const tabId = rawView.dataset.tabId || currentLessonTab;
+
+        if (rawView.value === ((mod.tabContents ? mod.tabContents[tabId] : mod.content) || '')) return;
+
+        setTabMarkdown(mod, tabId, rawView.value);
 
 
 
@@ -3011,6 +3021,10 @@ window.saveRawContent = function () {
         }
 
         saveState();
+
+        window.syncReviewBadge?.(mod);
+
+        window.refreshMdPreview?.();
 
     }
 
@@ -3214,6 +3228,9 @@ window.deleteImage = function (imgId, btnEl) {
         mod.tabContents[tabId] = mod.tabContents[tabId]
             .replace(new RegExp(`!\\[[^\\]]*\\]\\(local:${imgId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`, 'g'), '')
             .replace(new RegExp(`!\\[[^\\]]*\\]\\(data:image[^)]+\\)`, 'g'), '');
+        // 숨겨진 편집기가 지운 참조를 다시 저장하지 않게 맞춘다
+        const rawView = document.getElementById('raw-view');
+        if (rawView) rawView.value = mod.tabContents[tabId];
     }
     if (mod.content) {
         mod.content = mod.content

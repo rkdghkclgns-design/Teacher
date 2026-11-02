@@ -1248,6 +1248,9 @@
 
                 <p id="editor-loading-text" class="text-sm font-bold text-textMuted/60">AI가 상세 교안을 작성하고 있습니다...</p>
 
+                <button id="editor-loading-stop" onclick="requestTabGenerationStop()"
+                    class="hidden px-3 py-1.5 text-xs font-bold text-rose-600 bg-rose-50 border border-rose-200 rounded-lg hover:bg-rose-100 disabled:opacity-60">이 단락까지만 받고 중단</button>
+
             </div>
 
 
@@ -1295,6 +1298,8 @@
                             <i class="ph-bold ph-x"></i>
                         </button>
                     </div>
+
+                    <div id="ai-edit-chips" class="flex flex-wrap gap-1"></div>
 
                     <div class="flex items-center gap-3 w-full">
 
@@ -1731,6 +1736,8 @@
     <script src="./js/course-qbank.js?v=125"></script>
     <script src="./js/ai-edit-preview.js?v=125"></script>
     <script src="./js/lesson-editor-tools.js?v=125"></script>
+    <script src="./js/lesson-review.js?v=125"></script>
+    <script src="./js/md-toolbar.js?v=125"></script>
     <script src="./js/course-refs.js?v=125"></script>
     <script>
         // 튜토리얼 자동 시작 (공지 팝업 → 튜토리얼 순서)
