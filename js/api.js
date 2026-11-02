@@ -2181,9 +2181,10 @@ function renderSidebar() {
 
                         <div class="flex justify-between items-start mb-2">
 
-                            <div class="flex items-center gap-2">
+                            <div class="flex items-center gap-2 min-w-0 flex-1 mr-2">
                                 <input type="checkbox" class="merge-checkbox w-3.5 h-3.5 accent-accent shrink-0 cursor-pointer" data-lesson-id="${mod.id}" onchange="toggleMergeCheckbox('${mod.id}')" onclick="event.stopPropagation()">
-                                <span class="inline-flex items-center justify-center w-6 h-6 rounded bg-accent/20 text-accent font-bold text-xs">${idx + 1}</span>
+                                <span class="inline-flex items-center justify-center w-6 h-6 rounded bg-accent/20 text-accent font-bold text-xs shrink-0">${idx + 1}</span>
+                                ${lessonNcsCodeHtml(mod)}
                             </div>
 
                             <div class="flex gap-2">

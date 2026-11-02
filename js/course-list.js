@@ -26,6 +26,50 @@ function lessonListBadges(mod) {
     ].join('');
 }
 
+/* ---------- 카드의 NCS 코드 ---------- */
+// 요소 코드가 없으면 능력단위 코드를 쓴다. 같은 코드는 한 번만 둔다
+function lessonNcsCodes(mod) {
+    return [...new Set((mod.ncsElements || []).map(element => element.code || element.unitCode).filter(Boolean))];
+}
+
+// 칸이 좁아 첫 코드만 보이고, 전체 코드와 확정 여부는 마우스를 올리면 보인다
+function lessonNcsCodeHtml(mod) {
+    const codes = lessonNcsCodes(mod);
+    if (!codes.length) return '';
+    const title = `${codes.join('\n')}${mod.ncsAuto ? '\n(자동 배정 · 확정 전)' : ''}`;
+    return `
+        <span class="flex items-center gap-1 min-w-0" title="${escapeHtml(title)}">
+            <span class="font-mono text-[0.65rem] text-textLight truncate">${escapeHtml(codes[0])}</span>
+            ${codes.length > 1 ? `<span class="shrink-0 text-[0.6rem] text-textMuted">외 ${codes.length - 1}</span>` : ''}
+            <button onclick="event.stopPropagation(); copyLessonNcsCodes('${escapeHtml(String(mod.id))}')" title="NCS 코드 복사" class="shrink-0 text-white/50 hover:text-white"><i class="ph-bold ph-copy"></i></button>
+        </span>`;
+}
+
+// 클립보드 API가 막힌 환경(파일로 연 경우 등)에서는 선택 복사로 대신한다
+function copyTextFallback(text) {
+    const area = document.createElement('textarea');
+    area.value = text;
+    document.body.appendChild(area);
+    area.select();
+    const copied = document.execCommand('copy');
+    area.remove();
+    if (!copied) throw new Error('복사하지 못했습니다.');
+}
+
+window.copyLessonNcsCodes = async function (moduleId) {
+    const mod = getEditingModule(Number(moduleId) || moduleId);
+    const text = mod ? lessonNcsCodes(mod).join(', ') : '';
+    if (!text) return;
+    try {
+        if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+        else copyTextFallback(text);
+        window.showToast?.('NCS 코드를 복사했습니다.', 'success');
+    } catch (err) {
+        console.error('[차시 목록] NCS 코드 복사 실패:', err);
+        window.showAlert(`NCS 코드를 복사하지 못했습니다: ${text}`);
+    }
+};
+
 /* ---------- 카테고리별 묶음 ---------- */
 function renderLessonViewBar() {
     const active = 'bg-accent text-white';

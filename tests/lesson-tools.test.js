@@ -291,6 +291,21 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
         assert.ok(lint('### 문제 1. 기획서의 핵심 구조를 스스로 설명할 수 있는가\n학습 목표 1 · 밴드 L2 · 서술형\n\n📏 **채점 기준:** 요소\n').includes('체크리스트 문장을 그대로 쓰지 않습니다.'));
     });
 
+    await run('차시 카드: NCS 코드를 보여 주고 복사한다', async () => {
+        const codes = call('lessonNcsCodes');
+        const mod = { id: 7, ncsAuto: true, ncsElements: [{ code: 'A_1', name: '가' }, { code: '', unitCode: 'B_2', name: '나', unitLevel: true }, { code: 'A_1', name: '중복' }] };
+        assert.deepStrictEqual(plain(codes(mod)), ['A_1', 'B_2'], '요소 코드가 없으면 능력단위 코드, 중복은 한 번');
+        const html = call('lessonNcsCodeHtml')(mod);
+        assert.ok(html.includes('>A_1<') && html.includes('외 1') && html.includes('확정 전') && html.includes("copyLessonNcsCodes('7')"));
+        assert.strictEqual(call('lessonNcsCodeHtml')({ id: 8, ncsElements: [] }), '', 'NCS가 없으면 비운다');
+        assert.ok(!call('lessonNcsCodeHtml')({ id: 9, ncsElements: [{ code: '<b>x</b>' }] }).includes('<b>x'), '코드는 이스케이프');
+        let copied = '';
+        ctx.navigator = { clipboard: { writeText: async text => { copied = text; } } };
+        ctx.getEditingModule = id => (id === 7 ? mod : null);
+        await call('copyLessonNcsCodes')('7');
+        assert.strictEqual(copied, 'A_1, B_2');
+    });
+
     await run('문제은행: 분포·CSV', async () => {
         const questions = call('lessonLintQuestions')(QB).map(call('parseQuestionBlock'));
         const dist = plain(call('questionDistribution')(questions, 2));
