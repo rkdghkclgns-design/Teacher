@@ -822,7 +822,7 @@
                     class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent transition-all appearance-none cursor-pointer"
                     style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22%238a8ab5%22><path d=%22M7 10l5 5 5-5z%22/></svg>');background-repeat:no-repeat;background-position:right 10px center;">
                 </select>
-                <p class="text-[0.55rem] text-textMuted/50 mt-1">교안 내 삽입 이미지 생성에 사용 (16:9 · 2K, Gemini 키 필요)</p>
+                <p class="text-[0.55rem] text-textMuted/50 mt-1">교안 내 삽입 이미지 생성에 사용 (16:9 · 2K). Gemini 키가 없으면 텍스트 모델이 SVG 삽화를 그립니다.</p>
             </div>
             <div class="h-px bg-white/5"></div>
             <div>
@@ -1385,7 +1385,7 @@
                         <div class="text-[0.7rem] text-textMuted">지원 포맷: .md, .txt, .pdf, .ppt, .pptx (최대 30개 파일)</div>
 
                         <input type="file" id="batch-file-input"
-                            class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept=".md,.txt,.pdf,.ppt,.pptx" multiple>
+                            class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept=".md,.txt,.pdf,.ppt,.pptx,.docx" multiple>
 
                     </div>
 
@@ -1699,7 +1699,11 @@
     <script src="./js/lesson-lint.js?v=125"></script>
     <script src="./js/course-ncs.js?v=125"></script>
     <script src="./js/course-design.js?v=125"></script>
-    <script src="./js/export-modal.js?v=125"></script>
+    <script src="./js/course-sessions.js?v=125"></script>
+    <script src="./js/course-meta.js?v=125"></script>
+    <script src="./js/course-art.js?v=125"></script>
+    <script src="./js/course-qbank.js?v=125"></script>
+    <script src="./js/ai-edit-preview.js?v=125"></script>
     <script>
         // 튜토리얼 자동 시작 (공지 팝업 → 튜토리얼 순서)
         window.addEventListener('load', () => {

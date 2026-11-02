@@ -37,7 +37,7 @@ function makeContext(aiStub) {
     vm.createContext(ctx);
     vm.runInContext(fs.readFileSync(root + 'kbuilder/parser.js', 'utf8'), ctx);
     ctx.stripInstructorCallouts = stripCallouts;
-    ['gyosuan.js', 'lesson-lint.js', 'course-ncs.js', 'course-design.js'].forEach(file => vm.runInContext(fs.readFileSync(root + file, 'utf8'), ctx));
+    ['gyosuan.js', 'lesson-lint.js', 'course-ncs.js', 'course-design.js', 'course-sessions.js', 'course-meta.js'].forEach(file => vm.runInContext(fs.readFileSync(root + file, 'utf8'), ctx));
     return ctx;
 }
 
@@ -163,7 +163,8 @@ async function run(name, fn) {
         assert.ok(labels.includes('강사 활동') && labels.includes('설명 내용') && labels.includes('학생 활동'));
         assert.ok(doc.blocks.some(b => b.type === 'callout' && /멘트/.test(b.label)));
         const tables = doc.blocks.filter(b => b.type === 'table');
-        assert.strictEqual(tables.length, 2);
+        assert.strictEqual(tables.length, 3);
+        assert.deepStrictEqual(Array.from(tables[2].headers), ['차시', '시간', '진행 단계'], '60분이 넘으면 차시 구성표를 넣는다');
         assert.deepStrictEqual(Array.from(tables[1].headers), ['단계', '시간', '핵심']);
         assert.strictEqual(tables[1].rows.length, 3, '구분선 행은 제외');
         assert.ok(tables[0].rows.some(r => r[0] === '대상'));
@@ -283,6 +284,7 @@ async function run(name, fn) {
         assert.strictEqual(await ctx.generateGyosuan('m1'), true);
         assert.ok(mod.gyosuan.docMd.includes('| NCS | 2001020101_23v1 게임 기획 (5수준) |'));
         assert.ok(mod.gyosuan.docMd.includes('1.5시수(약 90분)'));
+        assert.ok(!mod.gyosuan.docMd.includes('<br>'), '교수안 뷰어가 글자로 보여 주는 HTML을 쓰지 않는다');
         subject.ncs = { ...subject.ncs, confirmed: false };
         assert.strictEqual(await ctx.generateGyosuan('m1'), true);
         assert.ok(mod.gyosuan.docMd.includes('게임 기획 (5수준) (미확정) |'), '확정 전 배정은 미확정으로 표기');

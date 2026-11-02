@@ -234,12 +234,19 @@ function lessonMinutes(lesson) {
 
 // 차시에 설계 정보가 있으면 교안 생성 프롬프트에 덧붙인다
 function lessonDesignBrief(mod) {
-    if (!mod?.minutes) return '';
-    const minutes = lessonMinutes(mod);
+    if (!mod) return '';
     const objectives = (mod.objectives || []).map(o => `- ${o}`).join('\n');
     const flow = (mod.flow || []).map(step => `- ${step.phase}: ${step.title} (${step.minutes}분)`).join('\n');
-    return `\n\n[과정 설계 — 반드시 반영]\n이 차시는 과정 설계에서 ${minutes}분으로 배정되었습니다. 지시문의 시간과 분량 기준을 이 시간에 맞게 비례해 줄이세요.` +
-        (objectives ? `\n[학습 목표]\n${objectives}` : '') + (flow ? `\n[진행 단계]\n${flow}` : '');
+    const tools = (mod.tools || []).map(tool => `- ${toolLabel(tool)}`).join('\n');
+    const prereqs = (mod.prereqs || []).map(item => `- ${item.title}`).join('\n');
+    const parts = [
+        mod.minutes ? `이 차시는 과정 설계에서 ${lessonMinutes(mod)}분으로 배정되었습니다. 지시문의 시간과 분량 기준을 이 시간에 맞게 비례해 줄이세요.` : '',
+        objectives ? `[학습 목표]\n${objectives}` : '',
+        flow ? `[진행 단계]\n${flow}` : '',
+        tools ? `[사용 툴과 버전]\n${tools}\n버전 번호는 본문에 쓰지 않습니다.` : '',
+        prereqs ? `[선행 차시]\n${prereqs}\n선행 내용은 다시 설명하지 않고, 본문에서 다른 차시를 지칭하지 않습니다.` : ''
+    ].filter(Boolean);
+    return parts.length ? `\n\n[과정 설계 — 반드시 반영]\n${parts.join('\n')}` : '';
 }
 
 function fmtMinutes(minutes) {
@@ -270,7 +277,7 @@ function courseDesignMd() {
         '---', `과정: ${globalState.courseTitle}`, `총 시간: ${fmtMinutes(total)}`, `date: ${new Date().toISOString().slice(0, 10)}`, '---', '',
         `# 과정 설계서 - ${globalState.courseTitle}`, '', '## 과정 목표', '', design.goal || '(과정 목표를 입력하세요)', '',
         '## 단원 구성 한눈에 보기', '', '| 단원 | 시간 | 학습모듈 | NCS 능력단위 |', '|---|---|---|---|', ...rows, `| **합계** | **${fmtMinutes(total)}** |  |  |`, '',
-        ...subjects.flatMap((subject, i) => [`## ${i + 1}. ${subject.title}`, '', ...subject.lessons.flatMap((lesson, j) => courseDesignLessonMd(lesson, i + 1, j + 1))])
+        ...subjects.flatMap((subject, i) => [`## ${i + 1}. ${subject.title}`, '', ...subject.lessons.flatMap((lesson, j) => courseDesignLessonMd(lesson, i + 1, j + 1)), ...subjectSessionLines(subject)])
     ].join('\n');
 }
 
@@ -367,7 +374,10 @@ window.openCourseDesign = function () {
                 <div id="design-preview" class="space-y-2"></div>
             </div>
             <div class="p-3 border-t border-white/10 flex justify-between gap-2">
-                <button data-design-action="export" class="px-3 py-2 text-xs font-bold text-textLight bg-white/10 rounded-lg hover:bg-white/20">현재 과정 설계서 내려받기</button>
+                <div class="flex gap-2">
+                    <button data-design-action="export" class="px-3 py-2 text-xs font-bold text-textLight bg-white/10 rounded-lg hover:bg-white/20">현재 과정 설계서 내려받기</button>
+                    <button data-design-action="art" class="px-3 py-2 text-xs font-bold text-textLight bg-white/10 rounded-lg hover:bg-white/20">삽화 스타일</button>
+                </div>
                 <div class="flex gap-2">
                     <button data-design-action="close" class="px-4 py-2 text-xs font-bold text-textLight bg-white/10 rounded-lg hover:bg-white/20">닫기</button>
                     <button data-design-action="apply" class="px-4 py-2 text-xs font-bold text-white bg-accent rounded-lg hover:bg-accentHover">교과로 추가</button>
@@ -394,6 +404,7 @@ async function onDesignClick(event) {
     if (action === 'close') return closeCourseDesign();
     if (_designBusy) return;
     if (action === 'export') window.downloadCourseDesignMd();
+    if (action === 'art') window.openArtStyle();
     if (action === 'draft') {
         _designDraft = readDesignInput();
         renderDesignPreview();

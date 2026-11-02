@@ -787,7 +787,7 @@ function showExportFormatMenu() {
     if (section) section.classList.remove('hidden');
 }
 
-// v7.5: 드롭다운 내보내기 (export-modal.js의 executeExport와 충돌 방지)
+// v7.5: 드롭다운 내보내기
 window.executeDropdownExport = function (format) {
     toggleExportDropdown(); // 닫기
     switch (format) {
@@ -1502,6 +1502,19 @@ async function extractTextFromFile(file) {
 
 
 
+    // .docx — JSZip으로 본문 XML에서 문단별 텍스트 추출
+    if (lower.endsWith('.docx')) {
+        if (typeof JSZip === 'undefined') throw new Error('DOCX 파서(JSZip)를 로드하지 못했습니다.');
+        const zip = await JSZip.loadAsync(await file.arrayBuffer());
+        const documentXml = zip.file('word/document.xml');
+        if (!documentXml) throw new Error('DOCX 본문을 찾지 못했습니다.');
+        const doc = new DOMParser().parseFromString(await documentXml.async('string'), 'application/xml');
+        const paragraphs = Array.from(doc.getElementsByTagName('w:p'))
+            .map(paragraph => Array.from(paragraph.getElementsByTagName('w:t')).map(node => node.textContent).join(''))
+            .filter(text => text.trim());
+        return paragraphs.join('\n\n');
+    }
+
     // .ppt (레거시 바이너리) — 경고만
 
     if (lower.endsWith('.ppt')) {
@@ -1520,7 +1533,7 @@ async function extractTextFromFile(file) {
 
 async function handleBatchFiles(files) {
 
-    const supported = ['.md', '.txt', '.pdf', '.ppt', '.pptx'];
+    const supported = ['.md', '.txt', '.pdf', '.ppt', '.pptx', '.docx'];
 
     const rejected = [];
 
@@ -1642,7 +1655,7 @@ function renderBatchFileList() {
 
         md: 'ph-file-md', txt: 'ph-file-text', pdf: 'ph-file-pdf',
 
-        ppt: 'ph-file-ppt', pptx: 'ph-file-ppt',
+        ppt: 'ph-file-ppt', pptx: 'ph-file-ppt', docx: 'ph-file-doc',
 
     })[type] || 'ph-file';
 

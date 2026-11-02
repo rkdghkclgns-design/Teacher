@@ -4,6 +4,7 @@
 
 const NCS_CATALOG_SRC = 'js/kbuilder/ncs-catalog.js';
 const NCS_AUTO_MIN_SCORE = 70;
+const NCS_AUTO_FLOOR_SCORE = 40;
 const NCS_AUTO_MAX = 3;
 const NCS_MAX_SUBD = 6;
 const NCS_MAX_CANDIDATES = 45;
@@ -138,9 +139,14 @@ function ncsSearch(query, limit = 20, opts = {}) {
 }
 
 /* ---------- 추천 ---------- */
+// 교과 이름만으로는 분야를 알 수 없을 때가 많아 과정 주제를 함께 쓴다
+function ncsCourseTitle() {
+    return globalState.courseDesign?.title || globalState.courseTitle || '';
+}
+
 function subjectNcsBrief(subject) {
     const lessons = (subject.lessons || []).map(l => `${l.title}${l.description ? `: ${l.description}` : ''}`).join('\n');
-    return `[교과] ${subject.title}\n[교과 설명] ${subject.description || '-'}\n[차시]\n${lessons || '-'}`;
+    return `[과정] ${ncsCourseTitle()}\n[교과] ${subject.title}\n[교과 설명] ${subject.description || '-'}\n[차시]\n${lessons || '-'}`;
 }
 
 function textModelHasKey() {
@@ -204,7 +210,7 @@ function keywordRecs(local) {
 
 async function recommendSubjectNcs(subject, onProgress = () => {}) {
     await loadNcsCatalog();
-    const query = `${subject.title} ${subject.description || ''} ${(subject.lessons || []).map(l => l.title).join(' ')}`;
+    const query = `${ncsCourseTitle()} ${subject.title} ${subject.description || ''} ${(subject.lessons || []).map(l => l.title).join(' ')}`;
     const local = ncsSearch(query, NCS_SEARCH_LIMIT);
     if (!textModelHasKey()) return keywordRecs(local);
 
@@ -224,10 +230,10 @@ async function recommendSubjectNcs(subject, onProgress = () => {}) {
     return recs.length ? recs : keywordRecs(local);
 }
 
-// 적합도 기준을 넘는 항목을 최대 3개, 없으면 1위를 고른다
+// 적합도 기준을 넘는 항목을 최대 3개, 없으면 최소 기준을 넘는 1위만 고른다
 function pickAutoNcs(recs) {
     const strong = recs.filter(rec => rec.score >= NCS_AUTO_MIN_SCORE).slice(0, NCS_AUTO_MAX);
-    return strong.length ? strong : recs.slice(0, 1);
+    return strong.length ? strong : recs.slice(0, 1).filter(rec => rec.score >= NCS_AUTO_FLOOR_SCORE);
 }
 
 // 사용자가 확정한 교과는 건드리지 않는다. 키워드 일치는 적합도가 아니므로 배정하지 않고 후보로만 둔다.

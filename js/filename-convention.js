@@ -33,33 +33,6 @@ function saveFilenameConvention() {
     } catch (e) {}
 }
 
-function buildFilename(mod, idx, subj) {
-    const parts = [];
-    const sep = filenameConvention.separator || '_';
-    const ep = filenameConvention.enabledParts || [];
-
-    if (ep.includes('unit') && subj) {
-        parts.push(subj.title.replace(/[^\w가-힣]/g, '').substring(0, 20));
-    }
-    if (ep.includes('lesson')) {
-        parts.push(String(idx + 1).padStart(2, '0') + '차시');
-    }
-    if (ep.includes('title') && mod) {
-        parts.push(mod.title.replace(/[\/\?<>\\:\*\|"]/g, '').substring(0, 30));
-    }
-    if (ep.includes('date')) {
-        parts.push(new Date().toISOString().slice(0, 10));
-    }
-    if (ep.includes('author') && filenameConvention.author) {
-        parts.push(filenameConvention.author);
-    }
-    if (filenameConvention.customPrefix) {
-        parts.unshift(filenameConvention.customPrefix);
-    }
-
-    return parts.join(sep) || 'export';
-}
-
 function renderFilenameConventionUI() {
     // 설정 패널과 사이드바 양쪽에 렌더링
     const containers = [

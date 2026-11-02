@@ -493,10 +493,13 @@ const TEXT_MODEL_OPTIONS = [
     { value: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash (무료 등급 지원)' },
     { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro (Preview)' },
 ];
+// 이미지 모델 대신 텍스트 모델이 SVG로 그리는 선택지 (js/course-art.js)
+const SVG_IMAGE_MODEL = 'svg-illustration';
 const IMAGE_MODEL_OPTIONS = [
     { value: 'gemini-nano-banana-2.1', label: 'Nano Banana 2.1 (권장 · 최고 성능)' },
     { value: 'gemini-3-pro-image', label: 'Nano Banana Pro' },
     { value: 'gemini-3.1-flash-image', label: 'Nano Banana 2' },
+    { value: SVG_IMAGE_MODEL, label: 'SVG 삽화 (텍스트 모델 · 과정 공용 화풍)' },
 ];
 const REASONING_EFFORT_OPTIONS = [
     { value: 'max', label: '최대 (최고 품질 · 가장 느림)' },
@@ -908,58 +911,6 @@ const INSTRUCTOR_TONE_PRESETS = [
     { id: 'friendly', label: '해요체', promptSuffix: '헤딩: 체언종결(~음, ~함). 본문: 해요체(~해요, ~이에요). 친근하지만 존댓말을 유지.' },
     { id: 'coaching', label: '코치형', promptSuffix: '헤딩: 체언종결(~음, ~함). 본문: 코칭형(~해봅시다, ~해볼까요?). 함께 배워가는 동료 멘토 느낌으로.' }
 ];
-
-// 2-1. 문체 변환 프리셋 (Tone & Manner)
-const TONE_PRESETS = [
-    {
-        id: 'academic',
-        label: '📚 교과서',
-        color: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
-        prompt: '학술적이고 정제된 교과서 문체로 변환하세요. 존댓말(~합니다, ~입니다)을 사용하고, 전문 용어는 유지하되 정의를 병기하며, 논리적이고 체계적인 서술 구조를 갖추세요. 감정적 표현이나 구어체는 배제합니다.'
-    },
-    {
-        id: 'casual',
-        label: '💬 대화형',
-        color: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
-        prompt: '친근한 대화체로 변환하세요. 강사가 학생에게 편하게 설명하듯 ~요, ~죠 같은 종결어미를 사용하고, 질문을 던지며 대화를 이어가는 느낌으로 작성하세요. 딱딱한 서술은 부드럽게 풀어주세요.'
-    },
-    {
-        id: 'gamer',
-        label: '🎮 게이머',
-        color: 'bg-purple-500/15 text-purple-400 border-purple-500/30',
-        prompt: '게이머/게임 개발자 문화에 익숙한 문체로 변환하세요. 게임 용어(버프, 너프, 메타, OP, 밸런스 등)를 적극 활용하고, 열정적이며 에너지 넘치는 톤으로 작성하세요. 비유도 게임 세계관에서 가져오세요.'
-    },
-    {
-        id: 'simple',
-        label: '👶 쉬운말',
-        color: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
-        prompt: '초등학생도 이해할 수 있도록 최대한 쉬운 말로 변환하세요. 전문 용어는 일상 단어로 바꾸고, 짧은 문장 위주로 구성하며, 비유와 예시를 풍부하게 사용하세요. 핵심 개념은 누락하지 마세요.'
-    },
-    {
-        id: 'business',
-        label: '🏢 실무형',
-        color: 'bg-slate-500/15 text-slate-300 border-slate-500/30',
-        prompt: '실무 현업 기획서/보고서 문체로 변환하세요. 간결하고 핵심 중심으로 서술하며, 불릿 포인트와 수치 근거를 활용하세요. "~해야 한다", "~가 필요하다" 형태의 실행 지향적 어조를 사용하세요.'
-    },
-    {
-        id: 'hype',
-        label: '🔥 동기부여',
-        color: 'bg-red-500/15 text-red-400 border-red-500/30',
-        prompt: '학습 의욕을 극대화하는 동기부여 문체로 변환하세요. 열정적이고 긍정적인 톤을 사용하고, 독자를 "당신"으로 호칭하며, 도전의식과 성취감을 자극하는 표현을 적극 사용하세요. 문장 끝에 힘을 주세요.'
-    }
-];
-
-// 2-2. 분량 조절 프리셋 (Volume Control)
-const VOLUME_PRESETS = {
-    shorter: {
-        label: '⊖ 짧게',
-        prompt: '다음 텍스트를 핵심 정의와 결론 위주로 압축하세요. 부연 설명, 반복, 예시 중 불필요한 것을 걷어내고 분량을 약 50~60% 수준으로 줄이세요. 마크다운 구조(#, ##, * 등)는 유지하되, 이미지 태그와 HTML 요소는 절대 수정하지 마세요.'
-    },
-    longer: {
-        label: '⊕ 길게',
-        prompt: '다음 텍스트의 핵심 개념은 유지하면서 분량을 약 150~170% 수준으로 늘려주세요. 구체적인 사례, 부가 설명, 실무 팁(TMI/Info 박스 형태)을 추가하세요. 마크다운 구조(#, ##, * 등)는 유지하되, 이미지 태그와 HTML 요소는 절대 수정하지 마세요.'
-    }
-};
 
 // 2-3. 5탭 교안 분류 상수
 const LESSON_TABS = [

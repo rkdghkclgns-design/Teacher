@@ -25,7 +25,7 @@ function makeContext(callGemini, keys = { gemini: '' }) {
     };
     ctx.window = ctx;
     vm.createContext(ctx);
-    ['kbuilder/ncs-catalog.js', 'course-ncs.js', 'course-design.js'].forEach(f => vm.runInContext(fs.readFileSync(root + f, 'utf8'), ctx));
+    ['kbuilder/ncs-catalog.js', 'course-ncs.js', 'course-design.js', 'course-sessions.js', 'course-meta.js'].forEach(f => vm.runInContext(fs.readFileSync(root + f, 'utf8'), ctx));
     return ctx;
 }
 
@@ -123,6 +123,14 @@ async function run(name, fn) {
         assert.ok(recs.every(r => r.by === '키워드' && r.score > 0));
     });
 
+    await run('NCS 검색: 과정 주제를 함께 사용', async () => {
+        const local = makeContext(async () => { throw new Error('호출되면 안 됨'); });
+        local.globalState.courseDesign = { title: '게임 기획 입문' };
+        const recs = plain(await vm.runInContext('recommendSubjectNcs', local)({ title: '코어 루프와 재미 설계', lessons: [] }));
+        assert.ok(recs.some(rec => /게임/.test(`${rec.name} ${rec.path.join(' ')}`)), '교과 이름에 없어도 과정 주제로 찾는다');
+        assert.ok(vm.runInContext('subjectNcsBrief', local)({ title: '교과' }).includes('[과정] 게임 기획 입문'));
+    });
+
     await run('NCS 추천: AI 경로는 후보 안의 코드만 수용', async () => {
         const real = plain(call('ncsSearch')('게임 기획', 3));
         const seen = [];
@@ -145,6 +153,7 @@ async function run(name, fn) {
         const rec = score => ({ code: String(score), score });
         assert.deepStrictEqual(plain(pick([rec(90), rec(80), rec(75), rec(71), rec(60)])).map(r => r.score), [90, 80, 75]);
         assert.deepStrictEqual(plain(pick([rec(60), rec(50)])).map(r => r.score), [60], '기준 미달이면 1위');
+        assert.deepStrictEqual(plain(pick([rec(30)])), [], '최소 기준 미달이면 배정하지 않는다');
         assert.deepStrictEqual(plain(pick([])), []);
         const subject = { title: '게임 기획', lessons: [] };
         await call('autoAssignNcs')(subject);

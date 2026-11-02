@@ -319,11 +319,14 @@ function assembleGyosuanDoc(info, meta, openClose, results) {
     if (info.duration) lines.push(`| 소요 | ${info.duration} |`);
     ['대상', '선행', '결과물', '교보제'].forEach(key => { if (meta[key]) lines.push(`| ${key} | ${meta[key]} |`); });
     if (info.ncs) lines.push(`| NCS | ${info.ncs} |`);
+    if (info.ncsElements) lines.push(`| NCS 요소 | ${info.ncsElements} |`);
+    if (info.tools) lines.push(`| 사용 툴 | ${info.tools} |`);
     lines.push('');
     meta.개요.forEach(paragraph => lines.push(paragraph, ''));
     lines.push('## 수업 흐름 한눈에 보기', '', '| 단계 | 시간 | 핵심 |', '|---|---|---|');
     meta.수업흐름.forEach(cells => lines.push(`| ${cells.join(' | ')} |`));
-    lines.push('', '## 준비물·교보제', '', ...bulletLines(meta.준비물, '교재 슬라이드'), '', '## 진행', '');
+    lines.push('', ...gyosuanSessionTable(meta.수업흐름, info.topic));
+    lines.push('## 준비물·교보제', '', ...bulletLines(meta.준비물, '교재 슬라이드'), '', '## 진행', '');
     lines.push('각 전개는 강사가 실제로 설명할 내용 → 멘트 예시 → 학생 활동 순으로 구성한다. 강사는 설명 내용을 자기 말로 풀되, 멘트 예시를 출발점으로 삼는다.', '');
     lines.push(`### ${progress[0]}`, '', openClose.intro.body || '**설명 내용**: 오늘 다룰 주제와 그 이유를 가볍게 연다.', '');
     results.forEach((r, i) => {
@@ -379,6 +382,8 @@ async function buildGyosuanFromLesson(mod, parts) {
         description: mod.description || '',
         duration: hours ? `${hours}시수(약 ${Math.round(hours * 60)}분)` : '',
         ncs: subjectNcsText(subject),
+        ncsElements: (mod.ncsElements || []).map(elementLabel).join(', '),
+        tools: (mod.tools || []).map(toolLabel).join(', '),
         designBrief: lessonDesignBrief(mod)
     };
     const { intro, sections: units } = splitLessonSections(parts);
@@ -499,6 +504,7 @@ function gyosuanToolbarHtml(mod) {
             <span class="gyosuan-note">${stale ? '⚠️ 교안이 바뀌었습니다. 교수안을 다시 생성하면 반영됩니다.' : '차시 전체 기준 교수안입니다. 탭별 교안은 학생뷰에서 볼 수 있습니다.'}</span>
             ${button(`toggleGyosuanEdit()`, 'ph-pencil-simple', _gyosuanEditingId === mod.id ? '보기' : 'MD 수정')}
             ${button(`downloadGyosuanMd('${mod.id}')`, 'ph-download-simple', 'MD')}
+            ${button(`downloadGyosuanSessions('${mod.id}')`, 'ph-clock', '차시별 MD')}
             ${button(`printGyosuan('${mod.id}')`, 'ph-printer', 'PDF')}
             ${button(`regenerateGyosuan('${mod.id}')`, 'ph-arrow-clockwise', '재생성')}
         </div>`;

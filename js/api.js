@@ -1646,9 +1646,11 @@ function withLessonImageStyle(prompt) {
 }
 
 async function generateImageAPI(prompt) {
+    if (usesSvgIllustration()) return generateSvgIllustration(prompt);
+
     // 폴백 체인: 선택한 모델 → 나머지 IMAGE_MODEL_OPTIONS 순서
     // (gemini-3.1-flash-image-preview, Imagen 4는 2026년 서비스 종료로 제거)
-    const geminiModels = [...new Set([IMAGE_MODEL, ...IMAGE_MODEL_OPTIONS.map(o => o.value)])];
+    const geminiModels = [...new Set([IMAGE_MODEL, ...IMAGE_MODEL_OPTIONS.map(o => o.value)])].filter(model => model !== SVG_IMAGE_MODEL);
     const errorHistory = [];
 
     for (const model of geminiModels) {
@@ -2204,9 +2206,10 @@ function renderSidebar() {
 
     } else {
 
+        html += renderLessonFilterBar();
         html += courseData.map((mod, idx) => `
 
-                    <div class="module-card bg-white/5 border ${mod.status === 'done' ? 'border-green-500/30' : 'border-white/10'} rounded-xl p-4 mb-3 cursor-pointer hover:-translate-y-0.5 hover:shadow-lg transition-all" 
+                    <div class="module-card ${lessonMatchesFilter(mod) ? '' : 'hidden'} bg-white/5 border ${mod.status === 'done' ? 'border-green-500/30' : 'border-white/10'} rounded-xl p-4 mb-3 cursor-pointer hover:-translate-y-0.5 hover:shadow-lg transition-all" 
 
                          data-id="${mod.id}" draggable="true" onclick="viewModule(${mod.id})" style="animation-delay: ${idx * 0.05}s">
 
@@ -2233,6 +2236,7 @@ function renderSidebar() {
 
                         
 
+                        ${renderLessonMetaChips(mod)}
                         <div class="mt-3 flex items-center justify-between">
 
                             <span class="text-[0.65rem] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${mod.status === 'done' ? 'bg-green-500/20 text-green-400' : 'bg-white/10 text-white/50'}">${mod.status === 'done' ? '작성완료' : '대기중'}</span>
@@ -2629,6 +2633,7 @@ function renderEditor(mod) {
                         <button onclick="reinforceCurrentTab('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors flex items-center gap-1 shrink-0 whitespace-nowrap">
                             <i class="ph-bold ph-arrow-clockwise"></i> 보강 재생성
                         </button>
+                        <button onclick="openQuestionBank('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-violet-50 text-violet-600 border border-violet-200 rounded hover:bg-violet-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="문항 분포·검수·CSV"><i class="ph-bold ph-exam"></i> 문제은행</button>
                         <button onclick="runConventionCheck('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-rose-50 text-rose-600 border border-rose-200 rounded hover:bg-rose-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="콘텐츠 업무 설계 규칙으로 현재 탭 검사"><i class="ph-bold ph-list-checks"></i> 컨벤션 검수</button>
                         <div id="tone-loading" class="hidden items-center gap-1.5 ml-2">
                             <div class="w-3 h-3 border-2 border-accent/30 border-t-accent rounded-full animate-spin"></div>
@@ -3148,6 +3153,7 @@ window.executeAICommand = async function () {
             let newText = extractText(res);
             newText = newText.replace(/^```\w*\n?/i, '').replace(/\n?```$/i, '').trim();
 
+            if (!(await confirmAiEdit(selectedText, newText))) return;
             rawView.value = text.substring(0, selStart) + newText + text.substring(selEnd);
 
             if (typeof clearAISelection === 'function') clearAISelection();
@@ -3185,127 +3191,6 @@ window.executeAICommand = async function () {
         btn.innerHTML = '✨ 실행';
         input.focus();
     }
-}
-
-
-
-// ===== 문체 변환 (Tone Conversion) =====
-window.applyToneConversion = async function (toneId) {
-    const mod = getEditingModule();
-    if (!mod || !mod.content) {
-        return window.showAlert('변환할 교안 콘텐츠가 없습니다.');
-    }
-
-    const preset = typeof TONE_PRESETS !== 'undefined' ? TONE_PRESETS.find(t => t.id === toneId) : null;
-    if (!preset) return window.showAlert('알 수 없는 문체입니다.');
-
-    window.showConfirm(
-        `"${preset.label}" 문체로 전체 교안을 변환합니다.\n원본은 히스토리에 자동 저장됩니다. 계속할까요?`,
-        async () => {
-            const loadingEl = document.getElementById('tone-loading');
-            const loadingText = document.getElementById('tone-loading-text');
-            const allBtns = document.querySelectorAll('#tone-toolbar button');
-
-            if (loadingEl) { loadingEl.classList.remove('hidden'); loadingEl.classList.add('flex'); }
-            if (loadingText) loadingText.textContent = `${preset.label} 변환 중...`;
-            allBtns.forEach(b => { b.disabled = true; b.style.opacity = '0.4'; b.style.pointerEvents = 'none'; });
-
-            try {
-                if (typeof archiveContent === 'function') archiveContent(mod, '문체 변환 전 백업');
-
-                const { systemInstruction, userPrompt } = buildTaskContext('tone', {
-                    tonePrompt: preset.prompt,
-                    content: mod.content
-                });
-
-                const payload = {
-                    contents: [{ parts: [{ text: userPrompt }] }],
-                    systemInstruction: { parts: [{ text: systemInstruction }] }
-                };
-
-                const data = await callGemini(TEXT_MODEL, payload);
-
-                let resultText = extractText(data);
-                if (resultText && resultText.trim().length > 50) {
-                    // 모델이 마크다운 블록(```)으로 감싸서 리턴할 경우 제거하는 전처리 로직
-                    resultText = resultText.replace(/^```\w*\n?/i, '').replace(/\n?```$/i, '').trim();
-                    mod.content = resultText;
-                    await saveState();
-                    renderEditor(mod);
-                    window.showAlert(`✅ "${preset.label}" 문체로 변환 완료!`);
-                } else {
-                    window.showAlert('변환 결과가 너무 짧습니다. 다시 시도해 주세요.');
-                }
-            } catch (err) {
-                console.error('문체 변환 실패:', err);
-                window.showAlert('문체 변환 중 오류: ' + (err.message || '알 수 없는 오류'));
-            } finally {
-                if (loadingEl) { loadingEl.classList.add('hidden'); loadingEl.classList.remove('flex'); }
-                allBtns.forEach(b => { b.disabled = false; b.style.opacity = '1'; b.style.pointerEvents = ''; });
-            }
-        }
-    );
-}
-
-
-// ===== 분량 조절 (Volume Control) =====
-window.applyVolumeControl = async function (direction) {
-    const mod = getEditingModule();
-    if (!mod || !mod.content) {
-        return window.showAlert('조절할 교안 콘텐츠가 없습니다.');
-    }
-
-    const preset = typeof VOLUME_PRESETS !== 'undefined' ? VOLUME_PRESETS[direction] : null;
-    if (!preset) return window.showAlert('알 수 없는 분량 옵션입니다.');
-
-    window.showConfirm(
-        `교안을 "${preset.label}" 방향으로 조절합니다.\n원본은 히스토리에 자동 저장됩니다. 계속할까요?`,
-        async () => {
-            const loadingEl = document.getElementById('tone-loading');
-            const loadingText = document.getElementById('tone-loading-text');
-            const allBtns = document.querySelectorAll('#tone-toolbar button');
-
-            if (loadingEl) { loadingEl.classList.remove('hidden'); loadingEl.classList.add('flex'); }
-            if (loadingText) loadingText.textContent = `${preset.label} 조절 중...`;
-            allBtns.forEach(b => { b.disabled = true; b.style.opacity = '0.4'; b.style.pointerEvents = 'none'; });
-
-            try {
-                if (typeof archiveContent === 'function') archiveContent(mod, '분량 조절 전 백업');
-
-                const { systemInstruction, userPrompt } = buildTaskContext('volume', {
-                    volumePrompt: preset.prompt,
-                    content: mod.content
-                });
-
-                const payload = {
-                    contents: [{ parts: [{ text: userPrompt }] }],
-                    systemInstruction: { parts: [{ text: systemInstruction }] }
-                };
-
-                const data = await callGemini(TEXT_MODEL, payload);
-
-                let resultText = extractText(data);
-                if (resultText && resultText.trim().length > 30) {
-                    resultText = resultText.replace(/^```\w*\n?/i, '').replace(/\n?```$/i, '').trim();
-                    const before = mod.content.length;
-                    mod.content = resultText;
-                    const after = resultText.length;
-                    const ratio = Math.round((after / before) * 100);
-                    await saveState();
-                    renderEditor(mod);
-                    window.showAlert(`✅ 분량 조절 완료! (${before.toLocaleString()}자 → ${after.toLocaleString()}자, ${ratio}%)`);
-                } else {
-                    window.showAlert('분량 조절 결과가 비어있습니다. 다시 시도해 주세요.');
-                }
-            } catch (err) {
-                console.error('분량 조절 실패:', err);
-                window.showAlert('분량 조절 중 오류: ' + (err.message || '알 수 없는 오류'));
-            } finally {
-                if (loadingEl) { loadingEl.classList.add('hidden'); loadingEl.classList.remove('flex'); }
-                allBtns.forEach(b => { b.disabled = false; b.style.opacity = '1'; b.style.pointerEvents = ''; });
-            }
-        }
-    );
 }
 
 // v7.2: 이미지 삭제 — 보기모드에서 이미지 제거
@@ -3390,208 +3275,8 @@ window.downloadImagesAsJPG = function (moduleId) {
     if (window.showToast) window.showToast(`📸 ${targetIds.length}개 이미지 다운로드 시작`, 'success');
 };
 
-// ===== 개별 이미지 문맥 파악 및 재생성 (Context-Aware Image Regeneration) =====
-window.regenerateImage = async function (imgId, btnEl) {
-    const mod = getEditingModule();
-    if (!mod || !mod.content) return;
-
-    const container = btnEl.closest('.group');
-    if (!container) return;
-
-    // 1. 이미지 주변 문맥(Context) 추출 
-    let contextText = '';
-
-    // 이전 2~3개 블록 텍스트
-    let prev = container.previousElementSibling;
-    for (let i = 0; i < 3 && prev; i++) {
-        if (prev.innerText) contextText = prev.innerText + "\\n" + contextText;
-        prev = prev.previousElementSibling;
-    }
-    // 다음 2~3개 블록 텍스트
-    let next = container.nextElementSibling;
-    for (let i = 0; i < 3 && next; i++) {
-        if (next.innerText) contextText += "\\n" + next.innerText;
-        next = next.nextElementSibling;
-    }
-
-    let promptSuffix = "이 이미지와 어울리는 새로운 16:9 픽셀아트 스타일의 게임 기획서용 삽화를 한글 프롬프트로 만들어줘.";
-    if (contextText.trim()) {
-        promptSuffix = `다음 앞뒤 문맥과 완벽히 어울리는 16:9 픽셀아트 스타일의 게임 기획서/교안 삽화 프롬프트를 작성해줘:\n[문맥]\n${contextText.substring(0, 400)}`;
-    }
-
-    // 2. 로딩 스피너 UI 활성화
-    const originalBtnParent = btnEl.parentElement;
-
-    const overlay = document.createElement('div');
-    overlay.className = 'absolute inset-0 bg-bgEditor/85 backdrop-blur-md flex flex-col items-center justify-center z-10 transition-all rounded-xl';
-    overlay.innerHTML = `
-        <div class="w-10 h-10 border-4 border-accent/20 border-t-accent rounded-full animate-spin mb-4"></div>
-        <p class="text-sm font-bold text-white shadow-sm mb-1">AI 문맥 분석 및 재생성 중...</p>
-        <p class="text-[0.65rem] text-accent font-mono bg-accent/10 px-2 py-0.5 rounded">ETA: 5~15s</p>
-    `;
-    container.appendChild(overlay);
-    originalBtnParent.classList.add('hidden');
-
-    try {
-        // 3. Gemini API를 통해 문맥에 맞는 그림 묘사(Text) 획득
-        const payload = {
-            contents: [{ parts: [{ text: promptSuffix }] }],
-            systemInstruction: { parts: [{ text: "너는 탁월한 게임 컨셉 아트 프롬프트 엔지니어다. 다른 인사말이나 설명 없이 무조건 '한 문장'짜리 명사 위주의 영어 번역 가능한 이미지 묘사 프롬프트만 반환하라." }] },
-            generationConfig: { temperature: 0.8 }
-        };
-
-        const data = await callGemini(TEXT_MODEL, payload);
-
-        let imagePrompt = extractText(data).trim();
-        if (!imagePrompt) throw new Error("프롬프트 획득 실패");
-
-        // 4. Pollinations.ai 무료 API로 새 그림 생성 
-        const encodedPrompt = encodeURIComponent(imagePrompt + ", 16:9, pixel art, game concept art, high quality, masterpiece");
-        const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=800&height=450&nologo=true&seed=${Math.floor(Math.random() * 9999999)}`;
-
-        const tempImg = new Image();
-        tempImg.crossOrigin = "Anonymous";
-
-        await new Promise((resolve, reject) => {
-            tempImg.onload = resolve;
-            tempImg.onerror = reject;
-            tempImg.src = imageUrl;
-        });
-
-        const canvas = document.createElement('canvas');
-        canvas.width = tempImg.width;
-        canvas.height = tempImg.height;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(tempImg, 0, 0);
-        const base64Image = canvas.toDataURL('image/png', 0.85);
-
-        // 5. 모듈 스토리지 업데이트 및 텍스트 리렌더 
-        if (!mod.images) mod.images = {};
-
-        if (typeof archiveContent === 'function') archiveContent(mod, '이미지 재생성 전 백업');
-
-        if (imgId.startsWith('http')) {
-            const newImgId = 'img_' + Date.now() + Math.floor(Math.random() * 1000);
-            mod.content = mod.content.split(imgId).join(`local:${newImgId}`);
-            mod.images[newImgId] = base64Image;
-        } else {
-            mod.images[imgId] = base64Image;
-        }
-
-        await saveState();
-        renderEditor(mod); // 전체 리렌더링 수행
-        window.showAlert('✅ 주변 문맥을 반영하여 이미지가 성공적으로 갱신되었습니다.');
-
-    } catch (e) {
-        console.error("이미지 재생성 오류:", e);
-        window.showAlert("이미지 재생성 실패: " + e.message);
-        overlay.remove();
-        originalBtnParent.classList.remove('hidden');
-    }
-}
-
 
 // ── Phase F3: 최종 서식 변환 (local: → 웹 URL 일괄) ──
-
-window.showFormatConvertModal = function () {
-    const subj = globalState.subjects.find(s => s.id === currentSubjectId);
-    if (!subj) return window.showAlert('교과를 먼저 선택해 주세요.');
-
-    // local: 이미지가 있는지 체크
-    const allMods = [...(subj.lessons || [])];
-    if (subj.mainQuest) allMods.push(subj.mainQuest);
-    const hasLocal = allMods.some(m => m.content && m.content.includes('local:'));
-    if (!hasLocal) return window.showAlert('변환할 local: 이미지 참조가 없습니다.');
-
-    const modalHTML = `
-        <div class="p-4 space-y-4">
-            <p class="text-sm text-textMuted">현재 교과의 모든 차시 교안에서 <code>local:</code> 이미지 참조를 웹 URL로 일괄 변환합니다.</p>
-            <div>
-                <label class="block text-xs font-bold text-white/70 mb-1">① 이미지 웹 폴더 URL (끝에 / 포함)</label>
-                <input id="convert-base-url" type="text" placeholder="https://example.com/images/course01/"
-                    class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-accent transition-colors"
-                    value="">
-            </div>
-            <div>
-                <label class="block text-xs font-bold text-white/70 mb-1">② 파일명 컨벤션</label>
-                <select id="convert-naming" class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-accent">
-                    <option value="sequential">순번 (image01.png, image02.png, ...)</option>
-                    <option value="keep">원본 ID 유지 (img_xxxxx.png)</option>
-                </select>
-            </div>
-            <div class="flex gap-2 justify-end mt-4">
-                <button onclick="document.getElementById('custom-modal').classList.add('hidden')"
-                    class="px-4 py-2 text-sm text-white/60 bg-white/5 border border-white/10 rounded-lg hover:bg-white/10 transition-colors">취소</button>
-                <button onclick="executeFormatConvert()"
-                    class="px-4 py-2 text-sm font-bold text-white bg-accent hover:bg-accentHover rounded-lg transition-colors">변환 실행</button>
-            </div>
-        </div>
-    `;
-    window.showModal('🔄 최종 서식 변환 (local: → 웹 URL)', modalHTML);
-};
-
-window.executeFormatConvert = function () {
-    const baseUrl = document.getElementById('convert-base-url').value.trim();
-    const naming = document.getElementById('convert-naming').value;
-
-    if (!baseUrl) return window.showAlert('이미지 웹 폴더 URL을 입력해 주세요.');
-    const safeBaseUrl = baseUrl.endsWith('/') ? baseUrl : baseUrl + '/';
-
-    const subj = globalState.subjects.find(s => s.id === currentSubjectId);
-    if (!subj) return;
-
-    const allMods = [...(subj.lessons || [])];
-    if (subj.mainQuest) allMods.push(subj.mainQuest);
-
-    let totalReplaced = 0;
-    let imgCounter = 1;
-
-    allMods.forEach(mod => {
-        if (!mod.content || !mod.content.includes('local:')) return;
-
-        // local:imgId 패턴 추출
-        const localRefs = [...new Set(mod.content.match(/local:img_[a-zA-Z0-9_]+/g) || [])];
-
-        localRefs.forEach(ref => {
-            const imgId = ref.substring(6); // 'local:' 제거
-            let fileName;
-
-            if (naming === 'sequential') {
-                fileName = `image${String(imgCounter).padStart(2, '0')}.png`;
-                imgCounter++;
-            } else {
-                fileName = `${imgId}.png`;
-            }
-
-            const webUrl = safeBaseUrl + fileName;
-
-            // local:imgId → 웹 URL 교체
-            mod.content = mod.content.split(`local:${imgId}`).join(webUrl);
-
-            // image-wrapper div 구조를 최종 서식으로 변환
-            // <div class="image-wrapper"><img src="URL" ...>...</div> → <p align="center"><img></p>
-            const wrapperRegex = new RegExp(
-                `<div class="image-wrapper">\\s*<img src="${webUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*alt="([^"]*)"[^>]*>[\\s\\S]*?</div>`,
-                'g'
-            );
-            mod.content = mod.content.replace(wrapperRegex, (match, alt) => {
-                return `\n<p align="center">\n  <img src="${webUrl}" alt="${alt}">\n</p>\n`;
-            });
-
-            totalReplaced++;
-        });
-    });
-
-    saveState().then(() => {
-        if (currentEditingModuleId) {
-            const mod = getEditingModule(currentEditingModuleId);
-            if (mod) renderEditor(mod);
-        }
-
-        document.getElementById('custom-modal').classList.add('hidden');
-        window.showAlert(`✅ ${totalReplaced}개의 이미지 참조가 웹 URL로 변환되었습니다.`);
-    });
-};
 
 // ─── v8: 강사/학생/분할 3모드 뷰 토글 ───
 const VIEW_MODES = {

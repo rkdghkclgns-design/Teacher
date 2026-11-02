@@ -28,11 +28,6 @@ function updateMergeUI() {
     });
 }
 
-function clearMergeSelection() {
-    mergeSelectedIds.clear();
-    updateMergeUI();
-}
-
 async function executeMerge() {
     const subj = globalState.subjects.find(s => s.id === currentSubjectId);
     if (!subj) return;
