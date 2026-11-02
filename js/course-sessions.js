@@ -95,14 +95,19 @@ function sessionSteps(modules, session, index, total) {
     });
 }
 
-function sessionTableLines(modules, separator = '<br>') {
+// 차시 구성표의 내용. 시간이 없으면 빈 목록이다
+function sessionRows(modules) {
     const sessions = splitSessions(modules);
     if (sessions.every(session => !session.minutes)) return [];
-    const rows = sessions.map((session, index) => {
-        const steps = sessionSteps(modules, session, index, sessions.length).map(step => `${step.label} ${step.text} (${fmtMinutes(step.minutes)})`);
-        return `| ${index + 1}차시. ${mdCell(sessionTitle(modules, session))} | ${fmtMinutes(session.minutes)} | ${mdCell(steps.join(separator))} |`;
+    return sessions.map((session, index) => ({ title: sessionTitle(modules, session), minutes: session.minutes, steps: sessionSteps(modules, session, index, sessions.length) }));
+}
+
+function sessionTableLines(modules, separator = '<br>') {
+    const rows = sessionRows(modules).map((row, index) => {
+        const steps = row.steps.map(step => `${step.label} ${step.text} (${fmtMinutes(step.minutes)})`);
+        return `| ${index + 1}차시. ${mdCell(row.title)} | ${fmtMinutes(row.minutes)} | ${mdCell(steps.join(separator))} |`;
     });
-    return ['### 차시 구성 (1차시 = 1시간)', '', '| 차시 | 시간 | 진행 단계 |', '|---|---|---|', ...rows, ''];
+    return rows.length ? ['### 차시 구성 (1차시 = 1시간)', '', '| 차시 | 시간 | 진행 단계 |', '|---|---|---|', ...rows, ''] : [];
 }
 
 // 과정 설계서: 교과의 차시를 모듈로 삼아 시간표를 만든다

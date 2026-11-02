@@ -383,7 +383,7 @@ async function buildGyosuanFromLesson(mod, parts) {
         duration: hours ? `${hours}시수(약 ${Math.round(hours * 60)}분)` : '',
         ncs: subjectNcsText(subject),
         ncsElements: (mod.ncsElements || []).map(elementLabel).join(', '),
-        tools: (mod.tools || []).map(toolLabel).join(', '),
+        tools: lessonTools(mod).map(toolLabel).join(', '),
         designBrief: lessonDesignBrief(mod)
     };
     const { intro, sections: units } = splitLessonSections(parts);

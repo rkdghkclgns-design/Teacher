@@ -11,6 +11,11 @@ const DESIGN_MODULE_SUFFIX = ['핵심 개념', '구조와 사례', '적용 실�
 const DESIGN_BANNED_VERBS = /(이해한다|이해합니다|안다|익힌다|익힙니다|배운다|배웁니다|알게 된다|알게 됩니다|(?:이해할|알|익힐) 수 있(?:다|습니다))\s*\.?$/;
 const DESIGN_BULLET = /^\s*(?:[-*•·]|\d+[.)])\s+/;
 const DESIGN_UNIT_HOURS = /\s*\(\s*(\d+)\s*(?:시간|h|H)\s*\)\s*$/;
+const DESIGN_SAMPLE_TOPIC = '주제 입력: 생성형 AI와 UGC 산업의 이해\n - 생성형 AI의 종류\n - LLM의 동작 원리\n - UGC 플랫폼 산업의 구조와 크리에이터 이코노미\n - AI 에이전트\n - 이미지, 사운드 생성 등의 AI 도구 생태계\n - AI 생성물의 저작권 및 라이선스';
+// 교안 생성 옵션 (develocket-slide assets/course-ai-tb.js @3a7303f). 값을 고르지 않으면 프롬프트에 넣지 않는다.
+const LESSON_OBJECTIVE_COUNTS = ['1', '2', '3'];
+const LESSON_LEVELS = ['비전공 입문', '기초 문법 이수', '실무 경험자'];
+const LESSON_LENGTHS = ['짧게 (약 400자)', '보통 (약 800자)', '길게 (약 1,500자)'];
 
 let _designDraft = null;
 let _designRun = 0;
@@ -82,18 +87,20 @@ function defaultModules(unitTitle, hours) {
     });
 }
 
+// 진행 단계 시간을 블록 시간에 비례로 맞춘다. 5분 단위로 담을 수 없으면 기본 흐름으로 되돌린다
+function fitFlow(flow, minutes, title) {
+    if (!flow?.length || flow.length * DESIGN_FLOW_STEP_MINUTES > minutes) return defaultFlow(minutes, title);
+    const flowMinutes = allocateTime(flow.length, minutes, flow.map(step => Math.max(5, Number(step.minutes) || 5)), 5);
+    return flow.map((step, i) => ({ ...step, minutes: flowMinutes[i] }));
+}
+
 // 단원 시간이 바뀌면 블록과 진행 단계 시간을 비례로 맞춘다
 function normalizeDesignUnit(unit) {
     const total = Math.max(1, Number(unit.hours) || 1) * 60;
-    // 기본 블록은 새 시간에 맞게 다시 나눈다 (블록 3시간 상한 유지)
+    // 기본 블록은 새 시간에 맞게 다시 나눈다 (블록 3시간 상한 유지). 사용자가 고친 블록은 isDefault가 없어 유지된다.
     if (!unit.modules?.length || unit.modules.every(module => module.isDefault)) return { ...unit, modules: defaultModules(unit.title, unit.hours) };
     const minutes = allocateTime(unit.modules.length, total, unit.modules.map(m => Math.max(5, Number(m.minutes) || 5)), 5);
-    const modules = unit.modules.map((module, i) => {
-        const flowFits = module.flow?.length && module.flow.length * DESIGN_FLOW_STEP_MINUTES <= minutes[i];
-        if (!flowFits) return { ...module, minutes: minutes[i], flow: defaultFlow(minutes[i], module.title) };
-        const flowMinutes = allocateTime(module.flow.length, minutes[i], module.flow.map(f => Math.max(5, Number(f.minutes) || 5)), 5);
-        return { ...module, minutes: minutes[i], flow: module.flow.map((step, j) => ({ ...step, minutes: flowMinutes[j] })) };
-    });
+    const modules = unit.modules.map((module, i) => ({ ...module, minutes: minutes[i], flow: fitFlow(module.flow, minutes[i], module.title) }));
     return { ...unit, modules };
 }
 
@@ -172,7 +179,7 @@ function parseUnitPlan(parsed, unit) {
 async function planCourseDesign(design, onProgress = () => {}, isCancelled = () => false) {
     onProgress('과정 목표와 시간 배분을 설계하고 있습니다...');
     const plan = await askDesignJson(buildGoalPrompt(design));
-    const goal = String(plan?.goal || design.goal || '').trim();
+    const goal = String(design.goal || plan?.goal || '').trim(); // 사용자가 적은 목표를 AI 제안보다 우선한다
     const planned = Array.isArray(plan?.hours) && plan.hours.length === design.units.length
         ? allocateTime(design.units.length, design.totalHours, plan.hours.map(Number))
         : design.units.map(unit => unit.hours);
@@ -233,19 +240,91 @@ function lessonMinutes(lesson) {
     return Math.round((Number(lesson.hours) || 0) * 60);
 }
 
+// 차시 시간을 5분 단위로 맞추고 진행 단계 합계도 함께 맞춘다. 올바른 값이 아니면 null
+function lessonWithHours(lesson, value) {
+    const hours = Number(value);
+    if (!Number.isFinite(hours) || hours <= 0) return null;
+    const minutes = Math.max(1, Math.round(hours * 60 / DESIGN_FLOW_STEP_MINUTES)) * DESIGN_FLOW_STEP_MINUTES;
+    const flow = lesson.flow?.length ? fitFlow(lesson.flow, minutes, lesson.title) : lesson.flow;
+    return { ...lesson, hours: Math.round(minutes / 60 * 100) / 100, minutes, flow };
+}
+
+function lessonHoursChip(mod) {
+    return `
+        <label onclick="event.stopPropagation()" class="flex items-center gap-1 text-[0.6rem] text-textMuted" title="차시 시간. 바꾸면 진행 단계 시간도 같은 비율로 맞춥니다.">
+            <input type="number" min="0.25" step="0.25" value="${escapeHtml(String(mod.hours ?? ''))}" placeholder="-" data-hours-lesson="${escapeHtml(String(mod.id))}" onchange="updateLessonHours(this.dataset.hoursLesson, this.value)" class="w-11 px-1 py-0.5 bg-black/30 border border-white/10 rounded text-white text-right focus:outline-none focus:border-accent">시간
+        </label>`;
+}
+
+window.updateLessonHours = async function (id, value) {
+    const mod = getEditingModule(id);
+    if (!mod) return;
+    const next = lessonWithHours(mod, value);
+    if (!next) window.showToast?.('차시 시간은 0보다 큰 숫자로 입력해주세요.', 'warning');
+    else Object.assign(mod, next);
+    await saveState();
+    renderSidebar();
+    if (next && lessonMissingTabs(mod).length < LESSON_TABS.length) window.showToast?.('이미 만든 교안은 바뀌지 않습니다. 새 시간에 맞추려면 다시 생성해주세요.', 'warning');
+};
+
+// 차시에 툴을 따로 적지 않으면 과정 공통 사용 툴을 쓴다
+function lessonTools(mod) {
+    return mod.tools?.length ? mod.tools : (globalState.courseDesign?.tools || []);
+}
+
+// 차시 옵션이 과정 기본값보다 우선한다
+function lessonGenOptions(mod) {
+    const own = Object.fromEntries(Object.entries(mod.gen || {}).filter(([, value]) => value));
+    return { ...globalState.courseDesign?.genOptions, ...own };
+}
+
+function lessonGenLines(mod) {
+    const { objectives, level, length } = lessonGenOptions(mod);
+    return [
+        objectives ? `- 학습 목표 수: ${objectives}개 (정해 둔 학습 목표와 수가 다르면 묶거나 나누어 맞춥니다)` : '',
+        level ? `- 학습자 수준: ${level}` : '',
+        length ? `- 학습 내용 섹션 하나당 분량: ${length}` : ''
+    ].filter(Boolean).join('\n');
+}
+
+// 이어쓰기 청크에는 옵션만 보낸다. 목표·진행 단계까지 다시 주면 앞부분을 되풀이할 수 있다
+function lessonGenBrief(mod) {
+    const options = lessonGenLines(mod);
+    return options ? `\n\n[생성 옵션 — 반드시 반영]\n${options}` : '';
+}
+
+function lessonGenFieldsHtml(prefix, values = {}) {
+    const select = (key, label, options, unit = '') => `
+        <label class="flex-1 min-w-0 text-[0.65rem] font-bold text-textMuted">${label}
+            <select id="${prefix}-gen-${key}" class="block w-full mt-1 px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white">
+                <option value="">지정 안 함</option>
+                ${options.map(option => `<option value="${escapeHtml(option)}" ${values[key] === option ? 'selected' : ''}>${escapeHtml(option)}${unit}</option>`).join('')}
+            </select>
+        </label>`;
+    return `<div class="flex gap-2">${select('objectives', '학습 목표 수', LESSON_OBJECTIVE_COUNTS, '개')}${select('level', '학습자 수준', LESSON_LEVELS)}${select('length', '섹션당 분량', LESSON_LENGTHS)}</div>`;
+}
+
+// 고른 값만 돌려준다. 빈 값을 남기면 차시 저장 때 바뀌지 않은 옵션이 변경 이력에 남는다
+function readLessonGenFields(prefix) {
+    const pairs = ['objectives', 'level', 'length'].map(key => [key, document.getElementById(`${prefix}-gen-${key}`)?.value]);
+    return Object.fromEntries(pairs.filter(([, value]) => value));
+}
+
 // 차시에 설계 정보가 있으면 교안 생성 프롬프트에 덧붙인다
 function lessonDesignBrief(mod) {
     if (!mod) return '';
     const objectives = (mod.objectives || []).map(o => `- ${o}`).join('\n');
     const flow = (mod.flow || []).map(step => `- ${step.phase}: ${step.title} (${step.minutes}분)`).join('\n');
-    const tools = (mod.tools || []).map(tool => `- ${toolLabel(tool)}`).join('\n');
+    const tools = lessonTools(mod).map(tool => `- ${toolLabel(tool)}`).join('\n');
     const prereqs = (mod.prereqs || []).map(item => `- ${item.title}`).join('\n');
+    const options = lessonGenLines(mod);
     const parts = [
         mod.minutes ? `이 차시는 과정 설계에서 ${lessonMinutes(mod)}분으로 배정되었습니다. 지시문의 시간과 분량 기준을 이 시간에 맞게 비례해 줄이세요.` : '',
         objectives ? `[학습 목표]\n${objectives}` : '',
         flow ? `[진행 단계]\n${flow}` : '',
         tools ? `[사용 툴과 버전]\n${tools}\n버전 번호는 본문에 쓰지 않습니다.` : '',
-        prereqs ? `[선행 차시]\n${prereqs}\n선행 내용은 다시 설명하지 않고, 본문에서 다른 차시를 지칭하지 않습니다.` : ''
+        prereqs ? `[선행 차시]\n${prereqs}\n선행 내용은 다시 설명하지 않고, 본문에서 다른 차시를 지칭하지 않습니다.` : '',
+        options ? `[생성 옵션]\n${options}\n출력 형식과 구성 순서는 바꾸지 않습니다.` : ''
     ].filter(Boolean);
     return parts.length ? `\n\n[과정 설계 — 반드시 반영]\n${parts.join('\n')}` : '';
 }
@@ -291,37 +370,18 @@ window.downloadCourseDesignMd = function () {
 };
 
 /* ---------- 화면 ---------- */
-function designUnitHtml(unit, index) {
-    const modules = unit.modules.map(module => {
-        const notes = [
-            module.minutes > DESIGN_MODULE_MAX_MINUTES && '블록은 3시간 이하로 나누세요',
-            ...module.objectives.map(lintObjective)
-        ].filter(Boolean);
-        return `
-            <li class="text-[0.7rem] text-textLight">
-                ${escapeHtml(module.title)} <span class="text-textMuted">(${fmtMinutes(module.minutes)})</span>
-                ${notes.length ? `<span class="text-amber-400 text-[0.6rem]">⚠ ${escapeHtml(notes[0])}</span>` : ''}
-            </li>`;
-    }).join('');
-    return `
-        <div class="p-3 rounded-lg bg-white/5 border border-white/10">
-            <div class="flex items-center gap-2 mb-1">
-                <span class="text-xs font-bold text-textLight flex-1">${index + 1}. ${escapeHtml(unit.title)}</span>
-                <input type="number" min="1" data-design-hours="${index}" value="${unit.hours}" class="w-14 px-1 py-0.5 text-xs bg-black/30 border border-white/10 rounded text-white text-right">
-                <span class="text-[0.65rem] text-textMuted">시간</span>
-            </div>
-            <ul class="pl-3 space-y-0.5">${modules}</ul>
-        </div>`;
-}
-
 function renderDesignPreview() {
     const area = document.getElementById('design-preview');
     if (!area) return;
-    if (!_designDraft) { area.innerHTML = ''; return; }
+    if (!_designDraft) {
+        // 설계 초안이 없으면 이미 추가한 과정의 목표를 고칠 수 있게 둔다
+        area.innerHTML = globalState.courseDesign?.title ? designGoalHtml('현재 과정 목표', globalState.courseDesign.goal, 'data-design-saved-goal') : '';
+        return;
+    }
     const sum = designTotalHours(_designDraft);
     const matched = sum === _designDraft.totalHours;
     area.innerHTML = `
-        ${_designDraft.goal ? `<p class="text-xs text-textLight"><b>과정 목표</b> ${escapeHtml(_designDraft.goal)}</p>` : ''}
+        ${designGoalHtml('과정 목표', _designDraft.goal, 'data-design-goal')}
         <div class="flex items-center gap-2 text-xs ${matched ? 'text-emerald-400' : 'text-amber-400'}">
             <span>합계 ${sum}시간 / 목표 ${_designDraft.totalHours}시간</span>
             ${matched ? '' : '<button data-design-action="fit" class="px-2 py-0.5 rounded bg-white/10 text-textLight font-bold">시간 맞추기</button>'}
@@ -342,17 +402,17 @@ function readDesignInput() {
     }
     const totalHours = Math.max(parsed.units.length, Math.round(Number(document.getElementById('design-hours').value)) || DESIGN_DEFAULT_HOURS);
     const target = document.getElementById('design-target').value.trim() || '직업훈련 수강생';
-    return createCourseDesign(parsed, totalHours, target);
+    return { ...createCourseDesign(parsed, totalHours, target), goal: carriedDesignGoal(parsed.title) };
 }
 
-window.openCourseDesign = function () {
-    if (document.getElementById('design-dialog')) return;
-    _designDraft = null;
-    const overlay = document.createElement('div');
-    overlay.id = 'design-dialog';
-    overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9000]';
-    overlay.innerHTML = `
-        <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[640px] max-h-[86vh] flex flex-col shadow-2xl">
+// 같은 과정을 다시 나눌 때는 초안이나 저장된 과정의 목표를 이어받는다
+function carriedDesignGoal(title) {
+    return [_designDraft, globalState.courseDesign].find(design => design?.title === title)?.goal || '';
+}
+
+function designDialogHtml() {
+    return `
+        <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[760px] max-w-[94vw] max-h-[88vh] flex flex-col shadow-2xl">
             <div class="p-4 border-b border-white/10">
                 <h2 class="text-sm font-bold text-textLight">🧩 과정 설계</h2>
                 <p class="text-[0.65rem] text-textMuted mt-1">주제와 단원을 적으면 시간을 나누고 단원을 학습모듈로 쪼개 교과·차시로 추가합니다. AI 키가 있으면 NCS 능력단위도 함께 배정합니다.</p>
@@ -367,9 +427,13 @@ window.openCourseDesign = function () {
                         <input id="design-target" value="직업훈련 수강생" class="block w-full mt-1 px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white">
                     </label>
                 </div>
+                <label class="block text-[0.65rem] text-textMuted">과정 공통 사용 툴 (이름 | 버전, 한 줄에 하나. 바로 저장되며, 차시에 따로 적지 않으면 이 값을 씁니다)
+                    <textarea id="design-tools" data-design-tools rows="2" class="block w-full mt-1 px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white" placeholder="ChatGPT 웹 | 2026-10 기준">${escapeHtml(designToolLines(globalState.courseDesign?.tools))}</textarea>
+                </label>
                 <div class="flex gap-2">
                     <button data-design-action="draft" class="px-3 py-1.5 text-xs font-bold text-textLight bg-white/10 rounded-lg hover:bg-white/20">시간만 나누기</button>
                     <button data-design-action="plan" class="px-3 py-1.5 text-xs font-bold text-white bg-accent rounded-lg hover:bg-accentHover">AI로 블록 설계</button>
+                    <button data-design-action="sample" class="ml-auto px-3 py-1.5 text-xs font-bold text-textLight bg-white/10 rounded-lg hover:bg-white/20">예시 넣기</button>
                 </div>
                 <p id="design-status" class="text-[0.65rem] text-accent min-h-[1em]"></p>
                 <div id="design-preview" class="space-y-2"></div>
@@ -385,18 +449,60 @@ window.openCourseDesign = function () {
                 </div>
             </div>
         </div>`;
+}
+
+window.openCourseDesign = function () {
+    if (document.getElementById('design-dialog')) return;
+    _designDraft = null;
+    resetDesignSessions();
+    const overlay = document.createElement('div');
+    overlay.id = 'design-dialog';
+    overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9000]';
+    overlay.innerHTML = designDialogHtml();
     overlay.addEventListener('click', onDesignClick);
     overlay.addEventListener('change', onDesignChange);
     document.body.appendChild(overlay);
+    renderDesignPreview();
 };
 
-function onDesignChange(event) {
-    const index = event.target.dataset?.designHours;
-    if (index === undefined || !_designDraft || _designBusy) return;
-    const hours = Math.max(1, Math.round(Number(event.target.value)) || 1);
-    const units = _designDraft.units.map((unit, i) => (i === Number(index) ? normalizeDesignUnit({ ...unit, hours }) : unit));
+function designToolLines(tools) {
+    return (tools || []).map(tool => `${tool.name}${tool.version ? ` | ${tool.version}` : ''}`).join('\n');
+}
+
+// 과정 전체에 걸린 값은 초안과 달리 바로 저장한다
+function saveCourseDesignField(change) {
+    globalState.courseDesign = { ...globalState.courseDesign, ...change };
+    saveState();
+}
+
+function onDesignHoursChange(target) {
+    const hours = Math.max(1, Math.round(Number(target.value)) || 1);
+    const index = Number(target.dataset.designHours);
+    const units = _designDraft.units.map((unit, i) => (i === index ? normalizeDesignUnit({ ...unit, hours }) : unit));
     _designDraft = { ..._designDraft, units };
     renderDesignPreview();
+}
+
+function onDesignChange(event) {
+    const { target } = event;
+    const data = target.dataset || {};
+    if (data.designTools !== undefined) return saveCourseDesignField({ tools: parseToolLines(target.value) });
+    if (data.designSavedGoal !== undefined) return saveCourseDesignField({ goal: target.value.trim() });
+    if (!_designDraft || _designBusy) return;
+    if (data.designGoal !== undefined) _designDraft = { ..._designDraft, goal: target.value.trim(), edited: true };
+    if (data.designHours !== undefined) onDesignHoursChange(target);
+    if (data.designField || data.designStep) onDesignFieldChange(target);
+}
+
+// 고친 블록이 있으면 다시 나누기 전에 확인한다
+function confirmDesignReset() {
+    return !_designDraft?.edited || confirm('직접 고친 블록과 과정 목표 내용이 새 설계로 바뀝니다. 계속할까요?');
+}
+
+// 시간이 맞지 않으면 차시 구성과 교안 지시가 어긋나므로 추가하기 전에 확인한다
+function confirmDesignMismatch() {
+    const count = designTimeMismatches(_designDraft);
+    return !count || confirm(`시간이 맞지 않는 항목이 ${count}개 있습니다. 그대로 교과로 추가할까요?`);
 }
 
 async function onDesignClick(event) {
@@ -406,16 +512,26 @@ async function onDesignClick(event) {
     if (_designBusy) return;
     if (action === 'export') window.downloadCourseDesignMd();
     if (action === 'art') window.openArtStyle();
-    if (action === 'draft') {
-        _designDraft = readDesignInput();
+    if (action === 'sample') document.getElementById('design-topic').value = DESIGN_SAMPLE_TOPIC;
+    if (action === 'sessions') toggleDesignSessions(Number(event.target.dataset.unit));
+    const edited = _designDraft && designEditAction(_designDraft, action, event.target.dataset);
+    if (edited) {
+        _designDraft = edited;
         renderDesignPreview();
+    }
+    if (action === 'draft' && confirmDesignReset()) {
+        const draft = readDesignInput();
+        if (draft) {
+            _designDraft = draft;
+            renderDesignPreview();
+        }
     }
     if (action === 'fit') {
         const hours = allocateTime(_designDraft.units.length, _designDraft.totalHours, _designDraft.units.map(u => u.hours));
         _designDraft = { ..._designDraft, units: _designDraft.units.map((unit, i) => normalizeDesignUnit({ ...unit, hours: hours[i] })) };
         renderDesignPreview();
     }
-    if (action === 'plan') await runDesignPlan(event.target);
+    if (action === 'plan' && confirmDesignReset()) await runDesignPlan(event.target);
     if (action === 'apply') await applyCourseDesign(event.target);
 }
 
@@ -467,6 +583,7 @@ async function assignSubjectsNcs(subjects) {
 
 async function applyCourseDesign(button) {
     if (!_designDraft) return window.showAlert('먼저 시간을 나누거나 AI로 블록을 설계해주세요.');
+    if (!confirmDesignMismatch()) return;
     _designBusy = true;
     button.disabled = true;
     const design = _designDraft;
@@ -479,7 +596,7 @@ async function applyCourseDesign(button) {
     const hasContent = globalState.subjects.some(s => (s.lessons || []).some(l => l.content));
     if (!hasContent) globalState.courseTitle = design.title;
     globalState.subjects.push(...subjects);
-    globalState.courseDesign = { title: design.title, goal: design.goal, target: design.target, totalHours: design.totalHours };
+    globalState.courseDesign = { ...globalState.courseDesign, title: design.title, goal: design.goal, target: design.target, totalHours: design.totalHours };
     const failed = await assignSubjectsNcs(subjects);
     await saveState();
     closeCourseDesign();

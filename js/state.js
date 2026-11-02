@@ -972,6 +972,7 @@ window.exportCurrentModule = async function () {
 
         const markdownContent = extractImagesToZip(mod.content, mod.images, attachFolder);
         subjFolder.file(fileName, markdownContent);
+        lessonGyosuanFiles(mod).forEach(file => subjFolder.file(`${fileName.replace('.md', '')}_${file.name}`, file.content));
 
         const content = await zip.generateAsync({ type: "blob" });
         saveAs(content, `${safeCourseName}_${fileName.replace('.md', '')}.zip`);
@@ -1033,6 +1034,7 @@ window.exportAllModules = async function () {
 
             const markdownContent = extractImagesToZip(m.content, m.images, attachFolder);
             subjFolder.file(mdFileName, moduleTitle + markdownContent);
+            lessonGyosuanFiles(m).forEach(file => subjFolder.file(`${mdFileName.replace('.md', '')}_${file.name}`, file.content));
         });
 
         // 4. 메인 퀘스트(mainQuest) 별도 내보내기 — subj.mainQuest는 courseData(lessons)에 미포함

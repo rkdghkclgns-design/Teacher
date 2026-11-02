@@ -50,8 +50,9 @@ function getActiveTabContent(mod) {
     return '';
 }
 
+// mod.content는 탭을 합친 글이기도 하다. 탭이 하나라도 있으면 옛 단일 본문이 아니므로 기본 학습으로 옮기지 않는다.
 function migrateMonolithicContent(mod) {
-    if (mod && mod.content && (!mod.tabContents || !mod.tabContents.basicLearn)) {
+    if (mod && mod.content && !LESSON_TABS.some(tab => mod.tabContents?.[tab.id])) {
         if (!mod.tabContents) {
             mod.tabContents = { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null };
         }
@@ -59,13 +60,21 @@ function migrateMonolithicContent(mod) {
     }
 }
 
-async function generateTabContent(moduleId, tabId) {
+// 아직 내용이 없는 탭 id 목록
+function lessonMissingTabs(mod) {
+    const tabs = mod?.tabContents || {};
+    const legacyBody = !!mod?.content && !LESSON_TABS.some(tab => tabs[tab.id]);
+    return LESSON_TABS.map(tab => tab.id).filter(id => !tabs[id] && !(legacyBody && id === 'basicLearn'));
+}
+
+// opts.quiet: 알림 없이 결과만 돌려준다 / opts.onStatus: 진행 문구를 받는다 (일괄 생성용)
+async function generateTabContent(moduleId, tabId, opts = {}) {
     const mod = getEditingModule(moduleId);
-    if (!mod) return;
+    if (!mod) return { ok: false, error: '차시를 찾지 못했습니다.' };
     showLessonView();
 
     const tabMeta = LESSON_TABS.find(t => t.id === tabId);
-    if (!tabMeta) return;
+    if (!tabMeta) return { ok: false, error: '알 수 없는 탭입니다.' };
     const lockedBlocks = lockedSectionBlocks(mod, tabId);
 
     // Cross-tab context
@@ -95,6 +104,7 @@ async function generateTabContent(moduleId, tabId) {
         const setLoadingText = (txt) => {
             const el = document.getElementById('editor-loading-text');
             if (el) el.textContent = txt;
+            opts.onStatus?.(txt);
         };
 
         // 재시도 발생 시(특히 429 호출 한도) 로딩 문구를 갱신해 멈춘 것처럼 보이지 않게 함
@@ -142,7 +152,7 @@ async function generateTabContent(moduleId, tabId) {
             await new Promise(r => setTimeout(r, 1500));
 
             const contPayload = {
-                contents: [{ role: 'user', parts: [{ text: cont.userPrompt }] }],
+                contents: [{ role: 'user', parts: [{ text: cont.userPrompt + lessonGenBrief(mod) }] }],
                 systemInstruction: { parts: [{ text: cont.systemInstruction }] },
                 generationConfig: { maxOutputTokens: 65536 }
             };
@@ -187,6 +197,7 @@ async function generateTabContent(moduleId, tabId) {
 
         if (!mod.tabContents) mod.tabContents = { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null };
         resultText = restoreLockedSections(resultText, lockedBlocks);
+        if (!resultText.trim()) throw new Error('AI 응답이 비어 있습니다.');
         mod.tabContents[tabId] = resultText;
         mod.status = 'done';
 
@@ -219,18 +230,21 @@ async function generateTabContent(moduleId, tabId) {
         await saveState();
         renderSidebar();
         renderEditor(mod);
-        if (!_suppressTabAlert) {
+        if (!_suppressTabAlert && !opts.quiet) {
             window.showAlert(partialDueToError
                 ? `${tabMeta.label} 탭이 생성되었지만, API 호출 한도로 일부 단락이 누락되었을 수 있습니다. 잠시 후(1~2분) 다시 생성하면 전체 분량이 완성됩니다.`
                 : `${tabMeta.label} 탭이 생성되었습니다.`);
         }
+        return { ok: true, partial: partialDueToError };
     } catch (err) {
         console.error(`[TabGen] ${tabMeta.label} 실패:`, err);
         // 429(호출 한도)는 원인과 대처법을 명확히 안내해 사용자가 무한 재시도하지 않도록 함
         const is429 = /status:\s*429/.test(err.message || '');
-        window.showAlert(is429
+        const message = is429
             ? `${tabMeta.label} 생성 실패: API 호출 한도(429)에 도달했습니다. 1~2분 후 다시 시도해 주세요. (짧은 시간에 여러 탭을 연속 생성하면 한도에 걸릴 수 있습니다.)`
-            : `${tabMeta.label} 생성 중 오류: ${err.message}`);
+            : `${tabMeta.label} 생성 중 오류: ${err.message}`;
+        if (!opts.quiet) window.showAlert(message);
+        return { ok: false, error: message };
     } finally {
         // 진행도 안내 문구를 기본값으로 복원해 다음 작업에 잔여 텍스트가 남지 않도록 함
         const loadingTextEl = document.getElementById('editor-loading-text');
@@ -299,6 +313,24 @@ async function generateRemainingTabs(moduleId) {
     } finally {
         _suppressTabAlert = false;
     }
+}
+
+// 일괄 생성용: 빈 탭만 순서대로 채운다. 있는 탭은 건드리지 않고 첫 실패에서 멈춰 결과를 돌려준다.
+async function fillMissingTabs(moduleId, { isStopped = () => false, onTab = () => {}, onStatus } = {}) {
+    const mod = getEditingModule(moduleId);
+    if (!mod) return { ok: false, error: '차시를 찾지 못했습니다.' };
+    migrateMonolithicContent(mod); // 탭을 저장하면 mod.content를 다시 쓰므로 옛 단일 본문을 먼저 옮긴다
+    const missing = lessonMissingTabs(mod);
+    let partial = false;
+    for (let i = 0; i < missing.length; i++) {
+        if (isStopped()) return { ok: false, stopped: true, partial };
+        onTab(LESSON_TABS.find(tab => tab.id === missing[i]), i, missing.length);
+        const result = await generateTabContent(moduleId, missing[i], { quiet: true, onStatus });
+        if (!result.ok) return { ok: false, partial, error: result.error };
+        partial = partial || !!result.partial;
+        await new Promise(r => setTimeout(r, 2000));
+    }
+    return { ok: true, partial };
 }
 
 // 보강 재생성: 기존 탭 내용 + 사용자 보강 명령으로 재생성
