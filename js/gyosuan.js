@@ -10,7 +10,7 @@ const GYOSUAN_REFERENCE_CHARS = 4000;
 const GYOSUAN_CONCURRENCY = 3;
 // 전개가 아닌 교안 머리말·강사 전용 섹션 (머리말은 교수안 머리말 작성 근거로만 쓴다)
 const GYOSUAN_INTRO_TITLE = /학습\s*목표|^개요|들어가며/;
-const GYOSUAN_SKIP_TITLE = /교강사 가이드/;
+const GYOSUAN_SKIP_TITLE = /교강사 가이드|학습 후 체크리스트/;
 const GYOSUAN_BLOCK_FORMAT =
     '**강사 활동**: (강사가 수업에서 실제로 할 행동 1~2문장)\n' +
     '**설명 내용**:\n- (강사가 설명할 내용을 항목으로. 비교·단계 정리는 마크다운 표도 가능)\n' +

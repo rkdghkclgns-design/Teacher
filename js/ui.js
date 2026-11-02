@@ -2584,11 +2584,11 @@ function buildTaskContext(taskScope, additionalContext = "") {
         case 'tab_content': {
             // 탭별 규칙 필터링 — 학습탭에 실습/평가/강사가이드 혼입 방지
             const tabRuleExclusions = {
-                basicLearn: ['rubric_100', 'quiz_format'],
-                advLearn: ['rubric_100', 'quiz_format'],
-                basicPrac: ['rubric_100', 'quiz_format'],
-                advPrac: ['rubric_100', 'quiz_format'],
-                assessment: ['time_allocation', 'image_tags', 'mermaid_rules']
+                basicLearn: ['rubric_100', 'quiz_format', 'assessment_design'],
+                advLearn: ['rubric_100', 'quiz_format', 'assessment_design'],
+                basicPrac: ['rubric_100', 'quiz_format', 'assessment_design', 'learning_checklist'],
+                advPrac: ['rubric_100', 'quiz_format', 'assessment_design', 'learning_checklist'],
+                assessment: ['time_allocation', 'image_tags', 'mermaid_rules', 'learning_checklist']
             };
             const excludeKeys = tabRuleExclusions[additionalContext.tabId] || [];
 
@@ -2617,6 +2617,8 @@ function buildTaskContext(taskScope, additionalContext = "") {
                     ['formatting_workflow', r.formatting_workflow],
                     ['time_allocation', r.time_allocation],
                     ['content_design', r.content_design],
+                    ['learning_checklist', r.learning_checklist],
+                    ['assessment_design', r.assessment_design],
                     ['mermaid_rules', r.mermaid_rules],
                     ['rubric_100', r.rubric_100],
                     ['korean_period', r.korean_period]

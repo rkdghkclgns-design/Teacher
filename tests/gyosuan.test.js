@@ -128,7 +128,7 @@ const lesson = n => ({
     id: 'm1', title: '재미의 구조', hours: 3, description: '재미를 분석한다',
     tabContents: {
         basicLearn: '# 📝 재미의 구조\n\n## 학습 목표\n\n- 교안머리말표식 MDA를 설명할 수 있습니다.\n\n## 개요\n\n- 재미의 구조를 다룹니다. 타임테이블이 들어갑니다. 충분히 긴 문장입니다.\n\n' + Array.from({ length: n }, (_, i) => `## ${i + 1}. 섹션 ${i + 1} (⏱ 30분)\n\n<div class="instructor-callout">⏰ 강사 전용 비밀</div>\n\n본문 내용이 충분히 길게 들어갑니다. 재미의 구조를 설명합니다. ![그림](local:img1)\n\n\`\`\`mermaid\ngraph TD\n\`\`\`\n`).join('\n'),
-        basicPrac: '## 실습 과제\n\n직접 기획 메모를 작성합니다. 충분히 긴 실습 설명 문장입니다.\n\n## 🎓 교강사 가이드 (강사 전용)\n\n이 섹션은 제외되어야 하는 긴 안내 문장입니다. 제외 확인용.',
+        basicPrac: '## ✅ 학습 후 체크리스트\n\n- 체크리스트 항목입니다. 전개가 아니므로 제외되어야 하는 충분히 긴 문장입니다.\n\n## 실습 과제\n\n직접 기획 메모를 작성합니다. 충분히 긴 실습 설명 문장입니다.\n\n## 🎓 교강사 가이드 (강사 전용)\n\n이 섹션은 제외되어야 하는 긴 안내 문장입니다. 제외 확인용.',
         advLearn: null, advPrac: null, assessment: '## 평가\n\n평가 문항은 제외되어야 합니다. 충분히 긴 문장입니다.'
     }
 });
@@ -179,7 +179,7 @@ async function run(name, fn) {
         ctx.getEditingModule = () => mod;
         await ctx.generateGyosuan('m1');
         const all = ai.prompts.join('\n');
-        for (const banned of ['강사 전용 비밀', 'local:img1', 'graph TD', '평가 문항은', '제외 확인용']) {
+        for (const banned of ['전개가 아니므로', '강사 전용 비밀', 'local:img1', 'graph TD', '평가 문항은', '제외 확인용']) {
             assert.ok(!all.includes(banned), '원고에 남음: ' + banned);
         }
         assert.ok(all.includes('**수행 내용(활동 단계)**'), '실습 섹션은 수행 내용 요청');
