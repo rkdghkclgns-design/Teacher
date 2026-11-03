@@ -503,10 +503,17 @@ const TEXT_MODEL_OPTIONS = [
 ];
 // 이미지 모델 대신 텍스트 모델이 SVG로 그리는 선택지 (js/course-art.js)
 const SVG_IMAGE_MODEL = 'svg-illustration';
+// Higgsfield 모델은 설정의 Higgsfield 키와 중계 주소로 부른다 (js/higgsfield.js)
+const HIGGSFIELD_MODEL_PREFIX = 'higgsfield:';
+const isHiggsfieldModel = model => String(model || '').startsWith(HIGGSFIELD_MODEL_PREFIX);
 const IMAGE_MODEL_OPTIONS = [
     { value: 'gemini-nano-banana-2.1', label: 'Nano Banana 2.1 (권장 · 최고 성능)' },
     { value: 'gemini-3-pro-image', label: 'Nano Banana Pro' },
     { value: 'gemini-3.1-flash-image', label: 'Nano Banana 2' },
+    { value: `${HIGGSFIELD_MODEL_PREFIX}recraft`, label: 'Higgsfield · Recraft V4.1 (벡터 일러스트)' },
+    { value: `${HIGGSFIELD_MODEL_PREFIX}soul`, label: 'Higgsfield · SOUL V2 (사실적 장면)' },
+    { value: `${HIGGSFIELD_MODEL_PREFIX}ideogram`, label: 'Higgsfield · Ideogram 4.0 (글자가 든 그림)' },
+    { value: `${HIGGSFIELD_MODEL_PREFIX}grok`, label: 'Higgsfield · Grok Image 2.0' },
     { value: SVG_IMAGE_MODEL, label: 'SVG 삽화 (텍스트 모델 · 과정 공용 화풍)' },
 ];
 const REASONING_EFFORT_OPTIONS = [

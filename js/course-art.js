@@ -41,7 +41,10 @@ function courseArt() {
 }
 
 function usesSvgIllustration() {
-    return IMAGE_MODEL === SVG_IMAGE_MODEL || (!apiKey && textModelHasKey());
+    if (IMAGE_MODEL === SVG_IMAGE_MODEL) return true;
+    // Higgsfield를 골랐고 설정했으면 Gemini 키가 없어도 그림 모델로 그린다
+    if (isHiggsfieldModel(IMAGE_MODEL) && typeof higgsfieldReady === 'function' && higgsfieldReady()) return false;
+    return !apiKey && textModelHasKey();
 }
 
 /* ---------- SVG 정리·팔레트 ---------- */

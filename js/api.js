@@ -1625,10 +1625,21 @@ function withLessonImageStyle(prompt) {
 async function generateImageAPI(prompt) {
     if (usesSvgIllustration()) return generateSvgIllustration(prompt);
 
-    // 폴백 체인: 선택한 모델 → 나머지 IMAGE_MODEL_OPTIONS 순서
-    // (gemini-3.1-flash-image-preview, Imagen 4는 2026년 서비스 종료로 제거)
-    const geminiModels = [...new Set([IMAGE_MODEL, ...IMAGE_MODEL_OPTIONS.map(o => o.value)])].filter(model => model !== SVG_IMAGE_MODEL);
     const errorHistory = [];
+    // Higgsfield를 골랐으면 먼저 쓰고, 실패하면 Gemini 키가 있을 때만 Gemini 모델로 넘어간다
+    if (isHiggsfieldModel(IMAGE_MODEL)) {
+        try {
+            return await generateHiggsfieldImage(IMAGE_MODEL, prompt);
+        } catch (e) {
+            console.error('[Image Gen] Higgsfield 에러:', e.message);
+            errorHistory.push(e.message);
+        }
+    }
+
+    // 폴백 체인: 선택한 모델 → 나머지 Gemini 이미지 모델 순서
+    // (gemini-3.1-flash-image-preview, Imagen 4는 2026년 서비스 종료로 제거)
+    const geminiModels = errorHistory.length && !apiKey ? [] : [...new Set([IMAGE_MODEL, ...IMAGE_MODEL_OPTIONS.map(o => o.value)])]
+        .filter(model => model !== SVG_IMAGE_MODEL && !isHiggsfieldModel(model));
 
     for (const model of geminiModels) {
         const payload = {

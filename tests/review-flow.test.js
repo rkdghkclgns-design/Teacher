@@ -461,6 +461,23 @@ function generationContext(callGemini, mod) {
         assert.strictEqual(call(ctx, 'assessmentObjectivePrompt')({ objectives: ['목표'] }, 'basicLearn'), '');
     });
 
+    await run('이미지 생성: Higgsfield를 고르면 먼저 쓰고, Gemini 키가 없으면 Gemini로 넘어가지 않는다', async () => {
+        let geminiCalls = 0;
+        const imgCtx = makeContext(async () => { geminiCalls += 1; throw new Error('Gemini 호출'); });
+        vm.runInContext("usesSvgIllustration = () => false; IMAGE_MODEL = 'higgsfield:recraft'; apiKey = '';", imgCtx);
+        imgCtx.generateHiggsfieldImage = async (model, prompt) => `data:image/png;base64,${model}|${prompt}`;
+        vm.runInContext('generateHiggsfieldImage = window.generateHiggsfieldImage;', imgCtx);
+        assert.strictEqual(await call(imgCtx, 'generateImageAPI')('고양이'), 'data:image/png;base64,higgsfield:recraft|고양이');
+        imgCtx.generateHiggsfieldImage = async () => { throw new Error('Higgsfield 401: 키가 맞지 않습니다'); };
+        vm.runInContext('generateHiggsfieldImage = window.generateHiggsfieldImage;', imgCtx);
+        assert.strictEqual(await call(imgCtx, 'generateImageAPI')('고양이'), null);
+        assert.strictEqual(geminiCalls, 0, 'Gemini 키가 없으면 부르지 않는다');
+        assert.ok(imgCtx.toasts.at(-1).includes('키가 맞지 않습니다'), '실패 이유를 알린다');
+        vm.runInContext("apiKey = 'k'; IMAGE_MODEL = 'gemini-nano-banana-2.1';", imgCtx);
+        await call(imgCtx, 'generateImageAPI')('고양이');
+        assert.strictEqual(geminiCalls, 3, 'Gemini 체인에는 Higgsfield 모델을 넣지 않는다 (Gemini 이미지 모델 3개)');
+    });
+
     await run('미리보기: 섹션 제목을 이스케이프한다', async () => {
         const aiCtx = makeContext();
         let html = '';

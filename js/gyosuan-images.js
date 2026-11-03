@@ -15,7 +15,7 @@ function bindGyosuanImageAi() {
         if (!url) throw new Error('이미지를 만들지 못했습니다.');
         return url;
     };
-    K.AI = { hasKey: () => !!apiKey || textModelHasKey() };
+    K.AI = { hasKey: () => !!apiKey || textModelHasKey() || (isHiggsfieldModel(IMAGE_MODEL) && typeof higgsfieldReady === 'function' && higgsfieldReady()) };
     K.ai = {
         genImage: K.genImage,
         available: role => (role === 'image' ? K.AI.hasKey() : textModelHasKey()),

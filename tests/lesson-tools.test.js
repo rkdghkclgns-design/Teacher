@@ -14,6 +14,7 @@ function makeContext(callGemini, keys = { gemini: '' }) {
         TEXT_MODEL: 'gemini-4-argon',
         IMAGE_MODEL: 'gemini-nano-banana-2.1',
         SVG_IMAGE_MODEL: 'svg-illustration',
+        isHiggsfieldModel: m => String(m || '').startsWith('higgsfield:'),
         apiKey: keys.gemini,
         claudeApiKey: keys.claude || '',
         isClaudeModel: m => /^claude-/.test(m),
@@ -392,6 +393,11 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
         const chosen = makeContext(async () => {}, { gemini: 'k' });
         vm.runInContext("IMAGE_MODEL = 'svg-illustration'", chosen);
         assert.strictEqual(chosen.window.usesSvgIllustration(), true, '설정에서 고를 수 있다');
+        vm.runInContext("IMAGE_MODEL = 'higgsfield:recraft'; TEXT_MODEL = 'claude-opus-5-5'", claudeOnly);
+        claudeOnly.higgsfieldReady = () => true;
+        assert.strictEqual(claudeOnly.window.usesSvgIllustration(), false, 'Higgsfield를 설정했으면 Gemini 키가 없어도 그림 모델로 그린다');
+        claudeOnly.higgsfieldReady = () => false;
+        assert.strictEqual(claudeOnly.window.usesSvgIllustration(), true, 'Higgsfield 설정이 없으면 전처럼 SVG로 그린다');
         const palette = [{ role: '주색', hex: '#3D5FC4' }, { role: '바탕', hex: '#F6F4EE' }];
         assert.ok(call('snapSvgPalette')('<text fill="#3D5FC4">fill: #0000ff</text>', palette).svg.includes('>fill: #0000ff<'), '글자 내용은 바꾸지 않는다');
         const result = plain(call('snapSvgPalette')('<rect fill="#0000ff" stroke="#3D5FC4"/><rect fill="none"/><rect fill="#fff"/>', palette));

@@ -715,7 +715,7 @@
                     <div id="claude-key-status-dot" class="w-1.5 h-1.5 rounded-full bg-red-400"></div><span
                         id="claude-key-status-text" class="text-[0.6rem] text-textMuted">Key 미등록</span>
                 </div>
-                <p class="text-[0.55rem] text-textMuted/50 mt-1">Claude 모델을 고르면 텍스트 생성에 사용됩니다. 이미지 생성에는 Gemini 키가 필요합니다. 빈 칸으로 저장하면 키가 삭제됩니다.</p>
+                <p class="text-[0.55rem] text-textMuted/50 mt-1">Claude 모델을 고르면 텍스트 생성에 사용됩니다. 이미지 생성에는 Gemini 키나 Higgsfield 설정이 필요합니다. 빈 칸으로 저장하면 키가 삭제됩니다.</p>
             </div>
 
             <!-- [Phase F10] 구글 검색 이미지 연동 (다중 키 롤링) -->
@@ -795,7 +795,38 @@
                     class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent transition-all appearance-none cursor-pointer"
                     style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22%238a8ab5%22><path d=%22M7 10l5 5 5-5z%22/></svg>');background-repeat:no-repeat;background-position:right 10px center;">
                 </select>
-                <p class="text-[0.55rem] text-textMuted/50 mt-1">교안 내 삽입 이미지 생성에 사용 (16:9 · 2K). Gemini 키가 없으면 텍스트 모델이 SVG 삽화를 그립니다.</p>
+                <p class="text-[0.55rem] text-textMuted/50 mt-1">교안 내 삽입 이미지 생성에 사용 (16:9). Higgsfield 모델은 아래 Higgsfield 설정을 씁니다. Gemini 키가 없으면 텍스트 모델이 SVG 삽화를 그립니다.</p>
+            </div>
+            <div>
+                <label class="flex items-center gap-1.5 text-xs font-bold text-textMuted mb-2"><i
+                        class="ph-fill ph-paint-brush text-accent/70"></i> Higgsfield 이미지 생성 (선택)</label>
+                <div class="space-y-2">
+                    <div class="relative">
+                        <input type="password" id="settings-higgsfield-key-input" autocomplete="off"
+                            class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-accent transition-all pr-8"
+                            placeholder="Key ID:Secret (console.higgsfield.ai)">
+                        <button
+                            onclick="const i=document.getElementById('settings-higgsfield-key-input');i.type=i.type==='password'?'text':'password'"
+                            class="absolute right-2 top-1/2 -translate-y-1/2 text-textMuted hover:text-white transition-colors"><i
+                                class="ph-bold ph-eye text-xs"></i></button>
+                    </div>
+                    <input type="text" id="settings-higgsfield-relay-input" autocomplete="off"
+                        class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-accent transition-all"
+                        placeholder="중계 주소 (예: https://teacher-higgsfield.내계정.workers.dev)">
+                </div>
+                <div class="flex items-center justify-between gap-2 mt-2">
+                    <div class="flex items-center gap-1 min-w-0">
+                        <div id="higgsfield-status-dot" class="w-1.5 h-1.5 rounded-full shrink-0 bg-red-400"></div><span
+                            id="higgsfield-status-text" class="text-[0.6rem] text-textMuted truncate">키 미등록</span>
+                    </div>
+                    <div class="flex gap-1 shrink-0">
+                        <button onclick="testHiggsfieldSetting(this)"
+                            class="px-2 py-1.5 text-xs font-bold text-textLight bg-white/10 hover:bg-white/20 rounded-lg transition-colors disabled:opacity-50">연결 확인</button>
+                        <button onclick="saveHiggsfieldSetting()"
+                            class="px-3 py-1.5 text-xs font-bold text-white bg-accent hover:bg-accentHover rounded-lg transition-colors">저장</button>
+                    </div>
+                </div>
+                <p class="text-[0.55rem] text-textMuted/50 mt-1 leading-relaxed">위 이미지 생성 모델에서 Higgsfield를 고르면 사용합니다. Higgsfield는 브라우저에서 직접 부를 수 없어 처음 한 번 Cloudflare Worker 중계를 배포해야 합니다: <button onclick="copyHiggsfieldRelay()" class="underline text-accent/80 hover:text-accent">중계 코드 복사</button> → Cloudflare 대시보드 Workers &amp; Pages → Create → Worker → Edit code에 붙여 넣고 Deploy → 나온 주소를 위 칸에 넣고 연결 확인. 비용은 Higgsfield API 잔액에서 나갑니다.</p>
             </div>
             <div class="h-px bg-white/5"></div>
             <div>
@@ -1566,6 +1597,7 @@
                 // [Phase F10] 무료 스톡(Pixabay) 이미지 설정 초기화
                 const pixabayInput = document.getElementById('settings-pixabay-key-input');
                 if (pixabayInput && typeof pixabayApiKey !== 'undefined') pixabayInput.value = pixabayApiKey;
+                window.renderHiggsfieldSettings?.();
 
                 // 파일명 컨벤션 UI 렌더링
                 if (typeof renderFilenameConventionUI === 'function') renderFilenameConventionUI();
@@ -1669,6 +1701,7 @@
     <script src="./js/panel-manager.js?v=125"></script>
     <script src="./js/filename-convention.js?v=125"></script>
     <script src="./js/data.js?v=125"></script>
+    <script src="./js/higgsfield.js?v=125"></script>
     <script src="./js/claude.js?v=125"></script>
     <script src="./js/ai-routing.js?v=125"></script>
     <script src="./js/lesson-attachments.js?v=125"></script>

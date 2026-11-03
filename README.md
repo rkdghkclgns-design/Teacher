@@ -19,6 +19,10 @@ AI 기반 게임 기획 교안 자동 생성 도구
 - **Claude**: 교안 생성, 교차 검수 ([Claude Console](https://console.anthropic.com)에서 발급)
 - **Google Custom Search** (선택): 본문 이미지 웹 검색. [검색 엔진](https://programmablesearchengine.google.com/controlpanel/all)을 만들어 CX를 넣고, [Google Cloud Console](https://console.cloud.google.com/)에서 Custom Search API 키를 발급합니다. 키를 쉼표로 여러 개 넣으면 한도에 걸릴 때 돌려 씁니다.
 - **Pixabay** (선택): 웹 검색이 실패할 때 쓰는 무료 스톡 이미지 ([API 문서](https://pixabay.com/api/docs/)에서 발급)
+- **Higgsfield** (선택): 이미지 생성 모델에서 Higgsfield를 고르면 교안 삽화를 Higgsfield로 만듭니다. [Higgsfield Console](https://console.higgsfield.ai)에서 API 키(Key ID:Secret)를 만들고 API 잔액을 충전합니다.
+  - Higgsfield API는 브라우저에서 직접 부르는 것을 막으므로, 처음 한 번 [Cloudflare Worker](https://dash.cloudflare.com) 중계를 배포합니다 (무료 등급으로 충분).
+  - 설정의 "중계 코드 복사" → Cloudflare 대시보드 Workers & Pages → Create → Worker → Deploy → Edit code에 붙여 넣고 Deploy → 나온 주소(`https://이름.계정.workers.dev`)를 설정의 중계 주소에 넣고 "연결 확인"
+  - 중계는 키를 저장하지 않고 이 앱 주소에서 온 요청만 Higgsfield로 넘깁니다. 다른 주소에서 앱을 쓰면 Worker 변수 `ALLOWED_ORIGINS`에 그 주소를 적습니다. 코드: `relay/higgsfield-relay.mjs`
 
 ## 폴더 구조
 
@@ -66,6 +70,7 @@ AI 기반 게임 기획 교안 자동 생성 도구
 │   ├── course-art.js          SVG 삽화 생성·검사, 아트 스타일 가이드
 │   ├── course-illustrations.js 차시 삽화 생성·수정·내려받기·본문 배치
 │   ├── ai-edit-preview.js     AI 수정 단어 단위 미리보기
+│   ├── higgsfield.js          Higgsfield 이미지 생성(키·중계 설정, 생성 요청·상태 확인·내려받기)
 │   ├── lesson-editor-tools.js 섹션 고정
 │   ├── course-refs.js         이미지·스캔 PDF 판독, 쪽 범위, CP949, 전달 분량
 │   ├── claude.js              Claude API 어댑터
@@ -77,6 +82,8 @@ AI 기반 게임 기획 교안 자동 생성 도구
 │   └── filename-convention.js 파일명 규칙
 │
 ├── assets/                    ← 리소스 파일
+│
+├── relay/                     ← Higgsfield 중계(Cloudflare Worker) 코드
 │
 └── tests/                     ← 자동 테스트 (node tests/<이름>.test.js)
 ```
