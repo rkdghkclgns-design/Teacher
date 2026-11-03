@@ -230,12 +230,7 @@ window.copyHiggsfieldRelay = async function () {
     try {
         const res = await fetch(HIGGSFIELD_RELAY_FILE);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const code = await res.text();
-        try {
-            await navigator.clipboard.writeText(code);
-        } catch {
-            copyTextFallback(code);
-        }
+        await copyPlainText(await res.text());
         window.showToast?.('중계 코드를 복사했습니다. Cloudflare Worker 편집기에 붙여 넣고 배포하세요.', 'success');
     } catch (err) {
         console.error('[Higgsfield] 중계 코드 복사 실패:', err);

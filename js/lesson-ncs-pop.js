@@ -4,6 +4,8 @@
 const NCS_POP_MAX_ROWS = 12;
 const NCS_POP_CLOSE_MS = 250;
 const NCS_POP_GAP = 6;
+const NCS_POP_COPIED_MS = 1200;
+const NCS_POP_COPY_ICON = '<i class="ph-bold ph-copy text-[0.7rem]"></i>';
 
 let _ncsPop = null; // { moduleId, pinned, entries, selected }
 let _ncsPopTimer = 0;
@@ -37,17 +39,29 @@ function ncsPopFitHtml(rec) {
     return `<span class="ml-auto shrink-0 text-[0.6rem] font-bold px-1.5 py-0.5 rounded ${ncsFitTone(rec.fit)}" title="${kind}">${Number(rec.fit) || 0}점</span>`;
 }
 
-function ncsPopRowHtml(entry, checked) {
+// 카드와 같이 요소 코드가 없으면 능력단위 코드를 쓴다
+const ncsPopCode = element => element.code || element.unitCode || '';
+
+// 행 안의 버튼이라 눌러도 체크가 바뀌지 않게 onNcsPopClick에서 기본 동작을 막는다
+function ncsPopCopyButtonHtml(code) {
+    const label = escapeHtml(`${code} 복사`);
+    return `<button type="button" data-ncs-pop-action="copy" data-code="${escapeHtml(code)}" title="${label}" aria-label="${label}"
+        class="shrink-0 px-1 rounded text-textMuted hover:text-white hover:bg-white/10">${NCS_POP_COPY_ICON}</button>`;
+}
+
+function ncsPopRowHtml(entry, checked, index) {
     const { key, element, rec } = entry;
+    const code = ncsPopCode(element);
     // 코드도 단위도 없는 목록 밖 후보는 참고로만 보여 준다
-    const blocked = !element.unitCode && !element.code;
+    const blocked = !code;
     const covers = rec?.covers?.length ? ` · 학습 목표 ${rec.covers.join(', ')}` : '';
     return `
-        <label class="flex items-start gap-2 p-1.5 rounded hover:bg-white/5 ${blocked ? 'opacity-60' : 'cursor-pointer'}">
+        <label data-ncs-pop-row="${index}" class="flex items-start gap-2 p-1.5 rounded hover:bg-white/5 ${blocked ? 'opacity-60' : 'cursor-pointer'}">
             <input type="checkbox" class="mt-0.5 shrink-0" data-ncs-pop-key="${escapeHtml(key)}" ${checked ? 'checked' : ''} ${blocked ? 'disabled' : ''}>
             <span class="min-w-0 flex-1">
                 <span class="flex items-center gap-1">
-                    <span class="font-mono text-[0.65rem] text-white truncate">${escapeHtml(element.code || '(코드 없음)')}</span>
+                    <span class="font-mono text-[0.65rem] text-white truncate">${escapeHtml(code || '(코드 없음)')}</span>
+                    ${code ? ncsPopCopyButtonHtml(code) : ''}
                     ${elementBadgeHtml(rec)}
                     ${ncsPopFitHtml(rec)}
                 </span>
@@ -67,7 +81,7 @@ function ncsPopStatus(mod) {
 function ncsPopHtml(mod, entries, selected, pinned) {
     const status = ncsPopStatus(mod);
     const rows = entries.length
-        ? entries.map(entry => ncsPopRowHtml(entry, selected.has(entry.key))).join('')
+        ? entries.map((entry, index) => ncsPopRowHtml(entry, selected.has(entry.key), index)).join('')
         : '<p class="p-2 text-[0.7rem] text-textMuted">후보가 없습니다. 차시 정보에서 AI 추천을 받아주세요.</p>';
     return `
         <div class="flex items-center gap-2 mb-2">
@@ -94,13 +108,93 @@ function confirmedNcsChange(entries, selected) {
     return { ncsElements: picked, ncsAuto: false, ncsKeyword: false, ncsNone: !picked.length };
 }
 
+// 마우스를 올린 항목을 크게 보여 주는 상세 카드. 학습 목표 번호는 추천 때 쓴 목록(qbankObjectives)의 순서다
+function ncsPopDetailHtml(entry, mod) {
+    const { element, rec } = entry;
+    const code = ncsPopCode(element);
+    const objectives = qbankObjectives(mod);
+    const covers = rec?.covers || [];
+    const section = (title, body) => `<div class="mt-3"><p class="text-xs font-bold text-textMuted mb-1">${title}</p>${body}</div>`;
+    return `
+        <div class="flex items-center gap-2 flex-wrap">
+            <span class="font-mono text-sm font-bold text-white">${escapeHtml(code || '(코드 없음)')}</span>
+            ${elementBadgeHtml(rec)}
+            ${rec ? `<span class="ml-auto text-xs font-bold px-2 py-0.5 rounded ${ncsFitTone(rec.fit)}">${rec.by === 'AI' ? 'AI 적합도' : '키워드 일치도'} ${Number(rec.fit) || 0}점</span>` : ''}
+        </div>
+        <p class="mt-2 text-base font-bold text-white leading-snug">${escapeHtml(element.name || '')}</p>
+        <p class="mt-1 text-xs text-textLight">${escapeHtml(ncsPopUnitLine(element))}</p>
+        ${covers.length ? section('관련 학습 목표', `<ul class="space-y-1 text-[0.8rem] text-textLight leading-relaxed">${covers.map(no => `<li><b class="text-accent">${no}.</b> ${escapeHtml(objectives[no - 1] || '지금 교안에는 없는 번호입니다')}</li>`).join('')}</ul>`) : ''}
+        ${rec?.reason ? section(rec.by === 'AI' ? '근거' : '찾은 방법', `<p class="text-[0.85rem] text-textLight leading-relaxed whitespace-pre-wrap">${escapeHtml(rec.reason)}</p>`) : ''}
+        ${rec ? '' : '<p class="mt-3 text-xs text-textMuted">교과에 등록한 요소입니다. 적합도 점수는 차시 정보에서 AI 추천을 받으면 생깁니다.</p>'}`;
+}
+
 /* ---------- 화면 ---------- */
 const ncsPopModule = () => (_ncsPop ? getEditingModule(Number(_ncsPop.moduleId) || _ncsPop.moduleId) : null);
 
 function closeLessonNcsPop() {
     clearTimeout(_ncsPopTimer);
+    hideNcsPopDetail();
     document.getElementById('lesson-ncs-pop')?.remove();
     _ncsPop = null;
+}
+
+/* ---------- 큰 상세 카드 ---------- */
+const hideNcsPopDetail = () => document.getElementById('lesson-ncs-pop-detail')?.remove();
+
+// 팝업 오른쪽에 두고, 자리가 없으면 왼쪽에 둔다. 높이는 마우스를 올린 행에 맞추되 화면 안에 둔다
+function placeNcsPopDetail(card, pop, row) {
+    card.style.visibility = 'hidden';
+    requestAnimationFrame(() => {
+        if (!card.isConnected) return;
+        if (!row.isConnected) return hideNcsPopDetail();
+        const box = pop.getBoundingClientRect();
+        const anchor = row.getBoundingClientRect();
+        const size = card.getBoundingClientRect();
+        const right = box.right + NCS_POP_GAP;
+        const left = right + size.width <= window.innerWidth - NCS_POP_GAP ? right : Math.max(NCS_POP_GAP, box.left - size.width - NCS_POP_GAP);
+        const top = Math.max(NCS_POP_GAP, Math.min(anchor.top, window.innerHeight - size.height - NCS_POP_GAP));
+        card.style.left = `${left}px`;
+        card.style.top = `${top}px`;
+        card.style.visibility = 'visible';
+    });
+}
+
+// 마우스가 지나가는 동안 보기만 하는 카드라 마우스를 받지 않는다 (pointer-events-none)
+function showNcsPopDetail(row) {
+    const entry = _ncsPop?.entries[Number(row.dataset.ncsPopRow)];
+    const mod = ncsPopModule();
+    const pop = document.getElementById('lesson-ncs-pop');
+    if (!entry || !mod || !pop) return hideNcsPopDetail();
+    let card = document.getElementById('lesson-ncs-pop-detail');
+    if (card?.dataset.row === row.dataset.ncsPopRow) return;
+    if (!card) {
+        card = document.createElement('div');
+        card.id = 'lesson-ncs-pop-detail';
+        card.className = 'fixed z-[9501] w-[420px] max-w-[92vw] p-4 bg-[#141428] border border-accent/40 rounded-xl shadow-2xl pointer-events-none';
+        document.body.appendChild(card);
+    }
+    card.dataset.row = row.dataset.ncsPopRow;
+    card.innerHTML = ncsPopDetailHtml(entry, mod);
+    placeNcsPopDetail(card, pop, row);
+}
+
+function onNcsPopHover(event) {
+    const row = event.target.closest?.('[data-ncs-pop-row]');
+    if (row) showNcsPopDetail(row);
+    else hideNcsPopDetail();
+}
+
+async function copyNcsPopCode(button) {
+    const code = button.dataset.code;
+    try {
+        await copyPlainText(code);
+        button.innerHTML = '<i class="ph-bold ph-check text-[0.7rem] text-emerald-300"></i>';
+        setTimeout(() => { if (button.isConnected) button.innerHTML = NCS_POP_COPY_ICON; }, NCS_POP_COPIED_MS);
+        window.showToast?.(`NCS 코드를 복사했습니다: ${code}`, 'success');
+    } catch (err) {
+        console.error('[NCS 팝업] 코드 복사 실패:', err);
+        window.showAlert(`코드를 복사하지 못했습니다: ${code}`);
+    }
 }
 
 // 아래 공간이 모자라면 위로 띄우고, 좌우는 화면 안에 둔다.
@@ -129,11 +223,17 @@ function renderNcsPop(trigger) {
         pop.id = 'lesson-ncs-pop';
         pop.className = 'fixed z-[9500] w-[380px] max-w-[92vw] p-3 bg-[#1a1a2e] border border-white/15 rounded-xl shadow-2xl text-xs text-textLight';
         pop.addEventListener('mouseenter', () => clearTimeout(_ncsPopTimer));
-        pop.addEventListener('mouseleave', () => window.scheduleLessonNcsPopClose());
+        pop.addEventListener('mouseleave', () => {
+            hideNcsPopDetail();
+            window.scheduleLessonNcsPopClose();
+        });
+        pop.addEventListener('mouseover', onNcsPopHover);
+        pop.addEventListener('scroll', hideNcsPopDetail, true); // 목록을 스크롤하면 카드 위치가 어긋난다
         pop.addEventListener('click', onNcsPopClick);
         pop.addEventListener('change', onNcsPopChange);
         document.body.appendChild(pop);
     }
+    hideNcsPopDetail();
     pop.innerHTML = ncsPopHtml(mod, _ncsPop.entries, _ncsPop.selected, _ncsPop.pinned);
     if (trigger) placeNcsPop(pop, trigger);
 }
@@ -202,7 +302,12 @@ async function confirmNcsPop() {
 }
 
 function onNcsPopClick(event) {
-    const action = event.target.closest?.('[data-ncs-pop-action]')?.dataset.ncsPopAction;
+    const button = event.target.closest?.('[data-ncs-pop-action]');
+    const action = button?.dataset.ncsPopAction;
+    if (action === 'copy') {
+        event.preventDefault(); // 행(label) 안의 버튼이라 막지 않으면 체크가 바뀐다
+        copyNcsPopCode(button);
+    }
     if (action === 'close') closeLessonNcsPop();
     if (action === 'confirm') confirmNcsPop();
     if (action === 'detail') {

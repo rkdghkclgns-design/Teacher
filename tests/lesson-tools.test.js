@@ -311,7 +311,7 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
     await run('NCS 팝업: 코드별 상세와 적합도를 보이고 고른 것을 확정한다', async () => {
         const chosen = { code: 'E1', name: '요구사항 정의하기', unitCode: 'U1', unitName: '기획 단위', auto: true };
         const mod = {
-            id: 7, ncsAuto: true, ncsElements: [chosen],
+            id: 7, ncsAuto: true, ncsElements: [chosen], objectives: ['기획 요구사항을 정리할 수 있습니다.'],
             ncsRecs: [
                 { unitCode: 'U1', unitName: '기획 단위', elementCode: 'E1', elementName: '요구사항 정의하기', fit: 82, covers: [1], reason: '목표 <1>과 맞음', by: 'AI' },
                 { unitCode: 'U2', unitName: '다른 단위', elementCode: '', elementName: '', fit: 91, covers: [], reason: '높지만 고르지 않음', by: 'AI' }
@@ -330,6 +330,17 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
         assert.ok(!('auto' in change.ncsElements[0]));
         assert.strictEqual(call('confirmedNcsChange')(entries, new Set()).ncsNone, true, '모두 해제하면 다시 채우지 않는다');
         assert.strictEqual(call('ncsPopStatus')({ ncsElements: [chosen], ncsAuto: false }).text, '확정됨');
+        assert.ok(html.includes('data-ncs-pop-action="copy" data-code="E1"') && html.includes('data-code="U2"'), '항목마다 코드 복사 버튼');
+        assert.ok(html.includes('data-ncs-pop-row="0"') && html.includes('data-ncs-pop-row="1"'), '마우스를 올린 행을 찾는 번호');
+        const blocked = call('ncsPopRowHtml')({ key: 'x', element: { name: '목록 밖' }, rec: null }, false, 2);
+        assert.ok(!blocked.includes('data-ncs-pop-action="copy"') && blocked.includes('disabled'), '코드가 없으면 복사 버튼도 없다');
+        const detail = call('ncsPopDetailHtml')(entries[0], mod);
+        assert.ok(detail.includes('AI 적합도 82점') && detail.includes('요구사항 정의하기'), '큰 카드에 점수와 요소 이름');
+        assert.ok(detail.includes('1.</b> 기획 요구사항을 정리할 수 있습니다.'), '학습 목표 번호를 목표 문장으로 보여 준다');
+        assert.ok(detail.includes('목표 &lt;1&gt;과 맞음') && !detail.includes('목표 <1>'), '근거 전체를 이스케이프해 보여 준다');
+        const stale = call('ncsPopDetailHtml')({ ...entries[0], rec: { ...entries[0].rec, covers: [3] } }, mod);
+        assert.ok(stale.includes('지금 교안에는 없는 번호입니다'), '목표가 바뀌어 없는 번호');
+        assert.ok(call('ncsPopDetailHtml')({ key: 'k', element: chosen, rec: null }, mod).includes('AI 추천을 받으면'), '점수가 없는 요소 안내');
     });
 
     await run('문제은행: 분포·CSV', async () => {

@@ -56,13 +56,21 @@ function copyTextFallback(text) {
     if (!copied) throw new Error('복사하지 못했습니다.');
 }
 
+// 클립보드 API가 없거나 권한이 막히면 선택 복사로 대신한다
+async function copyPlainText(text) {
+    try {
+        await navigator.clipboard.writeText(text);
+    } catch {
+        copyTextFallback(text);
+    }
+}
+
 window.copyLessonNcsCodes = async function (moduleId) {
     const mod = getEditingModule(Number(moduleId) || moduleId);
     const text = mod ? lessonNcsCodes(mod).join(', ') : '';
     if (!text) return;
     try {
-        if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
-        else copyTextFallback(text);
+        await copyPlainText(text);
         window.showToast?.('NCS 코드를 복사했습니다.', 'success');
     } catch (err) {
         console.error('[차시 목록] NCS 코드 복사 실패:', err);
