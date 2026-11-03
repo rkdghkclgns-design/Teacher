@@ -8,6 +8,7 @@ const REVIEW_SUBHEADING = /^###\s/gm; // 문항과 소주제. 지적 수가 줄�
 const REVIEW_MAX_OUTPUT_TOKENS = 65536;
 const REVIEW_FRAME_WHERE = ['학습 목표', '학습 후 체크리스트'];
 const REVIEW_REFERENCE_TITLE = /학습\s*목표|학습\s*후\s*체크리스트/;
+const LESSON_CHECKLIST_TITLE = /학습\s*후\s*체크리스트/;
 const REVIEW_MARKERS = /<!--\s*(?:CONTINUE|END)\s*-->/g;
 const REVIEW_IMAGE_REF = /local:[\w-]+|\[IMG:[^\]]*\]/g;
 const REVIEW_BADGE_STYLES = { bad: 'bg-rose-500 text-white', warn: 'bg-amber-400 text-amber-950', ok: 'bg-emerald-500 text-white' };
@@ -102,6 +103,15 @@ function newSectionIndex(sections, title) {
 function insertSection(sections, section) {
     const at = newSectionIndex(sections, section.title);
     return [...sections.slice(0, at), section, ...sections.slice(at)];
+}
+
+// 학습 탭의 체크리스트는 맨 끝에 둔다. 나눠 받은 응답에서 본문 섹션 사이에 끼면 뒤로 옮긴다
+function checklistLast(md, tabId) {
+    if (!LESSON_STRUCTURED_TABS.includes(tabId)) return md;
+    const sections = mdSections(md);
+    const at = sections.findIndex(section => LESSON_CHECKLIST_TITLE.test(section.title));
+    if (at < 0 || at === sections.length - 1) return md;
+    return [...sections.slice(0, at), ...sections.slice(at + 1), sections[at]].map(section => section.text).join('\n\n');
 }
 
 // 대상 섹션만 바꾼다. 다른 제목으로 돌아온 섹션은 본문이 비슷한 대상과만 짝지어, 새 개요가 지적된 섹션을 덮어쓰지 않게 한다.

@@ -95,9 +95,12 @@ function alignMdSections(beforeMd, afterMd) {
 const sectionChanged = row => row.before.trim() !== row.after.trim();
 
 // 사라진 섹션은 모델이 빠뜨렸을 수 있으므로 기본으로 원문을 남긴다. 응답이 잘렸으면 마지막 섹션도 잘린 글이므로 고르지 않는다.
-function defaultAcceptedRows(rows, truncated = false) {
+// 탭 전체를 다시 쓴 글(rewrite)은 제목이 통째로 바뀌는 것이 보통이라 이전 섹션을 남기면 같은 내용이 두 벌 생긴다.
+// 그래서 끝까지 받은 글이면 이전 섹션을 기본으로 지운다. 이전 글은 작업 히스토리에 남는다.
+function defaultAcceptedRows(rows, truncated = false, rewrite = false) {
     const cut = truncated ? rows.map(row => !!row.after.trim()).lastIndexOf(true) : -1;
-    return new Set(rows.flatMap((row, index) => (index !== cut && sectionChanged(row) && row.after.trim() ? [index] : [])));
+    const dropGone = rewrite && !truncated;
+    return new Set(rows.flatMap((row, index) => (index !== cut && sectionChanged(row) && (row.after.trim() || dropGone) ? [index] : [])));
 }
 
 // 고르지 않은 섹션은 원문을 유지한다
@@ -111,8 +114,9 @@ function lintDeltaLabel(beforeMd, afterMd, tabId) {
     return `검수 지적 필수 ${before.required} → ${after.required} · 권장 ${before.recommended} → ${after.recommended}`;
 }
 
-function sectionRowHtml(row, index, checked) {
-    const state = !row.before.trim() ? '새 섹션' : !row.after.trim() ? '삭제 제안 · 기본은 유지' : '변경';
+function sectionRowHtml(row, index, checked, dropGone = false) {
+    const gone = dropGone ? '이전 섹션 · 기본은 삭제' : '삭제 제안 · 기본은 유지';
+    const state = !row.before.trim() ? '새 섹션' : !row.after.trim() ? gone : '변경';
     return `
         <div class="border border-white/10 rounded-lg p-2">
             <label class="flex items-center gap-2 text-xs font-bold text-textLight">
@@ -124,7 +128,7 @@ function sectionRowHtml(row, index, checked) {
         </div>`;
 }
 
-function aiChangeHtml({ title, note, summary, rows, accepted }) {
+function aiChangeHtml({ title, note, summary, rows, accepted, dropGone = false }) {
     const changed = rows.map((row, index) => ({ row, index })).filter(({ row }) => sectionChanged(row));
     return `
         <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[720px] max-w-[92vw] max-h-[84vh] flex flex-col shadow-2xl">
@@ -134,7 +138,7 @@ function aiChangeHtml({ title, note, summary, rows, accepted }) {
                 ${note ? `<p class="text-[0.65rem] text-amber-300 mt-1">${escapeHtml(note)}</p>` : ''}
             </div>
             <div class="flex-1 overflow-y-auto p-4 space-y-2">
-                ${changed.length ? changed.map(({ row, index }) => sectionRowHtml(row, index, accepted.has(index))).join('') : '<p class="text-xs text-textMuted">바뀐 내용이 없습니다.</p>'}
+                ${changed.length ? changed.map(({ row, index }) => sectionRowHtml(row, index, accepted.has(index), dropGone)).join('') : '<p class="text-xs text-textMuted">바뀐 내용이 없습니다.</p>'}
                 ${changed.length && changed.length < rows.length ? `<p class="text-[0.65rem] text-textMuted">변경 없는 섹션 ${rows.length - changed.length}개는 그대로 둡니다.</p>` : ''}
             </div>
             <div class="p-3 border-t border-white/10 flex justify-end gap-2">
@@ -145,13 +149,14 @@ function aiChangeHtml({ title, note, summary, rows, accepted }) {
 }
 
 // 고른 섹션을 반영한 마크다운을 돌려준다. 취소하면 null
-function previewAiChange(beforeMd, afterMd, { title = 'AI 수정 미리보기', tabId, note = '', truncated = false } = {}) {
+// rewrite: 탭 전체를 다시 쓴 글이다 (defaultAcceptedRows 참고)
+function previewAiChange(beforeMd, afterMd, { title = 'AI 수정 미리보기', tabId, note = '', truncated = false, rewrite = false } = {}) {
     const rows = alignMdSections(beforeMd, afterMd);
-    let accepted = defaultAcceptedRows(rows, truncated);
+    let accepted = defaultAcceptedRows(rows, truncated, rewrite);
     return new Promise(resolve => {
         const overlay = document.createElement('div');
         overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9200]';
-        overlay.innerHTML = aiChangeHtml({ title, note, summary: lintDeltaLabel(beforeMd, composeSectionChoice(rows, accepted), tabId), rows, accepted });
+        overlay.innerHTML = aiChangeHtml({ title, note, summary: lintDeltaLabel(beforeMd, composeSectionChoice(rows, accepted), tabId), rows, accepted, dropGone: rewrite && !truncated });
         overlay.addEventListener('change', event => {
             const index = Number(event.target.dataset?.sectionRow);
             if (Number.isNaN(index)) return;

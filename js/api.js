@@ -744,6 +744,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
         }
 
         fullContent = cleanLessonOpening(restoreLockedSections(fullContent, lockedBlocks));
+        if (typeof checklistLast === 'function') fullContent = checklistLast(fullContent, 'basicLearn');
 
         // 중단하면 끝까지 받지 못한 글이므로 자동 수정과 이미지 생성 비용을 쓰지 않는다
         const stopped = !!window.isTabGenerationStopped?.();

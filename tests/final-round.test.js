@@ -579,6 +579,8 @@ const LESSON_MD = [
         const data = fs.readFileSync(root + 'data.js', 'utf8');
         assert.ok(data.includes('L1은 객관식이나 단답식, L2는 서술형이나 코드제출, L3는 파일제출'));
         assert.ok(call('LESSON_QUESTION_LABEL').test('학습 목표 2 · 밴드 L2 · 서술형'), '프롬프트 예시 표기를 검수기가 읽는다');
+        assert.ok(!ui.includes('5지선다 객관식 10문제'), '학습이해도를 객관식 10문제로 묶지 않는다 (밴드별 유형, 목표 수와 충돌)');
+        assert.ok(ui.includes('학습 목표 2 · 밴드 L2 · 서술형') && ui.includes('학습 목표 1 · 밴드 L1 · 객관식'), '예시가 밴드별 유형을 따른다');
     });
 
     await run('역할별 AI 분배: 켠 경우에만 나누고 교차 검수는 다른 공급자가 맡는다', async () => {

@@ -429,6 +429,38 @@ function generationContext(callGemini, mod) {
         assert.deepStrictEqual([...call(ctx, 'defaultAcceptedRows')(rows)], [0, 1]);
     });
 
+    await run('미리보기: 탭 전체를 다시 쓰면 이전 섹션을 기본으로 지운다', async () => {
+        const rows = call(ctx, 'alignMdSections')('## 학습 목표\n\n- 목표\n\n## 옛 섹션\n\n오래된 설명입니다.', '## 학습 목표\n\n- 목표\n\n## 1. 새 섹션\n\n완전히 다른 내용을 담은 글입니다.');
+        assert.strictEqual(call(ctx, 'defaultAcceptedRows')(rows).size, 1, '부분 수정은 사라진 섹션을 남긴다');
+        const merged = call(ctx, 'composeSectionChoice')(rows, call(ctx, 'defaultAcceptedRows')(rows, false, true));
+        assert.ok(merged.includes('## 1. 새 섹션') && !merged.includes('옛 섹션'), '두 벌로 남지 않는다');
+        const cut = call(ctx, 'composeSectionChoice')(rows, call(ctx, 'defaultAcceptedRows')(rows, true, true));
+        assert.ok(cut.includes('옛 섹션'), '잘린 응답이면 이전 섹션을 남긴다');
+        const aiCtx = makeContext();
+        let html = '';
+        aiCtx.onOverlay = overlay => { html = overlay.innerHTML; setImmediate(() => overlay.fire('click', { target: { dataset: { diffAction: 'cancel' } } })); };
+        await call(aiCtx, 'previewAiChange')('## 옛 섹션\n\n오래된 설명입니다.', '## 새 섹션\n\n완전히 다른 내용을 담은 글입니다.', { rewrite: true });
+        assert.ok(html.includes('이전 섹션 · 기본은 삭제'));
+    });
+
+    await run('생성 정리: 줄이 나뉜 제목을 잇고 체크리스트를 학습 탭 끝으로 옮긴다', async () => {
+        const raw = '## 4. 넷째 (⏱ 40분)\n\n본문입니다.\n\n##\n✅ 학습 후 체크리스트\n\n- 넷째를 확인합니다. (다시 보기: 4. 넷째 (⏱ 40분))\n\n## 5. 다섯째 (⏱ 20분)\n\n본문입니다.';
+        const fixed = call(ctx, 'sanitizeMarkdownContent')(raw);
+        assert.ok(fixed.includes('## ✅ 학습 후 체크리스트'), '"##" 다음 줄의 제목을 잇는다');
+        assert.ok(!call(ctx, 'sanitizeMarkdownContent')('본문\n\n##\n- 목록').includes('## - 목록'), '목록은 제목으로 잇지 않는다');
+        const moved = call(ctx, 'checklistLast')(fixed, 'basicLearn');
+        assert.deepStrictEqual(plain(call(ctx, 'mdSections')(moved)).map(section => section.title), ['4. 넷째 (⏱ 40분)', '5. 다섯째 (⏱ 20분)', '✅ 학습 후 체크리스트']);
+        assert.strictEqual(call(ctx, 'checklistLast')(moved, 'basicLearn'), moved, '이미 끝이면 그대로');
+        assert.strictEqual(call(ctx, 'checklistLast')(fixed, 'assessment'), fixed, '학습 탭에만 적용한다');
+    });
+
+    await run('학습이해도: 목표가 10개보다 많으면 목표 수만큼 내게 한다', async () => {
+        const prompt = n => call(ctx, 'assessmentObjectivePrompt')({ id: 1, tabContents: {}, objectives: Array.from({ length: n }, (_, i) => `목표 ${i + 1}을 설명할 수 있습니다.`) }, 'assessment');
+        assert.ok(prompt(12).includes('문제는 12개 이상'));
+        assert.ok(prompt(3).includes('문제는 10개 이상'));
+        assert.strictEqual(call(ctx, 'assessmentObjectivePrompt')({ objectives: ['목표'] }, 'basicLearn'), '');
+    });
+
     await run('미리보기: 섹션 제목을 이스케이프한다', async () => {
         const aiCtx = makeContext();
         let html = '';

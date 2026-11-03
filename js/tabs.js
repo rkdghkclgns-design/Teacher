@@ -180,11 +180,15 @@ window.requestTabGenerationStop = function () {
     btn.textContent = _tabStopLabels.pending;
 };
 
-// 학습이해도 문항을 문제은행에서 바로 쓰도록 목표 번호를 함께 준다
+const ASSESSMENT_MIN_QUESTIONS = 10;
+
+// 학습이해도 문항을 문제은행에서 바로 쓰도록 목표 번호를 함께 준다. 목표가 기본 문제 수보다 많으면 목표 수만큼 낸다
 function assessmentObjectivePrompt(mod, tabId) {
     if (tabId !== 'assessment' || typeof qbankObjectives !== 'function') return '';
     const goals = qbankObjectives(mod);
-    return goals.length ? `\n\n[학습 목표 목록 — 문제마다 이 번호를 쓰고, 모든 목표를 1문제 이상 묻습니다]\n${goals.map((goal, i) => `${i + 1}. ${goal}`).join('\n')}` : '';
+    if (!goals.length) return '';
+    const count = Math.max(ASSESSMENT_MIN_QUESTIONS, goals.length);
+    return `\n\n[학습 목표 목록 — 문제마다 이 번호를 쓰고, 모든 목표를 1문제 이상 묻습니다. 문제는 ${count}개 이상 냅니다]\n${goals.map((goal, i) => `${i + 1}. ${goal}`).join('\n')}`;
 }
 
 // opts.quiet: 알림 없이 결과만 돌려준다 / opts.onStatus: 진행 문구를 받는다 (일괄 생성용)
@@ -327,6 +331,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
 
         if (!mod.tabContents) mod.tabContents = { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null };
         resultText = cleanLessonOpening(restoreLockedSections(resultText, lockedBlocks));
+        if (typeof checklistLast === 'function') resultText = checklistLast(resultText, tabId);
         if (!resultText.trim()) throw new Error('AI 응답이 비어 있습니다.');
         // 끝까지 받지 못한 글은 체크리스트 누락 같은 지적이 당연히 나오므로 자동 수정하지 않는다
         if (typeof autoFixGeneratedTab === 'function' && !partialDueToError && !_tabGenStop) {
@@ -341,8 +346,8 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             document.getElementById('editor-loading').style.display = 'none';
             const truncated = stoppedEarly || partialDueToError;
             resultText = await previewAiChange(previous, resultText, {
-                title: `${tabMeta.label} 재생성 미리보기`, tabId, truncated,
-                note: truncated ? '끝까지 받지 못한 글입니다. 마지막 섹션은 기본으로 고르지 않았습니다.' : ''
+                title: `${tabMeta.label} 재생성 미리보기`, tabId, truncated, rewrite: true,
+                note: truncated ? '끝까지 받지 못한 글입니다. 마지막 섹션은 기본으로 고르지 않았습니다.' : '새 글에 없는 이전 섹션은 기본으로 지웁니다. 이전 글은 작업 히스토리에 남습니다.'
             });
             if (resultText === null || resultText.trim() === previous.trim()) return { ok: true, cancelled: true };
             document.getElementById('editor-loading').style.display = 'flex';

@@ -75,7 +75,7 @@ AI가 생성한 교안을 확인하고 편집하는 핵심 영역입니다.<br><
 • <strong>기본실습</strong> — 기본 실습 과제<br>
 • <strong>심화학습</strong> — 고급 이론과 응용<br>
 • <strong>심화실습</strong> — 프로젝트형 실습<br>
-• <strong>학습이해도</strong> — 5지선다 퀴즈 10문항<br><br>
+• <strong>학습이해도</strong> — 목표마다 1문제 이상, 밴드별 유형 (10문항 이상)<br><br>
 <strong>📖 편집 기능</strong><br>
 • <strong>보기/수정</strong> — 마크다운 직접 편집 가능<br>
 • <strong>탐색줄</strong> — 교안 탭, 교수안, 슬라이드, 문제은행을 한 줄에서 오갑니다<br>
