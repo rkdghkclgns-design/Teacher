@@ -32,13 +32,13 @@ function lessonNcsCodes(mod) {
     return [...new Set((mod.ncsElements || []).map(element => element.code || element.unitCode).filter(Boolean))];
 }
 
-// 칸이 좁아 첫 코드만 보이고, 전체 코드와 확정 여부는 마우스를 올리면 보인다
+// 칸이 좁아 첫 코드만 보이고, 마우스를 올리면 코드별 상세와 적합도 팝업이 뜬다 (lesson-ncs-pop.js)
 function lessonNcsCodeHtml(mod) {
     const codes = lessonNcsCodes(mod);
     if (!codes.length) return '';
-    const title = `${codes.join('\n')}${mod.ncsAuto ? '\n(자동 배정 · 확정 전)' : ''}`;
+    const id = escapeHtml(String(mod.id));
     return `
-        <span class="flex items-center gap-1 min-w-0" title="${escapeHtml(title)}">
+        <span class="flex items-center gap-1 min-w-0 cursor-help" data-ncs-pop="${id}" onmouseenter="openLessonNcsPop(this)" onmouseleave="scheduleLessonNcsPopClose()" onclick="event.stopPropagation(); toggleLessonNcsPop(this)">
             <span class="font-mono text-[0.65rem] text-textLight truncate">${escapeHtml(codes[0])}</span>
             ${codes.length > 1 ? `<span class="shrink-0 text-[0.6rem] text-textMuted">외 ${codes.length - 1}</span>` : ''}
             <button onclick="event.stopPropagation(); copyLessonNcsCodes('${escapeHtml(String(mod.id))}')" title="NCS 코드 복사" class="shrink-0 text-white/50 hover:text-white"><i class="ph-bold ph-copy"></i></button>

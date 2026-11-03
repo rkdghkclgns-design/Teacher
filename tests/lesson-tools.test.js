@@ -5,7 +5,7 @@ const vm = require('vm');
 const path = require('path');
 const assert = require('assert');
 const root = path.join(__dirname, '..', 'js') + path.sep;
-const FILES = ['kbuilder/ncs-catalog.js', 'lesson-lint.js', 'ai-routing.js', 'course-ncs.js', 'course-ncs-ref.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'course-elements.js', 'course-list.js', 'course-art.js', 'course-illustrations.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js', 'course-refs.js', 'filename-convention.js'];
+const FILES = ['kbuilder/ncs-catalog.js', 'lesson-lint.js', 'ai-routing.js', 'course-ncs.js', 'course-ncs-ref.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'course-elements.js', 'course-list.js', 'lesson-ncs-pop.js', 'course-art.js', 'course-illustrations.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js', 'course-refs.js', 'filename-convention.js'];
 
 function makeContext(callGemini, keys = { gemini: '' }) {
     const ctx = {
@@ -296,7 +296,8 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
         const mod = { id: 7, ncsAuto: true, ncsElements: [{ code: 'A_1', name: '가' }, { code: '', unitCode: 'B_2', name: '나', unitLevel: true }, { code: 'A_1', name: '중복' }] };
         assert.deepStrictEqual(plain(codes(mod)), ['A_1', 'B_2'], '요소 코드가 없으면 능력단위 코드, 중복은 한 번');
         const html = call('lessonNcsCodeHtml')(mod);
-        assert.ok(html.includes('>A_1<') && html.includes('외 1') && html.includes('확정 전') && html.includes("copyLessonNcsCodes('7')"));
+        assert.ok(html.includes('>A_1<') && html.includes('외 1') && html.includes('data-ncs-pop="7"') && html.includes("copyLessonNcsCodes('7')"));
+        assert.ok(!html.includes('title="A_1'), '브라우저 기본 툴팁 대신 팝업을 쓴다');
         assert.strictEqual(call('lessonNcsCodeHtml')({ id: 8, ncsElements: [] }), '', 'NCS가 없으면 비운다');
         assert.ok(!call('lessonNcsCodeHtml')({ id: 9, ncsElements: [{ code: '<b>x</b>' }] }).includes('<b>x'), '코드는 이스케이프');
         let copied = '';
@@ -304,6 +305,30 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
         ctx.getEditingModule = id => (id === 7 ? mod : null);
         await call('copyLessonNcsCodes')('7');
         assert.strictEqual(copied, 'A_1, B_2');
+    });
+
+    await run('NCS 팝업: 코드별 상세와 적합도를 보이고 고른 것을 확정한다', async () => {
+        const chosen = { code: 'E1', name: '요구사항 정의하기', unitCode: 'U1', unitName: '기획 단위', auto: true };
+        const mod = {
+            id: 7, ncsAuto: true, ncsElements: [chosen],
+            ncsRecs: [
+                { unitCode: 'U1', unitName: '기획 단위', elementCode: 'E1', elementName: '요구사항 정의하기', fit: 82, covers: [1], reason: '목표 <1>과 맞음', by: 'AI' },
+                { unitCode: 'U2', unitName: '다른 단위', elementCode: '', elementName: '', fit: 91, covers: [], reason: '높지만 고르지 않음', by: 'AI' }
+            ]
+        };
+        const entries = plain(call('lessonNcsPopEntries')(mod, { ncs: { units: [] } }));
+        assert.deepStrictEqual(entries.map(entry => entry.element.code), ['E1', 'U2'], '고른 항목을 먼저, 그다음 적합도 순');
+        const keys = new Set([entries[0].key]);
+        const html = call('ncsPopHtml')(mod, call('lessonNcsPopEntries')(mod, { ncs: { units: [] } }), keys, false);
+        assert.ok(html.includes('82점') && html.includes('91점') && html.includes('AI 자동 배정 · 확정 전'));
+        assert.ok(html.includes('목표 &lt;1&gt;과 맞음') && !html.includes('목표 <1>'), '근거는 이스케이프');
+        assert.ok(html.includes('선택 확정 (1)') && html.includes('학습 목표 1'));
+        const change = plain(call('confirmedNcsChange')(entries, new Set([entries[1].key])));
+        assert.deepStrictEqual(change.ncsElements.map(element => element.code), ['U2'], '다른 후보로 바꿔 확정');
+        assert.ok(change.ncsAuto === false && change.ncsKeyword === false && change.ncsNone === false);
+        assert.ok(!('auto' in change.ncsElements[0]));
+        assert.strictEqual(call('confirmedNcsChange')(entries, new Set()).ncsNone, true, '모두 해제하면 다시 채우지 않는다');
+        assert.strictEqual(call('ncsPopStatus')({ ncsElements: [chosen], ncsAuto: false }).text, '확정됨');
     });
 
     await run('문제은행: 분포·CSV', async () => {
