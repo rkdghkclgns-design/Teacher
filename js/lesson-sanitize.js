@@ -47,6 +47,22 @@ function sanitizeLessonHtml(html) {
     }
 }
 
+/* ---------- '용어: 설명' 문단을 위 항목에 딸린 인용처럼 보이기 ---------- */
+// "• 핵심 역할" 같은 항목 다음의 "**전투 설계**: 설명" 문단들은 그 항목에 딸린 설명이다. 왼쪽 회색 막대로 이어 보이게
+// class만 붙인다. 문단을 상자로 감싸지 않으므로 화면의 블록 수가 마크다운 블록 수와 같아 두 번 눌러 고치기가 그대로 맞는다.
+const LESSON_TERM_PARAGRAPH = String.raw`<p><strong>[^<]{1,40}(?:[:：]<\/strong>|<\/strong>\s*[:：])[\s\S]*?<\/p>\s*`;
+// 목록, '• 항목' 문단, 굵은 글씨만 있는 짧은 문단이 머리다
+const LESSON_TERM_HEAD = String.raw`(?:<\/ul>|<\/ol>|<p>•[^<]{1,40}<\/p>|<p>(?:•\s*)?<strong>[^<]{1,40}<\/strong><\/p>)\s*`;
+const LESSON_TERM_RUN = new RegExp(`(${LESSON_TERM_HEAD})?((?:${LESSON_TERM_PARAGRAPH})+)`, 'g');
+
+function markTermParagraphs(html) {
+    return String(html || '').replace(LESSON_TERM_RUN, (whole, head, run) => {
+        const count = (run.match(/<p>/g) || []).length;
+        if (!head && count < 2) return whole; // 머리 없이 하나만 있는 '라벨: 설명'은 그대로 둔다
+        return (head || '') + run.replace(/<p>(?=<strong>)/g, '<p class="lesson-term">');
+    });
+}
+
 /* ---------- 교안 안의 버튼 ---------- */
 const LESSON_ACTIONS = {
     'regenerate-image': button => window.promptRegenerateImage(button, button.dataset.keyword || '', button.dataset.imgId || null),

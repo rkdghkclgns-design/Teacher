@@ -864,7 +864,7 @@ async function exportCurrentToHTML() {
     // 판서 영상으로 바꾼 그림은 영상을 파일 안에 넣는다
     const exported = window.whiteboardHtmlForExport ? await window.whiteboardHtmlForExport(renderView) : { html: renderView.innerHTML, videos: 0 };
     if (exported.videos) window.showToast?.(`판서 영상 ${exported.videos}개를 HTML 파일 안에 넣었습니다(파일이 커질 수 있습니다).`, 'info');
-    const htmlDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(mod.title || '교안')}</title><style>body{font-family:'Noto Sans KR',sans-serif;max-width:900px;margin:0 auto;padding:40px;line-height:1.8;color:#1a1a2e;}h1,h2,h3{margin-top:1.5em;}table{border-collapse:collapse;width:100%;}th,td{border:1px solid #ddd;padding:8px 12px;text-align:left;}th{background:#f0f0f0;}img,video{max-width:100%;border-radius:8px;}</style></head><body>${exported.html}</body></html>`;
+    const htmlDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(mod.title || '교안')}</title><style>body{font-family:'Noto Sans KR',sans-serif;max-width:900px;margin:0 auto;padding:40px;line-height:1.8;color:#1a1a2e;}h1,h2,h3{margin-top:1.5em;}table{border-collapse:collapse;width:100%;}th,td{border:1px solid #ddd;padding:8px 12px;text-align:left;}th{background:#f0f0f0;}img,video{max-width:100%;border-radius:8px;}p.lesson-term{margin:0 0 0 1.25rem;padding:.35rem 0 .35rem 1rem;border-left:4px solid #d4d4de;}p.lesson-term+:not(.lesson-term){margin-top:1rem;}</style></head><body>${exported.html}</body></html>`;
     const blob = new Blob([htmlDoc], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

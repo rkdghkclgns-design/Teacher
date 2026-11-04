@@ -157,6 +157,7 @@ function renderLessonHTML(md, opts) {
         : `<pre class="text-gray-200 whitespace-pre-wrap">${safe.replace(/</g, '&lt;')}</pre>`;
     if (typeof applyPeriodLineBreakHTML === 'function') html = applyPeriodLineBreakHTML(html);
     if (postprocess && typeof postprocessHtml === 'function') html = postprocessHtml(html);
+    if (typeof markTermParagraphs === 'function') html = markTermParagraphs(html); // 항목에 딸린 '용어: 설명'은 왼쪽 막대로
     return sanitizeLessonHtml(html); // 후처리가 글자를 지워 태그가 이어 붙을 수 있으므로 맨 끝에서 거른다
 }
 if (typeof window !== 'undefined') window.renderLessonHTML = renderLessonHTML;
