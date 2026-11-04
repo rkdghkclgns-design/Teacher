@@ -1113,21 +1113,21 @@
 
                         <button type="button" id="sidebar-setup-toggle" onclick="toggleSidebarSetup()" aria-expanded="true" class="flex items-center gap-2 min-w-0 text-left" title="목차 만들기 영역 접기·펼치기"><i class="ph-bold ph-caret-right text-textMuted transition-transform rotate-90" data-setup-caret></i>
 
-                        <h2 class="text-sm font-bold uppercase tracking-wider text-textMuted shrink-0">커리큘럼 목차</h2></button>
+                        <h2 class="min-w-0 truncate text-sm font-bold uppercase tracking-wider text-textMuted">커리큘럼 목차</h2></button>
 
                     </div>
 
                     <div class="flex items-center gap-2 shrink-0">
-                        <!-- 차시 수 조절 (좁은 화면에서는 글자를 줄여 목차 제목 자리를 남긴다) -->
+                        <!-- 차시 수 조절 (화면 폭 1024px 아래에서는 글자를 빼 목차 제목 자리를 남긴다) -->
                         <div class="flex items-center gap-0.5 bg-white/5 border border-white/10 rounded px-1 py-0.5" title="생성할 차시 수 (AI 목차 생성 시 적용)">
                             <button onclick="adjustBatchCount(-1)" class="w-5 h-5 flex items-center justify-center text-textMuted hover:text-white hover:bg-white/10 rounded transition-colors text-xs font-bold">−</button>
                             <input type="number" id="sidebar-batch-count" min="1" max="30" value="5" class="w-8 text-center text-xs font-bold text-accent bg-transparent border-none focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" onchange="syncBatchCount(this.value)">
                             <button onclick="adjustBatchCount(1)" class="w-5 h-5 flex items-center justify-center text-textMuted hover:text-white hover:bg-white/10 rounded transition-colors text-xs font-bold">+</button>
-                            <span class="hidden sm:inline text-[0.6875rem] text-textMuted ml-0.5">차시</span>
+                            <span class="hidden lg:inline text-[0.6875rem] text-textMuted ml-0.5">차시</span>
                         </div>
                         <button onclick="openBatchModal()" title="AI 목차 생성" aria-label="AI 목차 생성"
                             class="flex items-center gap-1.5 px-2.5 py-1.5 text-[0.7rem] font-bold text-accent bg-accent/10 border border-accent/20 rounded hover:bg-accent/20 transition-all shadow-sm">
-                            <i class="ph-bold ph-stack"></i><span class="hidden sm:inline">AI 목차 생성</span>
+                            <i class="ph-bold ph-stack"></i><span class="hidden lg:inline">AI 목차 생성</span>
                         </button>
                     </div>
 
