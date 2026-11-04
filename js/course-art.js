@@ -314,13 +314,13 @@ function artPaletteRows(art, field) {
 
 function artDialogHtml(art) {
     const field = 'w-full px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white focus:outline-none focus:border-accent';
-    const label = 'block text-[0.65rem] text-textMuted';
+    const label = 'block text-[0.6875rem] text-textMuted';
     const text = (name, title, value) => `<label class="${label}">${title}<input data-art-field="${name}" value="${escapeHtml(String(value))}" class="${field} mt-1"></label>`;
     return `
         <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[560px] max-h-[88vh] flex flex-col shadow-2xl">
             <div class="p-4 border-b border-white/10">
                 <h2 class="text-sm font-bold text-textLight">삽화 스타일 가이드</h2>
-                <p class="text-[0.65rem] text-textMuted mt-1">과정의 모든 삽화가 공유하는 기준입니다. 바꾸면 이후 생성하는 삽화부터 적용됩니다.</p>
+                <p class="text-xs text-textMuted mt-1">과정의 모든 삽화가 공유하는 기준입니다. 바꾸면 이후 생성하는 삽화부터 적용됩니다.</p>
             </div>
             <div class="flex-1 overflow-y-auto p-4 space-y-3">
                 ${text('name', '가이드 이름', art.name)}
@@ -334,8 +334,8 @@ function artDialogHtml(art) {
                 ${text('shading', '채색', art.shading)}${text('text', '이미지 안 글자', art.text)}
                 <label class="${label}">그림 규칙<textarea data-art-field="rules" rows="3" class="${field} mt-1">${escapeHtml(art.rules)}</textarea></label>
                 <label class="${label}">레퍼런스 이미지에서 추출<input id="art-reference" type="file" accept="image/png,image/jpeg,image/webp" class="block w-full mt-1 text-xs text-textLight"></label>
-                <p class="text-[0.65rem] text-textMuted">기준 삽화: ${art.anchorSvg ? '설정됨' : '없음 (처음 그린 삽화가 기준이 됩니다)'}</p>
-                <p id="art-status" class="text-[0.65rem] text-accent min-h-[1em]"></p>
+                <p class="text-xs text-textMuted">기준 삽화: ${art.anchorSvg ? '설정됨' : '없음 (처음 그린 삽화가 기준이 됩니다)'}</p>
+                <p id="art-status" class="text-xs text-accent min-h-[1em]"></p>
             </div>
             <div class="p-3 border-t border-white/10 flex justify-between gap-2">
                 <div class="flex gap-2">

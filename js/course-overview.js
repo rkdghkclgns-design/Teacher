@@ -7,7 +7,7 @@ const courseTargetMinutes = () => (Number(globalState.courseDesign?.totalHours) 
 
 /* ---------- 교과 카드 배지 ---------- */
 function subjectBadge(text, title, style = 'bg-white/10 text-textLight') {
-    return `<span title="${escapeHtml(title)}" class="text-[0.65rem] font-bold px-2 py-1 rounded-md ${style}">${escapeHtml(text)}</span>`;
+    return `<span title="${escapeHtml(title)}" class="text-[0.6875rem] font-bold px-2 py-1 rounded-md ${style}">${escapeHtml(text)}</span>`;
 }
 
 function subjectStatusBadges(subject) {
@@ -40,15 +40,15 @@ function renderCourseTimeBar() {
     const target = courseTargetMinutes();
     const matched = !target || target === total;
     const segments = rows.map(({ subject, index, minutes }) => `
-        <button onclick="location.hash='#editor/${escapeHtml(String(subject.id))}'" style="flex:${minutes}" title="${escapeHtml(`${index + 1}. ${subject.title} — ${fmtMinutes(minutes)}`)}" class="min-w-0 h-4 rounded-sm bg-accent/40 hover:bg-accent text-[0.55rem] font-bold text-white truncate">${index + 1}</button>`).join('');
+        <button onclick="location.hash='#editor/${escapeHtml(String(subject.id))}'" style="flex:${minutes}" title="${escapeHtml(`${index + 1}. ${subject.title} — ${fmtMinutes(minutes)}`)}" class="min-w-0 h-4 rounded-sm bg-accent/40 hover:bg-accent text-[0.6875rem] font-bold text-white truncate">${index + 1}</button>`).join('');
     return `
         <div class="mb-3 rounded-xl border border-white/10 bg-white/5 p-2.5">
-            <div class="flex items-center justify-between gap-2 text-[0.65rem]">
+            <div class="flex items-center justify-between gap-2 text-[0.6875rem]">
                 <span class="font-bold text-textLight">과정 시간</span>
                 <span class="${matched ? 'text-emerald-400' : 'text-amber-400'}">합계 ${fmtMinutes(total)}${target ? ` / 목표 ${fmtMinutes(target)}` : ''}</span>
             </div>
             <div class="flex gap-0.5 mt-1.5">${segments}</div>
-            ${matched ? '' : '<button onclick="fitSubjectHours()" class="mt-1.5 text-[0.6rem] font-bold px-2 py-0.5 rounded bg-white/10 text-textLight hover:bg-accent">비율대로 맞추기</button>'}
+            ${matched ? '' : '<button onclick="fitSubjectHours()" class="mt-1.5 text-[0.6875rem] font-bold px-2 py-0.5 rounded bg-white/10 text-textLight hover:bg-accent">비율대로 맞추기</button>'}
         </div>`;
 }
 
@@ -85,11 +85,11 @@ function blockRowHtml(lesson, index) {
     const id = escapeHtml(String(lesson.id));
     return `
         <tr>
-            <td class="pr-2 text-[0.65rem] text-textMuted">${index + 1}</td>
+            <td class="pr-2 text-[0.6875rem] text-textMuted">${index + 1}</td>
             <td class="pr-2 py-0.5"><input data-block-title="${id}" value="${escapeHtml(lesson.title)}" class="${input} w-full"></td>
             <td class="pr-2 py-0.5"><input data-block-hours="${id}" type="number" min="0.25" step="0.25" value="${escapeHtml(String(lesson.hours ?? ''))}" aria-label="차시 시간" class="${input} w-16"></td>
-            <td class="pr-2 text-[0.6rem] text-textMuted whitespace-nowrap">${escapeHtml(summary)}</td>
-            <td><button data-block-action="detail" data-id="${id}" class="px-2 py-0.5 text-[0.65rem] font-bold text-textLight bg-white/10 rounded hover:bg-white/20">상세</button></td>
+            <td class="pr-2 text-[0.6875rem] text-textMuted whitespace-nowrap">${escapeHtml(summary)}</td>
+            <td><button data-block-action="detail" data-id="${id}" class="px-2 py-0.5 text-[0.6875rem] font-bold text-textLight bg-white/10 rounded hover:bg-white/20">상세</button></td>
         </tr>`;
 }
 
@@ -155,7 +155,7 @@ window.openSubjectBlocks = function () {
         <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[640px] max-w-[94vw] max-h-[84vh] flex flex-col shadow-2xl">
             <div class="p-4 border-b border-white/10">
                 <h2 class="text-sm font-bold text-textLight">차시 구성 · ${escapeHtml(subject.title)}</h2>
-                <p class="text-[0.65rem] text-textMuted mt-1">합계 ${fmtMinutes(courseLessonMinutes(subject))}. 학습 목표와 진행 단계는 상세에서 고칩니다. 시간을 바꾸면 진행 단계 시간도 함께 맞춥니다.</p>
+                <p class="text-xs text-textMuted mt-1">합계 ${fmtMinutes(courseLessonMinutes(subject))}. 학습 목표와 진행 단계는 상세에서 고칩니다. 시간을 바꾸면 진행 단계 시간도 함께 맞춥니다.</p>
             </div>
             <div class="flex-1 overflow-y-auto p-4"><table class="w-full">${lessons.map(blockRowHtml).join('')}</table></div>
             <div class="p-3 border-t border-white/10 flex justify-end gap-2">

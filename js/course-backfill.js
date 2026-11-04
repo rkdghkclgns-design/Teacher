@@ -107,11 +107,11 @@ function backfillCountHtml({ units, lessons }) {
 
 function backfillIntroHtml(work) {
     return `
-        <p class="text-[0.65rem] text-textMuted">NCS를 아직 배정해 보지 않은 교과와 차시를 채웁니다. 자동 배정은 확정 전 상태로 들어가고, 확정한 항목은 건드리지 않습니다.</p>
+        <p class="text-xs text-textMuted">NCS를 아직 배정해 보지 않은 교과와 차시를 채웁니다. 자동 배정은 확정 전 상태로 들어가고, 확정한 항목은 건드리지 않습니다.</p>
         <div id="backfill-count">${backfillCountHtml(work)}</div>
         <label class="flex items-start gap-2 text-xs text-textLight">
             <input id="backfill-art" type="checkbox">
-            <span>기본 학습에 삽화도 넣기<span class="block text-[0.6rem] text-textMuted">차시마다 삽화 후보 1회와 삽화 최대 ${ILLUSTRATION_MAX_IDEAS}장 호출이 늘어납니다.</span></span>
+            <span>기본 학습에 삽화도 넣기<span class="block text-[0.6875rem] text-textMuted">차시마다 삽화 후보 1회와 삽화 최대 ${ILLUSTRATION_MAX_IDEAS}장 호출이 늘어납니다.</span></span>
         </label>`;
 }
 
@@ -126,7 +126,7 @@ function backfillProgressHtml(step, index, total) {
     return `
         <p class="text-xs font-bold text-textLight">${index + 1}/${total} · ${escapeHtml(step.label)}</p>
         <div class="h-1.5 rounded bg-white/10 overflow-hidden"><div class="h-full bg-accent" style="width:${Math.round(index / total * 100)}%"></div></div>
-        <p id="backfill-status" class="text-[0.65rem] text-accent min-h-[1em]"></p>`;
+        <p id="backfill-status" class="text-xs text-accent min-h-[1em]"></p>`;
 }
 
 function refreshBackfillCount() {

@@ -58,7 +58,7 @@ window.openSectionLocks = function (moduleId) {
         <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[480px] max-h-[80vh] flex flex-col shadow-2xl">
             <div class="p-4 border-b border-white/10">
                 <h2 class="text-sm font-bold text-textLight">섹션 고정</h2>
-                <p class="text-[0.65rem] text-textMuted mt-1">고정한 섹션은 이 탭을 다시 생성해도 그대로 유지됩니다.</p>
+                <p class="text-xs text-textMuted mt-1">고정한 섹션은 이 탭을 다시 생성해도 그대로 유지됩니다.</p>
             </div>
             <div class="flex-1 overflow-y-auto p-4 space-y-1">${sections.map(section => `
                 <label class="flex items-center gap-2 text-xs text-textLight">

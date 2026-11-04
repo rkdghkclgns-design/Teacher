@@ -243,7 +243,7 @@ function lessonElementEntries(mod, options) {
 function elementBadgeHtml(rec) {
     if (!rec) return '';
     const state = ELEMENT_REC_STATES[elementRecState(rec)];
-    return `<span class="text-[0.55rem] font-bold px-1 rounded ${state.style}">${state.label}</span>`;
+    return `<span class="text-[0.6875rem] font-bold px-1 rounded ${state.style}">${state.label}</span>`;
 }
 
 function elementRowMeta(entry) {
@@ -264,8 +264,8 @@ function elementRowHtml(entry, checked) {
         <label class="flex items-start gap-2 text-xs text-textLight">
             <input type="checkbox" class="mt-0.5" data-meta-element="${escapeHtml(key)}" ${checked ? 'checked' : ''} ${blocked ? 'disabled' : ''}>
             <span>${escapeHtml(elementLabel(element))} ${elementBadgeHtml(rec)}
-                <span class="block text-[0.6rem] text-textMuted">${escapeHtml(elementRowMeta(entry))}</span>
-                ${rec?.reason ? `<span class="block text-[0.6rem] text-textMuted/80">${escapeHtml(rec.reason)}</span>` : ''}
+                <span class="block text-[0.6875rem] text-textMuted">${escapeHtml(elementRowMeta(entry))}</span>
+                ${rec?.reason ? `<span class="block text-[0.6875rem] text-textMuted">${escapeHtml(rec.reason)}</span>` : ''}
             </span>
         </label>`;
 }

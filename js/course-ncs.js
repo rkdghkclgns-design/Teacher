@@ -356,7 +356,7 @@ function renderSubjectNcsCard(subject) {
     const units = ncs?.units || [];
     const status = !units.length ? '미배정' : ncs.confirmed ? '확정' : '자동 배정 · 확정 전';
     const rows = units.map(unit => `
-        <div class="text-[0.65rem] text-textLight leading-relaxed" title="${escapeHtml((unit.path || []).join(' > '))}">
+        <div class="text-[0.6875rem] text-textLight leading-relaxed" title="${escapeHtml((unit.path || []).join(' > '))}">
             <span class="font-mono text-accent">${escapeHtml(unit.code)}</span> ${escapeHtml(unit.name)}
         </div>`).join('');
     return `
@@ -364,10 +364,10 @@ function renderSubjectNcsCard(subject) {
             <div class="flex items-center gap-2 mb-1">
                 <i class="ph-fill ph-certificate text-accent"></i>
                 <h3 class="text-[0.7rem] font-bold text-textLight tracking-wider">교과 NCS</h3>
-                <span class="text-[0.55rem] px-1.5 py-0.5 rounded bg-white/10 text-textMuted">${status}</span>
-                <button onclick="openNcsDialog()" class="ml-auto text-[0.6rem] font-bold px-2 py-1 rounded bg-white/10 text-textLight hover:bg-accent transition-colors">관리</button>
+                <span class="text-[0.6875rem] px-1.5 py-0.5 rounded bg-white/10 text-textMuted">${status}</span>
+                <button onclick="openNcsDialog()" class="ml-auto text-[0.6875rem] font-bold px-2 py-1 rounded bg-white/10 text-textLight hover:bg-accent transition-colors">관리</button>
             </div>
-            ${rows || '<p class="text-[0.6rem] text-textMuted">능력단위를 배정하면 교수안 개요에 표시됩니다.</p>'}
+            ${rows || '<p class="text-xs text-textMuted">능력단위를 배정하면 교수안 개요에 표시됩니다.</p>'}
         </div>`;
 }
 
@@ -380,9 +380,9 @@ function ncsRowHtml(unit, checked) {
             <input type="checkbox" class="mt-0.5" data-ncs-code="${escapeHtml(unit.code)}" ${checked ? 'checked' : ''}>
             <span class="text-xs text-textLight">
                 <span class="font-mono text-accent">${escapeHtml(unit.code)}</span> ${escapeHtml(unit.name)}
-                <span class="block text-[0.65rem] text-textMuted">${escapeHtml(meta)}</span>
-                ${covers ? `<span class="block text-[0.65rem] text-accent/80">${escapeHtml(covers)}</span>` : ''}
-                ${unit.reason ? `<span class="block text-[0.65rem] text-textMuted/80">${escapeHtml(unit.reason)}</span>` : ''}
+                <span class="block text-[0.6875rem] text-textMuted">${escapeHtml(meta)}</span>
+                ${covers ? `<span class="block text-[0.6875rem] text-accent/80">${escapeHtml(covers)}</span>` : ''}
+                ${unit.reason ? `<span class="block text-[0.6875rem] text-textMuted">${escapeHtml(unit.reason)}</span>` : ''}
             </span>
         </label>`;
 }
@@ -417,7 +417,7 @@ function ncsDialogHtml(subject) {
         <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[560px] max-h-[80vh] flex flex-col shadow-2xl">
             <div class="p-4 border-b border-white/10">
                 <h2 class="text-sm font-bold text-textLight">교과 NCS 능력단위 · ${escapeHtml(subject.title)}</h2>
-                <p class="text-[0.65rem] text-textMuted mt-1">NCS ${ncsCatalog().degree}차 체계 ${ncsCatalog().units.length.toLocaleString()}개 능력단위 기준입니다. 사용 전 ncs.go.kr에서 현행 여부를 확인하세요. <button data-ncs-action="ref" class="underline text-textLight">참조 목록 보기·편집</button></p>
+                <p class="text-xs text-textMuted mt-1">NCS ${ncsCatalog().degree}차 체계 ${ncsCatalog().units.length.toLocaleString()}개 능력단위 기준입니다. 사용 전 ncs.go.kr에서 현행 여부를 확인하세요. <button data-ncs-action="ref" class="underline text-textLight">참조 목록 보기·편집</button></p>
                 <div class="flex gap-2 mt-3">
                     <input id="ncs-dialog-search" class="flex-1 px-3 py-1.5 text-xs bg-black/30 border border-white/10 rounded-lg text-white focus:outline-none focus:border-accent" placeholder="능력단위 검색 (예: 게임 기획)">
                     <button data-ncs-action="recommend" class="px-3 py-1.5 text-xs font-bold text-white bg-accent rounded-lg hover:bg-accentHover">AI 추천</button>
@@ -428,7 +428,7 @@ function ncsDialogHtml(subject) {
                     <input id="ncs-custom-level" type="number" min="1" max="8" class="w-14 px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white" placeholder="수준">
                     <button data-ncs-action="add-custom" class="px-2 py-1 text-xs font-bold text-textLight bg-white/10 rounded hover:bg-white/20">직접 추가</button>
                 </div>
-                <p id="ncs-dialog-status" class="text-[0.65rem] text-accent mt-2 min-h-[1em]"></p>
+                <p id="ncs-dialog-status" class="text-xs text-accent mt-2 min-h-[1em]"></p>
             </div>
             <div id="ncs-dialog-list" class="flex-1 overflow-y-auto p-2"></div>
             <div class="p-3 border-t border-white/10 flex justify-end gap-2">

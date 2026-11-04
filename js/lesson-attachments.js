@@ -17,7 +17,7 @@ function lessonAttachmentPrompt(moduleId) {
 // AI 입력줄은 빈 차시에서 숨으므로 빈 차시 화면에도 같은 목록을 둔다
 function renderLessonAttachments() {
     const chips = attachmentsOf(currentEditingModuleId).map((file, index) => `
-        <span class="inline-flex items-center gap-1 px-2 py-0.5 text-[0.65rem] rounded bg-gray-500/20 text-gray-400">
+        <span class="inline-flex items-center gap-1 px-2 py-0.5 text-[0.6875rem] rounded bg-gray-500/20 text-gray-400">
             ${escapeHtml(file.name)}
             <button data-attach-remove="${index}" title="참고 파일 빼기" class="hover:text-red-400">✕</button>
         </span>`).join('');

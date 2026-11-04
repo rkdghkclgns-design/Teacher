@@ -156,7 +156,7 @@ async function suggestIllustrationIdeas(mod, tabId) {
 /* ---------- 화면 ---------- */
 function illustrationBadges(illustration, art) {
     const check = svgStyleCheck(illustration.svg, art);
-    const badge = (text, style, title = '') => `<span class="text-[0.55rem] font-bold px-1 rounded ${style}" title="${escapeHtml(title)}">${escapeHtml(text)}</span>`;
+    const badge = (text, style, title = '') => `<span class="text-[0.6875rem] font-bold px-1 rounded ${style}" title="${escapeHtml(title)}">${escapeHtml(text)}</span>`;
     return [
         check.bad.length ? badge(`팔레트 밖 ${check.bad.length}색`, 'bg-rose-500/20 text-rose-300', check.bad.join(', ')) : badge('팔레트 준수', 'bg-emerald-500/20 text-emerald-300'),
         check.strokeOk ? '' : badge('선 굵기 불일치', 'bg-amber-500/20 text-amber-300', check.strokes.join(', ')),
@@ -176,8 +176,8 @@ function illustrationReviseHtml(illustration) {
         <div class="mt-1 space-y-1">
             <textarea id="lesson-art-revise" rows="2" placeholder="무엇을 바꿀까요 (예: 오른쪽 화살표를 곡선으로, 블록 개수를 5개로 줄이기)" class="w-full px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white"></textarea>
             <div class="flex justify-end gap-1">
-                <button data-lesson-art-action="revise-cancel" class="px-2 py-0.5 text-[0.6rem] font-bold text-textLight bg-white/10 rounded">취소</button>
-                <button data-lesson-art-action="revise-go" data-id="${escapeHtml(illustration.id)}" class="px-2 py-0.5 text-[0.6rem] font-bold text-white bg-accent rounded">수정</button>
+                <button data-lesson-art-action="revise-cancel" class="px-2 py-0.5 text-[0.6875rem] font-bold text-textLight bg-white/10 rounded">취소</button>
+                <button data-lesson-art-action="revise-go" data-id="${escapeHtml(illustration.id)}" class="px-2 py-0.5 text-[0.6875rem] font-bold text-white bg-accent rounded">수정</button>
             </div>
         </div>`;
 }
@@ -185,15 +185,15 @@ function illustrationReviseHtml(illustration) {
 function illustrationCardHtml(mod, illustration, art) {
     const { tabId } = _lessonArt;
     const id = escapeHtml(illustration.id);
-    const action = (name, label, extra = '') => `<button data-lesson-art-action="${name}" data-id="${id}" class="px-1.5 py-0.5 text-[0.6rem] font-bold rounded bg-white/10 text-textLight hover:bg-white/20 ${extra}">${label}</button>`;
+    const action = (name, label, extra = '') => `<button data-lesson-art-action="${name}" data-id="${id}" class="px-1.5 py-0.5 text-[0.6875rem] font-bold rounded bg-white/10 text-textLight hover:bg-white/20 ${extra}">${label}</button>`;
     const bad = svgStyleCheck(illustration.svg, art).bad.length;
-    const field = 'w-full px-2 py-1 text-[0.65rem] bg-black/30 border border-white/10 rounded text-white';
+    const field = 'w-full px-2 py-1 text-[0.6875rem] bg-black/30 border border-white/10 rounded text-white';
     return `
         <div class="rounded-lg border ${art.anchorId === illustration.id ? 'border-accent' : 'border-white/10'} bg-white/5 overflow-hidden">
             <img alt="${escapeHtml(illustration.title)}" src="${escapeHtml(svgPreviewUrl(illustration.svg))}" class="w-full bg-white">
             <div class="p-2 space-y-1">
                 <p class="text-xs font-bold text-textLight truncate" title="${escapeHtml(illustration.prompt)}">${escapeHtml(illustration.title)}</p>
-                <p class="text-[0.6rem] text-textMuted">${escapeHtml(illustration.kind)}</p>
+                <p class="text-xs text-textMuted">${escapeHtml(illustration.kind)}</p>
                 <div>${illustrationBadges(illustration, art)}</div>
                 <input data-lesson-art-caption="${id}" value="${escapeHtml(illustration.caption || '')}" placeholder="캡션 (본문에 함께 실림)" class="${field}">
                 <select data-lesson-art-place="${id}" class="${field}">${placementOptions(mod, tabId, illustrationPlacement(mod, illustration, tabId))}</select>
@@ -209,14 +209,14 @@ function illustrationCardHtml(mod, illustration, art) {
 function lessonArtFormHtml(mod) {
     const { form, ideas, tabId } = _lessonArt;
     const field = 'w-full px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white';
-    const label = 'block text-[0.65rem] text-textMuted';
+    const label = 'block text-[0.6875rem] text-textMuted';
     const options = (items, current) => items.map(item => `<option value="${escapeHtml(item.value)}" ${item.value === current ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('');
     const hasKey = textModelHasKey();
     return `
         <div class="flex flex-wrap items-center gap-1">
-            <span class="text-[0.6rem] text-textMuted">아이디어</span>
-            ${ideas.map((idea, index) => `<button data-lesson-art-action="idea" data-index="${index}" title="${escapeHtml(idea.description)}" class="px-1.5 py-0.5 text-[0.6rem] rounded bg-white/10 text-textLight hover:bg-white/20">${escapeHtml(idea.description.slice(0, 20))}…</button>`).join('')}
-            ${hasKey ? '<button data-lesson-art-action="ideas" class="px-1.5 py-0.5 text-[0.6rem] font-bold rounded bg-accent/30 text-white hover:bg-accent">AI 아이디어</button>' : ''}
+            <span class="text-[0.6875rem] text-textMuted">아이디어</span>
+            ${ideas.map((idea, index) => `<button data-lesson-art-action="idea" data-index="${index}" title="${escapeHtml(idea.description)}" class="px-1.5 py-0.5 text-[0.6875rem] rounded bg-white/10 text-textLight hover:bg-white/20">${escapeHtml(idea.description.slice(0, 20))}…</button>`).join('')}
+            ${hasKey ? '<button data-lesson-art-action="ideas" class="px-1.5 py-0.5 text-[0.6875rem] font-bold rounded bg-accent/30 text-white hover:bg-accent">AI 아이디어</button>' : ''}
         </div>
         <label class="${label}">무엇을 그릴까요<textarea data-lesson-art-form="description" rows="3" placeholder="예: 질문 상자에서 나온 화살표가 토큰 블록 여러 개로 나뉘고, 각 블록 위에 확률 막대가 서 있는 모습" class="${field} mt-0.5">${escapeHtml(form.description)}</textarea></label>
         <div class="grid grid-cols-3 gap-2">
@@ -227,7 +227,7 @@ function lessonArtFormHtml(mod) {
         <label class="${label}">캡션<input data-lesson-art-form="caption" value="${escapeHtml(form.caption)}" class="${field} mt-0.5"></label>
         <div class="flex items-center gap-2">
             <button data-lesson-art-action="generate" ${hasKey ? '' : 'disabled'} class="px-3 py-1 text-xs font-bold text-white bg-accent rounded hover:bg-accentHover disabled:opacity-40">삽화 생성</button>
-            <span class="text-[0.6rem] text-textMuted">${hasKey ? '텍스트 모델이 SVG로 그립니다.' : 'AI 키를 저장하면 삽화를 만들 수 있습니다.'}</span>
+            <span class="text-[0.6875rem] text-textMuted">${hasKey ? '텍스트 모델이 SVG로 그립니다.' : 'AI 키를 저장하면 삽화를 만들 수 있습니다.'}</span>
         </div>`;
 }
 
@@ -236,11 +236,11 @@ function lessonArtGuideHtml(art) {
     return `
         <div class="flex items-center mb-2">
             <h3 class="text-xs font-bold text-textLight">스타일 가이드 · ${escapeHtml(art.name)}</h3>
-            <button data-lesson-art-action="guide" class="ml-auto px-2 py-0.5 text-[0.6rem] font-bold text-textLight bg-white/10 rounded hover:bg-white/20">편집</button>
+            <button data-lesson-art-action="guide" class="ml-auto px-2 py-0.5 text-[0.6875rem] font-bold text-textLight bg-white/10 rounded hover:bg-white/20">편집</button>
         </div>
-        <div class="flex flex-wrap gap-1 mb-2">${art.palette.map(option => `<span class="flex items-center gap-1 text-[0.6rem] text-textMuted"><i class="inline-block w-3 h-3 rounded border border-white/20" style="background:${escapeHtml(option.hex)}"></i>${escapeHtml(option.role)}</span>`).join('')}</div>
-        <dl class="text-[0.6rem]">${row('선 굵기', `${art.stroke}px`)}${row('모서리', art.corner)}${row('채색', art.shading)}${row('글자', art.text)}</dl>
-        ${art.anchorSvg ? `<p class="text-[0.6rem] text-textMuted mt-1">기준 삽화</p><img alt="기준 삽화" src="${escapeHtml(svgPreviewUrl(art.anchorSvg))}" class="w-full rounded bg-white mt-1">` : '<p class="text-[0.6rem] text-textMuted mt-1">기준 삽화가 없습니다. 첫 삽화가 기준이 됩니다.</p>'}`;
+        <div class="flex flex-wrap gap-1 mb-2">${art.palette.map(option => `<span class="flex items-center gap-1 text-[0.6875rem] text-textMuted"><i class="inline-block w-3 h-3 rounded border border-white/20" style="background:${escapeHtml(option.hex)}"></i>${escapeHtml(option.role)}</span>`).join('')}</div>
+        <dl class="text-[0.6875rem]">${row('선 굵기', `${art.stroke}px`)}${row('모서리', art.corner)}${row('채색', art.shading)}${row('글자', art.text)}</dl>
+        ${art.anchorSvg ? `<p class="text-xs text-textMuted mt-1">기준 삽화</p><img alt="기준 삽화" src="${escapeHtml(svgPreviewUrl(art.anchorSvg))}" class="w-full rounded bg-white mt-1">` : '<p class="text-xs text-textMuted mt-1">기준 삽화가 없습니다. 첫 삽화가 기준이 됩니다.</p>'}`;
 }
 
 function renderLessonArt() {
@@ -252,7 +252,7 @@ function renderLessonArt() {
     body.innerHTML = `
         <div class="grid grid-cols-3 gap-3">
             <div class="col-span-2 space-y-3">
-                <div class="p-2 rounded-lg bg-black/20 space-y-2">${lessonArtFormHtml(mod)}<p class="text-[0.65rem] text-accent min-h-[1em]">${escapeHtml(_lessonArt.status)}</p></div>
+                <div class="p-2 rounded-lg bg-black/20 space-y-2">${lessonArtFormHtml(mod)}<p class="text-xs text-accent min-h-[1em]">${escapeHtml(_lessonArt.status)}</p></div>
                 <div class="grid grid-cols-2 gap-2">${cards || '<p class="col-span-2 text-xs text-textMuted p-2">아직 삽화가 없습니다.</p>'}</div>
             </div>
             <div class="p-2 rounded-lg bg-black/20 self-start">${lessonArtGuideHtml(art)}</div>
@@ -273,7 +273,7 @@ window.openLessonArt = function (moduleId) {
     overlay.innerHTML = `
         <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[900px] max-h-[90vh] flex flex-col shadow-2xl">
             <div class="p-4 border-b border-white/10 flex items-center">
-                <div><h2 class="text-sm font-bold text-textLight">삽화 · ${escapeHtml(mod.title)}</h2><p class="text-[0.65rem] text-textMuted mt-1">배치는 지금 연 ${escapeHtml(label)} 탭 기준입니다. 본문에는 PNG로 들어갑니다.</p></div>
+                <div><h2 class="text-sm font-bold text-textLight">삽화 · ${escapeHtml(mod.title)}</h2><p class="text-xs text-textMuted mt-1">배치는 지금 연 ${escapeHtml(label)} 탭 기준입니다. 본문에는 PNG로 들어갑니다.</p></div>
                 <button data-lesson-art-action="close" class="ml-auto px-3 py-1 text-xs font-bold text-textLight bg-white/10 rounded hover:bg-white/20">닫기</button>
             </div>
             <div id="lesson-art-body" class="flex-1 overflow-y-auto p-4"></div>

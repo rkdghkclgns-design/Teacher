@@ -143,7 +143,7 @@ function refMeterHtml(budget) {
         : `추출한 ${count(budget.total)}자를 모두 AI에 보냅니다.`;
     return `
         <div class="h-1 rounded bg-white/10 overflow-hidden"><div class="h-full ${budget.cut ? 'bg-amber-400' : 'bg-emerald-400'}" style="width:${budget.lessonShare}%"></div></div>
-        <p class="mt-1 text-[0.6rem] ${budget.cut ? 'text-amber-300' : 'text-textMuted'}">${text}</p>`;
+        <p class="mt-1 text-xs ${budget.cut ? 'text-amber-300' : 'text-textMuted'}">${text}</p>`;
 }
 
 function renderRefMeter() {
@@ -164,15 +164,15 @@ function refContentBlocks(content, rangeText) {
 
 function batchFileToolsHtml(file, index) {
     if (file.status !== 'ok') return '';
-    const range = hasPageLabels(file.content) ? `<input value="${escapeHtml(file.pageRange || '')}" onchange="setBatchFileRange(${index}, this.value)" placeholder="쪽 범위 (예: 1-5, 9)" class="mt-1 w-32 px-1.5 py-0.5 text-[0.6rem] bg-black/30 border border-white/10 rounded text-white">` : '';
-    return `${range}<button type="button" onclick="viewBatchFile(${index})" class="ml-1 text-[0.6rem] underline text-textMuted hover:text-white">글자 보기</button>`;
+    const range = hasPageLabels(file.content) ? `<input value="${escapeHtml(file.pageRange || '')}" onchange="setBatchFileRange(${index}, this.value)" placeholder="쪽 범위 (예: 1-5, 9)" class="mt-1 w-32 px-1.5 py-0.5 text-xs bg-black/30 border border-white/10 rounded text-white">` : '';
+    return `${range}<button type="button" onclick="viewBatchFile(${index})" class="ml-1 text-[0.6875rem] underline text-textMuted hover:text-white">글자 보기</button>`;
 }
 
 window.viewBatchFile = function (index) {
     const file = batchUploadedFiles[index];
     if (!file || document.getElementById('ref-view-dialog')) return;
     const blocks = refContentBlocks(file.content, file.pageRange).map(block => `
-        <pre class="whitespace-pre-wrap text-[0.65rem] text-textLight p-2 rounded border ${block.included ? 'border-accent/60' : 'border-white/10 opacity-50'}">${escapeHtml(block.text || '(글자 없음)')}</pre>`).join('');
+        <pre class="whitespace-pre-wrap text-[0.6875rem] text-textLight p-2 rounded border ${block.included ? 'border-accent/60' : 'border-white/10 opacity-50'}">${escapeHtml(block.text || '(글자 없음)')}</pre>`).join('');
     const overlay = document.createElement('div');
     overlay.id = 'ref-view-dialog';
     overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9000]';
@@ -180,7 +180,7 @@ window.viewBatchFile = function (index) {
         <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[640px] max-h-[84vh] flex flex-col shadow-2xl">
             <div class="p-4 border-b border-white/10 flex items-start gap-2">
                 <div class="min-w-0"><h2 class="text-sm font-bold text-textLight truncate">${escapeHtml(file.name)}</h2>
-                    <p class="text-[0.65rem] text-textMuted mt-1">뽑아낸 글자 ${String(file.content || '').length.toLocaleString()}자입니다. 쓰는 범위는 파란 테두리로 표시합니다. 잘못 읽힌 곳이 많으면 다른 형식으로 올려주세요.</p></div>
+                    <p class="text-xs text-textMuted mt-1">뽑아낸 글자 ${String(file.content || '').length.toLocaleString()}자입니다. 쓰는 범위는 파란 테두리로 표시합니다. 잘못 읽힌 곳이 많으면 다른 형식으로 올려주세요.</p></div>
                 <button data-ref-view-close class="ml-auto px-3 py-1 text-xs font-bold text-textLight bg-white/10 rounded hover:bg-white/20">닫기</button>
             </div>
             <div class="flex-1 overflow-y-auto p-4 space-y-2">${blocks}</div>

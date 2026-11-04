@@ -646,7 +646,7 @@ window.syncSlidePanel = function (mod) {
     const generateLabel = document.getElementById('slide-generate-label');
     if (badge) {
         badge.textContent = hasDeck ? '생성됨' : '미생성';
-        badge.className = `text-[0.6rem] px-2 py-0.5 rounded-full font-bold ${hasDeck ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-200 text-gray-500'}`;
+        badge.className = `text-[0.6875rem] px-2 py-0.5 rounded-full font-bold ${hasDeck ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-200 text-gray-500'}`;
     }
     if (regenBtn) regenBtn.classList.toggle('hidden', !hasDeck);
     if (regenBtn) regenBtn.classList.toggle('flex', hasDeck);

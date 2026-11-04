@@ -9,7 +9,7 @@ let _ncsFilterDraft = null;
 
 /* ---------- 배지 ---------- */
 function lessonBadge(text, style, title = '') {
-    return `<span class="text-[0.6rem] font-bold px-1.5 py-0.5 rounded ${style}" title="${escapeHtml(title)}">${escapeHtml(text)}</span>`;
+    return `<span class="text-[0.6875rem] font-bold px-1.5 py-0.5 rounded ${style}" title="${escapeHtml(title)}">${escapeHtml(text)}</span>`;
 }
 
 function lessonListBadges(mod) {
@@ -39,8 +39,8 @@ function lessonNcsCodeHtml(mod) {
     const id = escapeHtml(String(mod.id));
     return `
         <span class="flex items-center gap-1 min-w-0 cursor-help" data-ncs-pop="${id}" onmouseenter="openLessonNcsPop(this)" onmouseleave="scheduleLessonNcsPopClose()" onclick="event.stopPropagation(); toggleLessonNcsPop(this)">
-            <span class="font-mono text-[0.65rem] text-textLight truncate">${escapeHtml(codes[0])}</span>
-            ${codes.length > 1 ? `<span class="shrink-0 text-[0.6rem] text-textMuted">외 ${codes.length - 1}</span>` : ''}
+            <span class="font-mono text-[0.6875rem] text-textLight truncate">${escapeHtml(codes[0])}</span>
+            ${codes.length > 1 ? `<span class="shrink-0 text-[0.6875rem] text-textMuted">외 ${codes.length - 1}</span>` : ''}
             <button onclick="event.stopPropagation(); copyLessonNcsCodes('${escapeHtml(String(mod.id))}')" title="NCS 코드 복사" class="shrink-0 text-white/50 hover:text-white"><i class="ph-bold ph-copy"></i></button>
         </span>`;
 }
@@ -85,9 +85,9 @@ function renderLessonViewBar() {
     const count = _lessonFilter.ncs.length;
     return `
         <div class="flex flex-wrap items-center gap-1">
-            <button onclick="toggleLessonGroup()" class="text-[0.6rem] px-1.5 py-0.5 rounded ${_lessonFilter.group ? active : idle}">카테고리별</button>
-            <button onclick="openLessonNcsFilter()" class="text-[0.6rem] px-1.5 py-0.5 rounded ${count ? active : idle}">NCS 필터${count ? ` ${count}` : ''}</button>
-            ${count ? '<button onclick="clearLessonNcsFilter()" class="text-[0.6rem] px-1 text-textMuted hover:text-white" title="NCS 필터 해제">✕</button>' : ''}
+            <button onclick="toggleLessonGroup()" class="text-[0.6875rem] px-1.5 py-0.5 rounded ${_lessonFilter.group ? active : idle}">카테고리별</button>
+            <button onclick="openLessonNcsFilter()" class="text-[0.6875rem] px-1.5 py-0.5 rounded ${count ? active : idle}">NCS 필터${count ? ` ${count}` : ''}</button>
+            ${count ? '<button onclick="clearLessonNcsFilter()" class="text-[0.6875rem] px-1 text-textMuted hover:text-white" title="NCS 필터 해제">✕</button>' : ''}
         </div>`;
 }
 
@@ -99,7 +99,7 @@ function groupLessonsByCategory(lessons) {
 
 function lessonGroupHead(group) {
     const head = document.createElement('div');
-    head.className = 'lesson-group-head text-[0.65rem] font-bold text-textMuted mt-2 mb-1 px-1';
+    head.className = 'lesson-group-head text-[0.6875rem] font-bold text-textMuted mt-2 mb-1 px-1';
     head.dataset.category = group.name;
     head.textContent = `${group.title} · ${group.lessons.length}`;
     return head;
@@ -158,7 +158,7 @@ function ncsFilterRowHtml(key, label, count) {
     return `
         <label class="flex items-center gap-2 p-1.5 rounded hover:bg-white/5 text-xs text-textLight">
             <input type="checkbox" data-ncs-filter="${escapeHtml(key)}" ${_ncsFilterDraft.has(key) ? 'checked' : ''}>
-            <span class="flex-1 min-w-0">${escapeHtml(label)}</span><span class="text-[0.6rem] text-textMuted">${count}</span>
+            <span class="flex-1 min-w-0">${escapeHtml(label)}</span><span class="text-[0.6875rem] text-textMuted">${count}</span>
         </label>`;
 }
 
@@ -173,7 +173,7 @@ window.openLessonNcsFilter = function () {
         <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[460px] max-h-[80vh] flex flex-col shadow-2xl">
             <div class="p-4 border-b border-white/10">
                 <h2 class="text-sm font-bold text-textLight">NCS 필터</h2>
-                <p class="text-[0.65rem] text-textMuted mt-1">고른 능력단위요소에 대응한 차시만 목록에 보입니다.</p>
+                <p class="text-xs text-textMuted mt-1">고른 능력단위요소에 대응한 차시만 목록에 보입니다.</p>
             </div>
             <div class="flex-1 overflow-y-auto p-3">
                 ${ncsFilterRowHtml(LESSON_NCS_NONE, 'NCS 미대응 차시', none)}
@@ -239,7 +239,7 @@ function lessonCategoryRowsHtml() {
     const rows = lessonCategories().map((item, index) => `
         <div class="flex items-center gap-2">
             <input data-category-input="${index}" value="${escapeHtml(item.name)}" class="flex-1 px-2 py-0.5 text-xs bg-black/30 border border-white/10 rounded text-white">
-            <span class="text-[0.6rem] shrink-0">${item.count}개 차시</span>
+            <span class="text-[0.6875rem] shrink-0">${item.count}개 차시</span>
             <button data-meta-action="rename-category" data-category="${escapeHtml(item.name)}" class="underline text-textLight shrink-0">이름 바꾸기</button>
             <button data-meta-action="delete-category" data-category="${escapeHtml(item.name)}" class="underline text-rose-300 shrink-0">삭제</button>
         </div>`);

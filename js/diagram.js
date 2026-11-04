@@ -48,7 +48,7 @@
 
                         <i class="ph-fill ph-target text-accent text-xl"></i>
 
-                        <div class="text-[0.65rem] font-bold text-accent uppercase tracking-widest">Course</div>
+                        <div class="text-[0.6875rem] font-bold text-accent uppercase tracking-widest">Course</div>
 
                     </div>
 
@@ -76,7 +76,7 @@
 
                                     <span class="text-xs font-bold text-textLight bg-black/30 border border-white/10 px-2 py-1 rounded">교과 모듈</span>
 
-                                    <button onclick="event.stopPropagation(); location.hash='#editor/${subj.id}'" class="opacity-0 group-hover:opacity-100 px-3 py-1.5 bg-accent hover:bg-accentHover text-white text-[0.65rem] font-bold rounded shadow-md transition-all flex items-center gap-1 -mr-1 -mt-1" title="상세 교안 편집기로 이동">
+                                    <button onclick="event.stopPropagation(); location.hash='#editor/${subj.id}'" class="opacity-0 group-hover:opacity-100 px-3 py-1.5 bg-accent hover:bg-accentHover text-white text-[0.6875rem] font-bold rounded shadow-md transition-all flex items-center gap-1 -mr-1 -mt-1" title="상세 교안 편집기로 이동">
 
                                         <i class="ph-bold ph-pencil-simple"></i> 편집기 열기
 
@@ -104,7 +104,7 @@
 
                                         <div class="flex gap-2.5 items-center">
 
-                                            <span class="text-[0.65rem] font-bold text-textMuted group-hover:text-accent transition-colors">${lIdx + 1}</span>
+                                            <span class="text-[0.6875rem] font-bold text-textMuted group-hover:text-accent transition-colors">${lIdx + 1}</span>
 
                                             <div class="text-sm font-bold text-textLight truncate flex-1">${escapeHtml(lesson.title)}</div>
 
@@ -114,7 +114,7 @@
 
                                 `).join('') : `
 
-                                    <div class="text-xs text-textMuted/40 italic px-4 py-2 bg-black/10 rounded border border-white/5 border-dashed z-10 w-[240px]">
+                                    <div class="text-xs text-textMuted italic px-4 py-2 bg-black/10 rounded border border-white/5 border-dashed z-10 w-[240px]">
 
                                         <i class="ph-fill ph-warning-circle mr-1"></i>아직 생성된 차시가 없습니다.
 

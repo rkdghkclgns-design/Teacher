@@ -235,7 +235,7 @@ function reviewIssueRow(issue) {
     return `
         <li class="text-xs text-textLight bg-white/5 rounded-lg px-2 py-1.5">
             ${issue.where ? `<b>${escapeHtml(issue.where)}</b> · ` : ''}${escapeHtml(issue.msg)}
-            ${issue.snip ? `<div class="text-[0.65rem] text-textMuted break-all">${escapeHtml(issue.snip)}</div>` : ''}
+            ${issue.snip ? `<div class="text-[0.6875rem] text-textMuted break-all">${escapeHtml(issue.snip)}</div>` : ''}
         </li>`;
 }
 
@@ -247,7 +247,7 @@ function reviewIssueGroup(label, tone, issues) {
 function reviewIssuesHtml(issues, tabId, md) {
     const stats = LESSON_STRUCTURED_TABS.includes(tabId) ? lessonStructureStats(md) : null;
     return `
-        ${stats ? `<p class="text-[0.65rem] text-textMuted">학습 목표 ${stats.objectives}개 · 내용 섹션 ${stats.sections}개 · 체크리스트 ${stats.checklist}개</p>` : ''}
+        ${stats ? `<p class="text-xs text-textMuted">학습 목표 ${stats.objectives}개 · 내용 섹션 ${stats.sections}개 · 체크리스트 ${stats.checklist}개</p>` : ''}
         ${issues.length ? '' : '<p class="text-xs text-emerald-300">콘텐츠 업무 설계 규칙에 어긋난 곳이 없습니다.</p>'}
         ${reviewIssueGroup('필수', 'text-rose-300', issues.filter(issue => issue.sev === 'bad'))}
         ${reviewIssueGroup('권장', 'text-amber-300', issues.filter(issue => issue.sev !== 'bad'))}`;
@@ -259,7 +259,7 @@ function manualCheckRow(check, record, md) {
     return `
         <label class="flex items-start gap-2 text-xs text-textLight">
             <input type="checkbox" class="mt-0.5" data-manual-key="${escapeHtml(check.key)}" ${state === 'ok' ? 'checked' : ''}>
-            <span>${escapeHtml(check.text)}<span class="block text-[0.6rem] ${state === 'stale' ? 'text-amber-300' : 'text-textMuted'}">${detail}</span></span>
+            <span>${escapeHtml(check.text)}<span class="block text-[0.6875rem] ${state === 'stale' ? 'text-amber-300' : 'text-textMuted'}">${detail}</span></span>
         </label>`;
 }
 
@@ -282,7 +282,7 @@ function reviewRuleItems(sev) {
 function reviewRulesHtml(tabId) {
     const questionRules = tabId === 'assessment' ? `<h4 class="font-bold text-textLight mt-2">문항</h4><ul class="space-y-1">${QBANK_RULE_LIST.map(rule => `<li>${escapeHtml(rule)}</li>`).join('')}</ul>` : '';
     return `
-        <details class="text-[0.65rem] text-textMuted">
+        <details class="text-[0.6875rem] text-textMuted">
             <summary class="cursor-pointer text-xs font-bold text-textLight">검사 규칙 목록</summary>
             <h4 class="font-bold text-rose-300 mt-2">필수</h4><ul class="space-y-1">${reviewRuleItems('bad')}</ul>
             <h4 class="font-bold text-amber-300 mt-2">권장</h4><ul class="space-y-1">${reviewRuleItems('warn')}</ul>
@@ -298,7 +298,7 @@ function reviewPanelHtml(mod, tabId, md, busy) {
         <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[640px] max-w-[92vw] max-h-[84vh] flex flex-col shadow-2xl">
             <div class="p-4 border-b border-white/10">
                 <h2 class="text-sm font-bold text-textLight">컨벤션 검수 · ${escapeHtml(reviewTabLabel(tabId))}</h2>
-                <p class="text-[0.65rem] text-textMuted mt-1">콘텐츠 업무 설계 규칙으로 현재 탭을 검사했습니다.</p>
+                <p class="text-xs text-textMuted mt-1">콘텐츠 업무 설계 규칙으로 현재 탭을 검사했습니다.</p>
             </div>
             <div class="flex-1 overflow-y-auto p-4 space-y-3">
                 ${reviewIssuesHtml(issues, tabId, md)}
@@ -375,6 +375,6 @@ window.syncReviewBadge = function (mod = getEditingModule()) {
     }
     const { required, recommended } = lintCounts(lintLessonMarkdown(md, currentLessonTab, lessonLintContext(mod, currentLessonTab)));
     const tone = required ? 'bad' : recommended ? 'warn' : 'ok';
-    badge.className = `ml-1 px-1.5 py-0.5 rounded-full text-[0.55rem] font-bold ${REVIEW_BADGE_STYLES[tone]}`;
+    badge.className = `ml-1 px-1.5 py-0.5 rounded-full text-[0.6875rem] font-bold ${REVIEW_BADGE_STYLES[tone]}`;
     badge.textContent = required || recommended ? `필수 ${required} · 권장 ${recommended}` : '통과';
 };

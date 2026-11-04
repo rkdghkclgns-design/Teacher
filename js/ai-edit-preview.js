@@ -122,7 +122,7 @@ function sectionRowHtml(row, index, checked, dropGone = false) {
             <label class="flex items-center gap-2 text-xs font-bold text-textLight">
                 <input type="checkbox" data-section-row="${index}" ${checked ? 'checked' : ''}>
                 <span class="flex-1 truncate">${escapeHtml(row.title || '머리말')}</span>
-                <span class="text-[0.6rem] font-normal text-textMuted">${state}</span>
+                <span class="text-[0.6875rem] font-normal text-textMuted">${state}</span>
             </label>
             <div class="mt-1 text-sm text-textLight leading-relaxed whitespace-pre-wrap">${wordDiffHtml(row.before, row.after)}</div>
         </div>`;
@@ -134,12 +134,12 @@ function aiChangeHtml({ title, note, summary, rows, accepted, dropGone = false }
         <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[720px] max-w-[92vw] max-h-[84vh] flex flex-col shadow-2xl">
             <div class="p-4 border-b border-white/10">
                 <h2 class="text-sm font-bold text-textLight">${escapeHtml(title)}</h2>
-                <p data-diff-summary class="text-[0.65rem] text-textMuted mt-1">${escapeHtml(summary)}</p>
-                ${note ? `<p class="text-[0.65rem] text-amber-300 mt-1">${escapeHtml(note)}</p>` : ''}
+                <p data-diff-summary class="text-xs text-textMuted mt-1">${escapeHtml(summary)}</p>
+                ${note ? `<p class="text-xs text-amber-300 mt-1">${escapeHtml(note)}</p>` : ''}
             </div>
             <div class="flex-1 overflow-y-auto p-4 space-y-2">
                 ${changed.length ? changed.map(({ row, index }) => sectionRowHtml(row, index, accepted.has(index), dropGone)).join('') : '<p class="text-xs text-textMuted">바뀐 내용이 없습니다.</p>'}
-                ${changed.length && changed.length < rows.length ? `<p class="text-[0.65rem] text-textMuted">변경 없는 섹션 ${rows.length - changed.length}개는 그대로 둡니다.</p>` : ''}
+                ${changed.length && changed.length < rows.length ? `<p class="text-xs text-textMuted">변경 없는 섹션 ${rows.length - changed.length}개는 그대로 둡니다.</p>` : ''}
             </div>
             <div class="p-3 border-t border-white/10 flex justify-end gap-2">
                 <button data-diff-action="cancel" class="px-4 py-2 text-xs font-bold text-textLight bg-white/10 rounded-lg hover:bg-white/20">취소</button>

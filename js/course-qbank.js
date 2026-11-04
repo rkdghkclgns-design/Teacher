@@ -350,10 +350,10 @@ function qbankOption(value, label, current) {
 function qbankDistributionHtml(questions, objectives) {
     const bands = Object.keys(QBANK_BANDS);
     const { rows, total } = questionDistribution(questions, Math.max(1, objectives.length));
-    const body = rows.map((row, i) => `<tr><td class="p-1 text-textLight">${i + 1}. ${escapeHtml(objectives[i] || '(학습 목표 없음)')}</td>${bands.map(band => `<td class="p-1 text-center ${row[band] ? 'text-textLight' : 'text-textMuted/50'}">${row[band]}</td>`).join('')}</tr>`).join('');
+    const body = rows.map((row, i) => `<tr><td class="p-1 text-textLight">${i + 1}. ${escapeHtml(objectives[i] || '(학습 목표 없음)')}</td>${bands.map(band => `<td class="p-1 text-center ${row[band] ? 'text-textLight' : 'text-textMuted'}">${row[band]}</td>`).join('')}</tr>`).join('');
     const foot = bands.map(band => `<td class="p-1 text-center font-bold ${total[band] >= QBANK_BANDS[band].recommend ? 'text-emerald-400' : 'text-amber-400'}">${total[band]} / ${QBANK_BANDS[band].recommend}</td>`).join('');
     return `
-        <table class="w-full text-[0.65rem]">
+        <table class="w-full text-[0.6875rem]">
             <thead><tr class="text-textMuted"><th class="p-1 text-left">학습 목표</th>${bands.map(band => `<th class="p-1" title="${escapeHtml(QBANK_BANDS[band].name)}">${band}</th>`).join('')}</tr></thead>
             <tbody>${body}</tbody>
             <tfoot><tr class="border-t border-white/10"><td class="p-1 text-textMuted">합계 / 권장</td>${foot}</tr></tfoot>
@@ -366,12 +366,12 @@ function qbankBandCardsHtml() {
         QBANK_BAND_L4
     ];
     return `
-        <p class="text-[0.65rem] text-textMuted mt-1">${escapeHtml(QBANK_BAND_INTRO)}</p>
+        <p class="text-xs text-textMuted mt-1">${escapeHtml(QBANK_BAND_INTRO)}</p>
         <div class="grid grid-cols-4 gap-2 mt-1">${cards.map(card => `
-            <div class="p-2 rounded bg-white/5 text-[0.6rem] text-textMuted">
+            <div class="p-2 rounded bg-white/5 text-[0.6875rem] text-textMuted">
                 <p class="font-bold text-textLight"><span class="text-accent">${card.band}</span> ${escapeHtml(card.name)}</p>
                 <p class="mt-1">${escapeHtml(card.desc)}</p>
-                <p class="mt-1 text-textMuted/80">${escapeHtml(card.types)}</p>
+                <p class="mt-1 text-textMuted">${escapeHtml(card.types)}</p>
             </div>`).join('')}
         </div>`;
 }
@@ -391,23 +391,23 @@ function qbankFormHtml(objectives, mod) {
             <button data-qbank-action="generate" class="px-3 py-1 text-xs font-bold text-white bg-accent rounded hover:bg-accentHover">AI로 생성</button>
             <button data-qbank-action="add" class="px-3 py-1 text-xs font-bold text-textLight bg-white/10 rounded hover:bg-white/20">빈 문항 추가</button>
         </div>
-        <p class="text-[0.6rem] text-textMuted mt-1">${escapeHtml(langs.length ? `코드는 학습내용에 쓰인 ${langs.join(', ')} 기준입니다.` : '학습내용에 코드가 없으면 사용 툴을 보고 꼭 필요할 때만 코드를 씁니다.')}</p>`;
+        <p class="text-xs text-textMuted mt-1">${escapeHtml(langs.length ? `코드는 학습내용에 쓰인 ${langs.join(', ')} 기준입니다.` : '학습내용에 코드가 없으면 사용 툴을 보고 꼭 필요할 때만 코드를 씁니다.')}</p>`;
 }
 
 function qbankFlaggedHtml(questions, checklist) {
     const flagged = questions.map((q, index) => ({ q, index, issues: lintBankQuestion(q, checklist) })).filter(row => row.issues.length);
     return flagged.slice(0, QBANK_MAX_FLAGGED).map(({ q, index, issues }) => `
-        <button data-qbank-action="jump" data-index="${index}" class="px-2 py-0.5 text-[0.6rem] text-left rounded bg-amber-500/10 text-amber-300 hover:bg-amber-500/20">
+        <button data-qbank-action="jump" data-index="${index}" class="px-2 py-0.5 text-[0.6875rem] text-left rounded bg-amber-500/10 text-amber-300 hover:bg-amber-500/20">
             ${escapeHtml(q.band || '밴드 없음')} ${q.no}. ${escapeHtml(String(q.title || q.stem || '(빈 문항)').slice(0, 24))} · ${escapeHtml(issues[0].slice(0, 20))}${issues.length > 1 ? ` 외 ${issues.length - 1}` : ''}
         </button>`).join('');
 }
 
 function qbankCardHtml(q, index, checklist) {
     const issues = lintBankQuestion(q, checklist);
-    const answer = q.answer ? `<p class="text-[0.65rem] text-emerald-300 mt-1">정답: ${escapeHtml(q.answer)}${q.accepted ? ` · 허용 표기: ${escapeHtml(q.accepted)}` : ''}</p>` : '';
+    const answer = q.answer ? `<p class="text-xs text-emerald-300 mt-1">정답: ${escapeHtml(q.answer)}${q.accepted ? ` · 허용 표기: ${escapeHtml(q.accepted)}` : ''}</p>` : '';
     return `
         <div id="qbank-q-${index}" class="p-2 rounded-lg bg-white/5 border ${issues.length ? 'border-amber-400/40' : 'border-white/10'}">
-            <div class="flex items-center gap-2 text-[0.65rem]">
+            <div class="flex items-center gap-2 text-[0.6875rem]">
                 <span class="font-bold text-accent">${escapeHtml(q.band || '밴드 없음')}</span><span class="text-textLight">${escapeHtml(q.type || '유형 없음')}</span>
                 <span class="text-textMuted">${q.objective ? `목표 ${q.objective}` : '목표 없음'}</span>${q.multi ? '<span class="text-textMuted">복수 정답</span>' : ''}
                 <span class="ml-auto ${issues.length ? 'text-amber-400' : 'text-emerald-400'}">${issues.length ? `위반 ${issues.length}` : '검수 통과'}</span>
@@ -416,16 +416,16 @@ function qbankCardHtml(q, index, checklist) {
             </div>
             <p class="text-xs font-bold text-textLight mt-1">${q.no}. ${escapeHtml(q.title)}</p>
             ${q.stem ? `<p class="text-xs text-textLight mt-1 whitespace-pre-wrap">${escapeHtml(q.stem)}</p>` : ''}
-            ${q.code ? `<pre class="text-[0.65rem] text-textLight mt-1 p-2 rounded bg-black/30 overflow-x-auto">${escapeHtml(q.code)}</pre>` : ''}
-            ${q.choices.length ? `<p class="text-[0.65rem] text-textMuted mt-1 whitespace-pre-wrap">${escapeHtml(q.choices.map(choice => `${choice.mark} ${choice.text}`).join('\n'))}</p>` : ''}
+            ${q.code ? `<pre class="text-[0.6875rem] text-textLight mt-1 p-2 rounded bg-black/30 overflow-x-auto">${escapeHtml(q.code)}</pre>` : ''}
+            ${q.choices.length ? `<p class="text-xs text-textMuted mt-1 whitespace-pre-wrap">${escapeHtml(q.choices.map(choice => `${choice.mark} ${choice.text}`).join('\n'))}</p>` : ''}
             ${answer}
-            ${issues.map(msg => `<p class="text-[0.65rem] text-amber-300 mt-0.5">• ${escapeHtml(msg)}</p>`).join('')}
+            ${issues.map(msg => `<p class="text-xs text-amber-300 mt-0.5">• ${escapeHtml(msg)}</p>`).join('')}
         </div>`;
 }
 
 function qbankEditHtml(q, index, objectives) {
     const field = 'w-full px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white';
-    const text = (name, label, value, rows = 2) => `<label class="block text-[0.65rem] text-textMuted">${label}<textarea data-qbank-field="${name}" rows="${rows}" class="${field} mt-0.5">${escapeHtml(value)}</textarea></label>`;
+    const text = (name, label, value, rows = 2) => `<label class="block text-[0.6875rem] text-textMuted">${label}<textarea data-qbank-field="${name}" rows="${rows}" class="${field} mt-0.5">${escapeHtml(value)}</textarea></label>`;
     const band = q.band || 'L1';
     return `
         <div class="p-2 rounded-lg bg-white/5 border border-accent/50 space-y-1">
@@ -433,13 +433,13 @@ function qbankEditHtml(q, index, objectives) {
                 <select data-qbank-field="objective" class="${field}">${(objectives.length ? objectives : ['학습 목표 없음']).map((item, i) => qbankOption(i + 1, `${i + 1}. ${item}`, q.objective || 1)).join('')}</select>
                 <select data-qbank-field="band" class="${field} w-20">${Object.keys(QBANK_BANDS).map(item => qbankOption(item, item, band)).join('')}</select>
                 <select data-qbank-field="type" class="${field} w-28">${qbankOption('', '유형 미표기', q.type)}${Object.values(QUESTION_BAND_TYPES).flat().map(item => qbankOption(item, item, q.type)).join('')}</select>
-                <label class="text-[0.65rem] text-textLight flex items-center gap-1 shrink-0"><input type="checkbox" data-qbank-field="multi" ${q.multi ? 'checked' : ''}> 복수 정답</label>
+                <label class="text-[0.6875rem] text-textLight flex items-center gap-1 shrink-0"><input type="checkbox" data-qbank-field="multi" ${q.multi ? 'checked' : ''}> 복수 정답</label>
             </div>
             ${text('title', '제목', q.title, 1)}${text('stem', '문항', q.stem)}
             ${text('choices', '보기 (한 줄에 하나)', q.choices.map(choice => choice.text).join('\n'), 3)}
             ${text('answer', '정답 (객관식은 ② 또는 ①, ②)', q.answer, 1)}${text('accepted', '허용 표기', q.accepted, 1)}
             ${text('rubric', '채점 기준·루브릭', q.rubric)}
-            <label class="block text-[0.65rem] text-textMuted">코드 언어 (코드제출, 예: python)<input data-qbank-field="lang" value="${escapeHtml(q.lang || '')}" class="${field} mt-0.5"></label>
+            <label class="block text-[0.6875rem] text-textMuted">코드 언어 (코드제출, 예: python)<input data-qbank-field="lang" value="${escapeHtml(q.lang || '')}" class="${field} mt-0.5"></label>
             ${text('code', '시작 코드', q.code || '', 3)}
             ${text('tests', '기대 출력·테스트 케이스', q.tests)}${text('explanation', '해설', q.explanation)}
             <div class="flex justify-end gap-2 pt-1">
@@ -468,10 +468,10 @@ function renderQbank() {
     const button = 'px-2 py-1 text-xs font-bold text-textLight bg-white/10 rounded hover:bg-white/20';
     body.innerHTML = `
         <div class="p-2 rounded-lg bg-black/20">${qbankDistributionHtml(questions, objectives)}
-            <p class="text-[0.6rem] text-textMuted mt-1">권장: L1 10 · L2 5 · L3 3. L4는 프로젝트에서 다룹니다. <button data-qbank-action="help" class="underline text-textLight">밴드란? · ${_qbank.help ? '접기' : '펼치기'}</button></p>
+            <p class="text-xs text-textMuted mt-1">권장: L1 10 · L2 5 · L3 3. L4는 프로젝트에서 다룹니다. <button data-qbank-action="help" class="underline text-textLight">밴드란? · ${_qbank.help ? '접기' : '펼치기'}</button></p>
             ${_qbank.help ? qbankBandCardsHtml() : ''}
         </div>
-        <div class="p-2 rounded-lg bg-black/20">${qbankFormHtml(objectives, mod)}<p id="qbank-status" class="text-[0.65rem] text-accent mt-1 min-h-[1em]">${escapeHtml(_qbank.status)}</p></div>
+        <div class="p-2 rounded-lg bg-black/20">${qbankFormHtml(objectives, mod)}<p id="qbank-status" class="text-xs text-accent mt-1 min-h-[1em]">${escapeHtml(_qbank.status)}</p></div>
         <div class="flex items-center gap-2">
             <span class="text-xs font-bold ${passed === questions.length ? 'text-emerald-400' : 'text-amber-400'}">검수 통과 ${passed}/${questions.length}</span>
             <select data-qbank-filter="band" class="${select} ml-auto">${qbankOption('', '전체 밴드', _qbank.band)}${Object.keys(QBANK_BANDS).map(band => qbankOption(band, band, _qbank.band)).join('')}</select>
@@ -482,7 +482,7 @@ function renderQbank() {
         </div>
         <div class="flex flex-wrap gap-1">${qbankFlaggedHtml(questions, checklist)}</div>
         <div class="space-y-2">${qbankListHtml(questions, objectives, checklist)}</div>
-        <details class="text-[0.65rem] text-textMuted"><summary class="cursor-pointer">검사 규칙 목록</summary><ul class="mt-1 space-y-0.5">${QBANK_RULE_LIST.map(rule => `<li>• ${escapeHtml(rule)}</li>`).join('')}</ul></details>`;
+        <details class="text-[0.6875rem] text-textMuted"><summary class="cursor-pointer">검사 규칙 목록</summary><ul class="mt-1 space-y-0.5">${QBANK_RULE_LIST.map(rule => `<li>• ${escapeHtml(rule)}</li>`).join('')}</ul></details>`;
 }
 
 // opts.inline: 대화상자 대신 탐색줄의 문제은행 자리에 넣는다

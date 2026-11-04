@@ -104,18 +104,18 @@ function renderFilenameConventionUI() {
                 }).join('')}
             </div>
             <div class="flex gap-2 items-center">
-                <label class="text-[0.6rem] text-white/50 shrink-0">구분자:</label>
-                <select onchange="updateFilenameSeparator(this.value)" class="px-2 py-1 text-[0.65rem] bg-white/5 border border-white/10 rounded text-white">
+                <label class="text-[0.6875rem] text-white/50 shrink-0">구분자:</label>
+                <select onchange="updateFilenameSeparator(this.value)" class="px-2 py-1 text-xs bg-white/5 border border-white/10 rounded text-white">
                     ${['_', '-', '.', ' '].map(s => `<option value="${s}" ${filenameConvention.separator === s ? 'selected' : ''}>${s === ' ' ? '공백' : s}</option>`).join('')}
                 </select>
-                <label class="text-[0.6rem] text-white/50 shrink-0 ml-2">작성자:</label>
+                <label class="text-[0.6875rem] text-white/50 shrink-0 ml-2">작성자:</label>
                 <input type="text" value="${filenameConvention.author || ''}" onblur="updateFilenameAuthor(this.value)" placeholder="이름"
-                    class="px-2 py-1 text-[0.65rem] bg-white/5 border border-white/10 rounded text-white w-16">
+                    class="px-2 py-1 text-xs bg-white/5 border border-white/10 rounded text-white w-16">
             </div>
             <div class="flex gap-2 items-center">
-                <label class="text-[0.6rem] text-white/50 shrink-0">접두사:</label>
+                <label class="text-[0.6875rem] text-white/50 shrink-0">접두사:</label>
                 <input type="text" value="${filenameConvention.customPrefix || ''}" onblur="updateFilenamePrefix(this.value)" placeholder="기타 접두사"
-                    class="flex-1 px-2 py-1 text-[0.65rem] bg-white/5 border border-white/10 rounded text-white">
+                    class="flex-1 px-2 py-1 text-xs bg-white/5 border border-white/10 rounded text-white">
             </div>
         </div>`;
     containers.forEach(c => { c.innerHTML = html; });

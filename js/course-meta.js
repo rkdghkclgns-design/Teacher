@@ -135,7 +135,7 @@ function moveLessonsToTrash(lessons, subjectId = currentSubjectId) {
 function renderLessonTrashButton() {
     if (globalState.lessonTrash?.length) globalState.lessonTrash = liveLessonTrash(globalState.lessonTrash);
     const count = (globalState.lessonTrash || []).length;
-    return count ? `<button onclick="openLessonTrash()" class="text-[0.55rem] font-bold px-2 py-0.5 mr-1 rounded bg-white/10 text-textMuted hover:bg-white/20" title="삭제한 차시 복원">휴지통 ${count}</button>` : '';
+    return count ? `<button onclick="openLessonTrash()" class="text-[0.6875rem] font-bold px-2 py-0.5 mr-1 rounded bg-white/10 text-textMuted hover:bg-white/20" title="삭제한 차시 복원">휴지통 ${count}</button>` : '';
 }
 
 function restoreLesson(index) {
@@ -154,7 +154,7 @@ function renderTrashRows() {
         const subject = globalState.subjects.find(item => item.id === entry.subjectId);
         return `
             <div class="flex items-center gap-2 p-2 rounded-lg bg-white/5 text-xs text-textLight">
-                <span class="flex-1 min-w-0 truncate">${escapeHtml(entry.lesson.title)}<span class="block text-[0.6rem] text-textMuted">${escapeHtml(subject?.title || '삭제된 교과')} · ${escapeHtml(entry.at.slice(0, 16).replace('T', ' '))} · 남은 기간 ${trashDaysLeft(entry)}일</span></span>
+                <span class="flex-1 min-w-0 truncate">${escapeHtml(entry.lesson.title)}<span class="block text-[0.6875rem] text-textMuted">${escapeHtml(subject?.title || '삭제된 교과')} · ${escapeHtml(entry.at.slice(0, 16).replace('T', ' '))} · 남은 기간 ${trashDaysLeft(entry)}일</span></span>
                 <button data-trash-action="restore" data-index="${index}" class="px-2 py-1 font-bold bg-accent text-white rounded">복원</button>
                 <button data-trash-action="purge" data-index="${index}" class="px-2 py-1 font-bold bg-white/10 text-rose-300 rounded">완전 삭제</button>
             </div>`;
@@ -176,7 +176,7 @@ window.openLessonTrash = function () {
                     <button data-trash-action="empty" class="ml-auto px-3 py-1 text-xs font-bold text-rose-300 bg-white/10 rounded">휴지통 비우기</button>
                     <button data-trash-action="close" class="px-3 py-1 text-xs font-bold text-textLight bg-white/10 rounded">닫기</button>
                 </div>
-                <p class="text-[0.65rem] text-textMuted mt-1">삭제한 차시는 ${LESSON_TRASH_DAYS}일 동안 보관한 뒤 자동으로 지웁니다.</p>
+                <p class="text-xs text-textMuted mt-1">삭제한 차시는 ${LESSON_TRASH_DAYS}일 동안 보관한 뒤 자동으로 지웁니다.</p>
             </div>
             <div id="lesson-trash-rows" class="flex-1 overflow-y-auto p-4 space-y-2">${renderTrashRows()}</div>
         </div>`;
@@ -217,20 +217,20 @@ function renderLessonMetaChips(mod) {
     const tools = (mod.tools || []).map(toolLabel).join(', ');
     return `
         <div class="mt-2 flex flex-wrap items-center gap-1">
-            <button onclick="event.stopPropagation(); openLessonMeta(${mod.id})" class="text-[0.6rem] font-bold px-1.5 py-0.5 rounded ${LESSON_STATUS_STYLES[lessonStatus(mod)]}" title="차시 정보 편집">${lessonStatus(mod)}</button>
+            <button onclick="event.stopPropagation(); openLessonMeta(${mod.id})" class="text-[0.6875rem] font-bold px-1.5 py-0.5 rounded ${LESSON_STATUS_STYLES[lessonStatus(mod)]}" title="차시 정보 편집">${lessonStatus(mod)}</button>
             ${lessonHoursChip(mod)}
-            ${mod.category ? `<span class="text-[0.6rem] px-1.5 py-0.5 rounded bg-white/10 text-textLight">${escapeHtml(mod.category)}</span>` : ''}
-            ${tools ? `<span class="text-[0.6rem] text-textMuted truncate max-w-[150px]" title="${escapeHtml(tools)}">${escapeHtml(tools)}</span>` : ''}
+            ${mod.category ? `<span class="text-[0.6875rem] px-1.5 py-0.5 rounded bg-white/10 text-textLight">${escapeHtml(mod.category)}</span>` : ''}
+            ${tools ? `<span class="text-[0.6875rem] text-textMuted truncate max-w-[150px]" title="${escapeHtml(tools)}">${escapeHtml(tools)}</span>` : ''}
             ${lessonListBadges(mod)}
         </div>`;
 }
 
 function renderLessonFilterBar() {
     const counts = LESSON_STATUSES.map(status => [status, courseData.filter(lesson => lessonStatus(lesson) === status).length]);
-    const chip = (value, label, count) => `<button onclick="setLessonStatusFilter('${value}')" class="text-[0.6rem] px-1.5 py-0.5 rounded ${_lessonFilter.status === value ? 'bg-accent text-white' : 'bg-white/10 text-textMuted'}">${label} ${count}</button>`;
+    const chip = (value, label, count) => `<button onclick="setLessonStatusFilter('${value}')" class="text-[0.6875rem] px-1.5 py-0.5 rounded ${_lessonFilter.status === value ? 'bg-accent text-white' : 'bg-white/10 text-textMuted'}">${label} ${count}</button>`;
     return `
         <div class="mb-2 space-y-1">
-            <input oninput="setLessonQueryFilter(this.value)" value="${escapeHtml(_lessonFilter.query)}" placeholder="차시 검색 (제목·카테고리·목표)" class="w-full px-2 py-1 text-[0.65rem] bg-black/30 border border-white/10 rounded text-white focus:outline-none focus:border-accent">
+            <input oninput="setLessonQueryFilter(this.value)" value="${escapeHtml(_lessonFilter.query)}" placeholder="차시 검색 (제목·카테고리·목표)" class="w-full px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white focus:outline-none focus:border-accent">
             <div class="flex flex-wrap gap-1">${chip('', '전체', courseData.length)}${counts.map(([status, count]) => chip(status, status, count)).join('')}</div>
             ${renderLessonViewBar()}
         </div>`;
@@ -266,18 +266,18 @@ window.setLessonQueryFilter = function (query) {
 function metaElementRows() {
     const { mod, options, selected } = _metaDraft;
     const entries = lessonElementEntries(mod, options);
-    if (!entries.length) return '<p class="text-[0.65rem] text-textMuted">AI 추천을 누르면 교안을 분석해 고를 항목을 보여 줍니다. 요소를 등록하지 않았으면 능력단위 수준으로 추천합니다.</p>';
+    if (!entries.length) return '<p class="text-xs text-textMuted">AI 추천을 누르면 교안을 분석해 고를 항목을 보여 줍니다. 요소를 등록하지 않았으면 능력단위 수준으로 추천합니다.</p>';
     return entries.map(entry => elementRowHtml(entry, selected.has(entry.key))).join('');
 }
 
 function metaElementStatus() {
     const { mod } = _metaDraft;
-    const note = mod.ncsNote ? `<p class="text-[0.6rem] text-textMuted mb-1">${escapeHtml(mod.ncsNote)}</p>` : '';
+    const note = mod.ncsNote ? `<p class="text-xs text-textMuted mb-1">${escapeHtml(mod.ncsNote)}</p>` : '';
     if (!mod.ncsAuto) return note;
     return `
         <div class="flex items-center gap-2 mb-1">
-            <span class="text-[0.6rem] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">자동 배정 · 확정 전</span>
-            <button data-meta-action="confirm-elements" class="text-[0.6rem] font-bold px-2 py-0.5 rounded bg-accent text-white">확인하고 확정</button>
+            <span class="text-[0.6875rem] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">자동 배정 · 확정 전</span>
+            <button data-meta-action="confirm-elements" class="text-[0.6875rem] font-bold px-2 py-0.5 rounded bg-accent text-white">확인하고 확정</button>
         </div>${note}`;
 }
 
@@ -298,7 +298,7 @@ function renderMetaSearch() {
     const box = document.getElementById('meta-element-results');
     if (!box) return;
     const { found = [], searched = false } = _metaDraft;
-    box.innerHTML = found.length || !searched ? found.map(metaSearchRowHtml).join('') : '<p class="px-2 py-1 text-[0.65rem] text-textMuted">찾는 항목이 없습니다.</p>';
+    box.innerHTML = found.length || !searched ? found.map(metaSearchRowHtml).join('') : '<p class="px-2 py-1 text-xs text-textMuted">찾는 항목이 없습니다.</p>';
 }
 
 function searchMetaElements(query) {
@@ -325,7 +325,7 @@ function pickSearchedElement(key) {
 function metaRegisterForm(subject) {
     const units = subject?.ncs?.units || [];
     const recommend = '<button data-meta-action="recommend" class="px-2 py-1 text-xs font-bold text-white bg-accent rounded hover:bg-accentHover">AI 추천</button>';
-    if (!units.length) return `${metaElementSearchHtml()}<div class="flex items-center gap-2"><p class="flex-1 text-[0.65rem] text-textMuted">교과 NCS 관리에서 능력단위를 배정하면 요소를 등록할 수 있습니다.</p>${recommend}</div>`;
+    if (!units.length) return `${metaElementSearchHtml()}<div class="flex items-center gap-2"><p class="flex-1 text-xs text-textMuted">교과 NCS 관리에서 능력단위를 배정하면 요소를 등록할 수 있습니다.</p>${recommend}</div>`;
     return `
         ${metaElementSearchHtml()}
         <div class="flex gap-2">
@@ -340,7 +340,7 @@ function metaPrereqRow(lesson, checked) {
     return `
         <label class="flex items-center gap-2 text-xs text-textLight">
             <input type="checkbox" data-meta-prereq="${escapeHtml(String(lesson.id))}" ${checked ? 'checked' : ''}> <span class="min-w-0 truncate">${escapeHtml(lesson.title)}</span>
-            <span class="text-[0.55rem] font-bold px-1 rounded shrink-0 ${LESSON_STATUS_STYLES[lessonStatus(lesson)] || ''}">${escapeHtml(lessonStatus(lesson))}</span>
+            <span class="text-[0.6875rem] font-bold px-1 rounded shrink-0 ${LESSON_STATUS_STYLES[lessonStatus(lesson)] || ''}">${escapeHtml(lessonStatus(lesson))}</span>
         </label>`;
 }
 
@@ -352,34 +352,34 @@ function metaPrereqRows(mod) {
     const groups = globalState.subjects
         .map(subject => ({ subject, rows: others.filter(entry => entry.subject === subject) }))
         .filter(group => group.rows.length)
-        .map(({ subject, rows }) => `<p class="text-[0.6rem] text-textMuted mt-1">${escapeHtml(subject.title)}</p>${rows.map(({ lesson }) => metaPrereqRow(lesson, isChosen(lesson))).join('')}`);
+        .map(({ subject, rows }) => `<p class="text-xs text-textMuted mt-1">${escapeHtml(subject.title)}</p>${rows.map(({ lesson }) => metaPrereqRow(lesson, isChosen(lesson))).join('')}`);
     const broken = chosen.map((item, index) => ({ item, index, state: findLessonPrereq(item, mod.id).state })).filter(row => row.state !== 'ok').map(({ item, index, state }) => `
         <label class="flex items-center gap-2 text-xs text-textLight">
             <input type="checkbox" data-meta-prereq-broken="${index}" checked> ${escapeHtml(item.title || '')}
-            <span class="text-[0.55rem] font-bold px-1 rounded bg-rose-500/20 text-rose-300">${state === 'self' ? '자기 자신' : '미등록'}</span>
+            <span class="text-[0.6875rem] font-bold px-1 rounded bg-rose-500/20 text-rose-300">${state === 'self' ? '자기 자신' : '미등록'}</span>
         </label>`);
-    return [...broken, ...groups].join('') || '<p class="text-[0.65rem] text-textMuted">선행으로 고를 다른 차시가 없습니다.</p>';
+    return [...broken, ...groups].join('') || '<p class="text-xs text-textMuted">선행으로 고를 다른 차시가 없습니다.</p>';
 }
 
 function metaHistoryRows(mod) {
-    if (!(mod.history || []).length) return '<p class="text-[0.65rem] text-textMuted">변경 이력이 없습니다.</p>';
-    return mod.history.map(row => `<div class="text-[0.65rem] text-textMuted">${escapeHtml(row.at.slice(0, 16).replace('T', ' '))} · ${escapeHtml(row.note)}</div>`).join('');
+    if (!(mod.history || []).length) return '<p class="text-xs text-textMuted">변경 이력이 없습니다.</p>';
+    return mod.history.map(row => `<div class="text-[0.6875rem] text-textMuted">${escapeHtml(row.at.slice(0, 16).replace('T', ' '))} · ${escapeHtml(row.note)}</div>`).join('');
 }
 
 function metaBasicsHtml(subject, mod, label, field) {
     const categories = lessonCategories().map(item => item.name);
     return `
-        <div><label class="${label}">제목 (과정 안에서 겹치지 않게)</label><input id="meta-title" value="${escapeHtml(mod.title)}" class="${field}"><p id="meta-title-warning" class="text-[0.6rem] text-rose-300 min-h-[1em]">${lessonTitleTaken(mod.title, mod.id) ? '같은 제목의 차시가 이미 있습니다.' : ''}</p></div>
+        <div><label class="${label}">제목 (과정 안에서 겹치지 않게)</label><input id="meta-title" value="${escapeHtml(mod.title)}" class="${field}"><p id="meta-title-warning" class="text-xs text-rose-300 min-h-[1em]">${lessonTitleTaken(mod.title, mod.id) ? '같은 제목의 차시가 이미 있습니다.' : ''}</p></div>
         <div class="flex gap-2">
             <div class="flex-1"><label class="${label}">카테고리</label><input id="meta-category" list="meta-categories" value="${escapeHtml(mod.category || '')}" class="${field}"><datalist id="meta-categories">${categories.map(item => `<option value="${escapeHtml(item)}"></option>`).join('')}</datalist></div>
             <div class="w-28"><label class="${label}">상태</label><select id="meta-status" class="${field}">${LESSON_STATUSES.map(status => `<option ${lessonStatus(mod) === status ? 'selected' : ''}>${status}</option>`).join('')}</select></div>
             <div class="w-40"><label class="${label}">교과</label><select id="meta-subject" class="${field}">${globalState.subjects.map(item => `<option value="${escapeHtml(String(item.id))}" ${item.id === subject.id ? 'selected' : ''}>${escapeHtml(item.title)}</option>`).join('')}</select></div>
         </div>
-        <details id="meta-category-manager" class="text-[0.65rem] text-textMuted"><summary class="cursor-pointer">카테고리 관리</summary><div id="meta-category-rows" class="mt-1 space-y-1">${lessonCategoryRowsHtml()}</div></details>`;
+        <details id="meta-category-manager" class="text-[0.6875rem] text-textMuted"><summary class="cursor-pointer">카테고리 관리</summary><div id="meta-category-rows" class="mt-1 space-y-1">${lessonCategoryRowsHtml()}</div></details>`;
 }
 
 function metaDialogHtml(subject, mod) {
-    const label = 'block text-[0.65rem] font-bold text-textMuted mb-1';
+    const label = 'block text-[0.6875rem] font-bold text-textMuted mb-1';
     const field = 'w-full px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white focus:outline-none focus:border-accent';
     return `
         <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[600px] max-h-[86vh] flex flex-col shadow-2xl">
@@ -389,17 +389,17 @@ function metaDialogHtml(subject, mod) {
                 <div>
                     <label class="${label}">학습 목표 (한 줄에 하나, 교안 생성과 교수안에 씁니다)</label>
                     <textarea id="meta-objectives" rows="3" class="${field}">${escapeHtml((mod.objectives || []).join('\n'))}</textarea>
-                    <button data-meta-action="objective-sets" class="mt-1 px-2 py-0.5 text-[0.65rem] font-bold text-textLight bg-white/10 rounded hover:bg-white/20">교안의 학습 목표 세트 추가·삭제</button>
+                    <button data-meta-action="objective-sets" class="mt-1 px-2 py-0.5 text-[0.6875rem] font-bold text-textLight bg-white/10 rounded hover:bg-white/20">교안의 학습 목표 세트 추가·삭제</button>
                 </div>
                 <div>
                     <label class="${label}">진행 단계 (단계 | 내용 | 분, 한 줄에 하나)</label>
                     <textarea id="meta-flow" rows="4" class="${field}">${escapeHtml(flowLinesText(mod.flow))}</textarea>
-                    <p id="meta-flow-note" class="text-[0.6rem] text-textMuted min-h-[1em]">${escapeHtml(metaFlowNote(flowLinesText(mod.flow), mod))}</p>
+                    <p id="meta-flow-note" class="text-xs text-textMuted min-h-[1em]">${escapeHtml(metaFlowNote(flowLinesText(mod.flow), mod))}</p>
                 </div>
                 <div><label class="${label}">사용 툴과 버전 (이름 | 버전, 버전 의존 정보는 본문이 아니라 여기서 관리합니다)</label><textarea id="meta-tools" rows="2" class="${field}">${escapeHtml((mod.tools || []).map(tool => `${tool.name}${tool.version ? ` | ${tool.version}` : ''}`).join('\n'))}</textarea></div>
                 <div><label class="${label}">교안 생성 옵션 (지정하지 않으면 과정 기본값을 씁니다)</label>${lessonGenFieldsHtml('meta', mod.gen)}</div>
                 <div><label class="${label}">선행 차시 (메타데이터 전용, 본문에서는 언급하지 않습니다)</label><div class="space-y-1 max-h-28 overflow-y-auto">${metaPrereqRows(mod)}</div></div>
-                <div><label class="${label}">NCS 능력단위요소</label><div id="meta-element-status">${metaElementStatus()}</div><div id="meta-elements" class="space-y-1 max-h-40 overflow-y-auto mb-2">${metaElementRows()}</div>${metaRegisterForm(subject)}<p id="meta-status-text" class="text-[0.65rem] text-accent mt-1 min-h-[1em]"></p></div>
+                <div><label class="${label}">NCS 능력단위요소</label><div id="meta-element-status">${metaElementStatus()}</div><div id="meta-elements" class="space-y-1 max-h-40 overflow-y-auto mb-2">${metaElementRows()}</div>${metaRegisterForm(subject)}<p id="meta-status-text" class="text-xs text-accent mt-1 min-h-[1em]"></p></div>
                 <div><label class="${label}">변경 이력</label>
                     <div class="flex gap-2 mb-1"><input id="meta-history-note" placeholder="직접 기록 (예: 교과 담당자 검토 반영)" class="${field}"><button data-meta-action="add-note" class="px-2 py-1 text-xs font-bold text-textLight bg-white/10 rounded hover:bg-white/20 shrink-0">기록</button></div>
                     <div id="meta-history">${metaHistoryRows(mod)}</div>

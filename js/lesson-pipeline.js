@@ -105,7 +105,7 @@ function pipelineBarHtml(run) {
     return `
         <div class="min-w-0 flex-1">
             <p class="text-xs font-bold text-white truncate">${position}${escapeHtml(run.label)}</p>
-            <p class="text-[0.65rem] text-white/60 truncate min-h-[1em]">${escapeHtml(run.status)}</p>
+            <p class="text-xs text-white/60 truncate min-h-[1em]">${escapeHtml(run.status)}</p>
             <div class="mt-1 h-1 rounded bg-white/15 overflow-hidden"><div class="h-full bg-accent transition-all" style="width:${percent}%"></div></div>
         </div>
         <button onclick="requestLessonPipelineStop()" ${run.stopped ? 'disabled' : ''} class="shrink-0 px-3 py-1.5 text-xs font-bold text-white bg-white/10 rounded-lg hover:bg-white/20 disabled:opacity-50">${run.stopped ? '멈추는 중' : '중지'}</button>`;

@@ -66,8 +66,8 @@ function ncsRefRowsHtml(rows) {
     const body = rows.map(unit => `
         <tr class="border-t border-white/5 align-top">
             <td class="p-1 font-mono text-accent">${escapeHtml(unit.code)}</td>
-            <td class="p-1 text-textLight">${escapeHtml(unit.name)}${unit.custom ? ' <span class="text-[0.55rem] px-1 rounded bg-white/10 text-textMuted">직접 추가</span>' : ''}
-                <span class="block text-[0.6rem] text-textMuted">${unit.elements.length ? escapeHtml(unit.elements.map(elementLabel).join(' · ')) : '요소 미등록'}</span></td>
+            <td class="p-1 text-textLight">${escapeHtml(unit.name)}${unit.custom ? ' <span class="text-[0.6875rem] px-1 rounded bg-white/10 text-textMuted">직접 추가</span>' : ''}
+                <span class="block text-[0.6875rem] text-textMuted">${unit.elements.length ? escapeHtml(unit.elements.map(elementLabel).join(' · ')) : '요소 미등록'}</span></td>
             <td class="p-1 text-textMuted">${unit.level ? `${escapeHtml(String(unit.level))}수준` : ''}</td>
             <td class="p-1 text-textMuted">${escapeHtml(unit.path?.[3] || '')}</td>
             <td class="p-1 ${unit.verified ? 'text-emerald-400' : 'text-amber-400'}">${unit.verified ? '확인' : '미검증'}</td>
@@ -75,7 +75,7 @@ function ncsRefRowsHtml(rows) {
         </tr>`).join('');
     const empty = _ncsRef.query.trim() ? '찾는 항목이 없습니다.' : '아직 요소를 등록한 능력단위가 없습니다. 검색해서 편집해주세요.';
     return `
-        <table class="w-full text-[0.65rem]">
+        <table class="w-full text-[0.6875rem]">
             <thead><tr class="text-textMuted text-left"><th class="p-1">코드</th><th class="p-1">능력단위 / 요소</th><th class="p-1">수준</th><th class="p-1">세분류</th><th class="p-1">검증</th><th class="p-1"></th></tr></thead>
             <tbody>${body || `<tr><td colspan="6" class="p-2 text-textMuted">${empty}</td></tr>`}</tbody>
         </table>`;
@@ -84,7 +84,7 @@ function ncsRefRowsHtml(rows) {
 function ncsRefFormHtml(unit) {
     const field = 'w-full px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white';
     const locked = unit && !unit.custom ? 'readonly' : '';
-    const input = (name, label, value, attrs = '') => `<label class="block text-[0.65rem] text-textMuted">${label}<input data-ncs-ref="${name}" value="${escapeHtml(String(value ?? ''))}" class="${field} mt-0.5" ${attrs}></label>`;
+    const input = (name, label, value, attrs = '') => `<label class="block text-[0.6875rem] text-textMuted">${label}<input data-ncs-ref="${name}" value="${escapeHtml(String(value ?? ''))}" class="${field} mt-0.5" ${attrs}></label>`;
     const lines = (unit?.elements || []).map(element => (element.code ? `${element.code} | ${element.name}` : element.name)).join('\n');
     return `
         <p class="text-xs font-bold text-textLight">${unit ? '능력단위 편집' : '능력단위 추가'}</p>
@@ -92,9 +92,9 @@ function ncsRefFormHtml(unit) {
             ${input('code', '분류번호', unit?.code, unit ? 'readonly' : '')}${input('name', '능력단위명', unit?.name, locked)}
             ${input('level', '수준', unit?.level, `type="number" min="1" max="8" ${locked}`)}${input('subclass', '세분류', unit?.path?.[3], locked)}
         </div>
-        <label class="block text-[0.65rem] text-textMuted">능력단위요소 (한 줄에 하나: 코드 | 이름)<textarea data-ncs-ref="elements" rows="3" class="${field} mt-0.5">${escapeHtml(lines)}</textarea></label>
+        <label class="block text-[0.6875rem] text-textMuted">능력단위요소 (한 줄에 하나: 코드 | 이름)<textarea data-ncs-ref="elements" rows="3" class="${field} mt-0.5">${escapeHtml(lines)}</textarea></label>
         <label class="flex items-center gap-2 text-xs text-textLight"><input type="checkbox" data-ncs-ref="verified" ${unit?.verified ? 'checked' : ''}> ncs.go.kr에서 확인함</label>
-        <p id="ncs-ref-status" class="text-[0.65rem] text-accent min-h-[1em]"></p>
+        <p id="ncs-ref-status" class="text-xs text-accent min-h-[1em]"></p>
         <div class="flex justify-end gap-2">
             ${unit ? `<button data-ncs-ref-action="delete" data-code="${escapeHtml(unit.code)}" class="px-3 py-1 text-xs font-bold text-rose-300 bg-white/10 rounded">${unit.custom ? '이 능력단위 삭제' : '요소·검증 표시 지우기'}</button><button data-ncs-ref-action="new" class="px-3 py-1 text-xs font-bold text-textLight bg-white/10 rounded">새로 추가</button>` : ''}
             <button data-ncs-ref-action="save" class="px-3 py-1 text-xs font-bold text-white bg-accent rounded">목록에 저장</button>
@@ -132,8 +132,8 @@ window.openNcsRefDialog = async function () {
                     <h2 class="text-sm font-bold text-textLight">NCS 참조 목록</h2>
                     <button data-ncs-ref-action="close" class="ml-auto px-3 py-1 text-xs font-bold text-textLight bg-white/10 rounded hover:bg-white/20">닫기</button>
                 </div>
-                <p class="text-[0.65rem] text-textMuted mt-1">추천은 이 목록 안에서 먼저 고릅니다. 요소와 직접 추가한 능력단위는 ncs.go.kr 원문을 확인해 등록하고 검증 표시를 바꿔주세요.</p>
-                <p id="ncs-ref-stats" class="text-[0.65rem] text-accent mt-1"></p>
+                <p class="text-xs text-textMuted mt-1">추천은 이 목록 안에서 먼저 고릅니다. 요소와 직접 추가한 능력단위는 ncs.go.kr 원문을 확인해 등록하고 검증 표시를 바꿔주세요.</p>
+                <p id="ncs-ref-stats" class="text-xs text-accent mt-1"></p>
                 <input id="ncs-ref-search" class="w-full mt-2 px-3 py-1.5 text-xs bg-black/30 border border-white/10 rounded-lg text-white focus:outline-none focus:border-accent" placeholder="코드·이름·세분류 검색 (비우면 요소를 등록한 능력단위만 보입니다)">
             </div>
             <div id="ncs-ref-rows" class="flex-1 overflow-y-auto p-2 min-h-[120px]"></div>

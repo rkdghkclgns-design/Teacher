@@ -177,9 +177,9 @@ function objectiveImpactHtml(mod, md, index) {
         <label class="flex items-center gap-2 text-xs text-textLight"><input type="checkbox" data-objective-section="${at}" ${chosen.has(at) ? 'checked' : ''}> <span class="truncate">${escapeHtml(title)}</span></label>`).join('');
     return `
         <div class="mt-1 p-2 rounded-lg bg-rose-500/10 border border-rose-500/30 space-y-2">
-            <p class="text-[0.65rem] text-textLight">학습 목표와 체크리스트 항목을 지웁니다.${check ? ` 체크리스트: ${escapeHtml(check)}` : ''}</p>
-            <div><p class="text-[0.6rem] font-bold text-textMuted mb-1">함께 지울 내용 섹션</p><div class="max-h-28 overflow-y-auto space-y-0.5">${rows || '<p class="text-[0.65rem] text-textMuted">내용 섹션이 없습니다.</p>'}</div></div>
-            ${linked ? `<div class="text-xs text-textLight space-y-0.5"><p class="text-[0.6rem] font-bold text-textMuted">이 목표에 연결된 문항 ${linked}개</p>
+            <p class="text-xs text-textLight">학습 목표와 체크리스트 항목을 지웁니다.${check ? ` 체크리스트: ${escapeHtml(check)}` : ''}</p>
+            <div><p class="text-xs font-bold text-textMuted mb-1">함께 지울 내용 섹션</p><div class="max-h-28 overflow-y-auto space-y-0.5">${rows || '<p class="text-xs text-textMuted">내용 섹션이 없습니다.</p>'}</div></div>
+            ${linked ? `<div class="text-xs text-textLight space-y-0.5"><p class="text-xs font-bold text-textMuted">이 목표에 연결된 문항 ${linked}개</p>
                 <label class="flex items-center gap-2"><input type="radio" name="objective-questions" value="keep" checked> 문항은 남기고 연결만 해제 (목표·밴드 표기가 빠집니다)</label>
                 <label class="flex items-center gap-2"><input type="radio" name="objective-questions" value="delete"> 문항도 함께 삭제</label></div>` : ''}
             <button data-objective-action="remove" class="px-3 py-1 text-xs font-bold text-white bg-rose-500 rounded">세트 삭제</button>
@@ -191,7 +191,7 @@ function objectiveRowHtml(mod, md, goal, index, pick) {
         <div>
             <div class="flex items-start gap-2 text-xs text-textLight">
                 <span class="flex-1 min-w-0">${index + 1}. ${escapeHtml(goal)}</span>
-                <button data-objective-action="pick" data-index="${index}" class="px-2 py-0.5 text-[0.65rem] font-bold text-rose-300 bg-white/10 rounded shrink-0">${pick === index ? '접기' : '삭제'}</button>
+                <button data-objective-action="pick" data-index="${index}" class="px-2 py-0.5 text-[0.6875rem] font-bold text-rose-300 bg-white/10 rounded shrink-0">${pick === index ? '접기' : '삭제'}</button>
             </div>
             ${pick === index ? objectiveImpactHtml(mod, md, index) : ''}
         </div>`;
@@ -201,13 +201,13 @@ function objectiveDialogBody(mod, tabId, pick) {
     const md = objectiveTabMd(mod, tabId);
     const goals = lessonLintBullets(md, OBJECTIVE_BULLETS);
     return `
-        <p class="text-[0.65rem] text-textMuted">학습 목표, 내용 섹션, 체크리스트는 1:1로 대응하므로 한 벌로 움직입니다.</p>
+        <p class="text-xs text-textMuted">학습 목표, 내용 섹션, 체크리스트는 1:1로 대응하므로 한 벌로 움직입니다.</p>
         <div class="space-y-2">${goals.map((goal, index) => objectiveRowHtml(mod, md, goal, index, pick)).join('') || '<p class="text-xs text-textMuted">이 탭에 학습 목표가 없습니다.</p>'}</div>
-        ${goals.length >= LESSON_LINT_MAX_OBJECTIVES ? `<p class="text-[0.65rem] text-amber-300">학습 목표가 이미 ${goals.length}개입니다. 더 늘리면 차시 분할을 검토합니다.</p>` : ''}
-        <label class="block text-[0.65rem] font-bold text-textMuted">새 학습 목표에서 다룰 내용 (비우면 빠진 내용을 골라 씁니다)
+        ${goals.length >= LESSON_LINT_MAX_OBJECTIVES ? `<p class="text-xs text-amber-300">학습 목표가 이미 ${goals.length}개입니다. 더 늘리면 차시 분할을 검토합니다.</p>` : ''}
+        <label class="block text-[0.6875rem] font-bold text-textMuted">새 학습 목표에서 다룰 내용 (비우면 빠진 내용을 골라 씁니다)
             <textarea id="objective-hint" rows="2" class="mt-1 w-full px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white"></textarea>
         </label>
-        <p id="objective-status" class="text-[0.65rem] text-accent min-h-[1em]"></p>`;
+        <p id="objective-status" class="text-xs text-accent min-h-[1em]"></p>`;
 }
 
 function renderObjectiveDialog() {

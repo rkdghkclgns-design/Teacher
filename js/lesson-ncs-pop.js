@@ -39,9 +39,9 @@ function ncsPopUnitLine(element) {
 }
 
 function ncsPopFitHtml(rec) {
-    if (!rec) return '<span class="ml-auto shrink-0 text-[0.6rem] text-textMuted">점수 없음</span>';
+    if (!rec) return '<span class="ml-auto shrink-0 text-[0.6875rem] text-textMuted">점수 없음</span>';
     const kind = rec.by === 'AI' ? 'AI 적합도' : '키워드 일치도';
-    return `<span class="ml-auto shrink-0 text-[0.6rem] font-bold px-1.5 py-0.5 rounded ${ncsFitTone(rec.fit)}" title="${kind}">${Number(rec.fit) || 0}점</span>`;
+    return `<span class="ml-auto shrink-0 text-[0.6875rem] font-bold px-1.5 py-0.5 rounded ${ncsFitTone(rec.fit)}" title="${kind}">${Number(rec.fit) || 0}점</span>`;
 }
 
 // 카드와 같이 요소 코드가 없으면 능력단위 코드를 쓴다
@@ -65,14 +65,14 @@ function ncsPopRowHtml(entry, checked, index, catalogReady = true) {
             <input type="checkbox" class="mt-0.5 shrink-0" data-ncs-pop-key="${escapeHtml(key)}" ${checked ? 'checked' : ''} ${blocked ? 'disabled' : ''}>
             <span class="min-w-0 flex-1">
                 <span class="flex items-center gap-1">
-                    <span class="font-mono text-[0.65rem] text-white truncate">${escapeHtml(code || '(코드 없음)')}</span>
+                    <span class="font-mono text-[0.6875rem] text-white truncate">${escapeHtml(code || '(코드 없음)')}</span>
                     ${code ? ncsPopCopyButtonHtml(code) : ''}
                     ${catalogReady ? elementBadgeHtml(rec) : ''}
                     ${ncsPopFitHtml(rec)}
                 </span>
                 <span class="block text-[0.7rem] text-textLight">${escapeHtml(element.name)}</span>
-                <span class="block text-[0.6rem] text-textMuted">${escapeHtml(ncsPopUnitLine(element) + covers)}</span>
-                ${rec?.reason ? `<span class="block text-[0.6rem] text-textMuted/80">${rec.by === 'AI' ? '근거' : '찾은 방법'}: ${escapeHtml(rec.reason)}</span>` : ''}
+                <span class="block text-[0.6875rem] text-textMuted">${escapeHtml(ncsPopUnitLine(element) + covers)}</span>
+                ${rec?.reason ? `<span class="block text-[0.6875rem] text-textMuted">${rec.by === 'AI' ? '근거' : '찾은 방법'}: ${escapeHtml(rec.reason)}</span>` : ''}
             </span>
         </label>`;
 }
@@ -88,21 +88,21 @@ function ncsPopHtml(mod, entries, selected, pinned, catalog = 'ready') {
     const status = ncsPopStatus(mod);
     const rows = entries.length
         ? entries.map((entry, index) => ncsPopRowHtml(entry, selected.has(entry.key), index, catalog === 'ready')).join('')
-        : '<p class="p-2 text-[0.7rem] text-textMuted">후보가 없습니다. 차시 정보에서 AI 추천을 받아주세요.</p>';
+        : '<p class="p-2 text-xs text-textMuted">후보가 없습니다. 차시 정보에서 AI 추천을 받아주세요.</p>';
     const note = NCS_POP_CATALOG_NOTE[catalog];
     return `
         <div class="flex items-center gap-2 mb-2">
             <b class="text-sm text-white">NCS 능력단위요소</b>
-            <span class="text-[0.6rem] px-1.5 py-0.5 rounded ${status.tone}">${status.text}</span>
-            <span data-ncs-pop-pin class="ml-auto text-[0.6rem] text-textMuted">${pinned ? '고정됨' : '클릭하면 고정'}</span>
+            <span class="text-[0.6875rem] px-1.5 py-0.5 rounded ${status.tone}">${status.text}</span>
+            <span data-ncs-pop-pin class="ml-auto text-[0.6875rem] text-textMuted">${pinned ? '고정됨' : '클릭하면 고정'}</span>
         </div>
-        ${note ? `<p class="mb-1 text-[0.6rem] ${catalog === 'failed' ? 'text-rose-300' : 'text-textMuted'}">${note}</p>` : ''}
+        ${note ? `<p class="mb-1 text-xs ${catalog === 'failed' ? 'text-rose-300' : 'text-textMuted'}">${note}</p>` : ''}
         <div class="space-y-0.5 max-h-72 overflow-y-auto">${rows}</div>
         <div class="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-white/10">
-            <button data-ncs-pop-action="detail" class="text-[0.65rem] text-textMuted hover:text-white underline">차시 정보에서 자세히</button>
+            <button data-ncs-pop-action="detail" class="text-[0.6875rem] text-textMuted hover:text-white underline">차시 정보에서 자세히</button>
             <span class="flex gap-1">
-                <button data-ncs-pop-action="close" class="px-2 py-1 text-[0.65rem] text-textLight rounded bg-white/10 hover:bg-white/20">닫기</button>
-                <button data-ncs-pop-action="confirm" class="px-3 py-1 text-[0.65rem] font-bold text-white bg-accent rounded hover:bg-accentHover">선택 확정 (${selected.size})</button>
+                <button data-ncs-pop-action="close" class="px-2 py-1 text-[0.6875rem] text-textLight rounded bg-white/10 hover:bg-white/20">닫기</button>
+                <button data-ncs-pop-action="confirm" class="px-3 py-1 text-[0.6875rem] font-bold text-white bg-accent rounded hover:bg-accentHover">선택 확정 (${selected.size})</button>
             </span>
         </div>`;
 }

@@ -124,7 +124,7 @@ const designIndexAttrs = (unitIndex, moduleIndex) => `data-unit="${unitIndex}" d
 
 function designGoalHtml(label, goal, attr) {
     return `
-        <label class="block text-[0.65rem] font-bold text-textMuted">${label} <span class="font-normal">(수료 시 도달할 최종 목표)</span>
+        <label class="block text-[0.6875rem] font-bold text-textMuted">${label} <span class="font-normal">(수료 시 도달할 최종 목표)</span>
             <textarea ${attr} rows="2" class="block w-full mt-1 ${DESIGN_FIELD_CLASS}" placeholder="예: 주어진 기준으로 콘텐츠 제작 기획서를 작성할 수 있습니다.">${escapeHtml(goal || '')}</textarea>
         </label>`;
 }
@@ -132,9 +132,9 @@ function designGoalHtml(label, goal, attr) {
 function designBlockStatusHtml(module, unitIndex, moduleIndex) {
     const flowMinutes = designFlowMinutes(module);
     const matched = designFlowMatches(module);
-    const notes = designModuleNotes(module).map(note => `<p class="text-amber-400 text-[0.6rem]">⚠ ${escapeHtml(note)}</p>`).join('');
+    const notes = designModuleNotes(module).map(note => `<p class="text-amber-400 text-xs">⚠ ${escapeHtml(note)}</p>`).join('');
     return `
-        <div class="flex items-center gap-2 text-[0.65rem] ${matched ? 'text-emerald-400' : 'text-amber-400'}">
+        <div class="flex items-center gap-2 text-[0.6875rem] ${matched ? 'text-emerald-400' : 'text-amber-400'}">
             <span>단계 합계 ${fmtMinutes(flowMinutes)}${matched ? ' ✓' : ` ≠ 블록 ${fmtMinutes(module.minutes)}`}</span>
             ${matched ? '' : `<button data-design-action="fit-block" ${designIndexAttrs(unitIndex, moduleIndex)} class="px-1.5 py-0.5 rounded bg-white/10 text-textLight font-bold">시간 맞추기</button>`}
         </div>${notes}`;
@@ -147,7 +147,7 @@ function designStepHtml(step, unitIndex, moduleIndex, stepIndex) {
             <select data-design-step="phase" ${attrs} class="${DESIGN_FIELD_CLASS}">${DESIGN_PHASES.map(phase => `<option ${phase === step.phase ? 'selected' : ''}>${phase}</option>`).join('')}</select>
             <input data-design-step="title" ${attrs} value="${escapeHtml(step.title)}" aria-label="단계 제목" class="flex-1 min-w-0 ${DESIGN_FIELD_CLASS}">
             <input type="number" min="5" step="5" data-design-step="minutes" ${attrs} value="${Number(step.minutes) || 0}" aria-label="단계 시간(분)" class="w-14 text-right ${DESIGN_FIELD_CLASS}">
-            <span class="text-[0.6rem] text-textMuted">분</span>
+            <span class="text-[0.6875rem] text-textMuted">분</span>
             <button data-design-action="del-step" ${attrs} title="단계 삭제" class="px-1 text-rose-300 text-xs">✕</button>
         </div>`;
 }
@@ -157,19 +157,19 @@ function designBlockHtml(module, unitIndex, moduleIndex) {
     return `
         <div class="p-2 rounded-lg bg-black/20 border border-white/5 space-y-1.5">
             <div class="flex items-center gap-1">
-                <span class="text-[0.6rem] font-bold text-accent shrink-0">블록 ${unitIndex + 1}-${moduleIndex + 1}</span>
+                <span class="text-[0.6875rem] font-bold text-accent shrink-0">블록 ${unitIndex + 1}-${moduleIndex + 1}</span>
                 <input data-design-field="title" ${attrs} value="${escapeHtml(module.title)}" aria-label="블록 제목" class="flex-1 min-w-0 ${DESIGN_FIELD_CLASS}">
                 <input type="number" min="10" step="5" data-design-field="minutes" ${attrs} value="${Number(module.minutes) || 0}" aria-label="블록 시간(분)" class="w-16 text-right ${DESIGN_FIELD_CLASS}">
-                <span class="text-[0.6rem] text-textMuted">분</span>
+                <span class="text-[0.6875rem] text-textMuted">분</span>
                 <button data-design-action="del-block" ${attrs} title="블록 삭제" class="px-1 text-rose-300 text-xs">✕</button>
             </div>
-            <label class="block text-[0.6rem] text-textMuted">학습목표 (한 줄에 하나, ${DESIGN_MAX_OBJECTIVES}개 이하, '~할 수 있습니다')
+            <label class="block text-[0.6875rem] text-textMuted">학습목표 (한 줄에 하나, ${DESIGN_MAX_OBJECTIVES}개 이하, '~할 수 있습니다')
                 <textarea data-design-field="objectives" ${attrs} rows="2" class="block w-full mt-0.5 ${DESIGN_FIELD_CLASS}">${escapeHtml(module.objectives.join('\n'))}</textarea>
             </label>
             <div class="space-y-1">${(module.flow || []).map((step, stepIndex) => designStepHtml(step, unitIndex, moduleIndex, stepIndex)).join('')}</div>
             <div class="flex items-start justify-between gap-2">
                 <div id="design-block-status-${unitIndex}-${moduleIndex}" class="min-w-0">${designBlockStatusHtml(module, unitIndex, moduleIndex)}</div>
-                <button data-design-action="add-step" ${attrs} class="shrink-0 px-1.5 py-0.5 text-[0.65rem] font-bold rounded bg-white/10 text-textLight hover:bg-white/20">＋ 단계</button>
+                <button data-design-action="add-step" ${attrs} class="shrink-0 px-1.5 py-0.5 text-[0.6875rem] font-bold rounded bg-white/10 text-textLight hover:bg-white/20">＋ 단계</button>
             </div>
         </div>`;
 }
@@ -177,8 +177,8 @@ function designBlockHtml(module, unitIndex, moduleIndex) {
 function designUnitStatusHtml(unit, unitIndex) {
     const matched = designUnitMatches(unit);
     return `
-        <span class="text-[0.65rem] ${matched ? 'text-emerald-400' : 'text-amber-400'}">블록 합계 ${fmtMinutes(designBlockMinutes(unit))}${matched ? ' ✓' : ` ≠ ${fmtMinutes(Number(unit.hours) * 60)}`}</span>
-        ${matched ? '' : `<button data-design-action="fit-unit" data-unit="${unitIndex}" class="px-1.5 py-0.5 text-[0.65rem] rounded bg-white/10 text-textLight font-bold">시간 맞추기</button>`}`;
+        <span class="text-[0.6875rem] ${matched ? 'text-emerald-400' : 'text-amber-400'}">블록 합계 ${fmtMinutes(designBlockMinutes(unit))}${matched ? ' ✓' : ` ≠ ${fmtMinutes(Number(unit.hours) * 60)}`}</span>
+        ${matched ? '' : `<button data-design-action="fit-unit" data-unit="${unitIndex}" class="px-1.5 py-0.5 text-[0.6875rem] rounded bg-white/10 text-textLight font-bold">시간 맞추기</button>`}`;
 }
 
 // 표의 셀로 조립하면 제목이 HTML로 해석되므로 sessionRows 값을 글자 그대로 넣는다
@@ -189,7 +189,7 @@ function sessionTableHtml(rows) {
             <td class="py-1 pr-2 text-textMuted whitespace-nowrap">${fmtMinutes(row.minutes)}</td>
             <td class="py-1 text-textMuted">${row.steps.map(step => `<div><b class="text-textLight">${escapeHtml(step.label)}</b> ${escapeHtml(step.text)} (${fmtMinutes(step.minutes)})</div>`).join('')}</td>
         </tr>`).join('');
-    return `<table class="w-full mt-1 text-[0.65rem]"><thead><tr class="text-left text-textMuted"><th class="pr-2 font-bold">차시</th><th class="pr-2 font-bold">시간</th><th class="font-bold">진행 단계</th></tr></thead><tbody>${body}</tbody></table>`;
+    return `<table class="w-full mt-1 text-[0.6875rem]"><thead><tr class="text-left text-textMuted"><th class="pr-2 font-bold">차시</th><th class="pr-2 font-bold">시간</th><th class="font-bold">진행 단계</th></tr></thead><tbody>${body}</tbody></table>`;
 }
 
 function designSessionsHtml(unit, unitIndex) {
@@ -197,7 +197,7 @@ function designSessionsHtml(unit, unitIndex) {
     if (!rows.length) return '';
     const open = _designSessionsOpen.has(unitIndex);
     return `
-        <button data-design-action="sessions" data-unit="${unitIndex}" class="px-1.5 py-0.5 text-[0.65rem] font-bold rounded bg-white/10 text-textLight hover:bg-white/20">차시 구성 ${open ? '접기' : `보기 (${rows.length}차시)`}</button>
+        <button data-design-action="sessions" data-unit="${unitIndex}" class="px-1.5 py-0.5 text-[0.6875rem] font-bold rounded bg-white/10 text-textLight hover:bg-white/20">차시 구성 ${open ? '접기' : `보기 (${rows.length}차시)`}</button>
         ${open ? sessionTableHtml(rows) : ''}`;
 }
 
@@ -209,10 +209,10 @@ function designUnitHtml(unit, unitIndex) {
                 <input data-design-unit-title="${unitIndex}" value="${escapeHtml(unit.title)}" aria-label="단원 제목" class="flex-1 min-w-0 ${DESIGN_FIELD_CLASS}">
                 <span id="design-unit-status-${unitIndex}" class="flex items-center gap-1 shrink-0">${designUnitStatusHtml(unit, unitIndex)}</span>
                 <input type="number" min="1" data-design-hours="${unitIndex}" value="${unit.hours}" aria-label="단원 시간" class="w-14 ${DESIGN_FIELD_CLASS} text-right">
-                <span class="text-[0.65rem] text-textMuted">시간</span>
+                <span class="text-[0.6875rem] text-textMuted">시간</span>
             </div>
             ${unit.modules.map((module, moduleIndex) => designBlockHtml(module, unitIndex, moduleIndex)).join('')}
-            <button data-design-action="add-block" data-unit="${unitIndex}" class="px-1.5 py-0.5 text-[0.65rem] font-bold rounded bg-white/10 text-textLight hover:bg-white/20">＋ 블록</button>
+            <button data-design-action="add-block" data-unit="${unitIndex}" class="px-1.5 py-0.5 text-[0.6875rem] font-bold rounded bg-white/10 text-textLight hover:bg-white/20">＋ 블록</button>
             <div id="design-sessions-${unitIndex}">${designSessionsHtml(unit, unitIndex)}</div>
         </div>`;
 }

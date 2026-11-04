@@ -129,7 +129,9 @@
 
                         textLight: '#e2e0f0',
 
-                        textMuted: '#8888a8',
+                        // 보조 글자. 어두운 패널 위에서 4.5:1 이상이 되도록 정했다. 반투명(textMuted/50 등)으로 쓰지 않는다.
+                        // 글자 크기 하한: 라벨·배지·칩 11px(text-[0.6875rem]), 문단·도움말·입력칸 12px(text-xs)
+                        textMuted: '#9a9ab8',
 
                         textEditor: '#333340',
 
@@ -475,16 +477,16 @@
         .tutorial-popover h4 { font-size:1.05rem; font-weight:700; color:#a78bfa; margin-bottom:10px; }
         .tutorial-popover p { font-size:0.82rem; color:#d0d0e8; line-height:1.7; margin-bottom:16px; }
         .tutorial-popover strong { color:#22d3ee; font-weight:600; }
-        .tutorial-step-indicator { font-size:0.72rem; color:#8888a8; margin-bottom:12px; }
+        .tutorial-step-indicator { font-size:0.72rem; color:#9a9ab8; margin-bottom:12px; }
         .tutorial-nav { display:flex; justify-content:space-between; align-items:center; gap:8px; }
-        .tutorial-skip-btn { font-size:0.78rem; color:#8888a8; background:none; border:none; cursor:pointer; padding:6px 10px; }
+        .tutorial-skip-btn { font-size:0.78rem; color:#9a9ab8; background:none; border:none; cursor:pointer; padding:6px 10px; }
         .tutorial-skip-btn:hover { color:#f87171; }
         .tutorial-next-btn {
             background:linear-gradient(135deg,#7c5bf5,#6366f1); color:#fff; border:none; border-radius:8px;
             padding:8px 20px; font-size:0.85rem; font-weight:700; cursor:pointer; transition:all 0.2s;
         }
         .tutorial-next-btn:hover { transform:translateY(-1px); box-shadow:0 4px 14px rgba(124,91,245,0.4); }
-        .tutorial-dont-show { display:flex; align-items:center; gap:5px; font-size:0.72rem; color:#8888a8; cursor:pointer; }
+        .tutorial-dont-show { display:flex; align-items:center; gap:5px; font-size:0.72rem; color:#9a9ab8; cursor:pointer; }
 
         /* v8: 분할 뷰 (좌: 수강생, 우: 강사) */
         </style>
@@ -506,20 +508,20 @@
                 class="text-base font-bold bg-gradient-to-r from-[#c4b5fd] via-[#a78bfa] to-[#7c5bf5] bg-clip-text text-transparent tracking-tight whitespace-nowrap hidden sm:block drop-shadow-sm hover:from-white hover:to-white transition-all">
                 교안 에이전트</h1>
             <span
-                class="text-[0.5rem] font-bold text-accent/40 tracking-[0.2em] mt-0.5 whitespace-nowrap hidden sm:block">V7.0.0</span>
+                class="text-[0.6875rem] font-bold text-accent/40 tracking-[0.2em] mt-0.5 whitespace-nowrap hidden sm:block">V7.0.0</span>
         </div>
 
         <!-- 중앙 스크롤 툴바 -->
         <div id="toolbar-scroll"
             class="flex-1 flex items-center gap-2 overflow-x-auto overflow-y-hidden hide-scrollbar cursor-grab min-w-0">
             <span
-                class="text-[0.6rem] font-semibold text-white/40 px-1.5 pointer-events-none select-none whitespace-nowrap shrink-0">내보내기</span>
+                class="text-[0.6875rem] font-semibold text-white/60 px-1.5 pointer-events-none select-none whitespace-nowrap shrink-0">내보내기</span>
 
             <div class="relative flex items-center shrink-0">
                 <button id="data-manage-btn" onclick="toggleDataManageDropdown(event)"
                     class="flex items-center gap-1 px-2.5 py-1.5 text-[0.7rem] font-semibold text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-lg hover:bg-emerald-500/20 transition-all whitespace-nowrap">
                     <i class="ph-bold ph-database text-sm"></i> 데이터 연동 <i
-                        class="ph-bold ph-caret-down text-[0.5rem] ml-0.5 opacity-70"></i>
+                        class="ph-bold ph-caret-down text-[0.6875rem] ml-0.5 opacity-70"></i>
                 </button>
             </div>
 
@@ -558,7 +560,7 @@
                 <button id="export-dropdown-btn" onclick="toggleExportDropdown(event)"
                     class="flex items-center gap-1 px-2.5 py-1.5 text-[0.7rem] font-semibold text-white bg-gradient-to-br from-accent/40 to-accentHover/40 border border-accent/50 rounded-lg hover:from-accent/60 hover:to-accentHover/60 transition-all whitespace-nowrap">
                     <i class="ph ph-export text-sm"></i> 내보내기 <i
-                        class="ph-bold ph-caret-down text-[0.5rem] ml-0.5 opacity-70"></i>
+                        class="ph-bold ph-caret-down text-[0.6875rem] ml-0.5 opacity-70"></i>
                 </button>
                 <button onclick="smartZipExport()"
                     class="flex items-center gap-1 px-2.5 py-1.5 text-[0.7rem] font-semibold text-white bg-gradient-to-br from-emerald-500/40 to-teal-500/40 border border-emerald-500/50 rounded-lg hover:from-emerald-500/60 hover:to-teal-500/60 transition-all whitespace-nowrap ml-1"
@@ -572,7 +574,7 @@
                 class="hidden fixed w-52 bg-[#1a1a2e] border border-white/10 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.6)] flex-col py-1.5 z-[9999]"
                 style="pointer-events: auto;">
 
-                <div class="px-3 py-1.5 text-[0.6rem] font-bold text-white/40 uppercase tracking-wider">범위 선택</div>
+                <div class="px-3 py-1.5 text-[0.6875rem] font-bold text-white/60 uppercase tracking-wider">범위 선택</div>
 
                 <button onclick="setExportScope('current'); showExportFormatMenu()"
                     class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
@@ -586,7 +588,7 @@
 
                 <div class="h-px bg-white/10 my-1 mx-3"></div>
                 <div id="export-format-section" class="hidden">
-                    <div class="px-3 py-1.5 text-[0.6rem] font-bold text-white/40 uppercase tracking-wider">형식 선택</div>
+                    <div class="px-3 py-1.5 text-[0.6875rem] font-bold text-white/60 uppercase tracking-wider">형식 선택</div>
 
                     <button onclick="executeDropdownExport('md')"
                         class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
@@ -630,10 +632,10 @@
         <!-- 우측 고정: 폴더 상태 + 설정 -->
         <div class="flex items-center gap-3 shrink-0 relative">
             <div id="folder-connection-indicator"
-                class="flex items-center gap-1.5 px-2 py-1 text-[0.6rem] cursor-pointer rounded-lg hover:bg-white/5 transition-colors"
+                class="flex items-center gap-1.5 px-2 py-1 text-[0.6875rem] cursor-pointer rounded-lg hover:bg-white/5 transition-colors"
                 title="프로젝트 폴더 연결하기" onclick="connectProjectFolder()">
-                <i class="ph ph-folder-dashed text-sm text-white/40"></i>
-                <span class="text-white/40">미연결</span>
+                <i class="ph ph-folder-dashed text-sm text-white/60"></i>
+                <span class="text-white/60">미연결</span>
             </div>
 
             <!-- 폴더 연결 드롭다운 (fixed) -->
@@ -691,7 +693,7 @@
                 </div>
                 <div class="flex items-center gap-1 mt-1.5">
                     <div id="api-key-status-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-400"></div><span
-                        id="api-key-status-text" class="text-[0.6rem] text-textMuted">Key 등록됨</span>
+                        id="api-key-status-text" class="text-[0.6875rem] text-textMuted">Key 등록됨</span>
                 </div>
             </div>
 
@@ -713,9 +715,9 @@
                 </div>
                 <div class="flex items-center gap-1 mt-1.5">
                     <div id="claude-key-status-dot" class="w-1.5 h-1.5 rounded-full bg-red-400"></div><span
-                        id="claude-key-status-text" class="text-[0.6rem] text-textMuted">Key 미등록</span>
+                        id="claude-key-status-text" class="text-[0.6875rem] text-textMuted">Key 미등록</span>
                 </div>
-                <p class="text-[0.55rem] text-textMuted/50 mt-1">Claude 모델을 고르면 텍스트 생성에 사용됩니다. 이미지 생성에는 Gemini 키나 Higgsfield 설정이 필요합니다. 빈 칸으로 저장하면 키가 삭제됩니다.</p>
+                <p class="text-xs text-textMuted mt-1">Claude 모델을 고르면 텍스트 생성에 사용됩니다. 이미지 생성에는 Gemini 키나 Higgsfield 설정이 필요합니다. 빈 칸으로 저장하면 키가 삭제됩니다.</p>
             </div>
 
             <!-- [Phase F10] 구글 검색 이미지 연동 (다중 키 롤링) -->
@@ -734,7 +736,7 @@
                 </div>
 
                 <div class="flex justify-between items-center mt-2">
-                    <p class="text-[0.55rem] text-textMuted/50 leading-relaxed">딥 리서치 검색 에이전트 이미지 수집에 사용 (할당량 초과 시 자동
+                    <p class="text-xs text-textMuted leading-relaxed">딥 리서치 검색 에이전트 이미지 수집에 사용 (할당량 초과 시 자동
                         롤링)</p>
                     <button onclick="saveGoogleSearchSetting()"
                         class="px-3 py-1.5 text-xs font-bold text-white bg-accent/20 hover:bg-accent hover:text-white rounded-lg transition-colors border border-accent/30 shrink-0">적용</button>
@@ -755,7 +757,7 @@
                 </div>
 
                 <div class="flex justify-between items-center mt-2">
-                    <p class="text-[0.55rem] text-textMuted/50 leading-relaxed">구글 검색 쿼터 만료 및 실패 시 대체 검색원으로 사용됩니다.</p>
+                    <p class="text-xs text-textMuted leading-relaxed">구글 검색 쿼터 만료 및 실패 시 대체 검색원으로 사용됩니다.</p>
                     <button onclick="savePixabaySetting()"
                         class="px-3 py-1.5 text-xs font-bold text-white bg-accent/20 hover:bg-accent hover:text-white rounded-lg transition-colors border border-accent/30 shrink-0">적용</button>
                 </div>
@@ -770,23 +772,23 @@
                     class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent transition-all appearance-none cursor-pointer"
                     style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22%238a8ab5%22><path d=%22M7 10l5 5 5-5z%22/></svg>');background-repeat:no-repeat;background-position:right 10px center;">
                 </select>
-                <p class="text-[0.55rem] text-textMuted/50 mt-1">교안·퀴즈·문체 변환 등 텍스트 생성에 사용</p>
+                <p class="text-xs text-textMuted mt-1">교안·퀴즈·문체 변환 등 텍스트 생성에 사용</p>
                 <label class="flex items-center gap-1.5 text-xs font-bold text-textMuted mt-3 mb-2"><i
                         class="ph-fill ph-gauge text-accent/70"></i> 추론 강도</label>
                 <select id="settings-reasoning-effort" onchange="updateReasoningEffort(this.value)"
                     class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent transition-all appearance-none cursor-pointer"
                     style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22%238a8ab5%22><path d=%22M7 10l5 5 5-5z%22/></svg>');background-repeat:no-repeat;background-position:right 10px center;">
                 </select>
-                <label class="flex items-center gap-2 text-[0.55rem] text-textMuted/70 mt-1">
+                <label class="flex items-center gap-2 text-[0.6875rem] text-textMuted mt-1">
                     <input type="checkbox" id="settings-auto-task-effort" onchange="updateAutoTaskEffort(this.checked)">
                     보조 작업은 낮은 강도로 실행 (NCS·문항·판독, 교안 본문은 위 설정 유지)
                 </label>
-                <label class="flex items-center gap-2 text-[0.55rem] text-textMuted/70 mt-1">
+                <label class="flex items-center gap-2 text-[0.6875rem] text-textMuted mt-1">
                     <input type="checkbox" id="settings-role-routing" onchange="updateRoleRouting(this.checked)">
                     역할별 AI 분배 (Gemini·Claude 키가 모두 있을 때 작업마다 나눠 호출, 비용이 달라질 수 있음)
                 </label>
-                <p id="settings-role-route" class="text-[0.55rem] text-accent/80 mt-0.5"></p>
-                <p class="text-[0.55rem] text-textMuted/50 mt-1">높을수록 품질이 좋아지고 시간과 비용이 늘어납니다. Gemini는 '높음'이 상한입니다.</p>
+                <p id="settings-role-route" class="text-xs text-accent/80 mt-0.5"></p>
+                <p class="text-xs text-textMuted mt-1">높을수록 품질이 좋아지고 시간과 비용이 늘어납니다. Gemini는 '높음'이 상한입니다.</p>
             </div>
             <div>
                 <label class="flex items-center gap-1.5 text-xs font-bold text-textMuted mb-2"><i
@@ -795,7 +797,7 @@
                     class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent transition-all appearance-none cursor-pointer"
                     style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22%238a8ab5%22><path d=%22M7 10l5 5 5-5z%22/></svg>');background-repeat:no-repeat;background-position:right 10px center;">
                 </select>
-                <p class="text-[0.55rem] text-textMuted/50 mt-1">교안 내 삽입 이미지 생성에 사용 (16:9). Higgsfield 모델은 아래 Higgsfield 설정을 씁니다. Gemini 키가 없으면 텍스트 모델이 SVG 삽화를 그립니다.</p>
+                <p class="text-xs text-textMuted mt-1">교안 내 삽입 이미지 생성에 사용 (16:9). Higgsfield 모델은 아래 Higgsfield 설정을 씁니다. Gemini 키가 없으면 텍스트 모델이 SVG 삽화를 그립니다.</p>
             </div>
             <div>
                 <label class="flex items-center gap-1.5 text-xs font-bold text-textMuted mb-2"><i
@@ -817,7 +819,7 @@
                 <div class="flex items-center justify-between gap-2 mt-2">
                     <div class="flex items-center gap-1 min-w-0">
                         <div id="higgsfield-status-dot" class="w-1.5 h-1.5 rounded-full shrink-0 bg-red-400"></div><span
-                            id="higgsfield-status-text" class="text-[0.6rem] text-textMuted truncate">키 미등록</span>
+                            id="higgsfield-status-text" class="text-[0.6875rem] text-textMuted truncate">키 미등록</span>
                     </div>
                     <div class="flex gap-1 shrink-0">
                         <button onclick="testHiggsfieldSetting(this)"
@@ -826,7 +828,7 @@
                             class="px-3 py-1.5 text-xs font-bold text-white bg-accent hover:bg-accentHover rounded-lg transition-colors">저장</button>
                     </div>
                 </div>
-                <p class="text-[0.55rem] text-textMuted/50 mt-1 leading-relaxed">위 이미지 생성 모델에서 Higgsfield를 고르면 사용합니다. Higgsfield는 브라우저에서 직접 부를 수 없어 처음 한 번 Cloudflare Worker 중계를 배포해야 합니다: <button onclick="copyHiggsfieldRelay()" class="underline text-accent/80 hover:text-accent">중계 코드 복사</button> → Cloudflare 대시보드 Workers &amp; Pages → Create → Worker → Edit code에 붙여 넣고 Deploy → 나온 주소를 위 칸에 넣고 연결 확인. 비용은 Higgsfield API 잔액에서 나갑니다.</p>
+                <p class="text-xs text-textMuted mt-1 leading-relaxed">위 이미지 생성 모델에서 Higgsfield를 고르면 사용합니다. Higgsfield는 브라우저에서 직접 부를 수 없어 처음 한 번 Cloudflare Worker 중계를 배포해야 합니다: <button onclick="copyHiggsfieldRelay()" class="underline text-accent/80 hover:text-accent">중계 코드 복사</button> → Cloudflare 대시보드 Workers &amp; Pages → Create → Worker → Edit code에 붙여 넣고 Deploy → 나온 주소를 위 칸에 넣고 연결 확인. 비용은 Higgsfield API 잔액에서 나갑니다.</p>
             </div>
             <div class="h-px bg-white/5"></div>
             <div>
@@ -836,7 +838,7 @@
                 </button>
             </div>
             <div class="h-px bg-white/5"></div>
-            <div class="text-[0.55rem] text-textMuted/50 leading-relaxed">
+            <div class="text-[0.6875rem] text-textMuted leading-relaxed">
                 <p>• API Key와 모델 설정은 브라우저 로컬에만 저장됩니다.</p>
             </div>
         </div>
@@ -859,7 +861,7 @@
                 <!-- ... 생략 ... -->
                 <div class="flex items-center gap-2">
                     <button onclick="clearHistory()"
-                        class="px-2 py-1 text-[0.6rem] font-medium text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
+                        class="px-2 py-1 text-[0.6875rem] font-medium text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
                         title="전체 히스토리 삭제">전체 삭제</button>
                     <button onclick="toggleHistoryPanel()"
                         class="w-7 h-7 flex items-center justify-center rounded-full hover:bg-white/10 text-textMuted hover:text-white transition-colors"><i
@@ -867,13 +869,13 @@
                 </div>
             </div>
             <div class="p-3 border-b border-white/5 shrink-0 bg-black/10">
-                <div class="flex justify-between items-center text-[0.7rem] text-textMuted/70">
+                <div class="flex justify-between items-center text-[0.7rem] text-textMuted">
                     <span>저장 개수</span>
                     <span id="history-count-badge"
                         class="bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded font-mono">0</span>
                 </div>
                 <!-- 용량 표기 (MB) -->
-                <div class="flex justify-between items-center text-[0.7rem] text-textMuted/70 mt-1">
+                <div class="flex justify-between items-center text-[0.7rem] text-textMuted mt-1">
                     <span>사용 용량</span>
                     <span id="history-storage-badge" class="text-emerald-400/80 px-1.5 py-0.5 rounded font-mono">0.0
                         MB</span>
@@ -894,7 +896,7 @@
                 </div>
                 <div class="flex items-center gap-2">
                     <button onclick="clearAllImageCaches()"
-                        class="px-2 py-1 text-[0.6rem] font-medium text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
+                        class="px-2 py-1 text-[0.6875rem] font-medium text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
                         title="모든 캐시 삭제">전체 삭제</button>
                     <button onclick="toggleCachePanel()"
                         class="w-7 h-7 flex items-center justify-center rounded-full hover:bg-white/10 text-textMuted hover:text-white transition-colors"><i
@@ -902,10 +904,10 @@
                 </div>
             </div>
             <div class="p-3 border-b border-white/5 shrink-0 bg-black/10">
-                <div class="text-[0.7rem] text-textMuted/70 mb-2 leading-relaxed">
+                <div class="text-[0.7rem] text-textMuted mb-2 leading-relaxed">
                     구글 검색을 통해 한 번 불러온 이미지는 IndexedDB에 저장되어, 동일 검색어 호출 시 API 할당량 소모 없이 즉시 재사용됩니다.
                 </div>
-                <div class="flex justify-between items-center text-[0.7rem] text-textMuted/70">
+                <div class="flex justify-between items-center text-[0.7rem] text-textMuted">
                     <span>캐시 항목 수</span>
                     <span id="cache-count-badge"
                         class="bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-mono">0</span>
@@ -935,7 +937,7 @@
                 </div>
 
                 <button onclick="openCourseDesign()"
-                    class="ml-auto mr-1 h-8 px-2 flex items-center gap-1 rounded bg-white/5 hover:bg-accent text-white text-[0.65rem] font-bold transition-colors"
+                    class="ml-auto mr-1 h-8 px-2 flex items-center gap-1 rounded bg-white/5 hover:bg-accent text-white text-[0.6875rem] font-bold transition-colors"
                     title="주제와 단원으로 과정 전체를 설계">
                     <i class="ph-bold ph-tree-structure"></i> 과정 설계
                 </button>
@@ -957,7 +959,7 @@
                 <div class="flex items-center justify-between mb-1">
                     <div class="text-xs font-bold text-textMuted">과정명</div>
                     <button onclick="exportSelectedToZip()" id="zip-selected-btn"
-                        class="hidden items-center gap-1 px-2 py-0.5 text-[0.6rem] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded hover:bg-emerald-500/20 transition-colors"
+                        class="hidden items-center gap-1 px-2 py-0.5 text-[0.6875rem] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded hover:bg-emerald-500/20 transition-colors"
                         title="선택한 항목을 ZIP으로 내보내기">
                         <i class="ph ph-file-zip"></i> ZIP 내보내기
                     </button>
@@ -970,7 +972,7 @@
                 </label>
 
                 <button onclick="openLessonRun('course')"
-                    class="w-full mt-2 h-8 flex items-center justify-center gap-1 rounded bg-white/5 hover:bg-accent text-white text-[0.65rem] font-bold transition-colors"
+                    class="w-full mt-2 h-8 flex items-center justify-center gap-1 rounded bg-white/5 hover:bg-accent text-white text-[0.6875rem] font-bold transition-colors"
                     title="모든 교과에서 내용이 빈 탭만 차례로 생성">
                     <i class="ph-bold ph-stack"></i> 과정 전체 남은 차시 생성
                 </button>
@@ -1114,7 +1116,7 @@
                             <button onclick="adjustBatchCount(-1)" class="w-5 h-5 flex items-center justify-center text-textMuted hover:text-white hover:bg-white/10 rounded transition-colors text-xs font-bold">−</button>
                             <input type="number" id="sidebar-batch-count" min="1" max="30" value="5" class="w-8 text-center text-xs font-bold text-accent bg-transparent border-none focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" onchange="syncBatchCount(this.value)">
                             <button onclick="adjustBatchCount(1)" class="w-5 h-5 flex items-center justify-center text-textMuted hover:text-white hover:bg-white/10 rounded transition-colors text-xs font-bold">+</button>
-                            <span class="text-[0.6rem] text-textMuted ml-0.5">차시</span>
+                            <span class="text-[0.6875rem] text-textMuted ml-0.5">차시</span>
                         </div>
                         <button onclick="openBatchModal()"
                             class="flex items-center gap-1.5 px-2.5 py-1.5 text-[0.7rem] font-bold text-accent bg-accent/10 border border-accent/20 rounded hover:bg-accent/20 transition-all shadow-sm">
@@ -1141,7 +1143,7 @@
 
                     <!-- 참고자료 탭 -->
                     <div id="sidebar-tab-reference" class="hidden">
-                        <div class="px-2 py-1.5 mb-2 text-[0.6rem] text-textMuted bg-white/5 rounded-lg border border-white/5 leading-relaxed">
+                        <div class="px-2 py-1.5 mb-2 text-[0.6875rem] text-textMuted bg-white/5 rounded-lg border border-white/5 leading-relaxed">
                             <strong class="text-accent">💡 사용법</strong><br>
                             • <strong>참고 URL:</strong> NotebookLM 공유 링크 또는 참고 웹페이지 URL을 입력 후 [추가] 클릭<br>
                             • <strong>참고 텍스트:</strong> NotebookLM 요약, 강의 원고, 참고 문서 등을 아래 텍스트 영역에 붙여넣기<br>
@@ -1158,20 +1160,20 @@
                             class="w-full px-2 py-1.5 text-xs bg-white/5 border border-white/10 rounded text-white placeholder-textMuted focus:outline-none focus:border-accent resize-y editor-scroll"
                             oninput="onReferenceTextChange()"></textarea>
                         <div class="flex justify-between items-center mt-0.5">
-                            <span id="reference-char-count" class="text-[0.6rem] text-textMuted">0자</span>
-                            <span id="reference-status-badge" class="text-[0.6rem] px-1.5 py-0.5 rounded bg-white/5 text-textMuted">미등록</span>
+                            <span id="reference-char-count" class="text-[0.6875rem] text-textMuted">0자</span>
+                            <span id="reference-status-badge" class="text-[0.6875rem] px-1.5 py-0.5 rounded bg-white/5 text-textMuted">미등록</span>
                         </div>
                     </div>
 
                     <!-- 단원 수 + 어투 선택 -->
                     <div class="flex items-center gap-2 mt-1">
-                        <label class="text-[0.65rem] text-textMuted whitespace-nowrap">단원 수:</label>
+                        <label class="text-[0.6875rem] text-textMuted whitespace-nowrap">단원 수:</label>
                         <input type="number" id="unit-count-input" min="1" max="10" value="1"
                             class="w-12 px-1 py-1 text-xs text-center bg-white/5 border border-white/10 rounded text-white focus:outline-none focus:border-accent">
                         <div class="flex gap-1 ml-auto" id="tone-selector">
-                            <button onclick="setInstructorTone('formal')" class="tone-btn px-1.5 py-0.5 text-[0.6rem] font-bold rounded border transition-colors bg-accent/20 text-accent border-accent/40" data-tone="formal">합쇼체</button>
-                            <button onclick="setInstructorTone('friendly')" class="tone-btn px-1.5 py-0.5 text-[0.6rem] font-bold rounded border transition-colors bg-white/5 text-textMuted border-white/10" data-tone="friendly">해요체</button>
-                            <button onclick="setInstructorTone('coaching')" class="tone-btn px-1.5 py-0.5 text-[0.6rem] font-bold rounded border transition-colors bg-white/5 text-textMuted border-white/10" data-tone="coaching">코치형</button>
+                            <button onclick="setInstructorTone('formal')" class="tone-btn px-1.5 py-0.5 text-[0.6875rem] font-bold rounded border transition-colors bg-accent/20 text-accent border-accent/40" data-tone="formal">합쇼체</button>
+                            <button onclick="setInstructorTone('friendly')" class="tone-btn px-1.5 py-0.5 text-[0.6875rem] font-bold rounded border transition-colors bg-white/5 text-textMuted border-white/10" data-tone="friendly">해요체</button>
+                            <button onclick="setInstructorTone('coaching')" class="tone-btn px-1.5 py-0.5 text-[0.6875rem] font-bold rounded border transition-colors bg-white/5 text-textMuted border-white/10" data-tone="coaching">코치형</button>
                         </div>
                     </div>
 
@@ -1192,7 +1194,7 @@
 
             <div id="module-list" class="flex-1 overflow-y-auto p-5 pb-20 editor-scroll">
 
-                <div class="text-center pt-10 text-textMuted/60 text-sm leading-relaxed">
+                <div class="text-center pt-10 text-textMuted text-sm leading-relaxed">
 
                     <i class="ph ph-book-open text-3xl mb-2 opacity-50 block"></i>
 
@@ -1238,7 +1240,7 @@
 
                 </div>
 
-                <p id="editor-loading-text" class="text-sm font-bold text-textMuted/60">AI가 상세 교안을 작성하고 있습니다...</p>
+                <p id="editor-loading-text" class="text-sm font-bold text-textMuted">AI가 상세 교안을 작성하고 있습니다...</p>
 
                 <button id="editor-loading-stop" onclick="requestTabGenerationStop()"
                     class="hidden px-3 py-1.5 text-xs font-bold text-rose-600 bg-rose-50 border border-rose-200 rounded-lg hover:bg-rose-100 disabled:opacity-60">이 단락까지만 받고 중단</button>
@@ -1252,11 +1254,11 @@
             <div id="editor-content-area" class="flex-1 overflow-y-auto editor-scroll relative">
 
                 <div
-                    class="max-w-[800px] mx-auto p-12 flex flex-col items-center justify-center h-full text-center text-textMuted/50">
+                    class="max-w-[800px] mx-auto p-12 flex flex-col items-center justify-center h-full text-center text-textMuted">
 
                     <i class="ph ph-file-text text-6xl mb-4 opacity-20"></i>
 
-                    <h2 class="text-lg font-bold text-textMuted/60 mb-2">교안 편집 영역</h2>
+                    <h2 class="text-lg font-bold text-textMuted mb-2">교안 편집 영역</h2>
 
                     <p class="text-sm leading-relaxed">좌측 목차에서 항목을 선택하거나 생성하면<br>이곳에 상세 내용이 렌더링됩니다.</p>
 
@@ -1286,7 +1288,7 @@
                             <span class="truncate text-white/80" id="ai-selected-text-content"></span>
                         </div>
                         <button onclick="clearAISelection()"
-                            class="shrink-0 ml-3 text-white/40 hover:text-red-400 transition-colors" title="선택 취소">
+                            class="shrink-0 ml-3 text-white/60 hover:text-red-400 transition-colors" title="선택 취소">
                             <i class="ph-bold ph-x"></i>
                         </button>
                     </div>
@@ -1355,7 +1357,7 @@
 
                         <h2 class="font-bold text-lg text-white">교과 단위 일괄 생성</h2>
 
-                        <p class="text-[0.7rem] text-textMuted mt-0.5">단원 전체의 교안을 AI가 한 번에 설계하고 작성합니다.</p>
+                        <p class="text-xs text-textMuted mt-0.5">단원 전체의 교안을 AI가 한 번에 설계하고 작성합니다.</p>
 
                     </div>
 
@@ -1405,10 +1407,10 @@
                     <div id="batch-file-list" class="hidden mt-3 space-y-1.5 max-h-[180px] overflow-y-auto editor-scroll bg-black/20 rounded-lg p-3 border border-white/5">
                         <div id="batch-file-list-items"></div>
                         <div id="batch-ref-meter" class="pt-2"></div>
-                        <div id="batch-file-list-summary" class="flex items-center justify-between pt-2 mt-2 border-t border-white/5 text-[0.65rem] text-textMuted">
+                        <div id="batch-file-list-summary" class="flex items-center justify-between pt-2 mt-2 border-t border-white/5 text-[0.6875rem] text-textMuted">
                             <span id="batch-file-count">0개 파일</span>
                             <button type="button" onclick="clearAllBatchFiles(event)"
-                                class="px-2 py-0.5 text-[0.65rem] font-bold text-red-400 hover:bg-red-500/20 rounded transition-colors">
+                                class="px-2 py-0.5 text-[0.6875rem] font-bold text-red-400 hover:bg-red-500/20 rounded transition-colors">
                                 모두 삭제
                             </button>
                         </div>
@@ -1480,7 +1482,7 @@
 
                             <label class="text-xs font-bold text-textMuted block">핵심 개념 (권장)</label>
 
-                            <span class="text-[0.6rem] text-textMuted/60">AI가 교안을 작성할 때 반드시 포함할 핵심 키워드나 문장을 한 줄씩
+                            <span class="text-[0.6875rem] text-textMuted">AI가 교안을 작성할 때 반드시 포함할 핵심 키워드나 문장을 한 줄씩
                                 입력하세요.</span>
 
                         </div>

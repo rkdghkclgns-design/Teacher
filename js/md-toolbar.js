@@ -290,7 +290,7 @@ function onAiChipClick(event) {
 function renderAiEditChips() {
     const box = document.getElementById('ai-edit-chips');
     if (!box) return;
-    box.innerHTML = AI_EDIT_CHIPS.map((chip, index) => `<button type="button" data-ai-chip="${index}" class="px-2 py-0.5 text-[0.65rem] text-white/70 bg-white/5 border border-white/10 rounded-full hover:bg-white/10">${chip.label}</button>`).join('');
+    box.innerHTML = AI_EDIT_CHIPS.map((chip, index) => `<button type="button" data-ai-chip="${index}" class="px-2 py-0.5 text-[0.6875rem] text-white/70 bg-white/5 border border-white/10 rounded-full hover:bg-white/10">${chip.label}</button>`).join('');
     box.addEventListener('mousedown', event => event.preventDefault()); // 드래그한 선택 영역 유지
     box.addEventListener('click', onAiChipClick);
 }

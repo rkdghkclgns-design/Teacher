@@ -543,7 +543,7 @@ window.renderHistoryList = function () {
                     <input type="checkbox" class="w-4 h-4 rounded border-white/20 bg-black/50 accent-accent pointer-events-none" ${isSelected ? 'checked' : ''}>
                     <div>
                         <h4 class="font-bold ${isSelected ? 'text-white' : 'text-white/80'} text-sm">${escapeHtml(h.title)}</h4>
-                        <span class="text-xs text-white/40">${escapeHtml(h.date)}</span>
+                        <span class="text-xs text-white/60">${escapeHtml(h.date)}</span>
                     </div>
                 </div>
                 <button onclick="event.stopPropagation(); viewHistoryItem(${Number(h.id)})" class="text-accent hover:text-white hover:bg-accent text-xs font-bold px-3 py-1.5 bg-accent/10 rounded transition-colors border border-accent/20">내용 보기</button>
@@ -1706,7 +1706,7 @@ window.connectProjectFolder = async function () {
         document.getElementById('folder-connection-indicator').innerHTML = `
             <i class="ph-fill ph-folder text-cyan-400 text-sm"></i>
             <span class="text-white/90 font-medium truncate max-w-[100px]">${dirHandle.name}</span>
-            <i class="ph-bold ph-caret-down text-[0.6rem] text-white/50 ml-1"></i>
+            <i class="ph-bold ph-caret-down text-[0.6875rem] text-white/50 ml-1"></i>
         `;
         // 드롭다운 토글 기능으로 변경
         document.getElementById('folder-connection-indicator').onclick = toggleFolderDropdown;
@@ -1737,8 +1737,8 @@ window.disconnectProjectFolder = async function () {
     }
 
     document.getElementById('folder-connection-indicator').innerHTML = `
-        <i class="ph ph-folder-dashed text-sm text-white/40"></i>
-        <span class="text-white/40">연결 안됨</span>
+        <i class="ph ph-folder-dashed text-sm text-white/60"></i>
+        <span class="text-white/60">연결 안됨</span>
     `;
     // 클릭 시 바로 연결 창 띄우기 (미연결 상태)
     document.getElementById('folder-connection-indicator').onclick = () => window.connectProjectFolder();
@@ -1793,7 +1793,7 @@ window.restoreProjectFolderConnection = async function () {
                 document.getElementById('folder-connection-indicator').innerHTML = `
                     <i class="ph-fill ph-folder text-cyan-400 text-sm"></i>
                     <span class="text-white/90 font-medium truncate max-w-[100px]">${storedHandle.name}</span>
-                    <i class="ph-bold ph-caret-down text-[0.6rem] text-white/50 ml-1"></i>
+                    <i class="ph-bold ph-caret-down text-[0.6875rem] text-white/50 ml-1"></i>
                 `;
                 document.getElementById('folder-connection-indicator').onclick = toggleFolderDropdown;
             } else {
@@ -1814,7 +1814,7 @@ window.restoreProjectFolderConnection = async function () {
                             indicator.innerHTML = `
                                 <i class="ph-fill ph-folder text-cyan-400 text-sm"></i>
                                 <span class="text-white/90 font-medium truncate max-w-[100px]">${storedHandle.name}</span>
-                                <i class="ph-bold ph-caret-down text-[0.6rem] text-white/50 ml-1"></i>
+                                <i class="ph-bold ph-caret-down text-[0.6875rem] text-white/50 ml-1"></i>
                             `;
                             indicator.onclick = toggleFolderDropdown; // 드롭다운으로 롤백
                             window.showToast(`[${storedHandle.name}] 폴더 쓰기 권한이 복원되었습니다.`);
@@ -1901,7 +1901,7 @@ window.loadFromProjectFolder = async function () {
         document.getElementById('folder-connection-indicator').innerHTML = `
             <i class="ph-fill ph-folder text-cyan-400 text-sm"></i>
             <span class="text-white/90 font-medium truncate max-w-[100px]">${dirHandle.name}</span>
-            <i class="ph-bold ph-caret-down text-[0.6rem] text-white/50 ml-1"></i>
+            <i class="ph-bold ph-caret-down text-[0.6875rem] text-white/50 ml-1"></i>
         `;
         document.getElementById('folder-connection-indicator').onclick = toggleFolderDropdown;
 
@@ -2067,7 +2067,7 @@ function updateFolderConnectionUI(connected, folderName = '') {
         indicator.title = `연결됨: ${folderName} (클릭하여 해제)`;
         indicator.onclick = () => window.disconnectProjectFolder(); // Changed to call the new disconnect function
     } else {
-        indicator.innerHTML = `<i class="ph ph-folder-dashed text-sm text-white/40"></i> <span class="text-white/40">미연결</span>`;
+        indicator.innerHTML = `<i class="ph ph-folder-dashed text-sm text-white/60"></i> <span class="text-white/60">미연결</span>`;
         indicator.title = '프로젝트 폴더 연결하기';
         indicator.onclick = () => connectProjectFolder();
     }

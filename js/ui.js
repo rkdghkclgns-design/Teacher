@@ -382,14 +382,14 @@ function renderOverviewLNB() {
 
                     <div class="px-3.5 pb-3.5 pt-1 flex flex-wrap gap-2">
 
-                        <span class="text-[0.65rem] font-bold bg-white/10 text-textLight px-2 py-1 rounded-md flex items-center gap-1">
+                        <span class="text-[0.6875rem] font-bold bg-white/10 text-textLight px-2 py-1 rounded-md flex items-center gap-1">
 
                             <i class="ph-fill ph-file-text text-accent"></i> ${subj.lessons?.length || 0} 차시
 
                         </span>
 
                         ${subjectOverviewChips(subj)}
-                        ${subj.hasLevelTest ? `<span class="text-[0.65rem] font-bold bg-yellow-500/20 text-yellow-300 px-2 py-1 rounded-md flex items-center gap-1"><i class="ph-fill ph-crown"></i> 메인 퀘스트</span>` : ''}
+                        ${subj.hasLevelTest ? `<span class="text-[0.6875rem] font-bold bg-yellow-500/20 text-yellow-300 px-2 py-1 rounded-md flex items-center gap-1"><i class="ph-fill ph-crown"></i> 메인 퀘스트</span>` : ''}
 
                     </div>
 
@@ -566,7 +566,7 @@ function openSubjectDetail(id) {
 
                     <div>
 
-                        <label class="text-[0.65rem] font-bold text-accent uppercase tracking-widest mb-1.5 block">Subject Title</label>
+                        <label class="text-[0.6875rem] font-bold text-accent uppercase tracking-widest mb-1.5 block">Subject Title</label>
 
                         <div class="text-xl font-bold text-white">${escapeHtml(subj.title)}</div>
 
@@ -576,7 +576,7 @@ function openSubjectDetail(id) {
 
                     <div>
 
-                        <label class="text-[0.65rem] font-bold text-accent uppercase tracking-widest mb-1.5 block">Description</label>
+                        <label class="text-[0.6875rem] font-bold text-accent uppercase tracking-widest mb-1.5 block">Description</label>
 
                         <div class="text-sm text-textLight leading-relaxed bg-white/5 p-4 rounded-xl border border-white/5">
 
@@ -592,7 +592,7 @@ function openSubjectDetail(id) {
 
                         <div class="flex justify-between items-end mb-4">
 
-                            <label class="text-[0.65rem] font-bold text-accent uppercase tracking-widest">Lessons</label>
+                            <label class="text-[0.6875rem] font-bold text-accent uppercase tracking-widest">Lessons</label>
 
                             <span class="text-xs font-bold text-textMuted">총 ${subj.lessons?.length || 0}개</span>
 
@@ -1675,13 +1675,13 @@ function renderBatchFileList() {
 
         const statusBadge = f.status === 'parsing'
 
-            ? '<span class="text-[0.6rem] text-amber-400 ml-1">파싱 중...</span>'
+            ? '<span class="text-[0.6875rem] text-amber-400 ml-1">파싱 중...</span>'
 
             : f.status === 'error'
 
-                ? `<span class="text-[0.6rem] text-red-400 ml-1" title="${(f.error || '').replace(/"/g, '&quot;')}">오류</span>`
+                ? `<span class="text-[0.6875rem] text-red-400 ml-1" title="${(f.error || '').replace(/"/g, '&quot;')}">오류</span>`
 
-                : `<span class="text-[0.6rem] text-emerald-400 ml-1">${(f.content || '').length}자</span>`;
+                : `<span class="text-[0.6875rem] text-emerald-400 ml-1">${(f.content || '').length}자</span>`;
 
         return `
 
@@ -1693,7 +1693,7 @@ function renderBatchFileList() {
 
                     <div class="text-[0.7rem] font-semibold text-white truncate">${escapeHtml(f.name)}${statusBadge}</div>
 
-                    <div class="text-[0.6rem] text-textMuted">${humanSize(f.size)}</div>
+                    <div class="text-[0.6875rem] text-textMuted">${humanSize(f.size)}</div>
                     ${batchFileToolsHtml(f, i)}
 
                 </div>
@@ -2336,11 +2336,11 @@ function openEditor(subjectId, targetModuleId = null) {
 
     document.getElementById('editor-content-area').innerHTML = `
 
-                <div class="max-w-[800px] mx-auto p-12 flex flex-col items-center justify-center h-full text-center text-textMuted/50">
+                <div class="max-w-[800px] mx-auto p-12 flex flex-col items-center justify-center h-full text-center text-textMuted">
 
                     <i class="ph ph-file-text text-6xl mb-4 opacity-20"></i>
 
-                    <h2 class="text-lg font-bold text-textMuted/60 mb-2">교안 편집 영역</h2>
+                    <h2 class="text-lg font-bold text-textMuted mb-2">교안 편집 영역</h2>
 
                     <p class="text-sm leading-relaxed">좌측 목차에서 항목을 선택하거나 생성하면<br>이곳에 상세 내용이 렌더링됩니다.</p>
 
@@ -2862,7 +2862,7 @@ window.renderCacheList = async function () {
                     <div class="flex justify-between items-start mb-2">
                         <div class="flex-1 min-w-0 pr-2">
                             <h4 class="text-[0.75rem] font-bold text-white truncate" title="${item.keyword}">${item.keyword}</h4>
-                            <p class="text-[0.6rem] text-textMuted mt-0.5">${dateStr} · ${item.format}</p>
+                            <p class="text-xs text-textMuted mt-0.5">${dateStr} · ${item.format}</p>
                         </div>
                         <button onclick="deleteSingleCache('${item.keyword}')" class="w-6 h-6 flex items-center justify-center rounded bg-rose-500/10 hover:bg-rose-500/30 text-rose-400 opacity-0 group-hover:opacity-100 transition-all shrink-0">
                             <i class="ph-bold ph-trash text-xs"></i>

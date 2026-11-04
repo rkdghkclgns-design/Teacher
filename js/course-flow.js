@@ -131,13 +131,13 @@ function generationBusy() {
 function lessonRunListHtml(title, items, detail = () => '') {
     if (!items.length) return '';
     const rows = items.map(item => `<li>${escapeHtml(lessonLabel(item))}${detail(item) ? ` <span class="text-textMuted">— ${escapeHtml(detail(item))}</span>` : ''}</li>`).join('');
-    return `<div><p class="text-[0.65rem] font-bold text-textMuted mb-1">${title} ${items.length}개</p><ul class="list-disc pl-4 space-y-0.5 text-[0.7rem] text-textLight max-h-32 overflow-y-auto">${rows}</ul></div>`;
+    return `<div><p class="text-xs font-bold text-textMuted mb-1">${title} ${items.length}개</p><ul class="list-disc pl-4 space-y-0.5 text-[0.7rem] text-textLight max-h-32 overflow-y-auto">${rows}</ul></div>`;
 }
 
 function lessonRunQueueHtml(queue, uploaded) {
     return `
-        ${lessonRunListHtml('생성할 차시', queue) || '<p class="text-[0.65rem] text-textMuted">생성할 차시가 없습니다.</p>'}
-        ${uploaded.length ? `<p class="text-[0.65rem] text-amber-400">업로드한 MD가 있는 차시 ${uploaded.length}개는 제외합니다. 업로드 파일을 반영하려면 차시 카드의 교안 생성을 눌러주세요.</p>` : ''}`;
+        ${lessonRunListHtml('생성할 차시', queue) || '<p class="text-xs text-textMuted">생성할 차시가 없습니다.</p>'}
+        ${uploaded.length ? `<p class="text-xs text-amber-400">업로드한 MD가 있는 차시 ${uploaded.length}개는 제외합니다. 업로드 파일을 반영하려면 차시 카드의 교안 생성을 눌러주세요.</p>` : ''}`;
 }
 
 function lessonRunIntroHtml(queue, uploaded, withGyosuan = false) {
@@ -146,18 +146,18 @@ function lessonRunIntroHtml(queue, uploaded, withGyosuan = false) {
         <div id="lesson-run-queue" class="space-y-2">${lessonRunQueueHtml(queue, uploaded)}</div>
         <label class="flex items-start gap-2 text-xs text-textLight">
             <input id="lesson-run-gyosuan" type="checkbox" ${withGyosuan ? 'checked' : ''}>
-            <span>교수안, 슬라이드, 문제은행까지 만들기<span class="block text-[0.6rem] text-textMuted">빠진 항목만 만듭니다. 차시마다 호출이 늘고, 슬라이드 자동 이미지를 켜 두면 이미지 비용도 듭니다.</span></span>
+            <span>교수안, 슬라이드, 문제은행까지 만들기<span class="block text-[0.6875rem] text-textMuted">빠진 항목만 만듭니다. 차시마다 호출이 늘고, 슬라이드 자동 이미지를 켜 두면 이미지 비용도 듭니다.</span></span>
         </label>
         <label class="flex items-start gap-2 text-xs text-textLight">
             <input id="lesson-run-overwrite" type="checkbox">
-            <span>이미 만든 내용도 모두 다시 만들기<span class="block text-[0.6rem] text-textMuted">기존 글은 작업 히스토리에 남아 다시 보거나 내려받을 수 있고, 고정 섹션은 유지합니다. 교수안까지 만들기를 켜면 교수안과 슬라이드도 다시 만들고, 슬라이드 화면을 직접 고친 내용은 되살릴 수 없습니다.</span></span>
+            <span>이미 만든 내용도 모두 다시 만들기<span class="block text-[0.6875rem] text-textMuted">기존 글은 작업 히스토리에 남아 다시 보거나 내려받을 수 있고, 고정 섹션은 유지합니다. 교수안까지 만들기를 켜면 교수안과 슬라이드도 다시 만들고, 슬라이드 화면을 직접 고친 내용은 되살릴 수 없습니다.</span></span>
         </label>
         <label class="flex items-start gap-2 text-xs text-textLight">
             <input id="lesson-run-art" type="checkbox" ${globalState.courseDesign?.autoArt ? 'checked' : ''}>
-            <span>교안에 SVG 삽화 넣기<span class="block text-[0.6rem] text-textMuted">기본 학습의 섹션에 그려 넣습니다. 차시마다 호출이 늘고, 차시의 전체 생성에도 같이 적용됩니다.</span></span>
+            <span>교안에 SVG 삽화 넣기<span class="block text-[0.6875rem] text-textMuted">기본 학습의 섹션에 그려 넣습니다. 차시마다 호출이 늘고, 차시의 전체 생성에도 같이 적용됩니다.</span></span>
         </label>
         ${lessonGenFieldsHtml('run', globalState.courseDesign?.genOptions)}
-        <p class="text-[0.6rem] text-textMuted">생성 옵션은 과정 기본값으로 저장됩니다. 차시 정보에서 따로 정한 값이 있으면 그 값을 씁니다.</p>`;
+        <p class="text-xs text-textMuted">생성 옵션은 과정 기본값으로 저장됩니다. 차시 정보에서 따로 정한 값이 있으면 그 값을 씁니다.</p>`;
 }
 
 function lessonRunProgressHtml(item, index, total) {
@@ -165,7 +165,7 @@ function lessonRunProgressHtml(item, index, total) {
     return `
         <p class="text-xs font-bold text-textLight">${index + 1}/${total} · ${escapeHtml(lessonLabel(item))}</p>
         <div class="h-1.5 rounded bg-white/10 overflow-hidden"><div class="h-full bg-accent" style="width:${percent}%"></div></div>
-        <p id="lesson-run-status" class="text-[0.65rem] text-accent min-h-[1em]"></p>`;
+        <p id="lesson-run-status" class="text-xs text-accent min-h-[1em]"></p>`;
 }
 
 function lessonRunReportHtml(report) {
@@ -175,7 +175,7 @@ function lessonRunReportHtml(report) {
         <p class="text-xs font-bold text-textLight">${report.stopped ? '중지했습니다' : '일괄 생성을 마쳤습니다'} · ${counts}</p>
         ${lessonRunListHtml('실패해서 건너뛴 차시', report.failed, item => item.error)}
         ${lessonRunListHtml('일부 단락이 누락되었을 수 있는 차시', report.partial)}
-        ${unfinished ? '<p class="text-[0.65rem] text-textMuted">만든 내용은 저장했습니다. 다시 실행하면 남은 탭부터 이어서 생성합니다.</p>' : ''}`;
+        ${unfinished ? '<p class="text-xs text-textMuted">만든 내용은 저장했습니다. 다시 실행하면 남은 탭부터 이어서 생성합니다.</p>' : ''}`;
 }
 
 function setLessonRunBody(html) {
@@ -337,10 +337,10 @@ window.openSubjectReplan = function () {
             <div class="p-4 border-b border-white/10"><h2 class="text-sm font-bold text-textLight">블록 다시 설계 · ${escapeHtml(subject.title)}</h2></div>
             <div class="p-4 space-y-3">
                 ${replanNoticeHtml(subject)}
-                <label class="block text-[0.65rem] font-bold text-textMuted">교과 시간
+                <label class="block text-[0.6875rem] font-bold text-textMuted">교과 시간
                     <input id="replan-hours" type="number" min="1" value="${subjectPlanHours(subject)}" class="block w-24 mt-1 px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white">
                 </label>
-                <p id="replan-status" class="text-[0.65rem] text-accent min-h-[1em]"></p>
+                <p id="replan-status" class="text-xs text-accent min-h-[1em]"></p>
             </div>
             <div class="p-3 border-t border-white/10 flex justify-end gap-2">
                 <button data-replan-action="close" class="px-4 py-2 text-xs font-bold text-textLight bg-white/10 rounded-lg hover:bg-white/20">닫기</button>
@@ -444,7 +444,7 @@ window.downloadSubjectBundle = function () {
 
 /* ---------- 교과 카드 ---------- */
 function renderSubjectFlowCard(subject) {
-    const button = 'text-[0.6rem] font-bold px-2 py-1 rounded bg-white/10 text-textLight hover:bg-accent transition-colors';
+    const button = 'text-[0.6875rem] font-bold px-2 py-1 rounded bg-white/10 text-textLight hover:bg-accent transition-colors';
     return `
         <div class="mb-3 rounded-xl border border-white/10 bg-bgSidebar p-2.5">
             <div class="flex items-center gap-2 mb-1.5">

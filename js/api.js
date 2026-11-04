@@ -1720,7 +1720,7 @@ window.promptRegenerateImage = function (btn, fallbackKeyword, imgId) {
 
                     </div>
 
-                    <textarea class="w-full bg-black/40 border border-white/10 rounded-lg p-3 text-xs text-white focus:border-accent focus:ring-1 focus:ring-accent outline-none resize-none mb-3 placeholder:text-textMuted/40" rows="3" placeholder="프롬프트를 입력하세요.\n(입력하지 않으면 주변 문맥을 분석하여 자동 생성됩니다)"></textarea>
+                    <textarea class="w-full bg-black/40 border border-white/10 rounded-lg p-3 text-xs text-white focus:border-accent focus:ring-1 focus:ring-accent outline-none resize-none mb-3 placeholder:text-textMuted" rows="3" placeholder="프롬프트를 입력하세요.\n(입력하지 않으면 주변 문맥을 분석하여 자동 생성됩니다)"></textarea>
 
                     <div class="flex justify-end gap-2">
 
@@ -1915,7 +1915,7 @@ function setInstructorTone(toneId) {
     try { localStorage.setItem('kyoan_tone', toneId); } catch (e) {}
     document.querySelectorAll('.tone-btn').forEach(btn => {
         const isActive = btn.dataset.tone === toneId;
-        btn.className = 'tone-btn px-1.5 py-0.5 text-[0.6rem] font-bold rounded border transition-colors ' +
+        btn.className = 'tone-btn px-1.5 py-0.5 text-[0.6875rem] font-bold rounded border transition-colors ' +
             (isActive ? 'bg-accent/20 text-accent border-accent/40' : 'bg-white/5 text-textMuted border-white/10');
     });
 }
@@ -2011,7 +2011,7 @@ function renderReferenceUrls() {
     if (!container || !subj) return;
     if (subj.referenceUrls.length === 0) { container.innerHTML = ''; return; }
     container.innerHTML = subj.referenceUrls.map((r, i) =>
-        `<div class="flex items-center gap-1 py-0.5 text-[0.6rem]">
+        `<div class="flex items-center gap-1 py-0.5 text-[0.6875rem]">
             <a href="${r.url}" target="_blank" class="text-accent hover:underline truncate flex-1" title="${r.url}">${r.title || r.url}</a>
             <button onclick="removeReferenceUrl(${i})" class="text-red-400 hover:text-red-300 px-1 shrink-0">✕</button>
         </div>`
@@ -2037,13 +2037,13 @@ function updateReferenceStatus() {
     const textLen = (subj.referenceText || '').length;
     if (urls === 0 && textLen === 0) {
         badge.textContent = '미등록';
-        badge.className = 'text-[0.6rem] px-1.5 py-0.5 rounded bg-white/5 text-textMuted';
+        badge.className = 'text-[0.6875rem] px-1.5 py-0.5 rounded bg-white/5 text-textMuted';
     } else {
         const parts = [];
         if (urls > 0) parts.push('링크 ' + urls + '개');
         if (textLen > 0) parts.push('텍스트 ' + textLen + '자');
         badge.textContent = parts.join(' + ');
-        badge.className = 'text-[0.6rem] px-1.5 py-0.5 rounded bg-accent/15 text-accent';
+        badge.className = 'text-[0.6875rem] px-1.5 py-0.5 rounded bg-accent/15 text-accent';
     }
 }
 
@@ -2106,7 +2106,7 @@ function renderSidebar() {
                         <div class="w-full p-3 border-b border-white/10 flex flex-col gap-3">
 
                             <div>
-                                <label class="text-[0.6rem] font-bold text-textMuted mb-1 flex items-center gap-1"><i class="ph-bold ph-file-code"></i> 파일명 규칙</label>
+                                <label class="text-[0.6875rem] font-bold text-textMuted mb-1 flex items-center gap-1"><i class="ph-bold ph-file-code"></i> 파일명 규칙</label>
                                 <div id="sidebar-filename-convention-ui"></div>
                             </div>
 
@@ -2126,11 +2126,11 @@ function renderSidebar() {
 
                                         <i class="ph-fill ph-crown text-sm ${mq && mq.status === 'done' ? 'text-yellow-400' : 'text-accent'}"></i>
 
-                                        <span class="text-[0.65rem] font-bold text-textLight group-hover:text-accent transition-colors">메인 퀘스트</span>
+                                        <span class="text-[0.6875rem] font-bold text-textLight group-hover:text-accent transition-colors">메인 퀘스트</span>
 
                                     </div>
 
-                                    <span class="text-[0.6rem] font-bold px-1.5 py-0.5 rounded ${mq && mq.status === 'done' ? 'bg-yellow-500/20 text-yellow-300' : 'bg-white/10 text-white/50'}">${mq && mq.status === 'done' ? '완료' : '대기중'}</span>
+                                    <span class="text-[0.6875rem] font-bold px-1.5 py-0.5 rounded ${mq && mq.status === 'done' ? 'bg-yellow-500/20 text-yellow-300' : 'bg-white/10 text-white/50'}">${mq && mq.status === 'done' ? '완료' : '대기중'}</span>
 
                                 </div>
 
@@ -2138,15 +2138,15 @@ function renderSidebar() {
 
                                     <h4 class="font-bold text-xs text-white mb-0.5 line-clamp-1">${mq ? mq.title : ''}</h4>
 
-                                    <p class="text-[0.6rem] text-textMuted line-clamp-2">${mq ? mq.description : ''}</p>
+                                    <p class="text-xs text-textMuted line-clamp-2">${mq ? mq.description : ''}</p>
 
                                 </div>
 
                                 <div class="mt-2 flex justify-between items-center pt-2 border-t border-white/5">
 
-                                    <span class="text-[0.55rem] text-white/50">${allLessonsDone ? '🌟 차시 완료' : '⚠️ 진행 필요'}</span>
+                                    <span class="text-[0.6875rem] text-white/50">${allLessonsDone ? '🌟 차시 완료' : '⚠️ 진행 필요'}</span>
 
-                                    <button onclick="event.stopPropagation(); promptAndGenerateMainQuest()" class="text-[0.6rem] font-bold px-2 py-1 rounded ${allLessonsDone ? 'bg-accent hover:bg-accentHover' : 'bg-white/10 hover:bg-white/20'} text-white transition-colors" ${!allLessonsDone && mq && mq.status !== 'done' ? 'title="모든 차시를 먼저 생성하는 것을 권장합니다."' : ''}>
+                                    <button onclick="event.stopPropagation(); promptAndGenerateMainQuest()" class="text-[0.6875rem] font-bold px-2 py-1 rounded ${allLessonsDone ? 'bg-accent hover:bg-accentHover' : 'bg-white/10 hover:bg-white/20'} text-white transition-colors" ${!allLessonsDone && mq && mq.status !== 'done' ? 'title="모든 차시를 먼저 생성하는 것을 권장합니다."' : ''}>
 
                                         ${mq && mq.status === 'done' ? '재생성' : '발급'}
 
@@ -2170,7 +2170,7 @@ function renderSidebar() {
 
                     <h3 class="text-xs font-bold text-textMuted uppercase tracking-wider flex-1">차시 목록</h3>${renderLessonTrashButton()}
 
-                    <button onclick="deleteAllModules()" class="text-[0.55rem] font-bold px-2 py-0.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20 transition-colors" title="모든 차시 일괄 삭제">
+                    <button onclick="deleteAllModules()" class="text-[0.6875rem] font-bold px-2 py-0.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20 transition-colors" title="모든 차시 일괄 삭제">
                         <i class="ph-bold ph-trash-simple"></i> 일괄 삭제
                     </button>
 
@@ -2182,7 +2182,7 @@ function renderSidebar() {
 
     if (!Array.isArray(courseData) || courseData.length === 0) {
 
-        html += `<div class="text-center pt-5 text-textMuted/60 text-sm leading-relaxed">차시 모듈이 없습니다.</div>`;
+        html += `<div class="text-center pt-5 text-textMuted text-sm leading-relaxed">차시 모듈이 없습니다.</div>`;
 
     } else {
 
@@ -2203,7 +2203,7 @@ function renderSidebar() {
 
                             <div class="flex gap-2">
 
-                                <button class="text-white/40 hover:text-white cursor-grab drag-handle" title="순서 변경"><i class="ph-bold ph-list"></i></button>
+                                <button class="text-white/60 hover:text-white cursor-grab drag-handle" title="순서 변경"><i class="ph-bold ph-list"></i></button>
 
                                 <button onclick="event.stopPropagation(); deleteModule(${mod.id})" class="text-red-400/70 hover:text-red-400" title="삭제"><i class="ph-bold ph-x"></i></button>
 
@@ -2220,13 +2220,13 @@ function renderSidebar() {
                         ${renderLessonMetaChips(mod)}
                         <div class="mt-3 flex items-center justify-between">
 
-                            <span class="text-[0.65rem] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${mod.status === 'done' ? 'bg-green-500/20 text-green-400' : 'bg-white/10 text-white/50'}">${mod.status === 'done' ? '작성완료' : '대기중'}</span>
+                            <span class="text-[0.6875rem] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${mod.status === 'done' ? 'bg-green-500/20 text-green-400' : 'bg-white/10 text-white/50'}">${mod.status === 'done' ? '작성완료' : '대기중'}</span>
 
                             <div class="flex gap-1.5 items-center">
 
                                 ${mod.uploadedMdName
 
-                ? `<div class="flex items-center gap-1 bg-blue-500/20 text-blue-300 px-2 py-1 rounded text-[0.65rem] border border-blue-500/30">
+                ? `<div class="flex items-center gap-1 bg-blue-500/20 text-blue-300 px-2 py-1 rounded text-[0.6875rem] border border-blue-500/30">
 
                                            <i class="ph-bold ph-file-md"></i> <span class="max-w-[50px] truncate" title="${mod.uploadedMdName}">${mod.uploadedMdName}</span>
 
@@ -2234,7 +2234,7 @@ function renderSidebar() {
 
                                        </div>`
 
-                : `<label class="cursor-pointer text-[0.65rem] font-bold px-2 py-1.5 rounded bg-white/5 hover:bg-white/10 text-white transition-colors border border-white/10 flex items-center gap-1" onclick="event.stopPropagation();" title="기존 마크다운 파일 업로드">
+                : `<label class="cursor-pointer text-[0.6875rem] font-bold px-2 py-1.5 rounded bg-white/5 hover:bg-white/10 text-white transition-colors border border-white/10 flex items-center gap-1" onclick="event.stopPropagation();" title="기존 마크다운 파일 업로드">
 
                                            <i class="ph-bold ph-upload-simple"></i> MD 업로드
 
@@ -2604,11 +2604,11 @@ function renderEditor(mod) {
                             <div class="w-px h-4 bg-gray-300 mx-1"></div>
 
                     <button id="lesson-tab-generate" onclick="generateTabContent('${mod.id}', currentLessonTab)"
-                        class="px-2.5 py-1.5 text-[0.65rem] font-bold text-accent bg-accent/10 border border-accent/30 rounded hover:bg-accent/20 transition-colors flex items-center gap-1 shrink-0">
+                        class="px-2.5 py-1.5 text-[0.6875rem] font-bold text-accent bg-accent/10 border border-accent/30 rounded hover:bg-accent/20 transition-colors flex items-center gap-1 shrink-0">
                         <i class="ph-bold ph-sparkle"></i> 이 탭 생성
                     </button>
                     <button onclick="startLessonGeneration('${mod.id}')" title="빈 항목을 교안 탭, 교수안·슬라이드, 문제은행 순서로 만들기"
-                        class="px-2.5 py-1.5 text-[0.65rem] font-bold text-white bg-accent rounded hover:bg-accentHover transition-colors flex items-center gap-1 shrink-0 ml-1">
+                        class="px-2.5 py-1.5 text-[0.6875rem] font-bold text-white bg-accent rounded hover:bg-accentHover transition-colors flex items-center gap-1 shrink-0 ml-1">
                         <i class="ph-bold ph-lightning"></i> 전체 생성
                     </button>
                             <details id="lesson-tools-menu" class="relative">
@@ -2624,9 +2624,9 @@ function renderEditor(mod) {
                                 <i class="ph-bold ph-download-simple"></i> 이미지 저장
                             </button>
                             <button onclick="insertImageSlot()" class="px-2 py-1 text-xs font-bold rounded border border-gray-200 text-gray-600 hover:text-gray-800 transition-all" title="이미지 슬롯 삽입">🖼️</button>
-                        <button onclick="openSectionLocks('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-slate-50 text-slate-600 border border-slate-200 rounded hover:bg-slate-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="다시 생성해도 유지할 섹션 선택"><i class="ph-bold ph-lock-simple"></i> 섹션 고정</button>
-                        <button onclick="openLessonArt('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-sky-50 text-sky-600 border border-sky-200 rounded hover:bg-sky-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="SVG 삽화 생성·수정·배치"><i class="ph-bold ph-paint-brush"></i> 삽화</button>
-                        <button onclick="copyTabMarkdown('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-sky-50 text-sky-600 border border-sky-200 rounded hover:bg-sky-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="현재 탭의 마크다운을 클립보드에 복사"><i class="ph-bold ph-copy"></i> 복사</button>
+                        <button onclick="openSectionLocks('${mod.id}')" class="px-3 py-1.5 text-[0.6875rem] font-bold bg-slate-50 text-slate-600 border border-slate-200 rounded hover:bg-slate-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="다시 생성해도 유지할 섹션 선택"><i class="ph-bold ph-lock-simple"></i> 섹션 고정</button>
+                        <button onclick="openLessonArt('${mod.id}')" class="px-3 py-1.5 text-[0.6875rem] font-bold bg-sky-50 text-sky-600 border border-sky-200 rounded hover:bg-sky-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="SVG 삽화 생성·수정·배치"><i class="ph-bold ph-paint-brush"></i> 삽화</button>
+                        <button onclick="copyTabMarkdown('${mod.id}')" class="px-3 py-1.5 text-[0.6875rem] font-bold bg-sky-50 text-sky-600 border border-sky-200 rounded hover:bg-sky-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="현재 탭의 마크다운을 클립보드에 복사"><i class="ph-bold ph-copy"></i> 복사</button>
                                 </div>
                             </details>
                             <div class="flex bg-gray-100 rounded p-1 border border-gray-200">
@@ -2649,10 +2649,10 @@ function renderEditor(mod) {
                     <div class="px-4 pb-2 flex items-center gap-2 border-t border-gray-100 pt-2">
                         <input type="text" id="reinforce-input" placeholder="보강 명령 (예: 예시를 더 추가해줘, 실습 난이도 높여줘)"
                             class="flex-1 px-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg text-gray-800 placeholder-gray-400 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/20">
-                        <button onclick="reinforceCurrentTab('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors flex items-center gap-1 shrink-0 whitespace-nowrap">
+                        <button onclick="reinforceCurrentTab('${mod.id}')" class="px-3 py-1.5 text-[0.6875rem] font-bold bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors flex items-center gap-1 shrink-0 whitespace-nowrap">
                             <i class="ph-bold ph-arrow-clockwise"></i> 보강 재생성
                         </button>
-                        <button onclick="runConventionCheck('${mod.id}')" class="px-3 py-1.5 text-[0.65rem] font-bold bg-rose-50 text-rose-600 border border-rose-200 rounded hover:bg-rose-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="콘텐츠 업무 설계 규칙으로 현재 탭 검사"><i class="ph-bold ph-list-checks"></i> 컨벤션 검수<span id="convention-check-count" class="hidden"></span></button>
+                        <button onclick="runConventionCheck('${mod.id}')" class="px-3 py-1.5 text-[0.6875rem] font-bold bg-rose-50 text-rose-600 border border-rose-200 rounded hover:bg-rose-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="콘텐츠 업무 설계 규칙으로 현재 탭 검사"><i class="ph-bold ph-list-checks"></i> 컨벤션 검수<span id="convention-check-count" class="hidden"></span></button>
                     </div>
 
                 </div>
@@ -2680,7 +2680,7 @@ function renderEditor(mod) {
                         <div class="flex items-center gap-2">
                             <i class="ph-bold ph-presentation-chart text-indigo-500"></i>
                             <span class="text-sm font-bold text-indigo-700">슬라이드 미리보기</span>
-                            <span id="slide-status-badge" class="text-[0.6rem] px-2 py-0.5 rounded-full bg-gray-200 text-gray-500 font-bold">미생성</span>
+                            <span id="slide-status-badge" class="text-[0.6875rem] px-2 py-0.5 rounded-full bg-gray-200 text-gray-500 font-bold">미생성</span>
                         </div>
                         <div class="flex items-center gap-2">
                             <button onclick="generateSlideView('${mod.id}')" id="slide-generate-btn"
@@ -3187,7 +3187,7 @@ window.executeAICommand = async function () {
                 mod.images[imgId] = b64;
 
                 const safeCmd = String(command).replace(/'/g, "\\'").replace(/"/g, '&quot;').slice(0, 80);
-                const imgTag = `\n<div class="image-wrapper"><img src="local:${imgId}" alt="${command}" class="rounded-lg border-2 border-accent/30 shadow-md max-w-full"><span class="absolute bottom-3 left-3 bg-black/80 text-white text-[0.6rem] px-2 py-1 rounded border border-white/20 flex items-center gap-1 pointer-events-none"><i class="ph-fill ph-sparkle text-accent"></i> AI 생성 이미지</span><button class="image-regenerate-btn px-3 py-1.5 text-xs text-white font-bold rounded flex items-center gap-1 border border-accent/50 hover:bg-accent transition-colors" data-lesson-action="regenerate-image" data-keyword="${escapeHtml(command)}" data-img-id="${imgId}"><i class="ph-bold ph-arrows-clockwise"></i> 다시 생성</button><div class="image-caption" style="margin-top:8px;text-align:center;font-size:0.85rem;color:#6b7280;font-style:italic;font-weight:500;letter-spacing:-0.01em;line-height:1.4;max-width:100%;">${safeCmd}</div></div>\n`;
+                const imgTag = `\n<div class="image-wrapper"><img src="local:${imgId}" alt="${command}" class="rounded-lg border-2 border-accent/30 shadow-md max-w-full"><span class="absolute bottom-3 left-3 bg-black/80 text-white text-[0.6875rem] px-2 py-1 rounded border border-white/20 flex items-center gap-1 pointer-events-none"><i class="ph-fill ph-sparkle text-accent"></i> AI 생성 이미지</span><button class="image-regenerate-btn px-3 py-1.5 text-xs text-white font-bold rounded flex items-center gap-1 border border-accent/50 hover:bg-accent transition-colors" data-lesson-action="regenerate-image" data-keyword="${escapeHtml(command)}" data-img-id="${imgId}"><i class="ph-bold ph-arrows-clockwise"></i> 다시 생성</button><div class="image-caption" style="margin-top:8px;text-align:center;font-size:0.85rem;color:#6b7280;font-style:italic;font-weight:500;letter-spacing:-0.01em;line-height:1.4;max-width:100%;">${safeCmd}</div></div>\n`;
 
                 const text = rawView.value;
                 // 보기 모드에서 진입한 경우 커서가 0이므로 문서 끝에 삽입

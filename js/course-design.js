@@ -251,7 +251,7 @@ function lessonWithHours(lesson, value) {
 
 function lessonHoursChip(mod) {
     return `
-        <label onclick="event.stopPropagation()" class="flex items-center gap-1 text-[0.6rem] text-textMuted" title="차시 시간. 바꾸면 진행 단계 시간도 같은 비율로 맞춥니다.">
+        <label onclick="event.stopPropagation()" class="flex items-center gap-1 text-[0.6875rem] text-textMuted" title="차시 시간. 바꾸면 진행 단계 시간도 같은 비율로 맞춥니다.">
             <input type="number" min="0.25" step="0.25" value="${escapeHtml(String(mod.hours ?? ''))}" placeholder="-" data-hours-lesson="${escapeHtml(String(mod.id))}" onchange="updateLessonHours(this.dataset.hoursLesson, this.value)" class="w-11 px-1 py-0.5 bg-black/30 border border-white/10 rounded text-white text-right focus:outline-none focus:border-accent">시간
         </label>`;
 }
@@ -295,7 +295,7 @@ function lessonGenBrief(mod) {
 
 function lessonGenFieldsHtml(prefix, values = {}) {
     const select = (key, label, options, unit = '') => `
-        <label class="flex-1 min-w-0 text-[0.65rem] font-bold text-textMuted">${label}
+        <label class="flex-1 min-w-0 text-[0.6875rem] font-bold text-textMuted">${label}
             <select id="${prefix}-gen-${key}" class="block w-full mt-1 px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white">
                 <option value="">지정 안 함</option>
                 ${options.map(option => `<option value="${escapeHtml(option)}" ${values[key] === option ? 'selected' : ''}>${escapeHtml(option)}${unit}</option>`).join('')}
@@ -415,19 +415,19 @@ function designDialogHtml() {
         <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[760px] max-w-[94vw] max-h-[88vh] flex flex-col shadow-2xl">
             <div class="p-4 border-b border-white/10">
                 <h2 class="text-sm font-bold text-textLight">🧩 과정 설계</h2>
-                <p class="text-[0.65rem] text-textMuted mt-1">주제와 단원을 적으면 시간을 나누고 단원을 학습모듈로 쪼개 교과·차시로 추가합니다. AI 키가 있으면 NCS 능력단위도 함께 배정합니다.</p>
+                <p class="text-xs text-textMuted mt-1">주제와 단원을 적으면 시간을 나누고 단원을 학습모듈로 쪼개 교과·차시로 추가합니다. AI 키가 있으면 NCS 능력단위도 함께 배정합니다.</p>
             </div>
             <div class="flex-1 overflow-y-auto p-4 space-y-3">
                 <textarea id="design-topic" rows="6" class="w-full px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg text-white focus:outline-none focus:border-accent" placeholder="주제 입력: 생성형 AI와 UGC 산업의 이해&#10; - 생성형 AI의 종류&#10; - LLM의 동작 원리&#10; - UGC 플랫폼과 저작권"></textarea>
                 <div class="flex gap-2">
-                    <label class="text-[0.65rem] text-textMuted">총 시간
+                    <label class="text-[0.6875rem] text-textMuted">총 시간
                         <input id="design-hours" type="number" min="1" value="${DESIGN_DEFAULT_HOURS}" class="block w-24 mt-1 px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white">
                     </label>
-                    <label class="text-[0.65rem] text-textMuted flex-1">대상
+                    <label class="text-[0.6875rem] text-textMuted flex-1">대상
                         <input id="design-target" value="직업훈련 수강생" class="block w-full mt-1 px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white">
                     </label>
                 </div>
-                <label class="block text-[0.65rem] text-textMuted">과정 공통 사용 툴 (이름 | 버전, 한 줄에 하나. 바로 저장되며, 차시에 따로 적지 않으면 이 값을 씁니다)
+                <label class="block text-[0.6875rem] text-textMuted">과정 공통 사용 툴 (이름 | 버전, 한 줄에 하나. 바로 저장되며, 차시에 따로 적지 않으면 이 값을 씁니다)
                     <textarea id="design-tools" data-design-tools rows="2" class="block w-full mt-1 px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white" placeholder="ChatGPT 웹 | 2026-10 기준">${escapeHtml(designToolLines(globalState.courseDesign?.tools))}</textarea>
                 </label>
                 <div class="flex gap-2">
@@ -435,7 +435,7 @@ function designDialogHtml() {
                     <button data-design-action="plan" class="px-3 py-1.5 text-xs font-bold text-white bg-accent rounded-lg hover:bg-accentHover">AI로 블록 설계</button>
                     <button data-design-action="sample" class="ml-auto px-3 py-1.5 text-xs font-bold text-textLight bg-white/10 rounded-lg hover:bg-white/20">예시 넣기</button>
                 </div>
-                <p id="design-status" class="text-[0.65rem] text-accent min-h-[1em]"></p>
+                <p id="design-status" class="text-xs text-accent min-h-[1em]"></p>
                 <div id="design-preview" class="space-y-2"></div>
             </div>
             <div class="p-3 border-t border-white/10 flex justify-between gap-2">
