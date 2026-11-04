@@ -182,6 +182,12 @@ window.requestTabGenerationStop = function () {
 
 const ASSESSMENT_MIN_QUESTIONS = 10;
 
+// 학습이해도가 묻지 않은 학습 목표가 있으면 생성 직후 알린다. 빠진 목표는 문제은행에서 그 목표로 문항을 만들어 채운다
+function warnUncoveredObjectives(mod, md) {
+    const [issue] = lintObjectiveCoverage(String(md || ''), qbankObjectives(mod).length);
+    if (issue) window.showToast?.(`학습이해도 점검: ${issue.snip}. 문제은행에서 그 목표로 문항을 만들어 채우세요.`, 'warning');
+}
+
 // 학습이해도 문항을 문제은행에서 바로 쓰도록 목표 번호를 함께 준다. 목표가 기본 문제 수보다 많으면 목표 수만큼 낸다
 function assessmentObjectivePrompt(mod, tabId) {
     if (tabId !== 'assessment' || typeof qbankObjectives !== 'function') return '';
@@ -276,7 +282,8 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             const cont = buildTaskContext('tab_content_continue', {
                 ...baseArgs,
                 chunkIndex: chunkCount,
-                previousContent: contextTail
+                previousContent: contextTail,
+                writtenHeadings: fullText.match(/^##\s+.+$/gm) || []
             });
 
             setLoadingText(`✍️ ${tabMeta.label} 이어서 작성 중입니다... (${chunkCount + 1}/${MAX_CHUNKS} 단락, ${fullText.length.toLocaleString()}자 수신)`);
@@ -356,6 +363,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         const archivePartial = !!previous && (stoppedEarly || partialDueToError || previewed || _suppressTabAlert);
         if (archivePartial) await archiveContent({ title: `${mod.title} · ${tabMeta.label}`, content: previous, images: mod.images });
         mod.tabContents[tabId] = resultText;
+        if (tabId === 'assessment') warnUncoveredObjectives(mod, resultText);
         mod.status = 'done';
         Object.assign(mod, withHistoryNote(mod, `${tabMeta.label} ${previous ? 'AI 재생성' : 'AI 생성'}`));
 

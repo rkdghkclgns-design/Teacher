@@ -580,6 +580,9 @@ const LESSON_MD = [
         assert.ok(data.includes('L1은 객관식이나 단답식, L2는 서술형이나 코드제출, L3는 파일제출'));
         assert.ok(call('LESSON_QUESTION_LABEL').test('학습 목표 2 · 밴드 L2 · 서술형'), '프롬프트 예시 표기를 검수기가 읽는다');
         assert.ok(!ui.includes('5지선다 객관식 10문제'), '학습이해도를 객관식 10문제로 묶지 않는다 (밴드별 유형, 목표 수와 충돌)');
+        assert.ok(/case 'tab_content_continue':[\s\S]{0,600}buildTabRules\(additionalContext\.tabId/.test(ui), '탭 이어쓰기도 탭 규칙을 받는다');
+        assert.ok(/case 'tab_content_continue':[\s\S]{0,2000}학습 후 체크리스트"는 모든 본문 섹션을 다 쓴 뒤/.test(ui), '체크리스트는 맨 끝에 한 번만');
+        assert.ok(/case 'tab_content_continue':[\s\S]{0,2600}지금까지 쓴 ## 제목/.test(ui), '쓴 제목 목록을 준다');
         assert.ok(ui.includes('학습 목표 2 · 밴드 L2 · 서술형') && ui.includes('학습 목표 1 · 밴드 L1 · 객관식'), '예시가 밴드별 유형을 따른다');
     });
 

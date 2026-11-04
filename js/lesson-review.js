@@ -9,6 +9,8 @@ const REVIEW_MAX_OUTPUT_TOKENS = 65536;
 const REVIEW_FRAME_WHERE = ['학습 목표', '학습 후 체크리스트'];
 const REVIEW_REFERENCE_TITLE = /학습\s*목표|학습\s*후\s*체크리스트/;
 const LESSON_CHECKLIST_TITLE = /학습\s*후\s*체크리스트/;
+// 학습이해도는 차시의 학습 목표 수를 알아야 목표마다 문제가 있는지 본다
+const lessonLintContext = (mod, tabId) => (tabId === 'assessment' && mod ? { objectiveCount: qbankObjectives(mod).length } : {});
 const REVIEW_MARKERS = /<!--\s*(?:CONTINUE|END)\s*-->/g;
 const REVIEW_IMAGE_REF = /local:[\w-]+|\[IMG:[^\]]*\]/g;
 const REVIEW_BADGE_STYLES = { bad: 'bg-rose-500 text-white', warn: 'bg-amber-400 text-amber-950', ok: 'bg-emerald-500 text-white' };
@@ -213,7 +215,7 @@ async function proposeLessonFix() {
     const { moduleId, tabId } = _review;
     const mod = getEditingModule(moduleId);
     const md = storedTabMarkdown(mod, tabId);
-    const issues = lintLessonMarkdown(md, tabId);
+    const issues = lintLessonMarkdown(md, tabId, lessonLintContext(mod, tabId));
     setReviewBusy(true);
     try {
         const { text, plan } = await requestSectionFix({ tabId, md, issues, lockedBlocks: lockedSectionBlocks(mod, tabId) });
@@ -290,7 +292,7 @@ function reviewRulesHtml(tabId) {
 }
 
 function reviewPanelHtml(mod, tabId, md, busy) {
-    const issues = lintLessonMarkdown(md, tabId);
+    const issues = lintLessonMarkdown(md, tabId, lessonLintContext(mod, tabId));
     const fixLabel = busy ? '수정안을 만들고 있습니다...' : 'AI 수정 제안';
     return `
         <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[640px] max-w-[92vw] max-h-[84vh] flex flex-col shadow-2xl">
@@ -371,7 +373,7 @@ window.syncReviewBadge = function (mod = getEditingModule()) {
         badge.textContent = '';
         return;
     }
-    const { required, recommended } = lintCounts(lintLessonMarkdown(md, currentLessonTab));
+    const { required, recommended } = lintCounts(lintLessonMarkdown(md, currentLessonTab, lessonLintContext(mod, currentLessonTab)));
     const tone = required ? 'bad' : recommended ? 'warn' : 'ok';
     badge.className = `ml-1 px-1.5 py-0.5 rounded-full text-[0.55rem] font-bold ${REVIEW_BADGE_STYLES[tone]}`;
     badge.textContent = required || recommended ? `필수 ${required} · 권장 ${recommended}` : '통과';

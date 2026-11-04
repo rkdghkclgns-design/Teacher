@@ -6,6 +6,11 @@ const NCS_POP_CLOSE_MS = 250;
 const NCS_POP_GAP = 6;
 const NCS_POP_COPIED_MS = 1200;
 const NCS_POP_COPY_ICON = '<i class="ph-bold ph-copy text-[0.7rem]"></i>';
+// NCS 목록(카탈로그)은 필요할 때 불러온다. 다 불러오기 전에는 참조 목록에 있는지 알 수 없으므로 상태 배지를 미룬다
+const NCS_POP_CATALOG_NOTE = {
+    loading: 'NCS 목록을 확인하고 있습니다...',
+    failed: 'NCS 목록을 불러오지 못해 참조 목록 여부와 수준을 표시하지 않습니다.'
+};
 
 let _ncsPop = null; // { moduleId, pinned, entries, selected }
 let _ncsPopTimer = 0;
@@ -49,7 +54,7 @@ function ncsPopCopyButtonHtml(code) {
         class="shrink-0 px-1 rounded text-textMuted hover:text-white hover:bg-white/10">${NCS_POP_COPY_ICON}</button>`;
 }
 
-function ncsPopRowHtml(entry, checked, index) {
+function ncsPopRowHtml(entry, checked, index, catalogReady = true) {
     const { key, element, rec } = entry;
     const code = ncsPopCode(element);
     // 코드도 단위도 없는 목록 밖 후보는 참고로만 보여 준다
@@ -62,7 +67,7 @@ function ncsPopRowHtml(entry, checked, index) {
                 <span class="flex items-center gap-1">
                     <span class="font-mono text-[0.65rem] text-white truncate">${escapeHtml(code || '(코드 없음)')}</span>
                     ${code ? ncsPopCopyButtonHtml(code) : ''}
-                    ${elementBadgeHtml(rec)}
+                    ${catalogReady ? elementBadgeHtml(rec) : ''}
                     ${ncsPopFitHtml(rec)}
                 </span>
                 <span class="block text-[0.7rem] text-textLight">${escapeHtml(element.name)}</span>
@@ -78,17 +83,20 @@ function ncsPopStatus(mod) {
     return { text: `${mod.ncsKeyword ? '키워드' : 'AI'} 자동 배정 · 확정 전`, tone: 'bg-amber-500/20 text-amber-300' };
 }
 
-function ncsPopHtml(mod, entries, selected, pinned) {
+// catalog: 'ready' | 'loading' | 'failed' (NCS 목록을 불러온 상태)
+function ncsPopHtml(mod, entries, selected, pinned, catalog = 'ready') {
     const status = ncsPopStatus(mod);
     const rows = entries.length
-        ? entries.map((entry, index) => ncsPopRowHtml(entry, selected.has(entry.key), index)).join('')
+        ? entries.map((entry, index) => ncsPopRowHtml(entry, selected.has(entry.key), index, catalog === 'ready')).join('')
         : '<p class="p-2 text-[0.7rem] text-textMuted">후보가 없습니다. 차시 정보에서 AI 추천을 받아주세요.</p>';
+    const note = NCS_POP_CATALOG_NOTE[catalog];
     return `
         <div class="flex items-center gap-2 mb-2">
             <b class="text-sm text-white">NCS 능력단위요소</b>
             <span class="text-[0.6rem] px-1.5 py-0.5 rounded ${status.tone}">${status.text}</span>
             <span data-ncs-pop-pin class="ml-auto text-[0.6rem] text-textMuted">${pinned ? '고정됨' : '클릭하면 고정'}</span>
         </div>
+        ${note ? `<p class="mb-1 text-[0.6rem] ${catalog === 'failed' ? 'text-rose-300' : 'text-textMuted'}">${note}</p>` : ''}
         <div class="space-y-0.5 max-h-72 overflow-y-auto">${rows}</div>
         <div class="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-white/10">
             <button data-ncs-pop-action="detail" class="text-[0.65rem] text-textMuted hover:text-white underline">차시 정보에서 자세히</button>
@@ -109,7 +117,7 @@ function confirmedNcsChange(entries, selected) {
 }
 
 // 마우스를 올린 항목을 크게 보여 주는 상세 카드. 학습 목표 번호는 추천 때 쓴 목록(qbankObjectives)의 순서다
-function ncsPopDetailHtml(entry, mod) {
+function ncsPopDetailHtml(entry, mod, catalogReady = true) {
     const { element, rec } = entry;
     const code = ncsPopCode(element);
     const objectives = qbankObjectives(mod);
@@ -118,7 +126,7 @@ function ncsPopDetailHtml(entry, mod) {
     return `
         <div class="flex items-center gap-2 flex-wrap">
             <span class="font-mono text-sm font-bold text-white">${escapeHtml(code || '(코드 없음)')}</span>
-            ${elementBadgeHtml(rec)}
+            ${catalogReady ? elementBadgeHtml(rec) : ''}
             ${rec ? `<span class="ml-auto text-xs font-bold px-2 py-0.5 rounded ${ncsFitTone(rec.fit)}">${rec.by === 'AI' ? 'AI 적합도' : '키워드 일치도'} ${Number(rec.fit) || 0}점</span>` : ''}
         </div>
         <p class="mt-2 text-base font-bold text-white leading-snug">${escapeHtml(element.name || '')}</p>
@@ -174,7 +182,7 @@ function showNcsPopDetail(row) {
         document.body.appendChild(card);
     }
     card.dataset.row = row.dataset.ncsPopRow;
-    card.innerHTML = ncsPopDetailHtml(entry, mod);
+    card.innerHTML = ncsPopDetailHtml(entry, mod, _ncsPop.catalog === 'ready');
     placeNcsPopDetail(card, pop, row);
 }
 
@@ -234,16 +242,32 @@ function renderNcsPop(trigger) {
         document.body.appendChild(pop);
     }
     hideNcsPopDetail();
-    pop.innerHTML = ncsPopHtml(mod, _ncsPop.entries, _ncsPop.selected, _ncsPop.pinned);
+    pop.innerHTML = ncsPopHtml(mod, _ncsPop.entries, _ncsPop.selected, _ncsPop.pinned, _ncsPop.catalog);
     if (trigger) placeNcsPop(pop, trigger);
+}
+
+// 목록을 다 불러오면 같은 차시의 팝업이 아직 열려 있을 때만 다시 그린다. 고른 항목과 고정 여부는 상태에 있어 유지된다
+async function refreshNcsPopCatalog(moduleId) {
+    let catalog = 'ready';
+    try {
+        await loadNcsCatalog();
+    } catch (err) {
+        console.warn('[NCS 팝업] NCS 목록을 불러오지 못했습니다:', err.message);
+        catalog = 'failed';
+    }
+    if (_ncsPop?.moduleId !== moduleId || !document.getElementById('lesson-ncs-pop')) return;
+    _ncsPop = { ..._ncsPop, catalog };
+    renderNcsPop(_ncsPop.trigger?.isConnected ? _ncsPop.trigger : null); // 목록이 다시 그려졌으면 자리는 그대로 둔다
 }
 
 function startNcsPop(trigger, pinned) {
     const mod = getEditingModule(Number(trigger.dataset.ncsPop) || trigger.dataset.ncsPop);
     const subject = globalState.subjects.find(item => item.id === currentSubjectId);
     if (!mod) return;
-    _ncsPop = { moduleId: String(mod.id), pinned, entries: lessonNcsPopEntries(mod, subject), selected: new Set((mod.ncsElements || []).map(elementKey)) };
+    const catalog = window.KBuilder?.NCS ? 'ready' : 'loading';
+    _ncsPop = { moduleId: String(mod.id), pinned, trigger, catalog, entries: lessonNcsPopEntries(mod, subject), selected: new Set((mod.ncsElements || []).map(elementKey)) };
     renderNcsPop(trigger);
+    if (catalog === 'loading') refreshNcsPopCatalog(_ncsPop.moduleId);
 }
 
 const isOpenFor = trigger => !!_ncsPop && _ncsPop.moduleId === trigger.dataset.ncsPop && !!document.getElementById('lesson-ncs-pop');

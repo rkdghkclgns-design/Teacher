@@ -2392,6 +2392,82 @@ function cleanForAPI(text) {
 
 
 
+// 탭별 규칙 필터링 — 학습탭에 실습/평가/강사가이드 혼입 방지
+const TAB_RULE_EXCLUSIONS = {
+    basicLearn: ['rubric_100', 'quiz_format', 'assessment_design'],
+    advLearn: ['rubric_100', 'quiz_format', 'assessment_design'],
+    basicPrac: ['rubric_100', 'quiz_format', 'assessment_design', 'learning_checklist'],
+    advPrac: ['rubric_100', 'quiz_format', 'assessment_design', 'learning_checklist'],
+    assessment: ['time_allocation', 'image_tags', 'mermaid_rules', 'learning_checklist']
+};
+
+// 탭 전용 규칙 빌더 (buildFullRules 변형). 탭 생성과 탭 이어쓰기가 같은 규칙을 쓴다
+function buildTabRules(tabId, keyConcepts) {
+    const excludeKeys = TAB_RULE_EXCLUSIONS[tabId] || [];
+    const r = CONTEXT_CORE.rules;
+    const ruleEntries = [
+        ['priority_rules', r.priority_rules],
+        ['element_definitions', r.element_definitions],
+        ['glossary_terms', r.glossary_terms],
+        ['markdown_structure', r.markdown_structure],
+        ['image_tags', r.image_tags],
+        ['tone', (function() {
+            const preset = INSTRUCTOR_TONE_PRESETS.find(p => p.id === instructorTone);
+            return preset ? preset.promptSuffix : r.tone;
+        })()],
+        ['heading_hierarchy', r.heading_hierarchy],
+        ['semantic_icons', r.semantic_icons],
+        ['indentation', r.indentation],
+        ['body_lists', r.body_lists],
+        ['numbering_usage', r.numbering_usage],
+        ['text_emphasis', r.text_emphasis],
+        ['evidence_based', r.evidence_based],
+        ['table_html_style', r.table_html_style],
+        ['spacing', r.spacing],
+        ['formatting_workflow', r.formatting_workflow],
+        ['time_allocation', r.time_allocation],
+        ['content_design', r.content_design],
+        ['learning_checklist', r.learning_checklist],
+        ['assessment_design', r.assessment_design],
+        ['mermaid_rules', r.mermaid_rules],
+        ['rubric_100', r.rubric_100],
+        ['korean_period', r.korean_period]
+    ];
+
+    let rules = ruleEntries
+        .filter(([key]) => !excludeKeys.includes(key))
+        .map(([, val]) => val)
+        .filter(Boolean)
+        .map(rule => `- ${rule}`)
+        .join('\n');
+
+    // 학습 탭 전용: 실습/평가 내용 금지 명시
+    if (tabId === 'basicLearn' || tabId === 'advLearn') {
+        rules += '\n\n[탭 범위 제한 — 절대 준수]\n' +
+            '- 이 탭은 "학습" 전용입니다. 다음 내용을 절대 포함하지 마세요:\n' +
+            '  * 실습 과제, 실습 가이드, 실습 예제\n' +
+            '  * 평가 기준표, 채점 기준, 루브릭\n' +
+            '  * 일일 퀘스트, 과제 제출\n' +
+            '- 개념 설명, 이론, 사례 분석에만 집중하세요.';
+    }
+
+    if (keyConcepts && keyConcepts.length > 0) {
+        rules += `\n- 다음 핵심 개념을 반드시 포함하여 교안을 구성하세요: ${keyConcepts.join(', ')}`;
+    }
+
+    // 메타 라벨 누출 방지 (요청#2): 작업용 표시가 학생 교안 본문에 노출되지 않도록
+    rules += '\n\n[출력 금지 — 메타 라벨 누출 방지]\n' +
+        '- 다음과 같은 내부 작업 라벨을 본문 헤딩이나 텍스트로 절대 출력하지 마세요: "[상세 교안]", "[현재 작업: ...]", "[기본 학습]", "[탭 범위 제한]", "교육용 일러스트", "[내부 프로세스]" 등.\n' +
+        '- 이들은 집필 지시용 표시일 뿐이며, 학생이 읽는 교안 본문에 그대로 노출되어서는 안 됩니다.\n' +
+        '- 교안은 실제 학습 내용(## 섹션 → 본문)으로 바로 시작하세요. 작업 설명·메타 헤더·따옴표로 감싼 라벨로 문서를 시작하지 마세요.';
+
+    if (CONTEXT_CORE.fewshot_cases && tabId !== 'assessment') {
+        rules += '\n\n' + CONTEXT_CORE.fewshot_cases;
+    }
+
+    return rules;
+}
+
 function buildTaskContext(taskScope, additionalContext = "") {
 
     let systemInstruction = "";
@@ -2597,83 +2673,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
 
         // ─── 탭별 교안 생성 ───
         case 'tab_content': {
-            // 탭별 규칙 필터링 — 학습탭에 실습/평가/강사가이드 혼입 방지
-            const tabRuleExclusions = {
-                basicLearn: ['rubric_100', 'quiz_format', 'assessment_design'],
-                advLearn: ['rubric_100', 'quiz_format', 'assessment_design'],
-                basicPrac: ['rubric_100', 'quiz_format', 'assessment_design', 'learning_checklist'],
-                advPrac: ['rubric_100', 'quiz_format', 'assessment_design', 'learning_checklist'],
-                assessment: ['time_allocation', 'image_tags', 'mermaid_rules', 'learning_checklist']
-            };
-            const excludeKeys = tabRuleExclusions[additionalContext.tabId] || [];
-
-            // 탭 전용 규칙 빌더 (buildFullRules 변형)
-            function buildTabRules(keyConcepts) {
-                const r = CONTEXT_CORE.rules;
-                const ruleEntries = [
-                    ['priority_rules', r.priority_rules],
-                    ['element_definitions', r.element_definitions],
-                    ['glossary_terms', r.glossary_terms],
-                    ['markdown_structure', r.markdown_structure],
-                    ['image_tags', r.image_tags],
-                    ['tone', (function() {
-                        const preset = INSTRUCTOR_TONE_PRESETS.find(p => p.id === instructorTone);
-                        return preset ? preset.promptSuffix : r.tone;
-                    })()],
-                    ['heading_hierarchy', r.heading_hierarchy],
-                    ['semantic_icons', r.semantic_icons],
-                    ['indentation', r.indentation],
-                    ['body_lists', r.body_lists],
-                    ['numbering_usage', r.numbering_usage],
-                    ['text_emphasis', r.text_emphasis],
-                    ['evidence_based', r.evidence_based],
-                    ['table_html_style', r.table_html_style],
-                    ['spacing', r.spacing],
-                    ['formatting_workflow', r.formatting_workflow],
-                    ['time_allocation', r.time_allocation],
-                    ['content_design', r.content_design],
-                    ['learning_checklist', r.learning_checklist],
-                    ['assessment_design', r.assessment_design],
-                    ['mermaid_rules', r.mermaid_rules],
-                    ['rubric_100', r.rubric_100],
-                    ['korean_period', r.korean_period]
-                ];
-
-                let rules = ruleEntries
-                    .filter(([key]) => !excludeKeys.includes(key))
-                    .map(([, val]) => val)
-                    .filter(Boolean)
-                    .map(rule => `- ${rule}`)
-                    .join('\n');
-
-                // 학습 탭 전용: 실습/평가 내용 금지 명시
-                if (additionalContext.tabId === 'basicLearn' || additionalContext.tabId === 'advLearn') {
-                    rules += '\n\n[탭 범위 제한 — 절대 준수]\n' +
-                        '- 이 탭은 "학습" 전용입니다. 다음 내용을 절대 포함하지 마세요:\n' +
-                        '  * 실습 과제, 실습 가이드, 실습 예제\n' +
-                        '  * 평가 기준표, 채점 기준, 루브릭\n' +
-                        '  * 일일 퀘스트, 과제 제출\n' +
-                        '- 개념 설명, 이론, 사례 분석에만 집중하세요.';
-                }
-
-                if (keyConcepts && keyConcepts.length > 0) {
-                    rules += `\n- 다음 핵심 개념을 반드시 포함하여 교안을 구성하세요: ${keyConcepts.join(', ')}`;
-                }
-
-                // 메타 라벨 누출 방지 (요청#2): 작업용 표시가 학생 교안 본문에 노출되지 않도록
-                rules += '\n\n[출력 금지 — 메타 라벨 누출 방지]\n' +
-                    '- 다음과 같은 내부 작업 라벨을 본문 헤딩이나 텍스트로 절대 출력하지 마세요: "[상세 교안]", "[현재 작업: ...]", "[기본 학습]", "[탭 범위 제한]", "교육용 일러스트", "[내부 프로세스]" 등.\n' +
-                    '- 이들은 집필 지시용 표시일 뿐이며, 학생이 읽는 교안 본문에 그대로 노출되어서는 안 됩니다.\n' +
-                    '- 교안은 실제 학습 내용(## 섹션 → 본문)으로 바로 시작하세요. 작업 설명·메타 헤더·따옴표로 감싼 라벨로 문서를 시작하지 마세요.';
-
-                if (CONTEXT_CORE.fewshot_cases && additionalContext.tabId !== 'assessment') {
-                    rules += '\n\n' + CONTEXT_CORE.fewshot_cases;
-                }
-
-                return rules;
-            }
-
-            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildTabRules(additionalContext.keyConcepts)}`;
+            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildTabRules(additionalContext.tabId, additionalContext.keyConcepts)}`;
 
             // 분할 생성 지시 — 긴 탭(특히 기본 학습 480분)이 중간에 잘리는 것을 방지
             systemInstruction += '\n\n[분량 관리]\n' +
@@ -2783,21 +2783,26 @@ function buildTaskContext(taskScope, additionalContext = "") {
 
         // ─── 탭 분할 생성 이어쓰기 (긴 탭, 특히 기본 학습 480분이 잘리지 않도록) ───
         case 'tab_content_continue': {
-            // buildTabRules는 tab_content 케이스 블록 내부 스코프라 여기서 접근 불가.
-            // 이어쓰기는 1청크에서 형성된 문체·구조를 그대로 잇는 것이 핵심이므로 자체 규칙으로 구성.
-            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n` +
-                '- 반드시 한국어로 작성하세요. 영어로 작성하지 마세요.\n' +
-                '- 마크다운 구조(##, ###, 표, mermaid, 불릿)와 이전 청크의 문체·깊이를 그대로 유지하세요.\n' +
-                '- 이 탭의 성격에 맞지 않는 섹션을 새로 만들지 마세요. (학습 탭에 채점 루브릭·퀴즈를 추가하지 말 것)\n' +
-                '- 이미지 태그 형식도 이전 청크와 동일하게 유지하세요.';
+            // 1청크와 같은 탭 규칙을 준다. 규칙 없이 이어 쓰면 체크리스트가 본문 중간에 들어가는 등 구조가 흐트러진다
+            const learningTab = additionalContext.tabId === 'basicLearn' || additionalContext.tabId === 'advLearn';
+            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildTabRules(additionalContext.tabId, additionalContext.keyConcepts)}`;
             systemInstruction += '\n\n[이어쓰기 규칙]\n' +
+                '- 반드시 한국어로 작성하세요. 영어로 작성하지 마세요.\n' +
+                '- 마크다운 구조(##, ###, 표, mermaid, 불릿)와 이전 청크의 문체·깊이를 그대로 유지하세요. ## 제목은 "##"와 제목을 같은 줄에 씁니다.\n' +
+                '- 이 탭의 성격에 맞지 않는 섹션을 새로 만들지 마세요. (학습 탭에 채점 루브릭·퀴즈를 추가하지 말 것)\n' +
+                '- 이미지 태그 형식도 이전 청크와 동일하게 유지하세요.\n' +
+                (learningTab ? '- "## ✅ 학습 후 체크리스트"는 모든 본문 섹션을 다 쓴 뒤 문서 맨 끝에 한 번만 둡니다. [지금까지 쓴 ## 제목]에 이미 있으면 다시 쓰지 않습니다.\n' : '') +
                 '- 아래 "이전 작성 내용"의 마지막 지점부터 이어서 작성하세요. 절대 처음부터 다시 쓰지 마세요.\n' +
                 '- 이미 작성된 내용을 반복하지 마세요. 중복 헤딩이나 중복 문단을 생성하면 안 됩니다.\n' +
                 '- 이전 내용의 마지막 헤딩/문단을 확인하고, 그 다음 섹션부터 자연스럽게 연결하세요.\n' +
                 '- 아직 작성되지 않은 남은 섹션을 모두 완성하세요.\n' +
                 '- 모든 내용을 마쳤으면 문서 끝에 <!-- END -->를 붙이세요. 아직 더 남았으면 자연스러운 문단/섹션 끝에서 멈추고 <!-- CONTINUE -->를 붙이세요. 문장 중간에서 끊지 마세요.';
 
-            userPrompt = `[현재 작업: 탭 이어쓰기 (${additionalContext.chunkIndex}번째 연속) — ${additionalContext.tabLabel}]\n모듈명: ${additionalContext.title}\n설명: ${additionalContext.description}\n\n[이전 작성 내용 — 여기서부터 이어쓰세요. 반복 금지]\n${additionalContext.previousContent}`;
+            // 이전 내용은 끝부분만 주므로, 이미 쓴 섹션을 제목 목록으로 알려 중복과 순서 꼬임을 막는다
+            const writtenHeadings = (additionalContext.writtenHeadings || []).join('\n');
+            userPrompt = `[현재 작업: 탭 이어쓰기 (${additionalContext.chunkIndex}번째 연속) — ${additionalContext.tabLabel}]\n모듈명: ${additionalContext.title}\n설명: ${additionalContext.description}` +
+                (writtenHeadings ? `\n\n[지금까지 쓴 ## 제목 — 다시 쓰지 않습니다]\n${writtenHeadings}` : '') +
+                `\n\n[이전 작성 내용 — 여기서부터 이어쓰세요. 반복 금지]\n${additionalContext.previousContent}`;
             break;
         }
 

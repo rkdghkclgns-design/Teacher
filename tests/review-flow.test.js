@@ -478,6 +478,37 @@ function generationContext(callGemini, mod) {
         assert.strictEqual(geminiCalls, 3, 'Gemini 체인에는 Higgsfield 모델을 넣지 않는다 (Gemini 이미지 모델 3개)');
     });
 
+    await run('검수: 학습이해도가 묻지 않은 학습 목표와 없는 목표 번호를 잡는다', async () => {
+        const question = (n, goal) => `### 문제 ${n}. 제목 ${n}\n학습 목표 ${goal} · 밴드 L1 · 객관식\n\n① 가\n② 나\n③ 다\n④ 라\n\n✅ **정답:** ②\n\n📝 **해설:** 해설 문장입니다.`;
+        const md = [question(1, 1), question(2, 3)].join('\n\n---\n\n');
+        const coverage = lint(md, 'assessment').filter(issue => issue.where === '학습 목표 대응');
+        assert.strictEqual(coverage.length, 0, '목표 수를 모르면 보지 않는다');
+        const issues = plain(call(ctx, 'lintLessonMarkdown')(md, 'assessment', { objectiveCount: 3 }));
+        const gap = issues.find(issue => issue.where === '학습 목표 대응');
+        assert.ok(gap && gap.sev === 'warn' && gap.snip === '묻지 않은 학습 목표 2', JSON.stringify(gap));
+        assert.ok(!plain(call(ctx, 'lintLessonMarkdown')(md, 'basicLearn', { objectiveCount: 3 })).some(issue => issue.where === '학습 목표 대응'), '학습이해도 탭에만');
+        const outOfRange = plain(call(ctx, 'lintLessonMarkdown')(question(1, 5), 'assessment', { objectiveCount: 3 }));
+        assert.ok(outOfRange.some(issue => issue.msg === '대응하는 학습 목표가 없습니다.'), '없는 목표 번호');
+        const mod = { id: 1, tabContents: {}, objectives: ['가를 설명할 수 있습니다.', '나를 비교할 수 있습니다.', '다를 만들 수 있습니다.'] };
+        assert.deepStrictEqual(plain(call(ctx, 'lessonLintContext')(mod, 'assessment')), { objectiveCount: 3 });
+        assert.deepStrictEqual(plain(call(ctx, 'lessonLintContext')(mod, 'basicLearn')), {});
+
+        const genMod = { id: 1, title: '차시', tabContents: {}, objectives: mod.objectives };
+        const genCtx = generationContext(async () => reply(md), genMod);
+        await call(genCtx, 'generateTabContent')(1, 'assessment');
+        assert.ok(genCtx.toasts.some(message => message.includes('묻지 않은 학습 목표 2') && message.includes('문제은행')), JSON.stringify(genCtx.toasts));
+    });
+
+    await run('탭 이어쓰기: 지금까지 쓴 ## 제목을 함께 넘긴다', async () => {
+        let calls = 0;
+        const mod = { id: 1, title: '차시', tabContents: {} };
+        const contCtx = generationContext(async () => reply(calls++ === 0 ? '## 학습 목표\n\n- 목표\n\n## 1. 첫째 (⏱ 60분)\n\n본문입니다.\n<!-- CONTINUE -->' : '## 2. 둘째 (⏱ 60분)\n\n끝입니다.'), mod);
+        vm.runInContext("buildTaskContext = (task, args) => { window.taskArgs = [...(window.taskArgs || []), { task, args }]; return { systemInstruction: '시스템', userPrompt: task }; }", contCtx);
+        await call(contCtx, 'generateTabContent')(1, 'basicLearn');
+        const cont = contCtx.taskArgs.find(item => item.task === 'tab_content_continue');
+        assert.deepStrictEqual(plain(cont.args.writtenHeadings), ['## 학습 목표', '## 1. 첫째 (⏱ 60분)']);
+    });
+
     await run('미리보기: 섹션 제목을 이스케이프한다', async () => {
         const aiCtx = makeContext();
         let html = '';

@@ -341,6 +341,12 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
         const stale = call('ncsPopDetailHtml')({ ...entries[0], rec: { ...entries[0].rec, covers: [3] } }, mod);
         assert.ok(stale.includes('지금 교안에는 없는 번호입니다'), '목표가 바뀌어 없는 번호');
         assert.ok(call('ncsPopDetailHtml')({ key: 'k', element: chosen, rec: null }, mod).includes('AI 추천을 받으면'), '점수가 없는 요소 안내');
+        assert.ok(html.includes('목록 밖'), '목록을 불러왔으면 참조 목록 여부를 보인다');
+        const loading = call('ncsPopHtml')(mod, call('lessonNcsPopEntries')(mod, { ncs: { units: [] } }), keys, false, 'loading');
+        assert.ok(loading.includes('NCS 목록을 확인하고 있습니다') && !loading.includes('목록 밖') && !loading.includes('참조 목록'), '불러오기 전에는 목록 밖으로 잘못 보이지 않는다');
+        assert.ok(loading.includes('82점'), '점수는 그대로 보인다');
+        assert.ok(call('ncsPopHtml')(mod, [], keys, false, 'failed').includes('불러오지 못해'), '불러오지 못하면 알린다');
+        assert.ok(!call('ncsPopDetailHtml')(entries[0], mod, false).includes('목록 밖'), '상세 카드도 같은 기준');
     });
 
     await run('문제은행: 분포·CSV', async () => {

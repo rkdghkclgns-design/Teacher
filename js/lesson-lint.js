@@ -357,9 +357,9 @@ function lessonRequiredIssues(mod) {
 
 const isQuestionWarning = msg => LESSON_QUESTION_WARNINGS.includes(msg) || msg.startsWith('AI 교차 검수');
 
-function lintQuestionBlock(block, checklist) {
+function lintQuestionBlock(block, checklist, objectiveCount = Infinity) {
     const question = parseQuestionBlock(block);
-    return lintQuestion(question, checklist).map(msg => ({
+    return lintQuestion(question, checklist, objectiveCount).map(msg => ({
         sev: isQuestionWarning(msg) ? 'warn' : 'bad',
         where: `문제 ${question.no}`,
         msg,
@@ -384,8 +384,19 @@ function lintLessonPhrases(sectionText, where) {
         : issues;
 }
 
+// 학습이해도는 차시의 모든 학습 목표를 1문제 이상 묻는다. 목표 수를 알 때만 본다.
+// 빠진 목표는 섹션 단위 AI 수정으로 채울 수 없어 권장으로 알리고, 문제은행에서 그 목표로 문항을 만들어 채운다.
+function lintObjectiveCoverage(source, objectiveCount) {
+    if (!objectiveCount) return [];
+    const asked = new Set(lessonLintQuestions(source).map(block => parseQuestionBlock(block).objective).filter(Boolean));
+    if (!asked.size) return []; // 문항이 없거나 목표 표기가 없으면 문항 검사가 따로 지적한다
+    const missing = Array.from({ length: objectiveCount }, (_, i) => i + 1).filter(no => !asked.has(no));
+    return missing.length ? [{ sev: 'warn', where: '학습 목표 대응', msg: '모든 학습 목표를 1문제 이상 묻습니다.', snip: `묻지 않은 학습 목표 ${missing.join(', ')}` }] : [];
+}
+
 // tabId를 주면 그 탭의 구조까지 검사한다. 지적은 { sev, where, msg, snip, missing } 형식이다. missing은 없는 섹션을 새로 써야 한다는 뜻이다.
-function lintLessonMarkdown(md, tabId) {
+// context.objectiveCount: 차시의 학습 목표 수(qbankObjectives). 주면 학습이해도의 목표 대응과 번호 범위를 검사한다.
+function lintLessonMarkdown(md, tabId, { objectiveCount = 0 } = {}) {
     const source = String(md || '').replace(/\r\n/g, '\n');
     const goals = lessonLintBullets(source, '학습\\s*목표');
     const checks = lessonLintBullets(source, '학습\\s*후\\s*체크리스트');
@@ -393,7 +404,8 @@ function lintLessonMarkdown(md, tabId) {
         ...(LESSON_STRUCTURED_TABS.includes(tabId) ? lintLessonStructure(source, goals, checks) : []),
         ...lintObjectiveBullets(goals),
         ...lintChecklistBullets(goals, checks),
-        ...lessonLintQuestions(source).flatMap(block => lintQuestionBlock(block, checks)),
+        ...lessonLintQuestions(source).flatMap(block => lintQuestionBlock(block, checks, objectiveCount || Infinity)),
+        ...(tabId === 'assessment' ? lintObjectiveCoverage(source, objectiveCount) : []),
         ...lessonLintSections(source).flatMap(section => lintLessonPhrases(section.text, section.title))
     ];
 }
