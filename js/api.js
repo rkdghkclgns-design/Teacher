@@ -74,7 +74,7 @@ function postprocessHtml(html) {
     // ★ 볼드 제목 끝 콜론 제거 — "**게임 기획의 본질:**" → "**게임 기획의 본질**"
     // 단, 문장 중간의 짧은 볼드(예: **창의성**: 같은 인라인)는 유지
     // 줄/리스트 시작에 있는 볼드 제목만 콜론 제거
-    html = html.replace(/((?:^|<li>|<p>|<br\s*\/?>)\s*(?:[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]\s*)?<strong>[^<]+?)[:：]\s*<\/strong>/gmu, '$1</strong>');
+    html = html.replace(/((?:^|<li>|<p(?: class="[^"]*")?>|<br\s*\/?>)\s*(?:[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]\s*)?<strong>[^<]+?)[:：]\s*<\/strong>/gmu, '$1</strong>');
 
     // ★ "예:" 들여쓰기 — 예: 로 시작하는 항목을 들여쓰기 처리
     html = html.replace(
@@ -156,8 +156,9 @@ function renderLessonHTML(md, opts) {
         ? marked.parse(safe)
         : `<pre class="text-gray-200 whitespace-pre-wrap">${safe.replace(/</g, '&lt;')}</pre>`;
     if (typeof applyPeriodLineBreakHTML === 'function') html = applyPeriodLineBreakHTML(html);
+    // 항목에 딸린 '용어: 설명'은 왼쪽 막대로. 후처리가 라벨 끝 콜론을 지우기 전에 찾는다
+    if (typeof markTermParagraphs === 'function') html = markTermParagraphs(html);
     if (postprocess && typeof postprocessHtml === 'function') html = postprocessHtml(html);
-    if (typeof markTermParagraphs === 'function') html = markTermParagraphs(html); // 항목에 딸린 '용어: 설명'은 왼쪽 막대로
     return sanitizeLessonHtml(html); // 후처리가 글자를 지워 태그가 이어 붙을 수 있으므로 맨 끝에서 거른다
 }
 if (typeof window !== 'undefined') window.renderLessonHTML = renderLessonHTML;

@@ -58,6 +58,35 @@ test('굵은 글씨로 시작하지만 콜론이 없는 문단이나 긴 굵은 
     assert.strictEqual(mark(long), long);
 });
 
+// 질문의 두 번째 화면: "• 시스템 기획적 접근:" 다음에 문단 전체가 굵은 "라벨: 설명" 둘과 보통 "**라벨**: 설명" 하나
+const SYSTEM = [
+    '<ul>\n<li><strong>시스템 기획적 접근:</strong></li>\n</ul>',
+    '<p><strong>드래곤의 상태 정의: 대기, 탐색, 공격 준비, 공격 실행, 피격, 사망 등의 상태를 유한 상태 기계(FSM) 구조로 설계합니다.</strong></p>',
+    '<p><strong>공격 패턴의 수치화: &#39;불 뿜기&#39; 스킬의 사거리는 15미터로 설정합니다.</strong></p>',
+    '<p><strong>플레이어의 대응 수단</strong>: 구르기 스킬의 무적 시간을 0.3초로 정의합니다.</p>'
+].join('\n');
+
+test('문단 전체가 굵은 "라벨: 설명"도 용어 문단으로 묶는다 (질문 화면 그대로)', () => {
+    const out = mark(SYSTEM);
+    assert.strictEqual(marked(out), 3);
+    assert.strictEqual(out.replace(/ class="lesson-term"/g, ''), SYSTEM);
+});
+
+test('목록 항목 안에 들여쓴 용어 문단(느슨한 목록)도 묶는다', () => {
+    const loose = '<ul>\n<li><p><strong>시스템 기획적 접근:</strong></p>\n<p><strong>드래곤의 상태 정의:</strong> 대기 상태를 설계합니다.</p>\n<p><strong>공격 패턴의 수치화:</strong> 사거리는 15미터입니다.</p>\n</li>\n</ul>';
+    const out = mark(loose);
+    assert.strictEqual(marked(out), 2);
+    assert.ok(out.includes('<li><p><strong>시스템 기획적 접근:</strong></p>'), '항목 첫 문단은 그대로');
+    // marked가 실제로 내는 모양: 들여쓴 문단 앞에 공백이 남는다
+    const spaced = loose.replace(/<p><strong>(드래곤|공격)/g, '<p>  <strong>$1');
+    assert.strictEqual(marked(mark(spaced)), 2);
+});
+
+test('콜론이 없는 굵은 문장 문단은 용어 문단이 아니다', () => {
+    const bold = '<ul><li>항목</li></ul>\n<p><strong>이 문장은 처음부터 끝까지 굵게 쓴 강조 문장입니다.</strong></p>';
+    assert.strictEqual(mark(bold), bold);
+});
+
 test('빈 값도 견딘다', () => {
     assert.strictEqual(mark(''), '');
     assert.strictEqual(mark(null), '');

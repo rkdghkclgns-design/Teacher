@@ -50,16 +50,19 @@ function sanitizeLessonHtml(html) {
 /* ---------- '용어: 설명' 문단을 위 항목에 딸린 인용처럼 보이기 ---------- */
 // "• 핵심 역할" 같은 항목 다음의 "**전투 설계**: 설명" 문단들은 그 항목에 딸린 설명이다. 왼쪽 회색 막대로 이어 보이게
 // class만 붙인다. 문단을 상자로 감싸지 않으므로 화면의 블록 수가 마크다운 블록 수와 같아 두 번 눌러 고치기가 그대로 맞는다.
-const LESSON_TERM_PARAGRAPH = String.raw`<p><strong>[^<]{1,40}(?:[:：]<\/strong>|<\/strong>\s*[:：])[\s\S]*?<\/p>\s*`;
-// 목록, '• 항목' 문단, 굵은 글씨만 있는 짧은 문단이 머리다
-const LESSON_TERM_HEAD = String.raw`(?:<\/ul>|<\/ol>|<p>•[^<]{1,40}<\/p>|<p>(?:•\s*)?<strong>[^<]{1,40}<\/strong><\/p>)\s*`;
+// postprocessHtml이 '**라벨:**'의 끝 콜론을 지우므로 그 전(marked 직후)에 부른다.
+// 라벨 모양: **라벨:** 설명 / **라벨**: 설명 / **라벨: 설명 전체가 굵게**
+// 목록 안에 들여쓴 문단은 marked가 '<p>  <strong>'처럼 앞 공백을 남긴다
+const LESSON_TERM_PARAGRAPH = String.raw`<p>\s*<strong>[^<:：]{1,40}(?:[:：]\s*<\/strong>|<\/strong>\s*[:：]|[:：](?=[^<]))[\s\S]*?<\/p>\s*`;
+// 머리: 목록 끝, '• 항목' 문단, 굵은 글씨만 있는 짧은 문단, 목록 항목 안의 첫 문단(들여쓴 설명이 그 항목 안에 들어간 경우)
+const LESSON_TERM_HEAD = String.raw`(?:<\/ul>|<\/ol>|<p>•[^<]{1,40}<\/p>|<p>(?:•\s*)?<strong>[^<]{1,40}<\/strong><\/p>|<li>\s*<p>(?:(?!<\/p>)[\s\S])*<\/p>)\s*`;
 const LESSON_TERM_RUN = new RegExp(`(${LESSON_TERM_HEAD})?((?:${LESSON_TERM_PARAGRAPH})+)`, 'g');
 
 function markTermParagraphs(html) {
     return String(html || '').replace(LESSON_TERM_RUN, (whole, head, run) => {
         const count = (run.match(/<p>/g) || []).length;
         if (!head && count < 2) return whole; // 머리 없이 하나만 있는 '라벨: 설명'은 그대로 둔다
-        return (head || '') + run.replace(/<p>(?=<strong>)/g, '<p class="lesson-term">');
+        return (head || '') + run.replace(/<p>(?=\s*<strong>)/g, '<p class="lesson-term">');
     });
 }
 
