@@ -14,13 +14,18 @@ const WHITEBOARD_NAME_MAX = 100;
 // "3차시: 제목", "1. 교과" 같은 번호를 뗀다
 const stripLessonNumber = text => String(text || '').replace(/^\s*\d+\s*(?:차시|\.)\s*[:.)\-–]?\s*/, '').trim();
 
-// 그림(본문에 든 data: 주소 포함)과 HTML 주석(이미지 자리 표시)은 판서 자료로 쓸 수 없어 빼고 그림 설명만 남긴다
+// 그림(본문에 든 data: 주소 포함)·그림 틀·버튼·HTML 주석(이미지 자리 표시)은 판서 자료로 쓸 수 없어 빼고, 그림 설명과 글만 남긴다
 function whiteboardPlainMarkdown(md) {
     return String(md || '')
         .replace(/\r\n/g, '\n')
         .replace(/<!--[\s\S]*?-->/g, '')
         .replace(/!\[([^\]]*)\]\([^)]*\)/g, (_, alt) => (alt.trim() ? `(그림: ${alt.trim()})` : ''))
+        .replace(/<img\b[^>]*\balt="([^"]*)"[^>]*>/gi, (_, alt) => (alt.trim() ? `(그림: ${alt.trim()})` : ''))
         .replace(/<img\b[^>]*>/gi, '')
+        .replace(/<button\b[\s\S]*?<\/button>/gi, '')
+        .replace(/<div\b[^>]*class="[^"]*image-placeholder[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '')
+        .replace(/<\/?[a-z][a-z0-9-]*\b[^>]*>/gi, '') // 남은 태그는 벗기고 글은 둔다
+        .replace(/^[ \t]+$/gm, '')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
 }
@@ -89,6 +94,101 @@ function handOffWhiteboardByFile(handoff, reason) {
     window.showAlert(`${reason}\n\n교안 파일(${handoff.fileName})을 내려받았습니다. 새 탭의 화이트보드 교안 스튜디오에서 '자료 기반 생성'을 켜고 지식 보관함에 이 파일을 넣은 뒤, 주제에 "${handoff.topic}"을 넣고 생성해 주세요.`);
 }
 
+// 스튜디오로 넘기고 새 탭을 연다. 기록은 스튜디오가 읽을 때 지우고, 열리지 않았다면 10분 뒤 쓰지 않으며, 다시 누르면 새 기록으로 바뀐다
+function deliverWhiteboardHandoff(handoff) {
+    if (!sharesWhiteboardOrigin()) return handOffWhiteboardByFile(handoff, '이 Teacher는 스튜디오와 다른 주소에서 열려 교안을 바로 넘길 수 없습니다.') ?? false;
+    try {
+        localStorage.setItem(WHITEBOARD_HANDOFF_KEY, JSON.stringify(handoff));
+    } catch (e) {
+        console.warn('[판서 영상] 교안을 넘기지 못했습니다:', e);
+        return handOffWhiteboardByFile(handoff, '브라우저 저장소에 교안을 넣지 못해 바로 넘길 수 없습니다.') ?? false;
+    }
+    openWhiteboardTab(`${location.origin}${WHITEBOARD_STUDIO_PATH}${WHITEBOARD_HANDOFF_HASH}`);
+    const next = handoff.returnTo ? "영상을 만든 뒤 스튜디오의 'Teacher로 보내기'를 누르면 이 그림 자리가 영상으로 바뀝니다." : '새 탭에서 설정을 확인하고 판서 수업을 생성하세요.';
+    window.showToast?.(`"${handoff.topic}" 내용을 화이트보드 교안 스튜디오로 넘겼습니다. ${next}`, 'success');
+    return true;
+}
+
+/* ---------- 판서 영상 만들기 창: 주제와 담을 내용을 직접 고쳐 쓴다 ---------- */
+// 창에서 고친 값을 검사한다. 잘못되면 { error }
+function readWhiteboardDialog(topic, markdown) {
+    const cleanTopic = String(topic || '').trim();
+    const body = String(markdown || '').replace(/\r\n/g, '\n').trim();
+    if (!cleanTopic) return { error: '주제를 써 주세요.' };
+    if (cleanTopic.length > WHITEBOARD_TOPIC_MAX) return { error: `주제는 ${WHITEBOARD_TOPIC_MAX}자까지 쓸 수 있습니다.` };
+    if (!body) return { error: '판서 영상에 담을 내용을 써 주세요.' };
+    if (body.length > WHITEBOARD_MAX_CHARS) return { error: `내용은 ${WHITEBOARD_MAX_CHARS.toLocaleString()}자까지 넘길 수 있습니다.` };
+    return { topic: cleanTopic, markdown: body };
+}
+
+// subtitle: 무엇을 만드는지(차시 전체 / 그림 자리). onConfirm({ topic, markdown })은 확인 버튼을 누른 그 클릭 안에서 불린다
+window.showWhiteboardDialog = function ({ subtitle, topic, markdown }, onConfirm) {
+    document.getElementById('whiteboard-dialog')?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'whiteboard-dialog';
+    overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] animate-fade-in p-4';
+    overlay.innerHTML = `
+        <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-full max-w-[720px] max-h-[90vh] p-6 shadow-2xl flex flex-col" role="dialog" aria-modal="true" aria-labelledby="wb-dialog-title">
+            <div class="flex items-center gap-3 mb-1">
+                <i class="ph-fill ph-chalkboard-teacher text-2xl text-accent"></i>
+                <h3 id="wb-dialog-title" class="font-bold text-white text-sm">판서 영상 만들기</h3>
+            </div>
+            <p class="text-xs text-textMuted mb-4">${escapeHtml(subtitle)}</p>
+            <label for="wb-dialog-topic" class="text-[0.6875rem] font-bold text-textLight mb-1">주제</label>
+            <input id="wb-dialog-topic" type="text" maxlength="${WHITEBOARD_TOPIC_MAX}"
+                class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-accent mb-3">
+            <div class="flex items-end justify-between mb-1">
+                <label for="wb-dialog-body" class="text-[0.6875rem] font-bold text-textLight">판서 영상에 담을 내용</label>
+                <span id="wb-dialog-count" class="text-[0.6875rem] text-textMuted"></span>
+            </div>
+            <textarea id="wb-dialog-body" spellcheck="false"
+                class="w-full flex-1 min-h-[240px] bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs leading-relaxed text-white font-mono focus:outline-none focus:border-accent resize-y"></textarea>
+            <p class="text-[0.6875rem] text-textMuted mt-2 leading-relaxed">스튜디오는 이 내용만 자료로 써서 5장면 판서 수업을 만듭니다. 필요 없는 부분은 지우고, 강조할 설명이나 예시를 직접 써넣으세요. <code># 제목</code>마다 스튜디오 목차에서 골라 쓸 수 있습니다.</p>
+            <p id="wb-dialog-error" class="hidden text-xs text-red-400 mt-2" role="alert"></p>
+            <div class="flex items-center justify-between gap-2 mt-4">
+                <button type="button" id="wb-dialog-reset" class="px-3 py-2 text-xs font-bold text-textLight bg-white/5 hover:bg-white/10 rounded-lg transition-colors">원래 내용으로</button>
+                <div class="flex gap-2">
+                    <button type="button" id="wb-dialog-cancel" class="px-4 py-2 text-xs font-bold text-textLight bg-white/5 hover:bg-white/10 rounded-lg transition-colors">취소</button>
+                    <button type="button" id="wb-dialog-ok" class="px-4 py-2 text-xs font-bold text-white bg-accent hover:bg-accentHover rounded-lg transition-colors flex items-center gap-1"><i class="ph-bold ph-arrow-square-out"></i> 스튜디오에서 만들기</button>
+                </div>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+    const topicInput = overlay.querySelector('#wb-dialog-topic');
+    const body = overlay.querySelector('#wb-dialog-body');
+    const count = overlay.querySelector('#wb-dialog-count');
+    const error = overlay.querySelector('#wb-dialog-error');
+    const showCount = () => { count.textContent = `${body.value.length.toLocaleString()}자`; };
+    topicInput.value = topic || '';
+    body.value = markdown || '';
+    showCount();
+    body.addEventListener('input', showCount);
+    const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
+    const onKey = event => { if (event.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    overlay.querySelector('#wb-dialog-cancel').onclick = close;
+    overlay.querySelector('#wb-dialog-reset').onclick = () => { topicInput.value = topic || ''; body.value = markdown || ''; showCount(); };
+    overlay.querySelector('#wb-dialog-ok').onclick = () => {
+        const result = readWhiteboardDialog(topicInput.value, body.value);
+        if (result.error) {
+            error.textContent = result.error;
+            error.classList.remove('hidden');
+            return;
+        }
+        close();
+        onConfirm(result);
+    };
+    setTimeout(() => topicInput.focus(), 50);
+};
+
+// 창에서 고친 주제·내용으로 바꿔 넘긴다
+function confirmWhiteboardHandoff(handoff, subtitle, after) {
+    window.showWhiteboardDialog({ subtitle, topic: handoff.topic, markdown: handoff.markdown }, ({ topic, markdown }) => {
+        const delivered = deliverWhiteboardHandoff({ ...handoff, topic, markdown, createdAt: Date.now() });
+        if (delivered && typeof after === 'function') after();
+    });
+}
+
 window.openWhiteboardStudio = function (moduleId) {
     const mod = getEditingModule(moduleId);
     if (!mod) return;
@@ -96,14 +196,5 @@ window.openWhiteboardStudio = function (moduleId) {
     const subject = globalState.subjects.find(item => item.id === currentSubjectId);
     const handoff = buildWhiteboardHandoff(mod, subject);
     if (!handoff) return window.showAlert('이 차시에는 아직 교안 내용이 없습니다. 교안을 먼저 만든 뒤 판서 영상을 만들어 주세요.');
-    if (!sharesWhiteboardOrigin()) return handOffWhiteboardByFile(handoff, '이 Teacher는 스튜디오와 다른 주소에서 열려 교안을 바로 넘길 수 없습니다.');
-    try {
-        localStorage.setItem(WHITEBOARD_HANDOFF_KEY, JSON.stringify(handoff));
-    } catch (e) {
-        console.warn('[판서 영상] 교안을 넘기지 못했습니다:', e);
-        return handOffWhiteboardByFile(handoff, '브라우저 저장소에 교안을 넣지 못해 바로 넘길 수 없습니다.');
-    }
-    // 기록은 스튜디오가 읽을 때 지운다. 열리지 않았다면 10분 뒤 쓰지 않으며, 다시 누르면 새 기록으로 바뀐다
-    openWhiteboardTab(`${location.origin}${WHITEBOARD_STUDIO_PATH}${WHITEBOARD_HANDOFF_HASH}`);
-    window.showToast?.(`"${handoff.topic}" 교안을 화이트보드 교안 스튜디오로 넘겼습니다. 새 탭에서 설정을 확인하고 판서 수업을 생성하세요.`, 'success');
+    confirmWhiteboardHandoff(handoff, `${mod.title || '이 차시'} 교안 전체로 만듭니다. 내용을 고쳐 쓰거나 줄여도 됩니다.`);
 };

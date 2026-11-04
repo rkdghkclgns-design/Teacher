@@ -2821,6 +2821,7 @@ window.toggleEditorMode = function (mode) {
 
                 // 교안 렌더 단일 파이프라인 (collapse→marked→reParse→마침표줄바꿈→postprocess)
                 renderView.innerHTML = renderLessonHTML(renderText);
+                window.applyWhiteboardVideos?.(mod); // 판서 영상으로 바꾼 그림은 영상으로, 나머지 그림에는 바꾸기 버튼
 
                 // Mermaid 다이어그램 렌더링 (근본적 수정)
                 if (window.mermaid) {

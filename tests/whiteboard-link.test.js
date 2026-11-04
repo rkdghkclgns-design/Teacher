@@ -1,66 +1,8 @@
 // 판서 영상(화이트보드 교안 스튜디오로 넘기기) 테스트 (실행: node tests/whiteboard-link.test.js)
-// 실제 data.js·lesson-lint.js·lesson-opening.js·whiteboard-link.js를 실행하고 저장소·창 열기·내려받기만 스텁으로 둔다.
+// 실제 data.js·lesson-lint.js·lesson-opening.js·whiteboard-link.js를 실행하고 저장소·창 열기·내려받기만 흉내 낸다 (tests/whiteboard-harness.js).
 // 스튜디오(src/lib/handoff.ts)가 받는 형식: v 1, from 'teacher', 주제 300자·파일 이름 120자·본문 500만 자 이하, 10분 안
-const fs = require('fs');
-const vm = require('vm');
-const path = require('path');
 const assert = require('assert');
-const root = path.join(__dirname, '..');
-
-const PAGES = { protocol: 'https:', pathname: '/Teacher/', origin: 'https://rkdghkclgns-design.github.io' };
-const LOCAL = { protocol: 'http:', pathname: '/', origin: 'http://localhost:8080' };
-const KEY = 'whiteboard-studio:handoff';
-
-function lesson(over = {}) {
-    return {
-        id: 7,
-        title: '1차시: 개념 이해',
-        description: '게임 기획의 기본 개념',
-        objectives: ['코어 루프를 설명할 수 있다', '게임 목표를 정할 수 있다'],
-        tabContents: {
-            basicLearn: '## 코어 루프\n\n반복되는 행동의 묶음이다.\n\n![루프 그림](data:image/png;base64,AAAA)\n<!-- [IMG: 코어 루프] -->\n<img src="x.png">',
-            assessment: '## 확인 문제\n\n1. 코어 루프란?'
-        },
-        ...over
-    };
-}
-
-function makeContext({ loc = PAGES, mod = lesson(), setItemThrows = false, onSaveEdits } = {}) {
-    const storage = {};
-    const ctx = {
-        console: { log() {}, warn() {}, error() {} },
-        location: loc,
-        storage, toasts: [], alerts: [], opened: [], downloads: [], saved: [],
-        localStorage: {
-            getItem: key => storage[key] ?? null,
-            setItem: (key, value) => { if (setItemThrows) throw new Error('QuotaExceededError'); storage[key] = String(value); },
-            removeItem: key => { delete storage[key]; }
-        },
-        // 새 탭은 링크(a target=_blank)를 눌러 연다. 눌린 링크를 기록하고 문서에서 빠졌는지 본다
-        document: {
-            getElementById: () => null,
-            createElement: () => ({
-                click() { ctx.opened.push({ url: this.href, target: this.target, rel: this.rel }); },
-                remove() { ctx.attached--; }
-            }),
-            body: { appendChild: () => { ctx.attached++; } }
-        },
-        attached: 0,
-        globalState: { subjects: [{ id: 's1', title: '1. 게임 기획의 기초', lessons: [mod] }] },
-        currentSubjectId: 's1',
-        currentLessonTab: 'basicLearn',
-        getEditingModule: id => (String(id) === String(mod.id) ? mod : null),
-        saveOpenEditsFor: (m, tabId) => { ctx.saved.push(tabId); onSaveEdits?.(m); },
-        downloadFile: (content, name, type) => ctx.downloads.push({ content, name, type })
-    };
-    ctx.window = ctx;
-    ctx.open = () => { throw new Error('window.open은 쓰지 않는다'); };
-    ctx.showToast = message => ctx.toasts.push(message);
-    ctx.showAlert = message => ctx.alerts.push(message);
-    vm.createContext(ctx);
-    ['data.js', 'lesson-lint.js', 'lesson-opening.js', 'whiteboard-link.js'].forEach(file => vm.runInContext(fs.readFileSync(path.join(root, 'js', file), 'utf8'), ctx));
-    return ctx;
-}
+const { LOCAL, HANDOFF_KEY: KEY, lesson, makeContext, runTests } = require('./whiteboard-harness');
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -161,15 +103,32 @@ test('스튜디오가 받는 길이를 넘지 않는다 (주제 300자, 파일 �
     assert.ok(!/[\\/:*?"<>|]/.test(ctx.buildWhiteboardHandoff(lesson({ title: 'a/b:c*d?' }), null).fileName));
 });
 
-let failed = 0;
-for (const { name, fn } of tests) {
-    try {
-        fn();
-        console.log(`ok - ${name}`);
-    } catch (e) {
-        failed++;
-        console.log(`FAIL - ${name}\n  ${e.message}`);
-    }
-}
-console.log(`\n${tests.length - failed}/${tests.length} passed`);
-if (failed) process.exit(1);
+test('판서 영상 만들기 창에서 고쳐 쓴 주제와 내용이 그대로 넘어간다', () => {
+    const ctx = makeContext({ dialogEdit: () => ({ topic: '내가 정한 주제', markdown: '# 내가 쓴 내용\n\n강조할 예시' }) });
+    ctx.openWhiteboardStudio(7);
+    assert.strictEqual(ctx.dialogs.length, 1);
+    assert.ok(ctx.dialogs[0].markdown.includes('# 기본학습'), '창에는 차시 교안이 미리 채워진다');
+    assert.ok(/교안 전체/.test(ctx.dialogs[0].subtitle));
+    const stored = JSON.parse(ctx.storage[KEY]);
+    assert.strictEqual(stored.topic, '내가 정한 주제');
+    assert.strictEqual(stored.markdown, '# 내가 쓴 내용\n\n강조할 예시');
+    assert.strictEqual(ctx.opened.length, 1);
+});
+
+test('창을 취소하면 아무것도 넘기지 않는다', () => {
+    const ctx = makeContext({ dialogEdit: null });
+    ctx.openWhiteboardStudio(7);
+    assert.strictEqual(ctx.storage[KEY], undefined);
+    assert.strictEqual(ctx.opened.length, 0);
+});
+
+test('창의 입력을 검사한다 (빈 주제·빈 내용·너무 긴 값)', () => {
+    const ctx = makeContext();
+    assert.deepStrictEqual({ ...ctx.readWhiteboardDialog('  주제 ', ' 내용\r\n둘째 줄 ') }, { topic: '주제', markdown: '내용\n둘째 줄' });
+    assert.ok(ctx.readWhiteboardDialog('', '내용').error.includes('주제'));
+    assert.ok(ctx.readWhiteboardDialog('주제', '   ').error.includes('내용'));
+    assert.ok(ctx.readWhiteboardDialog('가'.repeat(301), '내용').error.includes('300자'));
+    assert.ok(ctx.readWhiteboardDialog('주제', '가'.repeat(1000001)).error);
+});
+
+runTests(tests);
