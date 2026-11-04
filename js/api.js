@@ -2108,110 +2108,51 @@ function renderSidebar() {
     if (!subj) return;
 
     window.fillMissingLessonNcs?.(subj); // NCS가 없는 차시를 가장 가까운 후보로 채운다
+    window.applySidebarSetupState?.(Array.isArray(courseData) ? courseData.length : 0);
 
 
 
-    let html = renderSubjectNcsCard(subj) + renderSubjectFlowCard(subj);
 
 
 
-    // 교과 정보 & 메인 퀘스트 통합 모듈 (가로 분할 - 상하 Layout)
-
+    // 교과 정보(파일명 규칙)와 메인 퀘스트. 접어도 메인 퀘스트 상태와 열기 버튼은 머리줄에 남는다
     const mq = subj.mainQuest;
-
+    const questDone = mq?.status === 'done';
     const allLessonsDone = Array.isArray(subj.lessons) && subj.lessons.length > 0 && subj.lessons.every(l => l.status === 'done');
+    const questChip = `<span class="px-1.5 py-0.5 rounded ${questDone ? 'bg-yellow-500/20 text-yellow-300' : 'bg-white/10 text-textMuted'}">메인 퀘스트 ${questDone ? '완료' : '대기중'}</span>`;
+    const questOpen = `<button onclick="viewModule('mainQuest')" class="shrink-0 text-[0.6875rem] font-bold px-2 py-1 rounded bg-white/10 text-textLight hover:bg-accent transition-colors" title="메인 퀘스트 열기">열기</button>`;
+    const infoBody = `
+        <div class="mb-3">
+            <label class="text-[0.6875rem] font-bold text-textMuted mb-1 flex items-center gap-1"><i class="ph-bold ph-file-code"></i> 파일명 규칙</label>
+            <div id="sidebar-filename-convention-ui"></div>
+        </div>
+        <div class="p-3 rounded-lg border-2 ${questDone ? 'border-yellow-500/30 bg-yellow-500/5' : 'border-white/5 hover:border-white/10 hover:bg-white/5'} flex flex-col cursor-pointer transition-all group module-card" data-id="mainQuest" onclick="viewModule('mainQuest')">
+            <div class="flex items-center justify-between mb-1.5">
+                <div class="flex items-center gap-1">
+                    <i class="ph-fill ph-crown text-sm ${questDone ? 'text-yellow-400' : 'text-accent'}"></i>
+                    <span class="text-[0.6875rem] font-bold text-textLight group-hover:text-accent transition-colors">메인 퀘스트</span>
+                </div>
+                <span class="text-[0.6875rem] font-bold px-1.5 py-0.5 rounded ${questDone ? 'bg-yellow-500/20 text-yellow-300' : 'bg-white/10 text-white/60'}">${questDone ? '완료' : '대기중'}</span>
+            </div>
+            <h4 class="font-bold text-xs text-white mb-0.5 line-clamp-1">${escapeHtml(mq?.title || '')}</h4>
+            <p class="text-xs text-textMuted line-clamp-2">${escapeHtml(mq?.description || '')}</p>
+            <div class="mt-2 flex justify-between items-center pt-2 border-t border-white/5">
+                <span class="text-[0.6875rem] text-white/60">${allLessonsDone ? '🌟 차시 완료' : '⚠️ 진행 필요'}</span>
+                <button onclick="event.stopPropagation(); promptAndGenerateMainQuest()" class="text-[0.6875rem] font-bold px-2 py-1 rounded ${allLessonsDone ? 'bg-accent hover:bg-accentHover' : 'bg-white/10 hover:bg-white/20'} text-white transition-colors" ${!allLessonsDone && !questDone ? 'title="모든 차시를 먼저 생성하는 것을 권장합니다."' : ''}>${questDone ? '재생성' : '발급'}</button>
+            </div>
+        </div>`;
 
-
+    let html = renderSubjectNcsCard(subj) + renderSubjectFlowCard(subj)
+        + sidebarSectionHtml('subject-info', { icon: 'ph-sliders-horizontal', title: '교과 정보 및 레벨테스트', summaryHtml: questChip, actions: questOpen }, infoBody);
 
     html += `
-
-                <div class="mb-6 rounded-xl border border-white/10 bg-bgSidebar overflow-hidden flex flex-col shadow-[0_0_15px_rgba(0,0,0,0.2)]">
-
-                    <div class="bg-white/5 p-2.5 border-b border-white/10 flex items-center gap-2">
-
-                        <i class="ph-fill ph-sliders-horizontal text-accent"></i>
-
-                        <h3 class="text-[0.7rem] font-bold text-textLight tracking-wider">교과 정보 및 레벨테스트</h3>
-
-                    </div>
-
-                    <div class="flex flex-col items-stretch">
-
-                        <!-- 상단: 교과 정보 -->
-
-                        <div class="w-full p-3 border-b border-white/10 flex flex-col gap-3">
-
-                            <div>
-                                <label class="text-[0.6875rem] font-bold text-textMuted mb-1 flex items-center gap-1"><i class="ph-bold ph-file-code"></i> 파일명 규칙</label>
-                                <div id="sidebar-filename-convention-ui"></div>
-                            </div>
-
-                        </div>
-
-
-
-                        <!-- 하단: 메인 퀘스트 -->
-
-                        <div class="w-full p-3 flex flex-col">
-
-                            <div class="flex-1 p-3 rounded-lg border-2 ${mq && mq.status === 'done' ? 'border-yellow-500/30 bg-yellow-500/5' : 'border-transparent hover:border-white/10 hover:bg-white/5'} flex flex-col cursor-pointer transition-all group module-card" data-id="mainQuest" onclick="viewModule('mainQuest')">
-
-                                <div class="flex items-center justify-between mb-1.5">
-
-                                    <div class="flex items-center gap-1">
-
-                                        <i class="ph-fill ph-crown text-sm ${mq && mq.status === 'done' ? 'text-yellow-400' : 'text-accent'}"></i>
-
-                                        <span class="text-[0.6875rem] font-bold text-textLight group-hover:text-accent transition-colors">메인 퀘스트</span>
-
-                                    </div>
-
-                                    <span class="text-[0.6875rem] font-bold px-1.5 py-0.5 rounded ${mq && mq.status === 'done' ? 'bg-yellow-500/20 text-yellow-300' : 'bg-white/10 text-white/50'}">${mq && mq.status === 'done' ? '완료' : '대기중'}</span>
-
-                                </div>
-
-                                <div class="mb-2">
-
-                                    <h4 class="font-bold text-xs text-white mb-0.5 line-clamp-1">${mq ? mq.title : ''}</h4>
-
-                                    <p class="text-xs text-textMuted line-clamp-2">${mq ? mq.description : ''}</p>
-
-                                </div>
-
-                                <div class="mt-2 flex justify-between items-center pt-2 border-t border-white/5">
-
-                                    <span class="text-[0.6875rem] text-white/50">${allLessonsDone ? '🌟 차시 완료' : '⚠️ 진행 필요'}</span>
-
-                                    <button onclick="event.stopPropagation(); promptAndGenerateMainQuest()" class="text-[0.6875rem] font-bold px-2 py-1 rounded ${allLessonsDone ? 'bg-accent hover:bg-accentHover' : 'bg-white/10 hover:bg-white/20'} text-white transition-colors" ${!allLessonsDone && mq && mq.status !== 'done' ? 'title="모든 차시를 먼저 생성하는 것을 권장합니다."' : ''}>
-
-                                        ${mq && mq.status === 'done' ? '재생성' : '발급'}
-
-                                    </button>
-
-                                </div>
-
-                            </div>
-
-                        </div>
-
-                    </div>
-
-                </div>
-
-                
-
-                <div class="flex items-center gap-2 mb-3 px-1">
-
+                <div class="flex items-center gap-2 mt-4 mb-2 px-1">
                     <i class="ph-fill ph-flag-pennant text-textMuted"></i>
-
                     <h3 class="text-xs font-bold text-textMuted uppercase tracking-wider flex-1">차시 목록</h3>${renderLessonTrashButton()}
-
                     <button onclick="deleteAllModules()" class="text-[0.6875rem] font-bold px-2 py-0.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20 transition-colors" title="모든 차시 일괄 삭제">
                         <i class="ph-bold ph-trash-simple"></i> 일괄 삭제
                     </button>
-
                 </div>
-
             `;
 
 
@@ -2223,76 +2164,7 @@ function renderSidebar() {
     } else {
 
         html += renderLessonFilterBar();
-        html += courseData.map((mod, idx) => `
-
-                    <div class="module-card ${lessonMatchesFilter(mod) ? '' : 'hidden'} bg-white/5 border ${mod.status === 'done' ? 'border-green-500/30' : 'border-white/10'} rounded-xl p-4 mb-3 cursor-pointer hover:-translate-y-0.5 hover:shadow-lg transition-all" 
-
-                         data-id="${mod.id}" draggable="true" onclick="viewModule(${mod.id})" style="animation-delay: ${idx * 0.05}s">
-
-                        <div class="flex justify-between items-start mb-2">
-
-                            <div class="flex items-center gap-2 min-w-0 flex-1 mr-2">
-                                <input type="checkbox" class="merge-checkbox w-3.5 h-3.5 accent-accent shrink-0 cursor-pointer" data-lesson-id="${mod.id}" onchange="toggleMergeCheckbox('${mod.id}')" onclick="event.stopPropagation()">
-                                <span class="inline-flex items-center justify-center w-6 h-6 rounded bg-accent/20 text-accent font-bold text-xs shrink-0">${idx + 1}</span>
-                                ${lessonNcsCodeHtml(mod)}
-                            </div>
-
-                            <div class="flex gap-2">
-
-                                <button class="text-white/60 hover:text-white cursor-grab drag-handle" title="순서 변경"><i class="ph-bold ph-list"></i></button>
-
-                                <button onclick="event.stopPropagation(); deleteModule(${mod.id})" class="text-red-400/70 hover:text-red-400" title="삭제"><i class="ph-bold ph-x"></i></button>
-
-                            </div>
-
-                        </div>
-
-                        <h3 class="font-bold text-sm text-white mb-1 outline-none focus:bg-white/10 rounded px-1 -ml-1" contenteditable="true" spellcheck="false" onblur="updateModuleMeta(${mod.id}, 'title', this.innerText)" onclick="event.stopPropagation()">${escapeHtml(mod.title)}</h3>
-
-                        <p class="text-xs text-textMuted line-clamp-2 outline-none focus:bg-white/10 rounded px-1 -ml-1" contenteditable="true" spellcheck="false" onblur="updateModuleMeta(${mod.id}, 'description', this.innerText)" onclick="event.stopPropagation()">${escapeHtml(mod.description)}</p>
-
-                        
-
-                        ${renderLessonMetaChips(mod)}
-                        <div class="mt-3 flex items-center justify-between">
-
-                            <span class="text-[0.6875rem] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${mod.status === 'done' ? 'bg-green-500/20 text-green-400' : 'bg-white/10 text-white/50'}">${mod.status === 'done' ? '작성완료' : '대기중'}</span>
-
-                            <div class="flex gap-1.5 items-center">
-
-                                ${mod.uploadedMdName
-
-                ? `<div class="flex items-center gap-1 bg-blue-500/20 text-blue-300 px-2 py-1 rounded text-[0.6875rem] border border-blue-500/30">
-
-                                           <i class="ph-bold ph-file-md"></i> <span class="max-w-[50px] truncate" title="${mod.uploadedMdName}">${mod.uploadedMdName}</span>
-
-                                           <button onclick="event.stopPropagation(); cancelFileUpload(${mod.id})" class="ml-1 hover:text-white" title="업로드 취소"><i class="ph-bold ph-x"></i></button>
-
-                                       </div>`
-
-                : `<label class="cursor-pointer text-[0.6875rem] font-bold px-2 py-1.5 rounded bg-white/5 hover:bg-white/10 text-white transition-colors border border-white/10 flex items-center gap-1" onclick="event.stopPropagation();" title="기존 마크다운 파일 업로드">
-
-                                           <i class="ph-bold ph-upload-simple"></i> MD 업로드
-
-                                           <input type="file" accept=".md" class="hidden" onchange="handleFileUpload(event, ${mod.id})">
-
-                                       </label>`
-
-            }
-
-                                <button onclick="event.stopPropagation(); promptAndGenerateModule(${mod.id})" class="text-xs font-bold px-3 py-1.5 rounded bg-white/10 hover:bg-accent text-white transition-colors">
-
-                                    ${mod.status === 'done' ? '<i class="ph-bold ph-arrows-clockwise mr-1"></i>재생성' : '<i class="ph-bold ph-sparkle mr-1"></i>교안 생성'}
-
-                                </button>
-
-                            </div>
-
-                        </div>
-
-                    </div>
-
-                `).join('');
+        html += courseData.map((mod, idx) => lessonCardHtml(mod, idx)).join('');
 
     }
 

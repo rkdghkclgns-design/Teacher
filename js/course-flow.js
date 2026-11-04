@@ -445,20 +445,16 @@ window.downloadSubjectBundle = function () {
 /* ---------- 교과 카드 ---------- */
 function renderSubjectFlowCard(subject) {
     const button = 'text-[0.6875rem] font-bold px-2 py-1 rounded bg-white/10 text-textLight hover:bg-accent transition-colors';
-    return `
-        <div class="mb-3 rounded-xl border border-white/10 bg-bgSidebar p-2.5">
-            <div class="flex items-center gap-2 mb-1.5">
-                <i class="ph-fill ph-stack text-accent"></i>
-                <h3 class="text-[0.7rem] font-bold text-textLight tracking-wider">교과 일괄 작업</h3>
-            </div>
+    const remaining = runnableLessons([subject]).length;
+    // 접어도 남은 차시 수는 머리줄에 보인다
+    return sidebarSectionHtml('subject-flow', { icon: 'ph-stack', title: '교과 일괄 작업', summaryHtml: remaining ? `남은 차시 ${remaining}개` : '' }, `
             <div class="flex flex-wrap gap-1">
-                <button onclick="openLessonRun('subject')" class="${button}" title="내용이 빈 탭만 차례로 생성">남은 차시 생성 ${runnableLessons([subject]).length}개</button>
+                <button onclick="openLessonRun('subject')" class="${button}" title="내용이 빈 탭만 차례로 생성">남은 차시 생성 ${remaining}개</button>
                 <button onclick="openSubjectBlocks()" class="${button}" title="차시 제목과 시간을 한눈에 보고 고침">차시 구성</button>
                 <button onclick="openSubjectReplan()" class="${button}" title="AI로 이 교과의 차시를 새로 나눔">블록 다시 설계</button>
                 <button onclick="downloadSubjectBundle()" class="${button}" title="모든 차시의 교수안과 슬라이드 편성안을 한 파일로 내려받기">교수안·편성안 묶음</button>
                 <button onclick="downloadLessonMaterial('subject')" class="${button}" title="이 교과를 학습자용 직무 교육 자료 양식으로 내려받기">교육 자료</button>
                 <button onclick="downloadLessonMaterial('course')" class="${button}" title="과정 전체를 학습자용 직무 교육 자료 양식으로 내려받기">과정 교육 자료</button>
                 <button onclick="openLessonBackfill()" class="${button}" title="예전에 만든 교과와 차시에 NCS와 삽화를 채움">기존 내용 보강</button>
-            </div>
-        </div>`;
+            </div>`);
 }

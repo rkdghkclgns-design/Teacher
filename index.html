@@ -1107,32 +1107,33 @@
 
             <div class="p-5 border-b border-white/5 shrink-0">
 
-                <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center justify-between gap-2">
 
-                    <div class="flex items-center gap-2">
+                    <div class="flex items-center gap-2 min-w-0 flex-1">
 
-                        <i class="ph ph-list-dashes text-lg text-textMuted"></i>
+                        <button type="button" id="sidebar-setup-toggle" onclick="toggleSidebarSetup()" aria-expanded="true" class="flex items-center gap-2 min-w-0 text-left" title="목차 만들기 영역 접기·펼치기"><i class="ph-bold ph-caret-right text-textMuted transition-transform rotate-90" data-setup-caret></i>
 
-                        <h2 class="text-sm font-bold uppercase tracking-wider text-textMuted">커리큘럼 목차</h2>
+                        <h2 class="text-sm font-bold uppercase tracking-wider text-textMuted shrink-0">커리큘럼 목차</h2></button>
 
                     </div>
 
-                    <div class="flex items-center gap-2">
-                        <!-- 차시 수 조절 -->
+                    <div class="flex items-center gap-2 shrink-0">
+                        <!-- 차시 수 조절 (좁은 화면에서는 글자를 줄여 목차 제목 자리를 남긴다) -->
                         <div class="flex items-center gap-0.5 bg-white/5 border border-white/10 rounded px-1 py-0.5" title="생성할 차시 수 (AI 목차 생성 시 적용)">
                             <button onclick="adjustBatchCount(-1)" class="w-5 h-5 flex items-center justify-center text-textMuted hover:text-white hover:bg-white/10 rounded transition-colors text-xs font-bold">−</button>
                             <input type="number" id="sidebar-batch-count" min="1" max="30" value="5" class="w-8 text-center text-xs font-bold text-accent bg-transparent border-none focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" onchange="syncBatchCount(this.value)">
                             <button onclick="adjustBatchCount(1)" class="w-5 h-5 flex items-center justify-center text-textMuted hover:text-white hover:bg-white/10 rounded transition-colors text-xs font-bold">+</button>
-                            <span class="text-[0.6875rem] text-textMuted ml-0.5">차시</span>
+                            <span class="hidden sm:inline text-[0.6875rem] text-textMuted ml-0.5">차시</span>
                         </div>
-                        <button onclick="openBatchModal()"
+                        <button onclick="openBatchModal()" title="AI 목차 생성" aria-label="AI 목차 생성"
                             class="flex items-center gap-1.5 px-2.5 py-1.5 text-[0.7rem] font-bold text-accent bg-accent/10 border border-accent/20 rounded hover:bg-accent/20 transition-all shadow-sm">
-                            <i class="ph-bold ph-stack"></i> AI 목차 생성
+                            <i class="ph-bold ph-stack"></i><span class="hidden sm:inline">AI 목차 생성</span>
                         </button>
                     </div>
 
                 </div>
 
+                <div id="sidebar-setup-body" class="mt-4">
                 <!-- v5.9: 사이드바 탭 (주제/커리큘럼/참고자료) -->
                 <div class="flex border-b border-white/10 mb-2">
                     <button class="sidebar-input-tab flex-1 py-1.5 text-xs font-bold text-center transition-colors border-b-2 border-accent text-accent" data-sidebar-tab="topic" onclick="switchSidebarTab('topic')">📝 주제</button>
@@ -1191,6 +1192,7 @@
 
                     </button>
 
+                </div>
                 </div>
 
             </div>
@@ -1752,6 +1754,7 @@
     <script src="./js/course-elements.js?v=125"></script>
     <script src="./js/course-list.js?v=125"></script>
     <script src="./js/lesson-ncs-pop.js?v=125"></script>
+    <script src="./js/sidebar-layout.js?v=125"></script>
     <script src="./js/course-art.js?v=125"></script>
     <script src="./js/course-illustrations.js?v=125"></script>
     <script src="./js/course-qbank.js?v=125"></script>

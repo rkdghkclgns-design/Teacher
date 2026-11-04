@@ -213,15 +213,18 @@ async function onTrashClick(event) {
 }
 
 /* ---------- 차시 목록 ---------- */
-function renderLessonMetaChips(mod) {
+// extra: 카드가 함께 보일 칩 (올린 MD 파일 등)
+function renderLessonMetaChips(mod, { extra = '' } = {}) {
     const tools = (mod.tools || []).map(toolLabel).join(', ');
     return `
         <div class="mt-2 flex flex-wrap items-center gap-1">
+            ${mod.status === 'done' ? '' : '<span class="text-[0.6875rem] px-1.5 py-0.5 rounded border border-dashed border-white/25 text-textLight">교안 없음</span>'}
             <button onclick="event.stopPropagation(); openLessonMeta(${mod.id})" class="text-[0.6875rem] font-bold px-1.5 py-0.5 rounded ${LESSON_STATUS_STYLES[lessonStatus(mod)]}" title="차시 정보 편집">${lessonStatus(mod)}</button>
             ${lessonHoursChip(mod)}
             ${mod.category ? `<span class="text-[0.6875rem] px-1.5 py-0.5 rounded bg-white/10 text-textLight">${escapeHtml(mod.category)}</span>` : ''}
             ${tools ? `<span class="text-[0.6875rem] text-textMuted truncate max-w-[150px]" title="${escapeHtml(tools)}">${escapeHtml(tools)}</span>` : ''}
             ${lessonListBadges(mod)}
+            ${extra}
         </div>`;
 }
 

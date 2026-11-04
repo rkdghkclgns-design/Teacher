@@ -359,16 +359,11 @@ function renderSubjectNcsCard(subject) {
         <div class="text-[0.6875rem] text-textLight leading-relaxed" title="${escapeHtml((unit.path || []).join(' > '))}">
             <span class="font-mono text-accent">${escapeHtml(unit.code)}</span> ${escapeHtml(unit.name)}
         </div>`).join('');
-    return `
-        <div class="mb-3 rounded-xl border border-white/10 bg-bgSidebar p-2.5">
-            <div class="flex items-center gap-2 mb-1">
-                <i class="ph-fill ph-certificate text-accent"></i>
-                <h3 class="text-[0.7rem] font-bold text-textLight tracking-wider">교과 NCS</h3>
-                <span class="text-[0.6875rem] px-1.5 py-0.5 rounded bg-white/10 text-textMuted">${status}</span>
-                <button onclick="openNcsDialog()" class="ml-auto text-[0.6875rem] font-bold px-2 py-1 rounded bg-white/10 text-textLight hover:bg-accent transition-colors">관리</button>
-            </div>
-            ${rows || '<p class="text-xs text-textMuted">능력단위를 배정하면 교수안 개요에 표시됩니다.</p>'}
-        </div>`;
+    // 접어도 배정 상태와 관리 버튼은 머리줄에 남는다
+    const summary = units.length ? `${units.length}개 · ${status}` : status;
+    const manage = '<button onclick="openNcsDialog()" class="shrink-0 text-[0.6875rem] font-bold px-2 py-1 rounded bg-white/10 text-textLight hover:bg-accent transition-colors">관리</button>';
+    return sidebarSectionHtml('subject-ncs', { icon: 'ph-certificate', title: '교과 NCS', summaryHtml: escapeHtml(summary), actions: manage },
+        rows || '<p class="text-xs text-textMuted">능력단위를 배정하면 교수안 개요에 표시됩니다.</p>');
 }
 
 function ncsRowHtml(unit, checked) {
