@@ -56,6 +56,8 @@ function postprocessHtml(html) {
     // ★ 핵심: 모든 <ol>을 <ul>로 일괄 변환 (교안에서 넘버링 리스트 불필요)
     html = html.replace(/<ol[^>]*>/g, '<ul style="list-style:disc;padding-left:1.5rem;">');
     html = html.replace(/<\/ol>/g, '</ul>');
+    // 서식 막대로 직접 고른 번호 목록(<!-- 번호 목록 -->)만 번호로 남긴다
+    if (typeof keepChosenNumbering === 'function') html = keepChosenNumbering(html);
 
     // ★ <li> 안에 이모지가 첫 글자면 → <li> 밖으로 분리 (이모지는 단독 줄)
     // "<li>💡 제목: ..." → "</ul><p>💡 <strong>제목</strong>: ...</p><ul>"
@@ -2529,6 +2531,7 @@ function renderEditor(mod) {
                             <details id="lesson-tools-menu" class="relative">
                                 <summary class="list-none cursor-pointer px-3 py-1.5 text-xs font-bold bg-gray-50 text-gray-600 border border-gray-200 rounded hover:bg-gray-100 flex items-center gap-1"><i class="ph-bold ph-wrench"></i> 도구</summary>
                                 <div class="absolute right-0 mt-1 z-40 p-2 w-44 bg-white border border-gray-200 rounded-lg shadow-lg flex flex-col gap-1">
+                            <button onclick="toggleEditorMode('edit'); this.closest('details').open = false" id="raw-edit-btn" class="px-3 py-1.5 text-xs font-bold bg-gray-50 text-gray-700 border border-gray-200 rounded hover:bg-gray-100 flex items-center gap-1 transition-colors" title="이 탭의 마크다운 원문 전체를 고칩니다. 단락 하나는 본문을 두 번 눌러 고칩니다"><i class="ph-bold ph-code"></i> 원문 전체 수정</button>
                             <button onclick="generateAllImagesInModule('${mod.id}')" id="img-batch-btn" class="px-3 py-1.5 text-xs font-bold bg-purple-50 text-purple-600 border border-purple-200 rounded hover:bg-purple-100 flex items-center gap-1 transition-colors hover:-translate-y-0.5"><i class="ph-bold ph-image-square"></i> 일괄 이미지 찾기</button>
                             <button onclick="sanitizeAllContent()" id="sanitize-btn" class="px-3 py-1.5 text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 flex items-center gap-1 transition-colors hover:-translate-y-0.5" title="마크다운 문법 오류 일괄 정리 + 누락 이미지 일괄 생성"><i class="ph-bold ph-sparkle"></i> 콘텐츠 정리</button>
                             <label class="cursor-pointer px-3 py-1.5 text-xs font-bold bg-blue-50 text-blue-600 border border-blue-200 rounded hover:bg-blue-100 flex items-center gap-1 transition-colors" title="에디터에 이미지 삽입">
@@ -2545,13 +2548,6 @@ function renderEditor(mod) {
                         <button onclick="openWhiteboardStudio('${mod.id}')" class="px-3 py-1.5 text-[0.6875rem] font-bold bg-indigo-50 text-indigo-600 border border-indigo-200 rounded hover:bg-indigo-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="이 차시 교안을 화이트보드 교안 스튜디오로 넘겨 나레이션이 있는 판서 영상 만들기 (새 탭)"><i class="ph-bold ph-chalkboard-teacher"></i> 판서 영상</button>
                                 </div>
                             </details>
-                            <div class="flex bg-gray-100 rounded p-1 border border-gray-200">
-
-                                <button onclick="toggleEditorMode('view')" id="toggle-view" class="px-3 py-1 text-xs font-bold rounded bg-white text-gray-800 shadow-sm transition-all">보기</button>
-
-                                <button onclick="toggleEditorMode('edit')" id="toggle-edit" class="px-3 py-1 text-xs font-bold rounded text-gray-500 hover:text-gray-800 transition-all">수정</button>
-
-                            </div>
 
                             <div class="w-px h-4 bg-gray-300 mx-1"></div>
 
@@ -2642,108 +2638,9 @@ window.initInlineEditing = function () {
     renderView.addEventListener('dblclick', handleInlineEditDblClick);
 };
 
+// 두 번 누르면 그 단락만 원문 편집 상자로 연다(paragraph-edit.js). 화면 블록과 원문 블록은 글자로 짝짓는다
 function handleInlineEditDblClick(e) {
-    const mod = getEditingModule();
-    const source = getActiveTabContent(mod); // 화면에 보이는 탭의 글이다. 탭을 합친 mod.content와는 블록 순서가 다르다
-    const tabId = currentLessonTab;
-    if (!source || typeof marked === 'undefined') return;
-
-    // 최상위 블록 엘리먼트 찾기 (p, h1~6, ul/ol, blockquote, table 등)
-    const topLevelTarget = e.target.closest('#render-view > *');
-    if (!topLevelTarget || topLevelTarget.isEditing) return;
-
-    // 클릭된 DOM 자식 요소의 인덱스 추적 (마크다운 AST 토큰과의 매핑 목적)
-    const children = Array.from(document.getElementById('render-view').children);
-    const targetIndex = children.indexOf(topLevelTarget);
-    if (targetIndex === -1) return;
-
-    try {
-        const tokens = marked.lexer(source);
-        let blockIndex = 0;
-        let targetToken = null;
-
-        // Space 및 주석(Comment) 등 렌더 뷰에 표시되지 않는 토큰 필터링 인덱스 추적
-        for (let i = 0; i < tokens.length; i++) {
-            const t = tokens[i];
-            let generatesElement = t.type !== 'space';
-            if (t.type === 'html' && t.raw.trim().startsWith('<!--')) generatesElement = false;
-
-            if (generatesElement) {
-                if (blockIndex === targetIndex) {
-                    targetToken = t;
-                    break;
-                }
-                blockIndex++;
-            }
-        }
-
-        if (!targetToken) return;
-
-        // 원시 마크다운(Raw Markdown) 기반으로 Textarea 생성
-        const rawMarkdownText = targetToken.raw.trimEnd();
-
-        topLevelTarget.classList.add('hidden');
-        const ta = document.createElement('textarea');
-        ta.className = 'w-full p-4 font-mono text-sm bg-gray-900 border border-accent/40 shadow-xl shadow-accent/10 text-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-accent resize-y min-h-[100px] my-2 animate-fade-in';
-        ta.value = rawMarkdownText;
-
-        const saveAndRestore = () => {
-            if (!topLevelTarget.isEditing) return;
-            topLevelTarget.isEditing = false;
-
-            const newMarkdown = ta.value.trimEnd();
-            // 편집하는 사이 탭이나 내용이 바뀌었으면 옛 글로 다른 탭을 덮지 않는다
-            const unchanged = currentLessonTab === tabId && getActiveTabContent(mod) === source;
-            if (newMarkdown !== rawMarkdownText && !unchanged) window.showToast?.('탭 내용이 바뀌어 고친 내용을 반영하지 않았습니다.', 'warning');
-            if (newMarkdown !== rawMarkdownText && newMarkdown && unchanged) {
-                // 원문을 AST 기반으로 완벽 재구성 (해당 블록만 새 문구로 치환)
-                let newContent = "";
-                let bIdx = 0;
-                for (let t of tokens) {
-                    let generatesElem = t.type !== 'space';
-                    if (t.type === 'html' && t.raw.trim().startsWith('<!--')) generatesElem = false;
-
-                    if (generatesElem) {
-                        if (bIdx === targetIndex) {
-                            newContent += newMarkdown + t.raw.slice(t.raw.trimEnd().length);
-                        } else {
-                            newContent += t.raw;
-                        }
-                        bIdx++;
-                    } else {
-                        newContent += t.raw;
-                    }
-                }
-
-                setTabMarkdown(mod, tabId, newContent);
-                saveState().then(() => renderEditor(mod)); // 전체 리렌더링
-                return;
-            }
-
-            // 변경사항 없으면 복구
-            ta.remove();
-            topLevelTarget.classList.remove('hidden');
-        };
-
-        ta.onblur = saveAndRestore;
-        ta.onkeydown = (ev) => {
-            // Shift + Enter 를 허용하고, 그냥 Enter 는 저장. 한글 조합을 끝내는 Enter는 저장이 아니다
-            if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing) {
-                ev.preventDefault();
-                ta.blur();
-            } else if (ev.key === 'Escape') {
-                ta.value = rawMarkdownText;
-                ta.blur();
-            }
-        };
-
-        topLevelTarget.parentNode.insertBefore(ta, topLevelTarget.nextSibling);
-        topLevelTarget.isEditing = true;
-        ta.focus();
-
-    } catch (err) {
-        console.error("인라인 편집 매핑 오류:", err);
-    }
+    window.openParagraphEditor?.(e);
 }
 
 
@@ -2769,13 +2666,13 @@ window.toggleEditorMode = function (mode) {
 
         rawView.classList.remove('hidden');
 
-        btnEdit.classList.add('bg-white', 'text-gray-800', 'shadow-sm');
+        btnEdit?.classList.add('bg-white', 'text-gray-800', 'shadow-sm');
 
-        btnEdit.classList.remove('text-gray-500');
+        btnEdit?.classList.remove('text-gray-500');
 
-        btnView.classList.remove('bg-white', 'text-gray-800', 'shadow-sm');
+        btnView?.classList.remove('bg-white', 'text-gray-800', 'shadow-sm');
 
-        btnView.classList.add('text-gray-500');
+        btnView?.classList.add('text-gray-500');
 
         syncGyosuanView();
 
@@ -2785,13 +2682,13 @@ window.toggleEditorMode = function (mode) {
 
         rawView.classList.add('hidden');
 
-        btnView.classList.add('bg-white', 'text-gray-800', 'shadow-sm');
+        btnView?.classList.add('bg-white', 'text-gray-800', 'shadow-sm');
 
-        btnView.classList.remove('text-gray-500');
+        btnView?.classList.remove('text-gray-500');
 
-        btnEdit.classList.remove('bg-white', 'text-gray-800', 'shadow-sm');
+        btnEdit?.classList.remove('bg-white', 'text-gray-800', 'shadow-sm');
 
-        btnEdit.classList.add('text-gray-500');
+        btnEdit?.classList.add('text-gray-500');
 
         syncGyosuanView();
         window.syncLessonPanelView();
@@ -3065,7 +2962,7 @@ window.executeAICommand = async function () {
             selEnd = Math.min(endSearch, rawText.length);
         } else {
             // 매핑 실패 시 사용자에게 수정 모드 안내
-            return window.showAlert('선택한 텍스트를 원문에서 찾지 못했습니다.\n"수정" 탭에서 직접 텍스트를 선택한 뒤 다시 시도해주세요.');
+            return window.showAlert('선택한 텍스트를 원문에서 찾지 못했습니다.\n도구 → 원문 전체 수정에서 직접 텍스트를 선택한 뒤 다시 시도해주세요.');
         }
     }
 

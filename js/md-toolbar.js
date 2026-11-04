@@ -1,4 +1,4 @@
-// md-toolbar.js - 수정 모드(#raw-view) 서식 도구와 나란히 보기, 탭 복사, AI 수정 빠른 지시
+// md-toolbar.js - 원문 전체 수정(#raw-view, 도구 메뉴에서 연다) 서식 도구와 나란히 보기, 탭 복사, AI 수정 빠른 지시
 // develocket-slide(assets/md-editor.js, course-ai-tb.js @3a7303f)를 옮겼다. 표는 Teacher 컨벤션대로 인라인 스타일 HTML 표를 넣는다.
 // 값을 바꾸는 계산은 순수 함수가 { from, to, text, selStart, selEnd } 편집으로 돌려주고, 화면에 적용하는 곳은 applyMdEdit 하나다.
 
@@ -177,6 +177,7 @@ function mdToolbarHtml() {
         <div class="flex items-center gap-1 mb-2 px-1 py-1 bg-gray-100 border border-gray-200 rounded-lg">
             <div class="flex flex-wrap gap-0.5 flex-1" role="toolbar" aria-label="마크다운 서식">${tools}</div>
             <div class="flex gap-0.5 shrink-0" aria-label="보기">${views}</div>
+            <button type="button" onclick="toggleEditorMode('view')" class="shrink-0 ml-1 px-2.5 py-1 text-[0.7rem] font-bold text-white bg-accent rounded hover:bg-accentHover" title="원문 전체 수정을 마치고 교안 화면으로 돌아갑니다(고친 내용은 저장됩니다)">보기로 돌아가기</button>
         </div>
         <div data-md-body class="grid gap-3">
             <div data-md-preview class="hidden markdown-body h-[600px] overflow-y-auto p-6 bg-white border border-gray-200 rounded-xl"></div>
@@ -268,7 +269,7 @@ window.copyTabMarkdown = async function (moduleId) {
         window.showToast?.('현재 탭의 마크다운을 복사했습니다.', 'success');
     } catch (err) {
         console.warn('[복사] 실패:', err.message);
-        window.showAlert('복사하지 못했습니다. 수정 모드에서 내용을 선택해 복사해 주세요.');
+        window.showAlert('복사하지 못했습니다. 도구 → 원문 전체 수정에서 내용을 선택해 복사해 주세요.');
     }
 };
 

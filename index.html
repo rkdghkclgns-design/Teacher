@@ -277,6 +277,145 @@
             margin-left: 0;
         }
 
+        .markdown-body a {
+            color: #6d4fe0;
+            text-decoration: underline;
+            text-underline-offset: 2px;
+        }
+
+        /* 두 번 눌러 여는 단락 편집 상자 (paragraph-edit.js) */
+        .para-edit {
+            margin: 0.75rem 0;
+            border: 2px solid #7c5bf5;
+            border-radius: 12px;
+            overflow: hidden;
+            background: #1e1e2e;
+            box-shadow: 0 8px 24px rgba(124, 91, 245, 0.18);
+        }
+        .para-edit-head,
+        .para-edit-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            background: #2a2540;
+        }
+        .para-edit-head {
+            justify-content: space-between;
+            font-size: 0.72rem;
+            font-weight: 700;
+            color: #c9bfff;
+        }
+        .para-edit-hint {
+            font-weight: 500;
+            color: #9a94b8;
+        }
+        .para-edit-input {
+            display: block;
+            width: 100%;
+            min-height: 3.5rem;
+            padding: 12px 14px;
+            border: 0;
+            outline: none;
+            resize: vertical;
+            background: transparent;
+            color: #f1f0f8;
+            font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+            font-size: 0.875rem;
+            line-height: 1.6;
+        }
+        .para-edit-actions {
+            justify-content: flex-end;
+        }
+        .para-edit-actions button {
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: #d8d4ee;
+        }
+        .para-edit-actions button:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+        .para-edit-actions [data-para="save"] {
+            background: #7c5bf5;
+            color: #fff;
+        }
+
+        /* 본문 드래그 서식 막대 (format-toolbar.js) */
+        .format-bar {
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            padding: 4px 6px;
+            background: #fff;
+            border: 1px solid #e3e1ee;
+            border-radius: 12px;
+            box-shadow: 0 6px 24px rgba(30, 30, 60, 0.18);
+        }
+        .format-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 2px;
+            min-width: 30px;
+            height: 30px;
+            padding: 0 4px;
+            border-radius: 6px;
+            color: #4b4b63;
+            font-size: 17px;
+        }
+        .format-btn:hover,
+        .format-btn:focus-visible {
+            background: #f1effa;
+            color: #1f1f2e;
+            outline: none;
+        }
+        .format-btn[aria-pressed="true"] {
+            background: #ece7ff;
+            color: #7c5bf5;
+        }
+        .format-sep {
+            width: 1px;
+            height: 20px;
+            margin: 0 4px;
+            background: #e5e5ee;
+        }
+        .format-text-btn {
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: #7c5bf5;
+        }
+        .format-text-btn:hover {
+            background: #f1effa;
+        }
+        .format-menu {
+            position: absolute;
+            top: calc(100% + 6px);
+            left: 0;
+            min-width: 140px;
+            padding: 4px;
+            background: #fff;
+            border: 1px solid #e3e1ee;
+            border-radius: 10px;
+            box-shadow: 0 6px 24px rgba(30, 30, 60, 0.18);
+        }
+        .format-menu-item {
+            display: block;
+            width: 100%;
+            padding: 6px 10px;
+            border-radius: 6px;
+            text-align: left;
+            font-weight: 600;
+            color: #2b2b3c;
+        }
+        .format-menu-item:hover {
+            background: #f1effa;
+        }
+
         .markdown-body ul,
         .markdown-body ol {
             padding-left: 1.5rem;
@@ -1766,16 +1905,18 @@
 
 
 
-    <!-- Text Selection Floating Toolbar (AI Edit Hover) -->
+    <!-- 본문을 드래그하면 뜨는 막대: 서식(format-toolbar.js) + AI로 수정 -->
     <div id="ai-floating-toolbar"
-        class="fixed z-[9999] hidden flex items-center justify-center pointer-events-auto transform -translate-x-1/2 -translate-y-full pb-2 transition-opacity duration-200 opacity-0"
+        class="fixed z-[9999] hidden pointer-events-auto transform -translate-x-1/2 -translate-y-full transition-opacity duration-200 opacity-0"
         style="left: 0; top: 0;">
-        <button onclick="activateHoverAIEdit()"
-            class="px-3 py-1.5 flex items-center gap-1.5 bg-accent hover:bg-accentHover text-white text-xs font-bold rounded-lg shadow-[0_4px_15px_rgba(124,91,245,0.4)] border border-white/20 hover:-translate-y-0.5 transition-all">
-            <i class="ph-fill ph-sparkle text-yellow-300"></i> AI로 수정
-        </button>
-        <!-- 화살표 꼬리 -->
-        <div class="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-accent rotate-45"></div>
+        <div class="format-bar">
+            <div id="format-toolbar" class="flex items-center gap-0.5" role="toolbar" aria-label="글자 서식"></div>
+            <span class="format-sep" aria-hidden="true"></span>
+            <button type="button" onclick="activateHoverAIEdit()"
+                class="px-2.5 py-1.5 flex items-center gap-1.5 bg-accent hover:bg-accentHover text-white text-xs font-bold rounded-lg transition-colors whitespace-nowrap">
+                <i class="ph-fill ph-sparkle text-yellow-300"></i> AI로 수정
+            </button>
+        </div>
     </div>
 
     <!-- Application Logic Modules -->
@@ -1789,6 +1930,7 @@
     <script src="./js/ai-routing.js?v=125"></script>
     <script src="./js/lesson-attachments.js?v=125"></script>
     <script src="./js/lesson-sanitize.js?v=125"></script>
+    <script src="./js/lesson-format.js?v=125"></script>
     <script src="./js/state.js?v=125"></script>
     <script src="./js/api.js?v=125"></script>
     <script src="./js/diagram.js?v=125"></script>
@@ -1836,6 +1978,8 @@
     <script src="./js/lesson-editor-tools.js?v=125"></script>
     <script src="./js/lesson-review.js?v=125"></script>
     <script src="./js/md-toolbar.js?v=125"></script>
+    <script src="./js/format-toolbar.js?v=125"></script>
+    <script src="./js/paragraph-edit.js?v=125"></script>
     <script src="./js/course-refs.js?v=125"></script>
     <script>
         // 사용 가이드 자동 시작

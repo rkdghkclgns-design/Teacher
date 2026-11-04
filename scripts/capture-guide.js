@@ -157,8 +157,30 @@ const SHOTS = [
     },
     {
         id: 'edit',
-        prepare: openLesson,
-        markers: ['#toggle-edit', '#reinforce-input', byText('컨벤션 검수', '#editor-content-area'), '#ai-command-input']
+        prepare: async page => {
+            await openLesson(page);
+            // 1) 문단 하나를 두 번 눌러 편집 상자를 연다
+            await page.evaluate(() => {
+                const first = [...document.querySelectorAll('#render-view > p')].find(p => p.textContent.trim().length > 20);
+                first.scrollIntoView({ block: 'start' });
+                document.getElementById('editor-content-area').scrollTop -= 160;
+                first.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+            });
+            await page.waitForTimeout(500);
+            // 2) 아래 문단을 드래그했을 때 뜨는 서식 막대를 같이 보여 준다(편집 상자 포커스는 그대로 둔다)
+            await page.evaluate(() => {
+                const box = document.querySelector('.para-edit');
+                const next = box && [...document.querySelectorAll('#render-view > p, #render-view > ul')]
+                    .find(el => el.getBoundingClientRect().top > box.getBoundingClientRect().bottom + 70);
+                const bar = document.getElementById('ai-floating-toolbar');
+                if (!next || !bar) return;
+                const rect = next.getBoundingClientRect();
+                bar.classList.remove('hidden', 'opacity-0');
+                positionFloatingToolbar(bar, { left: rect.left, width: Math.min(rect.width, 320), top: rect.top, bottom: rect.bottom });
+            });
+            await page.waitForTimeout(300);
+        },
+        markers: ['.para-edit', '#ai-floating-toolbar .format-bar', '#reinforce-input', byText('컨벤션 검수', '#editor-content-area'), '#ai-command-input']
     },
     {
         id: 'tools',

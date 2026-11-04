@@ -2136,6 +2136,8 @@ window.startBatchGeneration = async function () {
 // ------------------------------------------------------------------------
 window.initSelectionHoverUI = function () {
     document.addEventListener('selectionchange', () => {
+        // 막대 안의 링크 주소 칸에 입력하는 동안은 본문 선택이 풀려도 막대를 둔다
+        if (document.getElementById('ai-floating-toolbar')?.contains(document.activeElement)) return;
         const renderView = document.getElementById('render-view');
         // 보기 모드가 아니거나, 마우스 클릭 유지중이면 무시
         if (!renderView || renderView.classList.contains('hidden')) {
@@ -2163,13 +2165,15 @@ window.initSelectionHoverUI = function () {
 
         const tooltip = document.getElementById('ai-floating-toolbar');
         if (tooltip && rect.width > 0 && rect.height > 0) {
-            // 위치 계산 (선택 영역의 중앙 상단 바깥쪽)
-            const top = rect.top + window.scrollY - 10; // 10px 위로 띄움
-            const left = rect.left + window.scrollX + (rect.width / 2);
-
-            tooltip.style.top = `${top}px`;
-            tooltip.style.left = `${left}px`;
-            tooltip.classList.remove('hidden');
+            clearTimeout(hoverTooltipHideTimer); // 숨기는 중이었으면 멈춘다(서식을 바꾼 뒤 다시 고를 때)
+            tooltip.classList.remove('hidden'); // 너비를 재려면 먼저 보여야 한다
+            if (window.positionFloatingToolbar) {
+                window.positionFloatingToolbar(tooltip, rect);
+            } else {
+                tooltip.style.top = `${rect.top - 10}px`;
+                tooltip.style.left = `${rect.left + rect.width / 2}px`;
+            }
+            window.refreshFormatToolbar?.();
 
             // 약간의 딜레이 후 opacity 전환하여 부드러운 페이드인
             setTimeout(() => {
@@ -2187,11 +2191,15 @@ window.initSelectionHoverUI = function () {
     });
 };
 
+let hoverTooltipHideTimer = null;
+
 function hideHoverTooltip() {
     const tooltip = document.getElementById('ai-floating-toolbar');
     if (tooltip && !tooltip.classList.contains('hidden')) {
         tooltip.classList.add('opacity-0');
-        setTimeout(() => {
+        window.resetFormatToolbar?.();
+        clearTimeout(hoverTooltipHideTimer);
+        hoverTooltipHideTimer = setTimeout(() => {
             tooltip.classList.add('hidden');
         }, 200); // transition-opacity duration 후 hidden
     }

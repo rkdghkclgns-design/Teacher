@@ -1447,7 +1447,7 @@ window.handleImageInputSelect = function (event) {
     }
 
     if (!target) {
-        window.showAlert('이미지를 삽입하려면 수정 모드로 전환하거나, 블록을 더블클릭하여 인라인 편집을 시작하세요.');
+        window.showAlert('이미지를 넣을 단락을 두 번 눌러 연 뒤 다시 누르거나, 도구 → 원문 전체 수정에서 넣어 주세요.');
         event.target.value = '';
         return;
     }
