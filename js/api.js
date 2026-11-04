@@ -756,7 +756,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
             // ── 이미지 태그 처리 ──
             setLoadingStatus(chunkCount > 1 ? `이미지 생성 중... (${chunkCount}단계 완료)` : '이미지 생성 중...');
 
-            fullContent = restoreLockedSections(await processImageTags(mod, fullContent), lockedBlocks);
+            fullContent = restoreLockedSections(await processImageTags(mod, fullContent, { onStatus: setLoadingStatus }), lockedBlocks);
         }
 
         mod.content = fullContent;
@@ -1298,7 +1298,28 @@ function autoInjectImageTags(markdown) {
 }
 window.autoInjectImageTags = autoInjectImageTags;
 
-async function processImageTags(mod, markdown) {
+const IMAGE_TAG_GAP_MS = 7000; // 이미지 하나에 검색 의도·판정·생성 호출이 이어지므로 무료 등급 분당 호출 한도를 피한다
+const IMAGE_TAG_MARK = '<!-- [IMG:';
+
+// 이미지 양 설정에 따라 만들 태그를 고른다. 고르지 않은 태그는 본문에 남아 나중에 '일괄 이미지 찾기'로 채운다
+function pickImageTags(markdown, tags, amount) {
+    if (amount === 'none') return [];
+    if (amount !== 'section') return tags;
+    const sections = new Set();
+    let from = 0;
+    return tags.filter(tag => {
+        const at = markdown.indexOf(tag.fullMatch, from);
+        if (at >= 0) from = at + tag.fullMatch.length;
+        const section = (markdown.slice(0, Math.max(at, 0)).match(/^##\s/gm) || []).length;
+        if (sections.has(section)) return false;
+        sections.add(section);
+        return true;
+    });
+}
+
+// opts.onStatus: 진행 문구(장수·남은 시간)를 받는다 / opts.isStopped: 중지하면 남은 태그를 그대로 둔다
+// opts.amount: 'all' | 'section' | 'none' (기본은 설정의 이미지 양) / opts.latest: 다 만든 뒤 이미지를 넣을 최신 글을 돌려준다
+async function processImageTags(mod, markdown, { onStatus = null, isStopped = () => !!window.isTabGenerationStopped?.(), amount = LESSON_IMAGE_AMOUNT, latest = null } = {}) {
 
     // LLM이 태그를 누락했을 경우 자동 주입 (이미지 0장 방지)
     markdown = autoInjectImageTags(markdown);
@@ -1337,22 +1358,38 @@ async function processImageTags(mod, markdown) {
     });
 
     if (filteredTags.length === 0) return result;
+    const pickedTags = pickImageTags(markdown, filteredTags, amount);
+    if (pickedTags.length === 0) return result;
+
+    // 부른 쪽 진행 막대에 장수와 남은 시간을 보인다. 남은 시간은 지금까지 걸린 평균으로 잰다
+    const startedAt = Date.now();
+    const reportImage = done => {
+        if (!onStatus) return;
+        const leftMinutes = done ? Math.max(1, Math.round((Date.now() - startedAt) / done * (pickedTags.length - done) / 60000)) : 0;
+        onStatus(`🖼️ 이미지 ${done + 1}/${pickedTags.length} 만드는 중 · ${done ? `남은 시간 약 ${leftMinutes}분` : '남은 시간 계산 중'}`);
+    };
 
     // 시작 알림 — 사용자가 진행 상황을 인지할 수 있도록 toast 표시
     if (window.showToast) {
-        window.showToast(`🎨 이미지 ${filteredTags.length}개 생성 시작 (약 ${Math.ceil(filteredTags.length * 10)}초 소요)`, 'info');
+        if (!onStatus) window.showToast(`🎨 이미지 ${pickedTags.length}개를 차례로 만듭니다. 한 장에 수십 초가 걸릴 수 있습니다.`, 'info');
     }
 
     // Rate Limit(429) 방지: 순차 처리 + 요청 간 7초 간격
     let successCount = 0;
     let failCount = 0;
     const replacements = [];
-    for (let index = 0; index < filteredTags.length; index++) {
-        const tag = filteredTags[index];
+    let skipped = 0;
+    for (let index = 0; index < pickedTags.length; index++) {
+        // 요청 사이 간격을 둔 뒤 중지를 확인한다. 중지하면 남은 태그는 본문에 두어 '일괄 이미지 찾기'로 이어서 만든다
+        if (index > 0) await new Promise(r => setTimeout(r, IMAGE_TAG_GAP_MS));
+        if (isStopped()) {
+            skipped = pickedTags.length - index;
+            break;
+        }
+        reportImage(index);
+        const tag = pickedTags[index];
         const replacement = await (async () => {
         try {
-            // Rate Limit 방어: 순차 실행 + 요청 간 7초 대기 (무료 티어 분당 10회 제한)
-            if (index > 0) await new Promise(r => setTimeout(r, 7000));
 
             // [Phase F10] 1. 문맥 기반 검색어 튜닝 에이전트 가동
             const context = getContextWindow(markdown, tag.fullMatch, 400);
@@ -1464,7 +1501,7 @@ async function processImageTags(mod, markdown) {
                 return { fullMatch: tag.fullMatch, html: imgHTML };
             } else {
                 failCount++;
-                console.warn(`[Image Pipeline] (${index + 1}/${filteredTags.length}) ⚠️ 이미지 미확보: ${tag.keyword}`);
+                console.warn(`[Image Pipeline] (${index + 1}/${pickedTags.length}) ⚠️ 이미지 미확보: ${tag.keyword}`);
                 return { fullMatch: tag.fullMatch, html: `\n<div class="image-placeholder" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:24px;margin:12px 0;border:2px dashed rgba(156,163,175,0.4);border-radius:8px;background:rgba(31,41,55,0.3);color:#9ca3af;font-size:0.85rem;"><i class="ph-bold ph-image" style="font-size:1.4rem;opacity:0.6;"></i> <span>이미지 영역: ${safeKoreanDesc}</span> <button data-lesson-action="regenerate-image" data-keyword="${escapeHtml(tag.keyword)}" class="ml-2 px-2 py-1 text-xs bg-accent/20 text-accent border border-accent/40 rounded hover:bg-accent/30 transition-colors" style="cursor:pointer;">🔄 다시 검색</button></div>\n` };
             }
 
@@ -1477,12 +1514,17 @@ async function processImageTags(mod, markdown) {
         replacements.push(replacement);
     }
 
+    // 기다리는 동안 글이 바뀌었으면 최신 글에 넣는다. 지운 태그 자리의 이미지는 넣지 않는다
+    // 최신 글에도 같은 기준으로 태그를 보충해야 자동으로 넣은 태그 자리의 이미지가 빠지지 않는다
+    let output = latest ? autoInjectImageTags(latest()) : result;
     for (const rep of replacements) {
-        if (rep) result = result.replace(rep.fullMatch, rep.html);
+        if (rep) output = output.replace(rep.fullMatch, rep.html);
     }
 
-    // 완료 토스트 — 성공/실패 카운트 표시
-    if (window.showToast) {
+    // 완료 토스트 — 성공/실패 카운트 표시. 중지로 남긴 태그가 있으면 이어서 만드는 법을 알린다
+    if (skipped) {
+        window.showToast?.(`이미지 ${successCount}건을 만들고 ${skipped}건은 남겨 두었습니다. '일괄 이미지 찾기'로 이어서 만들 수 있습니다.`, 'warning');
+    } else if (window.showToast) {
         if (successCount > 0 && failCount === 0) {
             window.showToast(`✅ 이미지 ${successCount}건 생성 완료`, 'success');
         } else if (successCount > 0 && failCount > 0) {
@@ -1492,45 +1534,39 @@ async function processImageTags(mod, markdown) {
         }
     }
 
-    return result;
+    return output;
 }
 
-// [신규] 지연된 이미지를 일괄 생성/검색하는 수동 트리거 함수
+// 처리하지 않은 이미지 태그가 남은 탭. 탭으로 나뉘기 전의 옛 본문은 기본학습으로 본다
+function imageTagTabs(mod) {
+    if (!mod.tabContents) return mod.content?.includes(IMAGE_TAG_MARK) ? [{ id: 'basicLearn', label: '본문' }] : [];
+    return LESSON_TABS.filter(tab => (mod.tabContents[tab.id] || '').includes(IMAGE_TAG_MARK));
+}
+
+// 남은 이미지 태그를 탭마다 채운다. 화면을 막지 않고 진행 막대에 장수·남은 시간·중지를 보인다.
+// 탭 글을 고쳐 저장해야 화면과 내보내기에 반영된다 (합친 본문만 고치면 다음 저장 때 사라진다)
 async function generateAllImagesInModule(moduleId) {
     const mod = getEditingModule(moduleId);
-    if (!mod || !mod.content) return;
-
-    if (!mod.content.includes('<!-- [IMG:')) {
-        window.showToast('본문에 처리 대기 중인 이미지 태그가 없습니다.', 'info');
-        return;
-    }
-
-    const btn = document.getElementById('img-batch-btn');
-    const originalText = btn ? btn.innerHTML : '';
-    if (btn) {
-        btn.innerHTML = '<i class="ph-bold ph-spinner animate-spin"></i> 이미지 일괄 확보 중...';
-        btn.disabled = true;
-    }
-
-    document.getElementById('editor-loading').style.display = 'flex';
-    document.getElementById('editor-loading-text').textContent = '본문 이미지를 수집하고 안전하게 검색을 수행하고 있습니다...';
-
-    try {
-        const newContent = await processImageTags(mod, mod.content);
-        mod.content = newContent;
-        await saveState();
-        renderEditor(mod); // 최신 내용으로 리렌더링
-        window.showToast('이미지 일괄 확보가 완료되었습니다.', 'success');
-    } catch (e) {
-        console.error('이미지 일괄 확보 실패:', e);
-        window.showAlert('이미지 검색/생성 중 오류가 발생했습니다.');
-    } finally {
-        document.getElementById('editor-loading').style.display = 'none';
-        if (btn) {
-            btn.innerHTML = originalText;
-            btn.disabled = false;
+    if (!mod) return;
+    const tabs = imageTagTabs(mod);
+    if (!tabs.length) return window.showToast('본문에 처리 대기 중인 이미지 태그가 없습니다.', 'info');
+    await window.runLessonJob(moduleId, { label: '일괄 이미지 찾기', current: tabs[0].id, total: tabs.length, alerts: true }, async () => {
+        try {
+            for (let i = 0; i < tabs.length && !window.isTabGenerationStopped(); i++) {
+                const tab = tabs[i];
+                window.updateLessonJob({ current: tab.id, label: `${tab.label} 이미지`, done: i });
+                const snapshot = storedTabMarkdown(mod, tab.id);
+                const processed = await processImageTags(mod, snapshot, { amount: 'all', onStatus: window.setPipelineStatus, latest: () => latestTabMarkdown(mod, tab.id, snapshot) });
+                setTabMarkdown(mod, tab.id, processed);
+                await saveState();
+                if (isViewingTab(mod, tab.id)) renderEditor(mod);
+            }
+            if (!window.isTabGenerationStopped()) window.notifyLessonJobDone('이미지 일괄 확보가 완료되었습니다.');
+        } catch (e) {
+            console.error('이미지 일괄 확보 실패:', e);
+            window.showAlert('이미지 검색/생성 중 오류가 발생했습니다.');
         }
-    }
+    });
 }
 
 
@@ -2546,11 +2582,16 @@ function renderEditor(mod) {
 
     let htmlContent = '';
 
-    if (_tabEmpty && window.isLessonPipelineRunning(mod.id)) {
+    // 이 탭을 만들고 있거나 전체 생성이 차례로 채우는 중이면 기다림 안내를 보인다. 다른 탭을 만드는 작업이면 평소 화면을 둔다
+    const buildingHere = window.isPipelineStep(currentLessonTab, mod.id);
+    if (_tabEmpty && window.isLessonPipelineRunning(mod.id) && (buildingHere || window.lessonPipelineKind() === 'all')) {
+        const waitText = buildingHere
+            ? '이 탭을 만들고 있습니다. 완성되면 여기에 나타납니다. 그동안 다른 탭과 차시를 볼 수 있습니다.'
+            : '이 탭은 전체 생성 순서대로 만들고 있습니다. 완성되면 여기에 나타납니다.';
         htmlContent = `
             <div class="flex flex-col items-center justify-center text-center py-20 px-6 select-none text-gray-500">
                 <i class="ph-bold ph-circle-notch animate-spin text-3xl text-accent mb-4"></i>
-                <p class="text-sm">이 탭은 전체 생성 순서대로 만들고 있습니다. 완성되면 여기에 나타납니다.</p>
+                <p class="text-sm">${waitText}</p>
             </div>`;
     } else if (_tabEmpty) {
 
@@ -2565,7 +2606,7 @@ function renderEditor(mod) {
                 </div>
                 <h3 class="text-lg font-bold text-gray-800 mb-2">아직 «${_tabLabel}» 탭 내용이 없습니다</h3>
                 <p class="text-sm text-gray-500 mb-6 leading-relaxed">아래 버튼을 눌러 AI로 «${_tabLabel}» 탭 교안을 생성하세요.<br>생성에는 수십 초가 걸릴 수 있습니다.</p>
-                <button onclick="generateTabContent('${mod.id}', currentLessonTab)"
+                <button onclick="runTabJob('${mod.id}', currentLessonTab)"
                     class="px-5 py-2.5 text-sm font-bold text-white bg-accent rounded-lg hover:bg-accentHover transition-colors flex items-center gap-2 shadow-sm hover:-translate-y-0.5">
                     <i class="ph-bold ph-lightning"></i> «${_tabLabel}» 탭 생성하기
                 </button>
@@ -2603,7 +2644,7 @@ function renderEditor(mod) {
 
                             <div class="w-px h-4 bg-gray-300 mx-1"></div>
 
-                    <button id="lesson-tab-generate" onclick="generateTabContent('${mod.id}', currentLessonTab)"
+                    <button id="lesson-tab-generate" onclick="runTabJob('${mod.id}', currentLessonTab)"
                         class="px-2.5 py-1.5 text-[0.6875rem] font-bold text-accent bg-accent/10 border border-accent/30 rounded hover:bg-accent/20 transition-colors flex items-center gap-1 shrink-0">
                         <i class="ph-bold ph-sparkle"></i> 이 탭 생성
                     </button>

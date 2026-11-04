@@ -5,7 +5,7 @@ const vm = require('vm');
 const path = require('path');
 const assert = require('assert');
 const root = path.join(__dirname, '..', 'js') + path.sep;
-const FILES = ['data.js', 'convention.js', 'lesson-lint.js', 'lesson-opening.js', 'course-meta.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js', 'lesson-review.js', 'md-toolbar.js', 'lesson-attachments.js', 'tabs.js', 'ai-routing.js', 'api.js'];
+const FILES = ['data.js', 'convention.js', 'lesson-lint.js', 'lesson-opening.js', 'course-meta.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js', 'lesson-review.js', 'md-toolbar.js', 'lesson-attachments.js', 'tabs.js', 'lesson-pipeline.js', 'ai-routing.js', 'api.js'];
 
 function fakeElement() {
     const handlers = {};
@@ -13,7 +13,7 @@ function fakeElement() {
         style: {}, dataset: {}, innerHTML: '', textContent: '', className: '', disabled: false, value: '',
         classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
         addEventListener(type, fn) { handlers[type] = fn; },
-        fire(type, event) { return handlers[type](event); },
+        fire(type, event) { return handlers[type]?.(event); }, // 진행 막대처럼 처리기가 없는 요소는 무시한다
         querySelector: () => fakeElement(),
         querySelectorAll: () => [],
         remove() { this.removed = true; }
@@ -26,6 +26,7 @@ function makeContext(callGemini = async () => { throw new Error('호출되면 �
         console: { log() {}, warn() {}, error() {} },
         setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 1)), clearTimeout, Promise, URL, Uint16Array, Blob,
         localStorage: { getItem: () => null, setItem() {} },
+        currentEditingModuleId: null,
         escapeHtml: s => (typeof s === 'string' ? s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') : ''),
         saveState: async () => { ctx.saved = (ctx.saved || 0) + 1; },
         renderEditor: () => { ctx.rendered = (ctx.rendered || 0) + 1; },
@@ -56,7 +57,7 @@ function makeContext(callGemini = async () => { throw new Error('호출되면 �
     FILES.forEach(file => vm.runInContext(fs.readFileSync(root + file, 'utf8'), ctx));
     // api.js의 callGemini와 tabs.js가 쓰는 함수는 스텁으로 바꾼다. 실제 파일에서 함수 선언이 전역을 차지하므로 로드 후에 덮는다.
     ctx.callGemini = callGemini;
-    vm.runInContext('callGemini = window.callGemini; buildTaskContext = (task, args) => ({ systemInstruction: "시스템", userPrompt: `${task}:${args.tabId}` }); getEditingModule = (id = window.currentMod?.id) => (String(id) === String(window.currentMod?.id) ? window.currentMod : window.otherMod); processImageTags = async (mod, md) => md; renderSidebar = () => {}; renderEditor = () => { window.rendered = (window.rendered || 0) + 1; };', ctx);
+    vm.runInContext('callGemini = window.callGemini; buildTaskContext = (task, args) => ({ systemInstruction: "시스템", userPrompt: `${task}:${args.tabId}` }); getEditingModule = (id = window.currentMod?.id) => (String(id) === String(window.currentMod?.id) ? window.currentMod : window.otherMod); window.realProcessImageTags = processImageTags; processImageTags = async (mod, md) => md; renderSidebar = () => {}; renderEditor = () => { window.rendered = (window.rendered || 0) + 1; };', ctx);
     return ctx;
 }
 
@@ -509,6 +510,71 @@ function generationContext(callGemini, mod) {
         assert.deepStrictEqual(plain(cont.args.writtenHeadings), ['## 학습 목표', '## 1. 첫째 (⏱ 60분)']);
     });
 
+    await run('긴 작업: 탭 하나 만들기는 화면을 막지 않고 진행 막대·알림으로 보이며 한 번에 하나만 돈다', async () => {
+        const mod = { id: 1, title: '차시', tabContents: {} };
+        let release;
+        const gate = new Promise(resolve => { release = resolve; });
+        const jobCtx = generationContext(async () => { await gate; return reply('## 본문\n\n완성한 글입니다.'); }, mod);
+        const running = call(jobCtx, 'runTabJob')(1, 'basicPrac');
+        await new Promise(resolve => setImmediate(resolve));
+        const bar = jobCtx.elements['lesson-pipeline-bar'];
+        const tabLabel = call(jobCtx, 'LESSON_TABS').find(tab => tab.id === 'basicPrac').label;
+        assert.ok(bar?.innerHTML.includes(`${tabLabel} 만들기`), '진행 막대에 작업 이름');
+        assert.ok(call(jobCtx, 'isPipelineStep')('basicPrac', 1), '탭 표시가 이 탭을 만드는 중');
+        assert.strictEqual(call(jobCtx, 'lessonPipelineKind')(), 'job');
+        const busy = await call(jobCtx, 'runTabJob')(1, 'advPrac');
+        assert.ok(busy.busy && jobCtx.alerts.at(-1).includes('진행 중인 생성'), '다른 작업은 끝난 뒤에');
+        release();
+        await running;
+        assert.ok(mod.tabContents.basicPrac.includes('완성한 글입니다.'));
+        assert.notStrictEqual(jobCtx.elements['editor-loading'].style.display, 'flex', '화면을 막지 않는다');
+        assert.ok(bar.removed && !call(jobCtx, 'isLessonPipelineRunning')(), '끝나면 막대를 닫는다');
+        assert.ok(jobCtx.toasts.some(message => message.includes('탭이 생성되었습니다')), '완료는 알림으로');
+
+        const previous = { id: 1, title: '차시', tabContents: { basicLearn: '## 이전\n\n이전 글입니다.' } };
+        const regenCtx = generationContext(async () => reply('## 새 글\n\n다시 쓴 글입니다.'), previous);
+        answerPreview(regenCtx, 'apply');
+        await call(regenCtx, 'runTabJob')(1, 'basicLearn');
+        assert.ok(previous.tabContents.basicLearn.includes('다시 쓴 글입니다.'));
+        assert.notStrictEqual(regenCtx.elements['editor-loading'].style.display, 'flex', '미리보기를 반영한 뒤에도 화면을 막지 않는다');
+    });
+
+    await run('긴 작업: 이미지는 양 설정·중지·진행·최신 글을 따른다', async () => {
+        const imgCtx = makeContext();
+        const process = (md, opts) => call(imgCtx, 'realProcessImageTags')({ id: 1, images: {} }, md, opts);
+        const md = '## 1. 첫째 (⏱ 30분)\n\n본문 하나입니다.\n\n<!-- [IMG: "a"] -->\n\n더 쓴 글입니다.\n\n<!-- [IMG: "b"] -->\n\n## 2. 둘째 (⏱ 30분)\n\n본문 둘입니다.\n\n<!-- [IMG: "c"] -->';
+        const picked = plain(call(imgCtx, 'pickImageTags')(md, ['a', 'b', 'c'].map(k => ({ fullMatch: `<!-- [IMG: "${k}"] -->`, keyword: k })), 'section')).map(tag => tag.keyword);
+        assert.deepStrictEqual(picked, ['a', 'c'], '핵심만은 ## 섹션마다 한 장');
+        assert.strictEqual(await process(md, { amount: 'none' }), md, '넣지 않음은 태그를 그대로 둔다');
+
+        const statuses = [];
+        const sectionOut = await process(md, { amount: 'section', onStatus: text => statuses.push(text), isStopped: () => false });
+        assert.ok(!sectionOut.includes('[IMG: "a"]') && sectionOut.includes('[IMG: "b"]') && !sectionOut.includes('[IMG: "c"]'), '고르지 않은 태그는 남긴다');
+        assert.ok(statuses[0].includes('이미지 1/2') && statuses[0].includes('계산 중'), statuses[0]);
+        assert.ok(statuses[1].includes('이미지 2/2') && statuses[1].includes('남은 시간 약'), statuses[1]);
+
+        let checks = 0;
+        const stopped = await process(md, { amount: 'all', isStopped: () => checks++ >= 1 });
+        assert.ok(!stopped.includes('[IMG: "a"]') && stopped.includes('[IMG: "b"]') && stopped.includes('[IMG: "c"]'), '중지하면 남은 태그를 둔다');
+        assert.ok(imgCtx.toasts.some(message => message.includes('2건은 남겨 두었습니다')), '이어서 만드는 법을 알린다');
+
+        const latest = await process(md, { amount: 'section', isStopped: () => false, latest: () => `${md}\n\n기다리는 동안 덧붙인 문단입니다.` });
+        assert.ok(latest.includes('덧붙인 문단') && !latest.includes('[IMG: "a"]'), '기다리는 동안 고친 글 위에 이미지를 넣는다');
+    });
+
+    await run('긴 작업: 일괄 이미지 찾기는 탭마다 채워 저장한다', async () => {
+        const body = '## 1. 첫째 (⏱ 30분)\n\n본문입니다.\n\n<!-- [IMG: "a"] -->';
+        const mod = { id: 1, title: '차시', tabContents: { basicLearn: body, basicPrac: '## 실습\n\n내용입니다.' }, content: '' };
+        const batchCtx = generationContext(async () => reply('{}'), mod);
+        vm.runInContext('processImageTags = window.realProcessImageTags;', batchCtx);
+        assert.deepStrictEqual(plain(call(batchCtx, 'imageTagTabs')(mod)).map(tab => tab.id), ['basicLearn']);
+        await call(batchCtx, 'generateAllImagesInModule')(1);
+        assert.ok(!mod.tabContents.basicLearn.includes('<!-- [IMG:'), '탭 글의 태그를 채운다');
+        assert.ok(!mod.content.includes('<!-- [IMG:'), '합친 본문도 탭 글로 다시 만든다');
+        assert.ok(batchCtx.toasts.some(message => message.includes('이미지 일괄 확보가 완료')));
+        assert.ok(batchCtx.elements['lesson-pipeline-bar']?.removed, '진행 막대를 썼다가 닫는다');
+    });
+
     await run('미리보기: 섹션 제목을 이스케이프한다', async () => {
         const aiCtx = makeContext();
         let html = '';
@@ -558,7 +624,9 @@ function generationContext(callGemini, mod) {
         assert.ok(mod.tabContents.basicLearn.includes('보강한 글입니다.'));
         assert.strictEqual(aiCtx.archived[0].content, original, '바꾸기 전 내용을 히스토리에 남긴다');
         assert.ok(mod.history[0].note.includes('예시 추가'));
-        assert.strictEqual(aiCtx.elements['editor-loading'].style.display, 'none');
+        assert.notStrictEqual(aiCtx.elements['editor-loading'].style.display, 'flex', '화면을 막지 않는다');
+        assert.ok(aiCtx.elements['lesson-pipeline-bar']?.removed, '진행 막대를 띄웠다가 닫는다');
+        assert.ok(aiCtx.toasts.some(message => message.includes('보강 재생성을 반영했습니다')), '끝나면 알림으로 알린다');
     });
 
     await run('보강: 고정 섹션과 잘린 응답', async () => {

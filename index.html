@@ -798,6 +798,13 @@
                     style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22%238a8ab5%22><path d=%22M7 10l5 5 5-5z%22/></svg>');background-repeat:no-repeat;background-position:right 10px center;">
                 </select>
                 <p class="text-xs text-textMuted mt-1">교안 내 삽입 이미지 생성에 사용 (16:9). Higgsfield 모델은 아래 Higgsfield 설정을 씁니다. Gemini 키가 없으면 텍스트 모델이 SVG 삽화를 그립니다.</p>
+                <label class="flex items-center gap-1.5 text-xs font-bold text-textMuted mt-3 mb-2"><i
+                        class="ph-fill ph-images text-accent/70"></i> 교안 이미지 양</label>
+                <select id="settings-image-amount" onchange="updateLessonImageAmount(this.value)"
+                    class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent transition-all appearance-none cursor-pointer"
+                    style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22%238a8ab5%22><path d=%22M7 10l5 5 5-5z%22/></svg>');background-repeat:no-repeat;background-position:right 10px center;">
+                </select>
+                <p class="text-xs text-textMuted mt-1">탭을 만들 때 넣을 이미지 수입니다. 이미지 한 장에 수십 초가 걸리므로 줄이면 생성이 빨리 끝납니다. 남긴 자리는 '일괄 이미지 찾기'로 나중에 채울 수 있습니다.</p>
             </div>
             <div>
                 <label class="flex items-center gap-1.5 text-xs font-bold text-textMuted mb-2"><i
@@ -1585,6 +1592,7 @@
                 // 모델 콤보박스 초기화
                 populateModelSelect('settings-text-model', typeof TEXT_MODEL_OPTIONS !== 'undefined' ? TEXT_MODEL_OPTIONS : [], typeof TEXT_MODEL !== 'undefined' ? TEXT_MODEL : '');
                 populateModelSelect('settings-image-model', typeof IMAGE_MODEL_OPTIONS !== 'undefined' ? IMAGE_MODEL_OPTIONS : [], typeof IMAGE_MODEL !== 'undefined' ? IMAGE_MODEL : '');
+                populateModelSelect('settings-image-amount', typeof LESSON_IMAGE_AMOUNT_OPTIONS !== 'undefined' ? LESSON_IMAGE_AMOUNT_OPTIONS : [], typeof LESSON_IMAGE_AMOUNT !== 'undefined' ? LESSON_IMAGE_AMOUNT : 'all');
                 document.getElementById('settings-auto-task-effort').checked = AUTO_TASK_EFFORT;
                 document.getElementById('settings-role-routing').checked = ROLE_ROUTING;
                 renderRoleRouteNote();

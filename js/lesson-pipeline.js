@@ -1,5 +1,6 @@
 // lesson-pipeline.js - 차시 전체 생성: 교안 탭 → 삽화 → NCS 요소 → 교수안·슬라이드 → 문제은행을 차례로 만든다
 // 화면을 막지 않으므로 생성하는 동안 끝난 항목을 읽을 수 있다. 진행은 아래쪽 막대와 탐색줄 표시로 보여 준다.
+// 탭 하나 만들기·보강 재생성·탭 모두 다시 만들기·일괄 이미지 찾기도 같은 막대와 중지를 쓴다 (runLessonJob).
 // 있는 항목은 건드리지 않고 빈 항목만 채운다. 항목마다 저장하므로 멈춰도 만든 내용은 남는다.
 
 const QBANK_FILL_COUNT = 3;
@@ -99,14 +100,22 @@ async function runPipelineStep(step) {
 }
 
 /* ---------- 진행 막대 ---------- */
+const PIPELINE_TICK_MS = 1000;
+const formatElapsed = ms => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+
+// 단계가 하나뿐인 작업은 비율 대신 움직이는 막대로 진행 중임을 보인다
 function pipelineBarHtml(run) {
-    const percent = run.total ? Math.round(run.done / run.total * 100) : 0;
-    const position = run.total ? `${Math.min(run.done + 1, run.total)}/${run.total} · ` : '';
+    const steps = run.total > 1;
+    const percent = steps ? Math.round(run.done / run.total * 100) : 100;
+    const position = steps ? `${Math.min(run.done + 1, run.total)}/${run.total} · ` : '';
     return `
         <div class="min-w-0 flex-1">
-            <p class="text-xs font-bold text-white truncate">${position}${escapeHtml(run.label)}</p>
-            <p class="text-xs text-white/60 truncate min-h-[1em]">${escapeHtml(run.status)}</p>
-            <div class="mt-1 h-1 rounded bg-white/15 overflow-hidden"><div class="h-full bg-accent transition-all" style="width:${percent}%"></div></div>
+            <div class="flex items-center gap-2">
+                <p class="flex-1 text-xs font-bold text-white truncate">${position}${escapeHtml(run.label)}</p>
+                <span data-pipeline-elapsed class="shrink-0 text-xs text-white/60 tabular-nums" title="걸린 시간">${formatElapsed(Date.now() - run.startedAt)}</span>
+            </div>
+            <p class="text-xs text-white/60 truncate min-h-[1em]" title="${escapeHtml(run.status)}">${escapeHtml(run.status)}</p>
+            <div class="mt-1 h-1 rounded bg-white/15 overflow-hidden"><div class="h-full bg-accent transition-all ${steps ? '' : 'animate-pulse'}" style="width:${percent}%"></div></div>
         </div>
         <button onclick="requestLessonPipelineStop()" ${run.stopped ? 'disabled' : ''} class="shrink-0 px-3 py-1.5 text-xs font-bold text-white bg-white/10 rounded-lg hover:bg-white/20 disabled:opacity-50">${run.stopped ? '멈추는 중' : '중지'}</button>`;
 }
@@ -140,11 +149,32 @@ window.requestLessonPipelineStop = function () {
     renderPipelineBar(_pipeline);
 };
 
+// 응답 하나를 오래 기다려도 멈춘 것처럼 보이지 않게 걸린 시간만 고친다. 막대 전체를 다시 그리면 중지 버튼 클릭을 놓친다
+function startPipelineTicker(run) {
+    if (typeof setInterval !== 'function') return null;
+    return setInterval(() => {
+        const elapsed = document.querySelector('#lesson-pipeline-bar [data-pipeline-elapsed]');
+        if (elapsed) elapsed.textContent = formatElapsed(Date.now() - run.startedAt);
+    }, PIPELINE_TICK_MS);
+}
+
 /* ---------- 실행 ---------- */
-window.beginLessonPipeline = function (moduleId) {
-    _pipeline = { moduleId, subjectId: currentSubjectId, stopped: false, moved: false, current: LESSON_TABS[0].id, label: LESSON_TABS[0].label, status: '', done: 0, total: 0, failed: [], partial: [], skipped: [] };
-    _suppressTabAlert = true;
+// kind: 'all'(빈 항목을 채우는 전체 생성) | 'job'(사용자가 고른 작업 하나)
+// alerts: 작업 안의 탭 생성이 미리보기와 완료 알림을 띄울지. 전체 생성은 끝에 한 번만 알린다
+window.beginLessonPipeline = function (moduleId, { kind = 'all', label = LESSON_TABS[0].label, current = LESSON_TABS[0].id, alerts = false } = {}) {
+    _pipeline = { moduleId, subjectId: currentSubjectId, kind, stopped: false, moved: false, current, label, status: '', done: 0, total: 0, failed: [], partial: [], skipped: [], startedAt: Date.now(), ticker: null };
+    _suppressTabAlert = !alerts;
     _tabGenStop = false;
+    refreshPipelineView(_pipeline);
+    _pipeline.ticker = startPipelineTicker(_pipeline);
+};
+
+window.lessonPipelineKind = () => _pipeline?.kind || null;
+
+// 작업이 단계를 넘어갈 때 막대와 탐색줄 표시를 고친다
+window.updateLessonJob = function (step) {
+    if (!_pipeline) return;
+    Object.assign(_pipeline, { status: '' }, step);
     refreshPipelineView(_pipeline);
 };
 
@@ -172,6 +202,7 @@ window.finishLessonPipeline = function ({ quiet = false } = {}) {
     const run = _pipeline;
     if (!run) return;
     _pipeline = null;
+    if (run.ticker) clearInterval(run.ticker);
     _suppressTabAlert = false;
     document.getElementById('lesson-pipeline-bar')?.remove();
     const mod = getEditingModule(run.moduleId);
@@ -211,6 +242,48 @@ window.runLessonPipeline = async function (moduleId, { lockedByTab = {}, continu
     } finally {
         window.finishLessonPipeline({ quiet });
     }
+};
+
+/* ---------- 작업 하나 ---------- */
+// 고른 작업 하나를 화면을 막지 않고 돌린다. 전체 생성과 같은 진행 막대·중지를 쓰고, 한 번에 하나만 돈다
+// task(run)의 결과를 돌려준다. 다른 생성이 돌고 있으면 { busy: true }
+window.runLessonJob = async function (moduleId, { label, current = null, total = 1, alerts = false }, task) {
+    if (_pipeline) {
+        window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
+        return { ok: false, busy: true };
+    }
+    window.beginLessonPipeline(moduleId, { kind: 'job', label, current, alerts });
+    _pipeline.total = total;
+    refreshPipelineView(_pipeline);
+    try {
+        return await task(_pipeline);
+    } finally {
+        window.finishLessonPipeline({ quiet: true });
+    }
+};
+
+// 탭 하나를 만들거나 다시 만든다. 다시 만들면 끝날 때 바뀐 섹션을 골라 반영한다
+window.runTabJob = function (moduleId, tabId) {
+    const tab = LESSON_TABS.find(item => item.id === tabId);
+    return window.runLessonJob(moduleId, { label: `${tab?.label || '탭'} 만들기`, current: tabId, alerts: true },
+        () => generateTabContent(moduleId, tabId, { background: true, onStatus: window.setPipelineStatus }));
+};
+
+let _titleBeforeNotice = null;
+
+// 작업이 끝나면 알린다. 다른 창을 보고 있었으면 브라우저 탭 제목에도 표시해 돌아왔을 때 알 수 있게 한다
+window.notifyLessonJobDone = function (message, kind = 'success') {
+    window.showToast?.(message, kind);
+    if (!document.hidden || _titleBeforeNotice !== null) return;
+    _titleBeforeNotice = document.title;
+    document.title = `✓ 작업 완료 · ${_titleBeforeNotice}`;
+    const restore = () => {
+        if (document.hidden) return;
+        document.title = _titleBeforeNotice;
+        _titleBeforeNotice = null;
+        document.removeEventListener('visibilitychange', restore);
+    };
+    document.addEventListener('visibilitychange', restore);
 };
 
 // 탐색줄의 전체 생성 버튼. 빈 항목이 없으면 다시 만들지 묻는다

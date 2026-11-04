@@ -516,6 +516,13 @@ const IMAGE_MODEL_OPTIONS = [
     { value: `${HIGGSFIELD_MODEL_PREFIX}grok`, label: 'Higgsfield · Grok Image 2.0' },
     { value: SVG_IMAGE_MODEL, label: 'SVG 삽화 (텍스트 모델 · 과정 공용 화풍)' },
 ];
+// 교안 탭을 만들 때 넣을 이미지 양. 이미지 한 장에 검색·판정·생성 호출이 이어져 탭 하나에 수십 분이 걸릴 수 있다
+const LESSON_IMAGE_AMOUNT_OPTIONS = [
+    { value: 'all', label: '모두 (태그마다 한 장)' },
+    { value: 'section', label: '핵심만 (## 섹션마다 한 장)' },
+    { value: 'none', label: '넣지 않음 (나중에 일괄 이미지 찾기)' },
+];
+let LESSON_IMAGE_AMOUNT = 'all';
 const REASONING_EFFORT_OPTIONS = [
     { value: 'max', label: '최대 (최고 품질 · 가장 느림)' },
     { value: 'xhigh', label: '매우 높음' },
@@ -529,6 +536,11 @@ function updateTextModel(val) {
 }
 function updateImageModel(val) {
     if (val) { IMAGE_MODEL = val; try { localStorage.setItem('gemini_image_model', val); } catch (e) { } }
+}
+function updateLessonImageAmount(val) {
+    if (!LESSON_IMAGE_AMOUNT_OPTIONS.some(o => o.value === val)) return;
+    LESSON_IMAGE_AMOUNT = val;
+    try { localStorage.setItem('lesson_image_amount', val); } catch (e) { }
 }
 function updateAutoTaskEffort(enabled) {
     AUTO_TASK_EFFORT = !!enabled;
@@ -549,6 +561,8 @@ try {
     if (savedText && TEXT_MODEL_OPTIONS.some(o => o.value === savedText)) TEXT_MODEL = savedText;
     if (savedImage && IMAGE_MODEL_OPTIONS.some(o => o.value === savedImage)) IMAGE_MODEL = savedImage;
     if (savedEffort && REASONING_EFFORT_OPTIONS.some(o => o.value === savedEffort)) REASONING_EFFORT = savedEffort;
+    const savedImageAmount = localStorage.getItem('lesson_image_amount');
+    if (savedImageAmount && LESSON_IMAGE_AMOUNT_OPTIONS.some(o => o.value === savedImageAmount)) LESSON_IMAGE_AMOUNT = savedImageAmount;
     AUTO_TASK_EFFORT = localStorage.getItem('auto_task_effort') === '1';
 
     // [Phase F10] 구글 검색 상태 복원

@@ -112,6 +112,20 @@ window.refreshLessonNav = function (mod) {
 
 const isViewingTab = (mod, tabId) => String(currentEditingModuleId) === String(mod.id) && !_lessonPanel && currentLessonTab === tabId;
 
+// 화면을 막지 않고 만드는 동안 같은 탭을 수정 모드로 고치고 있었으면 먼저 저장한다. 그래야 미리보기의 '이전 글'과 히스토리에 들어간다
+function saveOpenEditsFor(mod, tabId) {
+    const raw = document.getElementById('raw-view');
+    if (!raw || raw.classList.contains('hidden')) return;
+    if (String(raw.dataset.moduleId) !== String(mod.id) || (raw.dataset.tabId || currentLessonTab) !== tabId) return;
+    window.saveRawContent?.();
+}
+
+// 이미지를 다 만든 시점의 탭 글. 기다리는 동안 고친 내용 위에 이미지를 넣는다
+function latestTabMarkdown(mod, tabId, fallback) {
+    saveOpenEditsFor(mod, tabId);
+    return (mod.tabContents ? mod.tabContents[tabId] : mod.content) ?? fallback;
+}
+
 function getActiveTabContent(mod) {
     if (!mod) return '';
     if (mod.tabContents && mod.tabContents[currentLessonTab]) {
@@ -204,8 +218,8 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
     const mod = getEditingModule(moduleId);
     if (!mod) return { ok: false, error: '차시를 찾지 못했습니다.' };
     if (!opts.background && window.isLessonPipelineRunning?.()) {
-        window.showAlert('전체 생성이 끝난 뒤 다시 시도해주세요.');
-        return { ok: false, error: '전체 생성 중입니다.' };
+        window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
+        return { ok: false, error: '다른 생성이 진행 중입니다.' };
     }
     if (!opts.background) showLessonView();
 
@@ -347,6 +361,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         }
         if (tabId === 'basicPrac' && typeof withQuestFileName === 'function') resultText = withQuestFileName(resultText, mod, subj);
         // 기존 탭을 다시 만들면 바뀐 섹션을 보고 고른다. 묶어서 생성할 때는 묻지 않고 기존 글을 히스토리에 남긴다
+        saveOpenEditsFor(mod, tabId);
         const previous = mod.tabContents[tabId];
         const previewed = !!previous && !_suppressTabAlert && !opts.quiet;
         if (previewed) {
@@ -357,7 +372,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
                 note: truncated ? '끝까지 받지 못한 글입니다. 마지막 섹션은 기본으로 고르지 않았습니다.' : '새 글에 없는 이전 섹션은 기본으로 지웁니다. 이전 글은 작업 히스토리에 남습니다.'
             });
             if (resultText === null || resultText.trim() === previous.trim()) return { ok: true, cancelled: true };
-            document.getElementById('editor-loading').style.display = 'flex';
+            if (!opts.background) document.getElementById('editor-loading').style.display = 'flex'; // 막지 않는 작업은 진행 막대가 이어서 보인다
         }
         // 끝까지 받지 못한 글, 미리보기로 고른 글, 전체 탭 재생성이 기존 탭을 덮으므로 기존 내용을 히스토리에 남긴다
         const archivePartial = !!previous && (stoppedEarly || partialDueToError || previewed || _suppressTabAlert);
@@ -377,7 +392,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         if (typeof processImageTags === 'function' && !_tabGenStop) {
             setLoadingText(`🖼️ ${tabMeta.label} 이미지와 서식을 정리하고 있습니다...`);
             try {
-                const processed = restoreLockedSections(await processImageTags(mod, resultText), lockedBlocks);
+                const processed = restoreLockedSections(await processImageTags(mod, resultText, { onStatus: setLoadingText, latest: () => latestTabMarkdown(mod, tabId, resultText) }), lockedBlocks);
                 if (processed !== resultText) {
                     mod.tabContents[tabId] = processed;
                     mod.content = LESSON_TABS.map(t => (mod.tabContents[t.id] || '')).filter(Boolean).join('\n\n---\n\n');
@@ -395,9 +410,10 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             const doneText = stoppedEarly
                 ? `${tabMeta.label} 생성을 중단했습니다. 받은 ${fullText.length.toLocaleString()}자까지 저장했습니다.${archivePartial ? ' 이전 내용은 히스토리에 보관했습니다.' : ''}`
                 : `${tabMeta.label} 탭이 생성되었습니다.`;
-            window.showAlert(partialDueToError
-                ? `${tabMeta.label} 탭이 생성되었지만, API 호출 한도로 일부 단락이 누락되었을 수 있습니다. 잠시 후(1~2분) 다시 생성하면 전체 분량이 완성됩니다.`
-                : doneText);
+            // 화면을 막지 않고 만든 작업은 끝을 알림으로 알린다. 일부가 빠진 결과는 다시 만들어야 하므로 창으로 알린다
+            if (partialDueToError) window.showAlert(`${tabMeta.label} 탭이 생성되었지만, API 호출 한도로 일부 단락이 누락되었을 수 있습니다. 잠시 후(1~2분) 다시 생성하면 전체 분량이 완성됩니다.`);
+            else if (opts.background) window.notifyLessonJobDone?.(doneText, stoppedEarly ? 'warning' : 'success');
+            else window.showAlert(doneText);
         }
         return { ok: true, partial: partialDueToError || stoppedEarly };
     } catch (err) {
@@ -421,59 +437,24 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
     }
 }
 
+// 교안 탭을 모두 다시 만든다. 화면을 막지 않고 진행 막대에서 탭 순서·걸린 시간·중지를 보여 주며, 이전 글은 히스토리에 남긴다
 async function generateAllTabs(moduleId) {
-    showLessonView();
-    _suppressTabAlert = true;
-    _tabGenStop = false;
-    const total = LESSON_TABS.length;
     const failed = [];
-    // 프로그레스 바 생성
-    let progressBar = document.getElementById('gen-progress-bar');
-    if (!progressBar) {
-        progressBar = document.createElement('div');
-        progressBar.id = 'gen-progress-bar';
-        progressBar.style.cssText = 'position:fixed;top:0;left:0;width:100%;z-index:9999;background:rgba(0,0,0,0.85);color:#fff;padding:12px 24px;font-size:14px;font-weight:600;display:flex;align-items:center;gap:16px;backdrop-filter:blur(8px);';
-        document.body.appendChild(progressBar);
-    }
-    try {
-        for (let i = 0; i < total; i++) {
+    const outcome = await window.runLessonJob(moduleId, { label: '교안 탭 모두 다시 만들기', current: LESSON_TABS[0].id, total: LESSON_TABS.length }, async () => {
+        for (let i = 0; i < LESSON_TABS.length; i++) {
             const tab = LESSON_TABS[i];
-            const pct = Math.round(((i) / total) * 100);
-            progressBar.innerHTML = `
-                <div style="flex:1">
-                    <div style="margin-bottom:6px;">📝 전체 교안 생성 중... <span style="color:#22d3ee;">${tab.label}</span> (${i + 1}/${total})</div>
-                    <div style="width:100%;height:6px;background:rgba(255,255,255,0.15);border-radius:4px;overflow:hidden;">
-                        <div style="width:${pct}%;height:100%;background:linear-gradient(90deg,#22d3ee,#a78bfa);border-radius:4px;transition:width 0.5s;"></div>
-                    </div>
-                </div>
-                <span style="font-size:20px;min-width:50px;text-align:right;">${pct}%</span>`;
-            const result = await generateTabContent(moduleId, tab.id);
+            window.updateLessonJob({ current: tab.id, label: tab.label, done: i });
+            const result = await generateTabContent(moduleId, tab.id, { background: true, onStatus: window.setPipelineStatus });
             if (!result.ok) failed.push(tab.label);
             if (_tabGenStop) break;
             await new Promise(r => setTimeout(r, 2000));
         }
-        if (_tabGenStop) {
-            progressBar.remove();
-            window.showAlert('전체 탭 생성을 중단했습니다. 받은 내용까지 저장했습니다.');
-            return;
-        }
-        // 완료 표시
-        progressBar.innerHTML = `
-            <div style="flex:1;text-align:center;">
-                <span style="font-size:18px;">${failed.length ? `⚠️ ${escapeHtml(failed.join(', '))} 탭을 만들지 못했습니다` : '✅ 전체 5탭 교안 생성 완료!'}</span>
-                <div style="width:100%;height:6px;background:rgba(255,255,255,0.15);border-radius:4px;overflow:hidden;margin-top:6px;">
-                    <div style="width:100%;height:100%;background:linear-gradient(90deg,#22c55e,#10b981);border-radius:4px;"></div>
-                </div>
-            </div>
-            <span style="font-size:20px;">100%</span>`;
-        setTimeout(() => progressBar?.remove(), 3000);
-    } catch (e) {
-        if (progressBar) progressBar.innerHTML = `<span style="color:#f87171;">⚠️ 생성 중 오류 발생: ${(typeof escapeHtml === 'function' ? escapeHtml(String(e.message || e)) : String(e.message || e))}</span>`;
-        setTimeout(() => progressBar?.remove(), 5000);
-        throw e;
-    } finally {
-        _suppressTabAlert = false;
-    }
+        return { ok: true };
+    });
+    if (outcome?.busy) return;
+    if (_tabGenStop) return window.showAlert('전체 탭 생성을 중단했습니다. 받은 내용까지 저장했습니다.');
+    if (failed.length) return window.showAlert(`${failed.join(', ')} 탭을 만들지 못했습니다. 그 탭에서 다시 생성해 주세요.`);
+    window.notifyLessonJobDone('교안 탭을 모두 다시 만들었습니다. 이전 글은 작업 히스토리에 남았습니다.');
 }
 
 // 일괄 생성용: 빈 탭만 순서대로 채운다. 있는 탭은 건드리지 않고 첫 실패에서 멈춰 결과를 돌려준다.
@@ -495,7 +476,7 @@ async function fillMissingTabs(moduleId, { isStopped = () => false, onTab = () =
     return { ok: true, partial };
 }
 
-// 보강 재생성: 기존 탭 내용 + 사용자 보강 명령으로 재생성
+// 보강 재생성: 기존 탭 내용 + 사용자 보강 명령으로 재생성. 화면을 막지 않고 진행 막대에서 기다린다
 async function reinforceCurrentTab(moduleId) {
     const mod = getEditingModule(moduleId);
     if (!mod) return;
@@ -509,44 +490,47 @@ async function reinforceCurrentTab(moduleId) {
     if (!reinforceCmd) return window.showAlert('보강 명령을 입력해주세요.');
 
     const tabMeta = LESSON_TABS.find(t => t.id === tabId);
+    await window.runLessonJob(moduleId, { label: `${tabMeta.label} 보강 재생성`, current: tabId, alerts: true }, async () => {
+        try {
+            window.setPipelineStatus('보강한 글을 받고 있습니다...');
+            const systemInstruction = CONTEXT_CORE.personas.instructor +
+                '\n[규칙]\n- 기존 교안 내용을 유지하면서, 사용자의 보강 명령에 따라 내용을 개선하세요.\n- 전체 구조와 서식은 보존하되, 요청된 부분만 보강·수정하세요.\n- ' +
+                CONTEXT_CORE.rules.content_design + '\n- ' +
+                CONTEXT_CORE.rules.korean_period + '\n- ' +
+                (CONTEXT_CORE.rules.emoji_rule || '');
 
-    try {
-        document.getElementById('editor-loading').style.display = 'flex';
+            const userPrompt = `[현재 작업: ${tabMeta.label} 보강 재생성]\n모듈명: ${mod.title}\n\n[사용자 보강 명령]\n${reinforceCmd}\n\n[기존 교안 내용 — 이 내용을 기반으로 보강하세요]\n${existingContent}`;
 
-        const systemInstruction = CONTEXT_CORE.personas.instructor +
-            '\n[규칙]\n- 기존 교안 내용을 유지하면서, 사용자의 보강 명령에 따라 내용을 개선하세요.\n- 전체 구조와 서식은 보존하되, 요청된 부분만 보강·수정하세요.\n- ' +
-            CONTEXT_CORE.rules.content_design + '\n- ' +
-            CONTEXT_CORE.rules.korean_period + '\n- ' +
-            (CONTEXT_CORE.rules.emoji_rule || '');
+            const payload = {
+                contents: [{ parts: [{ text: userPrompt + lockedSectionPrompt(lockedBlocks) + lessonAttachmentPrompt(mod.id) }] }],
+                systemInstruction: { parts: [{ text: systemInstruction }] },
+                generationConfig: { maxOutputTokens: 65536 }
+            };
 
-        const userPrompt = `[현재 작업: ${tabMeta.label} 보강 재생성]\n모듈명: ${mod.title}\n\n[사용자 보강 명령]\n${reinforceCmd}\n\n[기존 교안 내용 — 이 내용을 기반으로 보강하세요]\n${existingContent}`;
+            const data = await callGemini(TEXT_MODEL, payload);
+            if (_tabGenStop) return; // 중지하면 받은 글을 반영하지 않는다
 
-        const payload = {
-            contents: [{ parts: [{ text: userPrompt + lockedSectionPrompt(lockedBlocks) + lessonAttachmentPrompt(mod.id) }] }],
-            systemInstruction: { parts: [{ text: systemInstruction }] },
-            generationConfig: { maxOutputTokens: 65536 }
-        };
+            const resultText = restoreLockedSections(extractText(data), lockedBlocks);
+            const truncated = data?.candidates?.[0]?.finishReason === 'MAX_TOKENS';
+            // 기다리는 동안 이 탭을 고쳤으면 고친 글을 지키고, 다시 실행하게 한다
+            saveOpenEditsFor(mod, tabId);
+            if (storedTabMarkdown(mod, tabId) !== existingContent) return window.showAlert('보강하는 동안 탭 내용이 바뀌어 반영하지 않았습니다. 다시 실행해 주세요.');
+            window.setPipelineStatus('바뀐 섹션을 골라 반영해 주세요.');
+            const approved = await previewAiChange(existingContent, resultText, {
+                title: `${tabMeta.label} 보강 미리보기`,
+                tabId,
+                truncated,
+                note: truncated ? '응답이 출력 한도에서 잘렸습니다. 마지막 섹션은 기본으로 고르지 않았습니다.' : ''
+            });
+            if (approved === null) return;
 
-        const data = await callGemini(TEXT_MODEL, payload);
-
-        const resultText = restoreLockedSections(extractText(data), lockedBlocks);
-        const truncated = data?.candidates?.[0]?.finishReason === 'MAX_TOKENS';
-        document.getElementById('editor-loading').style.display = 'none';
-        const approved = await previewAiChange(existingContent, resultText, {
-            title: `${tabMeta.label} 보강 미리보기`,
-            tabId,
-            truncated,
-            note: truncated ? '응답이 출력 한도에서 잘렸습니다. 마지막 섹션은 기본으로 고르지 않았습니다.' : ''
-        });
-        if (approved === null) return;
-
-        if (!(await commitTabChange(mod, tabId, existingContent, approved, `보강 재생성 반영: ${reinforceCmd}`))) return;
-        reinforceInput.value = '';
-        window.showAlert(`${tabMeta.label} 보강 재생성이 완료되었습니다.`);
-    } catch (err) {
-        console.error('[Reinforce] 실패:', err);
-        window.showAlert('보강 재생성 중 오류: ' + err.message);
-    } finally {
-        document.getElementById('editor-loading').style.display = 'none';
-    }
+            if (!(await commitTabChange(mod, tabId, existingContent, approved, `보강 재생성 반영: ${reinforceCmd}`))) return;
+            if (reinforceInput) reinforceInput.value = '';
+            window.notifyLessonJobDone(`${tabMeta.label} 보강 재생성을 반영했습니다.`);
+        } catch (err) {
+            console.error('[Reinforce] 실패:', err);
+            window.showAlert('보강 재생성 중 오류: ' + err.message);
+        }
+    });
 }
+

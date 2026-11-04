@@ -583,6 +583,8 @@ const LESSON_MD = [
         assert.ok(/case 'tab_content_continue':[\s\S]{0,600}buildTabRules\(additionalContext\.tabId/.test(ui), '탭 이어쓰기도 탭 규칙을 받는다');
         assert.ok(/case 'tab_content_continue':[\s\S]{0,2000}학습 후 체크리스트"는 모든 본문 섹션을 다 쓴 뒤/.test(ui), '체크리스트는 맨 끝에 한 번만');
         assert.ok(/case 'tab_content_continue':[\s\S]{0,2600}지금까지 쓴 ## 제목/.test(ui), '쓴 제목 목록을 준다');
+        const html = fs.readFileSync(path.join(root, '..', 'index.html'), 'utf8');
+        assert.ok(html.includes('id="settings-image-amount"') && html.includes("populateModelSelect('settings-image-amount'"), '설정에서 교안 이미지 양을 고른다');
         assert.ok(ui.includes('학습 목표 2 · 밴드 L2 · 서술형') && ui.includes('학습 목표 1 · 밴드 L1 · 객관식'), '예시가 밴드별 유형을 따른다');
     });
 
