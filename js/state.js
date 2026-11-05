@@ -1054,7 +1054,7 @@ window.exportAllModules = async function () {
             // 전체 설정 및 현황 컨텍스트 직렬화 (API 키와 삭제한 차시는 공유 파일에 남지 않도록 제외)
             context: { ...globalState, apiKey: undefined, lessonTrash: undefined }
         };
-        rootFolder.file('save_data.yaml', JSON.stringify(metaObj, null, 2)); // 편의상 JSON 직렬화를 yaml 확장자로 보존
+        writeBackupData(rootFolder, metaObj); // 편의상 JSON 직렬화를 yaml 확장자로 보존. 그림 담는 방식은 메뉴에서 고른다(data-safety.js)
 
         // 3. 리소스(첨부파일) 서브폴더 & 교과 폴더 생성
         const attachFolder = rootFolder.folder("첨부파일");
@@ -1311,6 +1311,7 @@ window.importProjectZip = async function (event) {
         let metaObj = null;
         let imageMap = new Map(); // fileName -> base64
         let mdFiles = [];
+        const backupImages = {}; // 그림을 따로 담은 백업의 '그림/' 파일들
 
         // 1순회: 메타데이터 추출 및 이미지(바이너리) 버퍼링
         const entries = Object.keys(zip.files);
@@ -1321,6 +1322,9 @@ window.importProjectZip = async function (event) {
             if (relativePath.includes('save_data.yaml')) {
                 const yamlText = await zipEntry.async("string");
                 metaObj = safeJSONParse(yamlText); // yaml이라 썼지만 이전 단계에서 편의상 JSON 직렬화함
+            } else if (/(^|\/)그림\/[^/]+$/.test(relativePath) && isBackupImageName(relativePath.split('/').pop())) {
+                const image = backupImageFromFile(relativePath.split('/').pop(), await zipEntry.async('base64'));
+                backupImages[image.key] = image.dataUrl;
             } else if (relativePath.includes('첨부파일/')) {
                 const binaryData = await zipEntry.async("base64");
                 const ext = relativePath.split('.').pop().toLowerCase();
@@ -1339,6 +1343,7 @@ window.importProjectZip = async function (event) {
         if (!metaObj) {
             throw new Error("되살릴 수 있는 백업 파일이 아닙니다(save_data.yaml이 없습니다). 내보내기·백업에서 받은 백업 ZIP을 골라 주세요.");
         }
+        if (metaObj.imageMode === 'separate') metaObj = attachBackupImages(metaObj, backupImages);
 
         if (metaObj.scope === 'subjects') {
             await importSubjectsBackup(metaObj);
@@ -1687,7 +1692,7 @@ window.loadFromProjectFolder = async function () {
 
         const file = await saveDataHandle.getFile();
         const text = await file.text();
-        const parsed = simpleYamlParse(text);
+        const parsed = await readFolderImages(dirHandle, simpleYamlParse(text));
 
         if (!parsed.state) {
             return window.showAlert('save_data.yaml에 유효한 상태 데이터가 없습니다.');
@@ -1773,12 +1778,14 @@ async function syncToLinkedFolder() {
             }
         }
 
-        // 1. save_data.yaml (전체 상태 + 히스토리)
-        const saveData = {
+        // 1. save_data.yaml (전체 상태 + 히스토리). 그림 담는 방식은 내보내기·백업 메뉴에서 고른다(data-safety.js)
+        const fullData = {
             state: globalState,
             history: contentHistory,
             lastSync: new Date().toISOString()
         };
+        const imageMode = backupImageMode();
+        const saveData = imageMode === 'inline' ? fullData : await writeFolderImages(projectFolderHandle, fullData, imageMode);
         await writeTextFile(projectFolderHandle, 'save_data.yaml', simpleYamlStringify(saveData)); // linkedDirHandle -> projectFolderHandle
 
         // 2. 교과별 md 파일 및 이미지 동기화
@@ -1865,6 +1872,59 @@ async function syncToLinkedFolder() {
         markFolderSyncFailed(e); // 저장만 실패했으면 연결은 두고 화면 위에 알린다
         return false;
     }
+}
+
+/* ---------- PC 폴더의 '그림' 폴더 (그림을 따로 담을 때) ---------- */
+// 그림을 떼어 '그림/'에 쓰고 그림 대신 이름이 든 저장 내용을 돌려준다.
+// 같은 내용이면 같은 이름이므로, 이름과 크기가 같은 파일이 이미 있으면 다시 쓰지 않는다(크기가 다르면 쓰다 끊긴 파일로 보고 다시 쓴다)
+async function writeFolderImages(dirHandle, data, mode) {
+    const { value, files } = detachBackupImages(data, mode);
+    if (mode === 'separate') {
+        const imageDir = await dirHandle.getDirectoryHandle(BACKUP_IMAGE_DIR, { create: true });
+        for (const [key, dataUrl] of Object.entries(files)) {
+            const file = backupImageFile(key, dataUrl);
+            if (!file) continue;
+            if (await folderFileSize(imageDir, file.name) === base64ByteLength(file.base64)) continue;
+            await writeBinaryFile(imageDir, file.name, base64ToUint8Array(dataUrl));
+        }
+    }
+    return { ...value, imageMode: mode };
+}
+
+// 폴더 안 파일의 바이트 수. 없으면 -1
+async function folderFileSize(dirHandle, name) {
+    try {
+        return (await (await dirHandle.getFileHandle(name)).getFile()).size;
+    } catch (err) {
+        if (err.name === 'NotFoundError') return -1;
+        throw err;
+    }
+}
+
+// 그림을 따로 담은 저장 내용이면 '그림/' 파일을 읽어 제자리에 돌려놓는다
+async function readFolderImages(dirHandle, parsed) {
+    if (parsed?.imageMode !== 'separate') return parsed;
+    const files = {};
+    try {
+        const imageDir = await dirHandle.getDirectoryHandle(BACKUP_IMAGE_DIR);
+        for await (const [name, handle] of imageDir.entries()) {
+            if (handle.kind !== 'file' || !isBackupImageName(name)) continue;
+            const buffer = await (await handle.getFile()).arrayBuffer();
+            const image = backupImageFromFile(name, uint8ToBase64(new Uint8Array(buffer)));
+            files[image.key] = image.dataUrl;
+        }
+    } catch (err) {
+        console.warn('[폴더 열기] 그림 폴더를 읽지 못했습니다:', err.message);
+        window.showToast?.('폴더의 그림 일부를 읽지 못했습니다. 글은 되살렸고, 빠진 그림은 일괄 이미지 찾기로 채울 수 있습니다.', 'warning');
+    }
+    return attachBackupImages(parsed, files);
+}
+
+function uint8ToBase64(bytes) {
+    let binary = '';
+    const CHUNK = 0x8000;
+    for (let i = 0; i < bytes.length; i += CHUNK) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+    return btoa(binary);
 }
 
 /* ---------- PC 폴더 상태 표시와 멈춤 알림 ---------- */

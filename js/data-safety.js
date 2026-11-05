@@ -171,10 +171,131 @@ function subjectsBackupMeta(subjectIds) {
 }
 
 // 지금 작업 전체를 되살릴 수 있는 백업 파일을 내려받는다(불러오기·폴더 연결 직전)
+/* ---------- 백업에 그림 담는 방식 (내보내기·백업 메뉴에서 고른다) ---------- */
+// inline: save_data.yaml 안에 그대로(예전과 같음, 파일 하나로 끝)
+// separate: '그림' 폴더의 파일로 떼고 같은 그림은 한 번만(작업 기록·휴지통의 사본까지 한 장으로). 가볍고 큰 과정도 된다
+// none: 그림을 빼고 글만(가장 가벼움). 되살리면 그림 자리가 비고 일괄 이미지 찾기로 다시 채운다
+const BACKUP_IMAGE_KEY = 'teacher:backup-images';
+const BACKUP_IMAGE_MODES = ['inline', 'separate', 'none'];
+const BACKUP_IMAGE_REF = 'teacher-image:';
+const BACKUP_IMAGE_DIR = '그림';
+const BACKUP_DATA_URL = /^data:(image\/[\w.+-]+);base64,([A-Za-z0-9+/=]+)$/;
+const BACKUP_IMAGE_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/svg+xml': 'svg' };
+const BACKUP_IMAGE_MIN = 64; // 이보다 짧은 글은 그림으로 보지 않는다
+
+function backupImageMode() {
+    try {
+        const mode = localStorage.getItem(BACKUP_IMAGE_KEY);
+        return BACKUP_IMAGE_MODES.includes(mode) ? mode : 'inline';
+    } catch (err) {
+        return 'inline';
+    }
+}
+
+function setBackupImageMode(mode) {
+    if (!BACKUP_IMAGE_MODES.includes(mode)) return;
+    try {
+        localStorage.setItem(BACKUP_IMAGE_KEY, mode);
+    } catch (err) {
+        console.warn('[백업] 그림 담는 방식을 저장하지 못했습니다:', err.message);
+    }
+    renderBackupImageMode();
+}
+
+function renderBackupImageMode() {
+    const mode = backupImageMode();
+    document.querySelectorAll?.('[data-backup-images]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.backupImages === mode)));
+}
+
+// 같은 그림은 같은 이름이 되게 내용으로 이름을 짓는다(32비트 해시 둘 + 길이)
+function backupImageKey(text) {
+    let a = 0x811c9dc5;
+    let b = 0x01234567;
+    for (let i = 0; i < text.length; i++) {
+        const code = text.charCodeAt(i);
+        a = Math.imul(a ^ code, 0x01000193);
+        b = Math.imul(b ^ code, 0x0100019d);
+    }
+    const hex = n => (n >>> 0).toString(16).padStart(8, '0');
+    return `${hex(a)}${hex(b)}${text.length.toString(16)}`;
+}
+
+const isBackupImage = text => typeof text === 'string' && text.length >= BACKUP_IMAGE_MIN && BACKUP_DATA_URL.test(text);
+
+// '그림/' 안에서 백업이 쓴 그림 파일만 고른다(backupImageKey 이름 + 그림 확장자). '그림'이라는 교과 폴더의 MD 등은 건너뛴다
+const BACKUP_IMAGE_NAME = /^[0-9a-f]{17,24}\.(png|jpg|gif|webp|svg)$/;
+const isBackupImageName = name => BACKUP_IMAGE_NAME.test(String(name));
+
+// base64 글자 수로 그 파일의 바이트 수를 센다(디코딩하지 않고)
+function base64ByteLength(base64) {
+    const text = String(base64);
+    const padding = text.endsWith('==') ? 2 : text.endsWith('=') ? 1 : 0;
+    return Math.floor(text.length * 3 / 4) - padding;
+}
+
+// 백업 내용에서 그림(data:image 글자 값)을 떼어 낸다. 글 속에 섞인 그림은 건드리지 않는다. 'none'이면 그 항목을 뺀다
+function detachBackupImages(value, mode) {
+    const files = {};
+    const DROP = Symbol('drop');
+    const walk = node => {
+        if (isBackupImage(node)) {
+            if (mode === 'none') return DROP;
+            const key = backupImageKey(node);
+            files[key] = node;
+            return BACKUP_IMAGE_REF + key;
+        }
+        if (Array.isArray(node)) return node.map(walk).filter(item => item !== DROP);
+        if (node && typeof node === 'object') {
+            return Object.fromEntries(Object.entries(node).map(([key, item]) => [key, walk(item)]).filter(([, item]) => item !== DROP));
+        }
+        return node;
+    };
+    return { value: walk(value), files };
+}
+
+// 떼어 둔 그림을 제자리에 돌려놓는다. 없는 그림은 빈 글로 둔다
+function attachBackupImages(value, files) {
+    const walk = node => {
+        if (typeof node === 'string') return node.startsWith(BACKUP_IMAGE_REF) ? (files[node.slice(BACKUP_IMAGE_REF.length)] || '') : node;
+        if (Array.isArray(node)) return node.map(walk);
+        if (node && typeof node === 'object') return Object.fromEntries(Object.entries(node).map(([key, item]) => [key, walk(item)]));
+        return node;
+    };
+    return walk(value);
+}
+
+// 그림 파일 이름·내용(base64)과 그 반대
+function backupImageFile(key, dataUrl) {
+    const match = String(dataUrl).match(BACKUP_DATA_URL);
+    return match ? { name: `${key}.${BACKUP_IMAGE_EXT[match[1]] || 'png'}`, base64: match[2] } : null;
+}
+
+function backupImageFromFile(name, base64) {
+    const ext = String(name).split('.').pop().toLowerCase();
+    const mime = Object.keys(BACKUP_IMAGE_EXT).find(type => BACKUP_IMAGE_EXT[type] === ext) || 'image/png';
+    return { key: String(name).replace(/\.[^.]+$/, ''), dataUrl: `data:${mime};base64,${base64}` };
+}
+
+// 백업 ZIP(또는 그 안의 폴더)에 save_data.yaml을 쓴다. 고른 방식에 따라 그림은 안에 두거나, '그림/' 파일로 떼거나, 뺀다
+function writeBackupData(folder, meta, mode = backupImageMode()) {
+    if (mode === 'inline') return folder.file('save_data.yaml', JSON.stringify(meta, null, 2));
+    const { value, files } = detachBackupImages(meta, mode);
+    folder.file('save_data.yaml', JSON.stringify({ ...value, imageMode: mode }, null, 2));
+    if (mode !== 'separate') return null;
+    const dir = folder.folder(BACKUP_IMAGE_DIR);
+    Object.entries(files).forEach(([key, dataUrl]) => {
+        const file = backupImageFile(key, dataUrl);
+        if (file) dir.file(file.name, file.base64, { base64: true });
+    });
+    return null;
+}
+
 async function downloadSafetyBackup(label) {
     const zip = new JSZip();
     const extra = { history: contentHistory, trash: { lessonTrash: globalState.lessonTrash || [], subjectTrash: globalState.subjectTrash || [] } };
-    zip.file('save_data.yaml', JSON.stringify(backupMeta('full', currentSnapshot(), new Date(), extra), null, 2));
+    // 되살릴 때 쓸 안전 백업이므로 '빼기'를 골랐어도 그림은 따로 담는다
+    const mode = backupImageMode() === 'none' ? 'separate' : backupImageMode();
+    writeBackupData(zip, backupMeta('full', currentSnapshot(), new Date(), extra), mode);
     const blob = await zip.generateAsync({ type: 'blob' });
     saveAs(blob, `교안백업_${backupStamp()}_${label}.zip`);
     recordBackupTime();
@@ -361,11 +482,13 @@ if (typeof window !== 'undefined') {
         downloadSafetyBackup, recordBackupTime, renderBackupIndicator, moveSubjectToTrash, restoreSubject,
         liveSubjectTrash, restoreHistoryItem, importSubjectsBackup, mergeBackupExtras, closeLessonEditor,
         isSafeStateId, stateText, safeReferenceUrls, normalizeLessonId, assignLessonIds, renumberLessons, capHistory,
-        cleanTrashLesson
+        cleanTrashLesson, backupImageMode, setBackupImageMode, renderBackupImageMode, backupImageKey, detachBackupImages,
+        attachBackupImages, backupImageFile, backupImageFromFile, writeBackupData, isBackupImageName, base64ByteLength
     });
     if (typeof document !== 'undefined' && document.addEventListener) {
         document.addEventListener('DOMContentLoaded', () => {
             renderBackupIndicator();
+            renderBackupImageMode();
             setInterval(renderBackupIndicator, 60000);
         });
     }

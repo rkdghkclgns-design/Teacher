@@ -99,10 +99,11 @@ const BACKFILL_BUTTONS = {
     close: '<button data-backfill-action="close" class="px-4 py-2 text-xs font-bold text-white bg-accent rounded-lg hover:bg-accentHover">닫기</button>'
 };
 
-function backfillCountHtml({ units, lessons }) {
-    return units.length + lessons.length
-        ? `<p class="text-xs text-textLight">교과 ${units.length}개, 차시 ${lessons.length}개를 보강합니다.</p>`
-        : '<p class="text-xs text-textMuted">보강할 항목이 없습니다.</p>';
+// 교과·차시마다 NCS 배정 1회, 삽화를 켜면 차시마다 삽화 호출이 늘어난다. 예고는 cost-estimate.js
+function backfillCountHtml({ units, lessons }, withArt = false) {
+    if (!(units.length + lessons.length)) return '<p class="text-xs text-textMuted">보강할 항목이 없습니다.</p>';
+    const estimate = typeof estimateBoxHtml === 'function' ? estimateBoxHtml({ ncs: units.length + lessons.length, art: withArt ? lessons.length : 0 }) : '';
+    return `<p class="text-xs text-textLight">교과 ${units.length}개, 차시 ${lessons.length}개를 보강합니다.</p>${estimate}`;
 }
 
 function backfillIntroHtml(work) {
@@ -132,7 +133,7 @@ function backfillProgressHtml(step, index, total) {
 function refreshBackfillCount() {
     const withArt = !!document.getElementById('backfill-art')?.checked;
     const work = backfillWork(globalState.subjects, withArt);
-    document.getElementById('backfill-count').innerHTML = backfillCountHtml(work);
+    document.getElementById('backfill-count').innerHTML = backfillCountHtml(work, withArt);
     document.querySelector('[data-backfill-action="start"]').disabled = !(work.units.length + work.lessons.length);
 }
 

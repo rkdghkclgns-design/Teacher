@@ -291,8 +291,20 @@ window.startLessonGeneration = function (moduleId) {
     const mod = getEditingModule(moduleId);
     if (!mod) return;
     if (_pipeline) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
-    if (pipelineSteps(moduleId, {}).some(step => step.needed(mod))) return window.runLessonPipeline(moduleId);
-    return window.showConfirm('모든 항목이 있습니다. 교안 탭을 모두 다시 만들까요?', () => generateAllTabs(moduleId), { okLabel: '모두 다시 만들기', tone: 'primary' });
+    const needed = pipelineSteps(moduleId, {}).filter(step => step.needed(mod));
+    if (needed.length) {
+        // 빈 항목을 차례로 만들기 전에 호출 수·시간·비용 수준을 먼저 보인다(cost-estimate.js)
+        const has = id => needed.some(step => step.id === id);
+        const work = lessonWork({
+            tabs: needed.filter(step => LESSON_TABS.some(tab => tab.id === step.id)).length,
+            gyosuan: has('gyosuan'), qbank: has('qbank'), art: has('art'), ncs: has('ncsElements')
+        }, currentEstimateSettings().imageAmount);
+        return confirmWithEstimate(`빈 항목 ${needed.length}개(${needed.map(step => step.label).join(', ')})를 차례로 만듭니다.`, work, { title: '전체 생성', okLabel: '만들기' })
+            .then(ok => ok && window.runLessonPipeline(moduleId));
+    }
+    const rebuild = lessonWork({ tabs: LESSON_TABS.length }, currentEstimateSettings().imageAmount);
+    return confirmWithEstimate('모든 항목이 있습니다. 교안 탭 5개를 모두 다시 만듭니다(지금 글은 작업 기록에 남습니다).', rebuild, { title: '모두 다시 만들기', okLabel: '모두 다시 만들기' })
+        .then(ok => ok && generateAllTabs(moduleId));
 };
 
 // 도구 메뉴는 바깥을 누르면 닫는다

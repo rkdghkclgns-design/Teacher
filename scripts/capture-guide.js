@@ -233,7 +233,7 @@ const SHOTS = [
             await page.click('#export-dropdown-btn');
             await page.waitForTimeout(400);
         },
-        markers: [byText('현재 차시', '#export-dropdown-menu'), byText('교과 백업 ZIP', '#export-dropdown-menu'), byText('빈 폴더에 저장 시작', '#export-dropdown-menu'), byText('작업 기록', '#toolbar-scroll')]
+        markers: [byText('현재 차시', '#export-dropdown-menu'), '#export-dropdown-menu [aria-label="백업에 그림 담는 방식"]', byText('교과 백업 ZIP', '#export-dropdown-menu'), byText('내보낸 교안 다시 불러오기', '#export-dropdown-menu'), byText('빈 폴더에 저장 시작', '#export-dropdown-menu'), byText('작업 기록', '#toolbar-scroll')]
     }
 ];
 

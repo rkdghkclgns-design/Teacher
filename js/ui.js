@@ -775,6 +775,7 @@ function toggleExportDropdown(event) {
     const menu = document.getElementById('export-dropdown-menu');
     if (!menu) return;
     const wasHidden = menu.classList.contains('hidden');
+    if (wasHidden) window.renderBackupImageMode?.();
     menu.classList.toggle('hidden');
     menu.classList.toggle('flex');
     // 형식 선택 섹션 리셋
@@ -863,8 +864,8 @@ function exportCurrentToMD() {
     }
     const tabs = lessonTabSources(mod, exportTabIds());
     if (!tabs.length) return window.showAlert(_exportTabs === 'current' ? '현재 탭에 내용이 없습니다.' : '내보낼 교안 내용이 없습니다.');
-    const tabContent = tabs.length === 1 ? tabs[0].md : tabs.map(tab => `# [${tab.label}]\n\n${tab.md}`).join('\n\n---\n\n');
-    const blob = new Blob([tabContent], { type: 'text/markdown;charset=utf-8' });
+    // 차시·탭 표시를 넣어 '내보낸 교안 다시 불러오기'로 탭별로 되살린다(output-import.js)
+    const blob = new Blob([lessonMarkdownExport(mod, tabs)], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -879,9 +880,9 @@ function exportSubjectToMD() {
     const lessonList = subj.lessons || [];
     if (!lessonList.length) return window.showAlert('내보낼 차시가 없습니다.');
     lessonList.forEach(mod => {
-        const allContent = Object.entries(mod.tabContents || {}).map(([k, v]) => v ? `# [${k}]\n\n${v}` : '').filter(Boolean).join('\n\n---\n\n');
-        if (!allContent) return;
-        const blob = new Blob([allContent], { type: 'text/markdown;charset=utf-8' });
+        const tabs = lessonTabSources(mod);
+        if (!tabs.length) return;
+        const blob = new Blob([lessonMarkdownExport(mod, tabs)], { type: 'text/markdown;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -991,7 +992,7 @@ window.exportSelectedToZip = async function () {
     if (totalFiles === 0) return window.showAlert('내보낼 내용이 없습니다.');
 
     try {
-        zip.file('save_data.yaml', JSON.stringify(subjectsBackupMeta(checkedIds), null, 2)); // 내보내기·백업 → 백업 ZIP으로 되살리기로 이 교과들을 되살린다
+        writeBackupData(zip, subjectsBackupMeta(checkedIds)); // 내보내기·백업 → 백업 ZIP으로 되살리기로 이 교과들을 되살린다(그림 담는 방식은 메뉴에서 고름)
         const blob = await zip.generateAsync({ type: 'blob' });
         const zipName = checkedIds.length === 1
             ? `${(globalState.subjects.find(s => String(s.id) === String(checkedIds[0]))?.title || '교과').replace(/[^\w가-힣\s]/g, '')}_교안.zip`
@@ -1117,7 +1118,7 @@ window.exportAllToZip = async function () {
     if (totalFiles === 0) return window.showAlert('내보낼 내용이 없습니다.');
 
     try {
-        zip.file('save_data.yaml', JSON.stringify(subjectsBackupMeta([subj.id]), null, 2)); // 내보내기·백업 → 백업 ZIP으로 되살리기로 이 교과를 되살린다
+        writeBackupData(zip, subjectsBackupMeta([subj.id])); // 내보내기·백업 → 백업 ZIP으로 되살리기로 이 교과를 되살린다(그림 담는 방식은 메뉴에서 고름)
         const blob = await zip.generateAsync({ type: 'blob' });
         saveAs(blob, `${subjectName}_전체교안.zip`);
         recordBackupTime();

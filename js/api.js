@@ -298,8 +298,13 @@ async function requestGemini(modelName, payload, onRetry) {
 // 텍스트 모델 호출은 역할별 AI 분배를 따른다. 교차 판단처럼 모델을 일부러 고른 호출은 pinModel을 넘긴다
 function callGemini(modelName, { pinModel, ...payload }, onRetry = null) {
     const model = modelName === TEXT_MODEL && !pinModel ? roleModel(payload.taskRole) : modelName;
-    if (isClaudeModel(model)) return callClaude(model, payload);
-    return requestGemini(model, payload, onRetry);
+    const started = Date.now();
+    const call = isClaudeModel(model) ? callClaude(model, payload) : requestGemini(model, payload, onRetry);
+    // 성공한 호출에 걸린 시간을 모델별로 모아 일괄 작업 예고 시간에 쓴다(cost-estimate.js)
+    return call.then(result => {
+        window.recordAiTiming?.(model, Date.now() - started);
+        return result;
+    });
 }
 
 
@@ -1543,6 +1548,8 @@ async function generateAllImagesInModule(moduleId) {
     if (!mod) return;
     const tabs = imageTagTabs(mod);
     if (!tabs.length) return window.showToast('본문에 처리 대기 중인 이미지 태그가 없습니다.', 'info');
+    const slots = tabs.reduce((sum, tab) => sum + (storedTabMarkdown(mod, tab.id).split(IMAGE_TAG_MARK).length - 1), 0);
+    if (!(await confirmWithEstimate(`탭 ${tabs.length}개에 남은 그림 자리 ${slots}개를 검색이나 AI 생성으로 채웁니다.`, { images: slots }, { title: '일괄 이미지 찾기', okLabel: '찾기 시작' }))) return;
     await window.runLessonJob(moduleId, { label: '일괄 이미지 찾기', current: tabs[0].id, total: tabs.length, alerts: true }, async () => {
         try {
             for (let i = 0; i < tabs.length && !window.isTabGenerationStopped(); i++) {
@@ -1566,7 +1573,9 @@ async function generateAllImagesInModule(moduleId) {
 
 // 현재 교과의 모든 차시를 정리: 마크다운 sanitize + 누락 이미지 일괄 생성
 window.sanitizeAllContent = async function () {
-    if (!confirm('현재 교과의 모든 차시에 마크다운 정리와 누락 이미지 생성을 수행합니다.\n시간이 오래 걸릴 수 있습니다. 계속하시겠습니까?')) return;
+    const subjForEstimate = globalState.subjects.find(s => s.id === currentSubjectId);
+    const slots = (courseData || []).reduce((sum, mod) => sum + LESSON_TABS.reduce((tabSum, tab) => tabSum + (storedTabMarkdown(mod, tab.id).split(IMAGE_TAG_MARK).length - 1), 0), 0);
+    if (!(await confirmWithEstimate(`'${subjForEstimate?.title || '이 교과'}'의 모든 차시에 마크다운 정리와 빠진 그림 채우기를 합니다(그림 자리 ${slots}개).`, { images: slots }, { title: '콘텐츠 정리', okLabel: '정리 시작' }))) return;
 
     const subj = globalState.subjects.find(s => s.id === currentSubjectId);
     if (!subj) { window.showAlert('교과를 먼저 선택하세요.'); return; }
@@ -2095,6 +2104,12 @@ async function importReferenceFiles(event) {
     input.value = ''; // 같은 파일을 다시 고를 수 있게
     const textarea = document.getElementById('reference-text-input');
     if (!files.length || !textarea) return;
+    const pictures = files.filter(file => /\.(png|jpe?g|webp)$/i.test(file.name)).length;
+    const pdfs = files.filter(file => /\.pdf$/i.test(file.name)).length;
+    if (pictures || pdfs) {
+        const detail = [pictures ? `그림 ${pictures}장은 AI가 글자를 옮겨 적습니다(장마다 1회)` : '', pdfs ? `PDF ${pdfs}개는 글자가 없는 스캔본이면 AI가 읽습니다(파일마다 최대 ${ESTIMATE_RULES.ocrMaxCallsPerPdf}회, 글자가 있는 PDF는 호출 없음)` : ''].filter(Boolean).join('\n');
+        if (!(await confirmWithEstimate(detail, { ocr: pictures + pdfs * ESTIMATE_RULES.ocrMaxCallsPerPdf }, { title: '파일에서 글자 가져오기', okLabel: '가져오기' }))) return;
+    }
     window.showToast?.(`파일 ${files.length}개의 글자를 읽고 있습니다...`, 'info');
     const added = [];
     const failed = [];

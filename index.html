@@ -286,6 +286,12 @@
         }
 
         /* 설정 빠른 선택: 지금 설정과 같은 묶음 (setup-helpers.js) */
+        [data-backup-images][aria-pressed="true"] {
+            background: #7c5bf5;
+            border-color: #7c5bf5;
+            color: #fff;
+        }
+
         [data-settings-preset][aria-pressed="true"] {
             border-color: #7c5bf5;
             background: rgba(124, 91, 245, 0.2);
@@ -803,6 +809,17 @@
                     <div class="h-px bg-white/10 my-1 mx-3"></div>
                 </div>
                 <div class="px-3 py-1.5 text-[0.6875rem] font-bold text-white/60 tracking-wider">백업 (되살리기용 ZIP)</div>
+                <div class="px-3 pb-1.5" role="group" aria-label="백업에 그림 담는 방식">
+                    <div class="pb-1 text-[0.6875rem] text-white/50">그림 담기 (PC 폴더 자동 저장에도 적용)</div>
+                    <div class="flex gap-1">
+                        <button type="button" data-backup-images="inline" onclick="setBackupImageMode('inline')" aria-pressed="true" title="그림을 백업 정보 파일 안에 함께 담습니다(예전과 같음). 그림이 많으면 파일이 커지고 만들다 실패할 수 있습니다"
+                            class="flex-1 px-1.5 py-1 text-[0.6875rem] font-bold rounded border border-white/15 text-white/70 whitespace-nowrap">함께</button>
+                        <button type="button" data-backup-images="separate" onclick="setBackupImageMode('separate')" aria-pressed="false" title="그림을 '그림' 폴더의 파일로 따로 담고 같은 그림은 한 번만 넣습니다. 백업이 가벼워지고, 되살리면 그림도 돌아옵니다"
+                            class="flex-1 px-1.5 py-1 text-[0.6875rem] font-bold rounded border border-white/15 text-white/70 whitespace-nowrap">따로·가볍게</button>
+                        <button type="button" data-backup-images="none" onclick="setBackupImageMode('none')" aria-pressed="false" title="그림을 빼고 글만 담습니다(가장 가벼움). 되살리면 그림 자리가 비고, 일괄 이미지 찾기로 다시 채울 수 있습니다"
+                            class="flex-1 px-1.5 py-1 text-[0.6875rem] font-bold rounded border border-white/15 text-white/70 whitespace-nowrap">빼기</button>
+                    </div>
+                </div>
                 <input type="file" id="import-zip-input" accept=".zip" class="hidden" onchange="importProjectZip(event)">
                 <button onclick="smartZipExport(); toggleExportDropdown();" title="고른 교과(편집 중에는 지금 교과)를 글·그림과 함께 받습니다. 이 파일로 그 교과만 되살립니다"
                     class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
@@ -815,6 +832,11 @@
                 <button onclick="document.getElementById('import-zip-input').click(); toggleExportDropdown();" title="받아 둔 백업 ZIP으로 되살립니다. 바꾸기 전에 무엇이 바뀌는지 묻고 지금 상태를 먼저 내려받습니다"
                     class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
                     <i class="ph-bold ph-arrow-counter-clockwise text-amber-300 text-sm"></i> 백업 ZIP으로 되살리기
+                </button>
+                <input type="file" id="import-output-input" accept=".html,.htm,.md,.markdown,.txt" multiple class="hidden" onchange="importOutputFiles(event)">
+                <button onclick="document.getElementById('import-output-input').click(); toggleExportDropdown();" title="이 앱에서 내보낸 교안 HTML·MD(교수안 HTML 포함)를 고칠 수 있는 차시로 되살립니다. 편집 중이면 그 교과에, 아니면 새 교과에 넣습니다"
+                    class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
+                    <i class="ph-bold ph-file-arrow-up text-sky-300 text-sm"></i> 내보낸 교안 다시 불러오기
                 </button>
                 <div class="h-px bg-white/10 my-1 mx-3"></div>
                 <div class="px-3 py-1.5 text-[0.6875rem] font-bold text-white/60 tracking-wider">PC 폴더에 자동 저장</div>
@@ -1754,9 +1776,11 @@
     <script src="./js/lesson-sanitize.js?v=125"></script>
     <script src="./js/lesson-format.js?v=125"></script>
     <script src="./js/lesson-export.js?v=125"></script>
+    <script src="./js/output-import.js?v=125"></script>
     <script src="./js/data-safety.js?v=125"></script>
     <script src="./js/ai-errors.js?v=125"></script>
     <script src="./js/setup-helpers.js?v=125"></script>
+    <script src="./js/cost-estimate.js?v=125"></script>
     <script src="./js/state.js?v=125"></script>
     <script src="./js/api.js?v=125"></script>
     <script src="./js/diagram.js?v=125"></script>

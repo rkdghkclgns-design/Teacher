@@ -5,7 +5,7 @@ const vm = require('vm');
 const path = require('path');
 const assert = require('assert');
 const root = path.join(__dirname, '..', 'js') + path.sep;
-const FILES = ['data.js', 'convention.js', 'lesson-lint.js', 'lesson-opening.js', 'course-meta.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js', 'lesson-review.js', 'md-toolbar.js', 'lesson-attachments.js', 'tabs.js', 'lesson-pipeline.js', 'ai-routing.js', 'api.js'];
+const FILES = ['data.js', 'convention.js', 'lesson-lint.js', 'lesson-opening.js', 'course-meta.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js', 'lesson-review.js', 'md-toolbar.js', 'lesson-attachments.js', 'tabs.js', 'lesson-pipeline.js', 'ai-routing.js', 'api.js', 'cost-estimate.js'];
 
 function fakeElement() {
     const handlers = {};
@@ -55,6 +55,7 @@ function makeContext(callGemini = async () => { throw new Error('호출되면 �
     ctx.showToast = message => ctx.toasts.push(message);
     vm.createContext(ctx);
     FILES.forEach(file => vm.runInContext(fs.readFileSync(root + file, 'utf8'), ctx));
+    if (!ctx.confirmAsync) ctx.confirmAsync = async () => true; // data-safety.js 없이 확인 창은 바로 승인한다
     // api.js의 callGemini와 tabs.js가 쓰는 함수는 스텁으로 바꾼다. 실제 파일에서 함수 선언이 전역을 차지하므로 로드 후에 덮는다.
     ctx.callGemini = callGemini;
     vm.runInContext('callGemini = window.callGemini; buildTaskContext = (task, args) => ({ systemInstruction: "시스템", userPrompt: `${task}:${args.tabId}` }); getEditingModule = (id = window.currentMod?.id) => (String(id) === String(window.currentMod?.id) ? window.currentMod : window.otherMod); window.realProcessImageTags = processImageTags; processImageTags = async (mod, md) => md; renderSidebar = () => {}; renderEditor = () => { window.rendered = (window.rendered || 0) + 1; };', ctx);

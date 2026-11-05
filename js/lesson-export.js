@@ -75,8 +75,9 @@ function inlineLessonImages(md, images) {
     return filled.replace(/src="local:[^"]+"/g, 'src="" alt="[이미지 생성 누락]"').replace(/\(local:[^)]+\)/g, '()');
 }
 
-// 완성된 HTML 문서. 서식은 문서 안에 넣어 파일 하나로 열린다
-function lessonHtmlDocument(title, body, extraCss = '') {
+// 완성된 HTML 문서. 서식은 문서 안에 넣어 파일 하나로 열린다.
+// source: 다시 불러오기용 원본 태그(output-import.js lessonSourceScript). HTML로 내려받을 때만 넣는다
+function lessonHtmlDocument(title, body, extraCss = '', source = '') {
     return `<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -89,6 +90,7 @@ function lessonHtmlDocument(title, body, extraCss = '') {
 <main class="lesson-doc">
 ${body}
 </main>
+${source}
 </body>
 </html>
 `;
@@ -189,9 +191,10 @@ window.exportLessonDocument = async function (mod, format, tabIds) {
         window.showToast?.(format === 'pdf' ? '인쇄 창을 준비하는 중입니다. "PDF로 저장"을 고르세요.' : 'HTML 파일을 만드는 중입니다.', 'info');
         const body = await lessonExportBody(mod, tabIds, { useView: true, videos: format === 'html' });
         if (!body.tabs) return window.showAlert('내보낼 교안 내용이 없습니다.');
-        const doc = lessonHtmlDocument(mod.title || '교안', body.html);
-        if (format === 'pdf') return await printHtmlDocument(doc);
-        downloadTextFile(doc, lessonFileName(mod, 'html'), 'text/html;charset=utf-8');
+        if (format === 'pdf') return await printHtmlDocument(lessonHtmlDocument(mod.title || '교안', body.html));
+        // HTML에는 원본(탭 글·그림·교수안)을 담아 '내보낸 교안 다시 불러오기'로 고칠 수 있게 한다
+        const source = lessonSourceScript(lessonSourcePayload([mod], { tabIds, withGyosuan: !tabIds }));
+        downloadTextFile(lessonHtmlDocument(mod.title || '교안', body.html, '', source), lessonFileName(mod, 'html'), 'text/html;charset=utf-8');
         if (body.videos) window.showToast?.(`판서 영상 ${body.videos}개를 HTML 파일 안에 넣었습니다(파일이 커질 수 있습니다).`, 'info');
     } catch (err) {
         console.error('[내보내기] 차시 문서 실패:', err);
@@ -208,9 +211,9 @@ window.exportSubjectDocument = async function (subj, format) {
         window.showToast?.(`${lessons.length}개 차시를 문서로 만드는 중입니다.`, 'info');
         const articles = [];
         for (const mod of lessons) articles.push(`<article class="lesson-break">${(await lessonExportBody(mod, null)).html}</article>`);
-        const doc = lessonHtmlDocument(subj.title || '교과', articles.join('\n'));
-        if (format === 'pdf') return await printHtmlDocument(doc);
-        downloadTextFile(doc, `${safeFileName(subj.title || '교과')}_교안.html`, 'text/html;charset=utf-8');
+        if (format === 'pdf') return await printHtmlDocument(lessonHtmlDocument(subj.title || '교과', articles.join('\n')));
+        const source = lessonSourceScript(lessonSourcePayload(lessons));
+        downloadTextFile(lessonHtmlDocument(subj.title || '교과', articles.join('\n'), '', source), `${safeFileName(subj.title || '교과')}_교안.html`, 'text/html;charset=utf-8');
     } catch (err) {
         console.error('[내보내기] 교과 문서 실패:', err);
         window.showAlert(`내보내기 중 오류가 났습니다: ${err.message}`);

@@ -221,5 +221,45 @@ test('백업의 휴지통·작업 기록은 모양이 맞는 것만 받고, 되�
     assert.strictEqual(cleaned.title, '차시');
 });
 
+/* ---------- 백업에 그림 담는 방식 ---------- */
+test('그림 따로 담기: 떼었다 돌려놓으면 그대로이고, 같은 그림은 한 번만 담는다', () => {
+    const W = ctx.window;
+    const png = 'data:image/png;base64,' + 'iVBORw0KGgo'.repeat(20);
+    const jpg = 'data:image/jpeg;base64,' + '/9j/4AAQSkZJRg'.repeat(20);
+    const meta = {
+        context: { subjects: [{ lessons: [{ images: { a: png, b: jpg }, tabContents: { basicLearn: `본문 ![](${png}) 글 속 그림은 그대로` } }] }] },
+        history: [{ images: { a: png } }, { images: { c: png } }],
+        trash: { subjectTrash: [{ subject: { lessons: [{ images: { z: jpg } }] } }] },
+        short: 'data:image/png;base64,AA'
+    };
+    const { value, files } = W.detachBackupImages(meta, 'separate');
+    assert.strictEqual(Object.keys(files).length, 2, '같은 그림 다섯 군데를 두 장으로');
+    assert.ok(!JSON.stringify(value).includes('"data:image/png;base64,iVBOR'), '값으로 든 그림은 이름으로 바뀐다');
+    assert.ok(value.context.subjects[0].lessons[0].tabContents.basicLearn.includes(png), '글 속 그림은 건드리지 않는다');
+    assert.strictEqual(value.short, meta.short, '짧은 글은 그림으로 보지 않는다');
+    assert.strictEqual(JSON.stringify(W.attachBackupImages(value, files)), JSON.stringify(meta));
+    const file = W.backupImageFile(W.backupImageKey(jpg), jpg);
+    assert.ok(file.name.endsWith('.jpg'));
+    const back = W.backupImageFromFile(file.name, file.base64);
+    assert.strictEqual(back.dataUrl, jpg);
+    assert.strictEqual(back.key, W.backupImageKey(jpg));
+    assert.notStrictEqual(W.backupImageKey(png), W.backupImageKey(jpg));
+    assert.ok(W.isBackupImageName(file.name), '백업이 쓴 그림 이름');
+    assert.ok(!W.isBackupImageName('01_개념 이해.md'), "'그림' 교과 폴더의 MD는 그림이 아니다");
+    assert.ok(!W.isBackupImageName('img_12345.png'), '첨부 그림 이름도 백업 그림이 아니다');
+    ['', 'QQ==', 'QUI=', 'QUJD', 'iVBORw0KGgo'.repeat(20)].forEach(b64 => {
+        assert.strictEqual(W.base64ByteLength(b64), Buffer.from(b64, 'base64').length, `${b64.slice(0, 8)} 바이트 수`);
+    });
+});
+
+test('그림 빼기: 그림 항목을 빼고 글은 남긴다', () => {
+    const W = ctx.window;
+    const png = 'data:image/png;base64,' + 'iVBORw0KGgo'.repeat(20);
+    const { value, files } = W.detachBackupImages({ images: { a: png, keep: '글' }, list: [png, '글'] }, 'none');
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(value)), { images: { keep: '글' }, list: ['글'] });
+    assert.strictEqual(Object.keys(files).length, 0);
+    assert.strictEqual(W.backupImageMode(), 'inline', '저장소가 없으면 예전 방식');
+});
+
 console.log(`\n${count - failed}/${count} passed`);
 if (failed) process.exit(1);

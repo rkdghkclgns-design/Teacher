@@ -144,6 +144,7 @@ function lessonRunIntroHtml(queue, uploaded, withGyosuan = false) {
     return `
         <p class="text-xs text-textLight">내용이 비어 있는 탭만 차례로 생성합니다. 이미 있는 탭은 그대로 둡니다. 차시마다 몇 분 걸릴 수 있습니다. 교안을 만든 차시에는 NCS 능력단위요소도 확정 전 상태로 배정합니다.</p>
         <div id="lesson-run-queue" class="space-y-2">${lessonRunQueueHtml(queue, uploaded)}</div>
+        <div id="lesson-run-estimate"></div>
         <label class="flex items-start gap-2 text-xs text-textLight">
             <input id="lesson-run-gyosuan" type="checkbox" ${withGyosuan ? 'checked' : ''}>
             <span>교수안, 슬라이드, 문제은행까지 만들기<span class="block text-[0.6875rem] text-textMuted">빠진 항목만 만듭니다. 차시마다 호출이 늘고, 슬라이드 자동 이미지를 켜 두면 이미지 비용도 듭니다.</span></span>
@@ -223,16 +224,34 @@ window.openLessonRun = function (scope) {
     refreshLessonRunQueue(scope); // 모두 만든 교과는 덮어쓰기를 골라야 시작할 수 있다
 };
 
+// 대기열의 차시마다 할 일을 더한다(빈 탭, 교수안·문제은행, 삽화). 예고에 쓴다(cost-estimate.js)
+function lessonRunWork(queue, { withGyosuan, overwrite, art }) {
+    const imageAmount = currentEstimateSettings().imageAmount;
+    return sumWork(queue.map(item => {
+        const lesson = (item.subject.lessons || []).find(entry => entry.id === item.lessonId) || {};
+        const tabs = overwrite ? LESSON_TABS.length : lessonMissingTabs(lesson).length;
+        return lessonWork({
+            tabs,
+            gyosuan: withGyosuan && (overwrite || lessonNeedsGyosuan(lesson)),
+            qbank: withGyosuan && (overwrite || questionBankGaps(lesson).length > 0),
+            art: art && tabs > 0
+        }, imageAmount);
+    }));
+}
+
 function refreshLessonRunQueue(scope) {
     const checked = id => !!document.getElementById(id)?.checked;
-    const pending = pendingLessons(runSubjects(scope), checked('lesson-run-gyosuan'), checked('lesson-run-overwrite'));
+    const options = { withGyosuan: checked('lesson-run-gyosuan'), overwrite: checked('lesson-run-overwrite'), art: checked('lesson-run-art') };
+    const pending = pendingLessons(runSubjects(scope), options.withGyosuan, options.overwrite);
     const queue = pending.filter(item => !item.uploaded);
     document.getElementById('lesson-run-queue').innerHTML = lessonRunQueueHtml(queue, pending.filter(item => item.uploaded));
+    const estimate = document.getElementById('lesson-run-estimate');
+    if (estimate) estimate.innerHTML = queue.length ? estimateBoxHtml(lessonRunWork(queue, options)) : '';
     document.querySelector('[data-run-action="start"]').disabled = !queue.length;
 }
 
 function onLessonRunChange(event, scope) {
-    if (['lesson-run-gyosuan', 'lesson-run-overwrite'].includes(event.target.id)) refreshLessonRunQueue(scope);
+    if (['lesson-run-gyosuan', 'lesson-run-overwrite', 'lesson-run-art'].includes(event.target.id)) refreshLessonRunQueue(scope);
 }
 
 function onLessonRunClick(event) {

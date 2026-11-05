@@ -274,7 +274,11 @@ window.downloadGyosuanHtml = async function (moduleId) {
     const mod = getEditingModule(moduleId);
     const doc = mod && await gyosuanExportDocument(mod);
     if (!doc) return window.showAlert('내보낼 교수안이 없습니다.');
-    downloadTextFile(doc, `${lessonFileBase(mod)}_교수안.html`, 'text/html;charset=utf-8');
+    // 다시 불러오면 이 차시(교안 탭과 교수안)가 고칠 수 있게 되살아난다(output-import.js)
+    // 바꿀 글을 함수로 넘긴다. 글자로 넘기면 교안 속 $$·$'·$& 가 치환 패턴으로 읽혀 원본이 깨진다
+    const source = lessonSourceScript(lessonSourcePayload([mod]));
+    const withSource = doc.replace('</body>', () => `${source}</body>`);
+    downloadTextFile(withSource, `${lessonFileBase(mod)}_교수안.html`, 'text/html;charset=utf-8');
 };
 
 // 새 창 없이 인쇄 창을 연다(lesson-export.js). 인쇄 창에서 'PDF로 저장'을 고른다

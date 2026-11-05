@@ -8,7 +8,7 @@ const root = path.join(__dirname, '..', 'js') + path.sep;
 const FILES = [
     'lesson-sanitize.js', 'filename-convention.js', 'kbuilder/ncs-catalog.js', 'lesson-lint.js', 'lesson-opening.js', 'lesson-objectives.js', 'lesson-material.js', 'lesson-pipeline.js', 'ai-routing.js', 'course-ncs.js', 'course-ncs-ref.js', 'course-design.js', 'course-design-edit.js',
     'course-sessions.js', 'course-meta.js', 'course-elements.js', 'course-art.js', 'course-illustrations.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js',
-    'lesson-attachments.js', 'tabs.js', 'course-flow.js', 'course-overview.js', 'course-backfill.js'
+    'lesson-attachments.js', 'tabs.js', 'course-flow.js', 'course-overview.js', 'course-backfill.js', 'cost-estimate.js'
 ];
 const TAB_IDS = ['basicLearn', 'basicPrac', 'advLearn', 'advPrac', 'assessment'];
 
@@ -376,10 +376,10 @@ const LESSON_MD = [
         assert.strictEqual(call('isLessonPipelineRunning')(), false);
         order.length = 0;
         const asked = [];
-        ctx.showConfirm = message => asked.push(message);
+        ctx.confirmAsync = async message => { asked.push(message); return false; };
         await call('startLessonGeneration')(1);
         assert.deepStrictEqual(order, [], '빈 항목이 없으면 다시 만들지 않는다');
-        assert.ok(asked[0].includes('다시 만들까요'));
+        assert.ok(asked[0].includes('모두 다시 만듭니다') && asked[0].includes('AI 호출 약'), '다시 만들기 전에 호출 수를 보인다');
     });
 
     await run('전체 생성: 실패한 항목을 건너뛰고 끝까지 간 뒤 알린다, 중지하면 멈춘다', async () => {
