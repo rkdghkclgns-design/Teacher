@@ -488,10 +488,10 @@ function usedGyosuanImages(gyosuan) {
     return Object.fromEntries(Object.entries(gyosuan.images || {}).filter(([id]) => text.includes(`local:${id}`)));
 }
 
-// 교수안·편성안의 ![설명](local:id)를 data URL로 바꾼다. 찾지 못한 이미지는 줄에서 뺀다
+// 교수안·편성안의 ![설명](local:id)를 data URL로 바꾼다. 찾지 못한 이미지(빈 값·폴더에서 찾지 못한 teacher-image 참조)는 줄에서 뺀다
 function resolveGyosuanImages(md, mod) {
     const images = { ...(mod?.images || {}), ...(mod?.gyosuan?.images || {}) };
-    return String(md || '').replace(/!\[([^\]]*)\]\(local:([^)\s]+)\)/g, (match, alt, id) => (images[id] ? `![${alt}](${images[id]})` : ''));
+    return String(md || '').replace(/!\[([^\]]*)\]\(local:([^)\s]+)\)/g, (match, alt, id) => (/^data:image\//.test(images[id] || '') ? `![${alt}](${images[id]})` : ''));
 }
 
 async function saveGyosuan(mod) {

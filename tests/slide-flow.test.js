@@ -470,6 +470,7 @@ const draftLesson = () => ({ id: 'm1', title: '재미', hours: 1, tabContents: {
         const mod = { images: { lesson1: PNG }, gyosuan: { images: { made1: PNG } } };
         assert.strictEqual(resolve('![a](local:made1) ![b](local:lesson1)', mod), `![a](${PNG}) ![b](${PNG})`);
         assert.strictEqual(resolve('앞 ![a](local:none) 뒤', mod), '앞  뒤');
+        assert.strictEqual(resolve('앞 ![r](local:gone) 뒤', { images: { gone: 'teacher-image:' + 'a'.repeat(18) } }), '앞  뒤', '폴더에서 찾지 못한 그림(참조)도 줄에서 뺀다');
         assert.strictEqual(resolve(null, mod), '');
     });
 

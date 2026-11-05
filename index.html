@@ -1434,7 +1434,7 @@
                         </label>
                         <textarea id="reference-text-input" rows="3" placeholder="참고 텍스트를 붙여 넣으세요&#10;예: 강의 원고, 요약, 참고 문서"
                             class="w-full px-2 py-1.5 text-xs bg-white/5 border border-white/10 rounded text-white placeholder-textMuted focus:outline-none focus:border-accent resize-y editor-scroll"
-                            oninput="onReferenceTextChange()"></textarea>
+                            oninput="onReferenceTextChange()" onchange="flushSaveStateSoon()"></textarea>
                         <div class="flex justify-between items-center mt-0.5">
                             <span id="reference-char-count" class="text-[0.6875rem] text-textMuted">0자</span>
                             <span id="reference-status-badge" class="text-[0.6875rem] px-1.5 py-0.5 rounded bg-white/5 text-textMuted">미등록</span>

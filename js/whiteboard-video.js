@@ -276,7 +276,7 @@ window.applyWhiteboardVideos = function (mod) {
             delete img.dataset.wbPoster;
         }
         const imgId = img.closest('.image-wrapper')?.querySelector('[data-img-id]')?.dataset.imgId || ids.get(img.getAttribute('src'));
-        if (!imgId || !mod.images?.[imgId]) return;
+        if (!imgId || !/^data:image\//.test(String(mod.images?.[imgId] || ''))) return; // 찾지 못한 그림(teacher-image 참조)·빈 값에는 버튼을 달지 않는다
         const holder = img.closest('.image-wrapper, [data-imgid]') || img.parentElement;
         holder.classList.add('relative', 'group');
         const video = mod.whiteboardVideos?.[imgId];

@@ -848,25 +848,26 @@ function fakeFolder(name = '작업') {
         }
     };
 }
-// state.js의 PC 폴더 저장을 실제로 돌린다(교과 MD는 지금 연 교과가 없어 건너뛴다)
+// state.js의 PC 폴더 저장을 실제로 돌린다(교과 MD는 지금 연 교과가 없어 건너뛴다). 줄 세우기(syncToLinkedFolder) 없이 저장 한 번(syncLinkedFolderNow)을 부른다
 function loadFolderSync(stored = {}) {
     const lessons = [{ id: 1, title: '1차시', images: { img_a: png(1) } }];
     const folder = fakeFolder();
     const env = loadSafety(stored, {
         globalState: { courseTitle: '과정', subjects: [{ id: 's1', title: '국어', lessons }], lessonTrash: [], subjectTrash: [] },
-        currentSubjectId: null, projectFolderHandle: folder,
+        currentSubjectId: null, projectFolderHandle: folder, folderWriteCache: null, FOLDER_STAMP_KEY: 'teacher:folder-save-stamp',
         atob: text => Buffer.from(text, 'base64').toString('binary'),
         markFolderSyncOk() {}, markFolderSyncFailed(err) { throw err; }, notifyFolderStopped() {}
     });
     vm.runInContext(['function simpleYamlStringify(', 'function base64ToUint8Array(', 'async function writeTextFile(', 'async function writeBinaryFile(',
-        'async function syncToLinkedFolder(', 'async function writeFolderImages(', 'async function folderFileSize('].map(start => stateFn(start)).join('\n'), env.c);
+        'function folderWriteCacheFor(', 'async function syncLinkedFolderNow(', 'async function rememberFolderSaveStamp(', 'async function writeSubjectExport(',
+        'async function writeFolderImages(', 'async function folderFileSize('].map(start => stateFn(start)).join('\n'), env.c);
     return { ...env, folder };
 }
 
 testAsync("PC 폴더 자동 저장: '빼기'는 받지 않고, '함께'가 크기 한도에 걸리면 따로 담아 저장한 뒤 한 번만 알린다", async () => {
     const plain = loadFolderSync();
     plain.W.setBackupImageMode('none');
-    assert.strictEqual(await plain.c.syncToLinkedFolder(), true);
+    assert.strictEqual(await plain.c.syncLinkedFolderNow(), true);
     const kept = plain.folder.files['save_data.yaml'];
     assert.ok(kept.includes(png(1)) && !kept.includes('imageMode'), "골라 둔 '빼기'여도 폴더에는 그림을 담는다(기억한 '함께')");
 
@@ -877,14 +878,14 @@ testAsync("PC 폴더 자동 저장: '빼기'는 받지 않고, '함께'가 크�
         if (!indent && obj?.state && obj.imageMode === undefined) { inlineTries++; throw new RangeError('Invalid string length'); }
         return realYaml(obj, indent);
     };
-    assert.strictEqual(await big.c.syncToLinkedFolder(), true);
+    assert.strictEqual(await big.c.syncLinkedFolderNow(), true);
     const data = big.folder.files['save_data.yaml'];
     assert.ok(data.includes('imageMode: "separate"') && data.includes('teacher-image:'), data.slice(0, 200));
     assert.strictEqual(Object.keys(big.folder.dirs['그림'].files).length, 1);
     assert.strictEqual(big.storage['teacher:backup-images'], 'separate');
     assert.strictEqual(big.seen.alerts.length, 1);
     assert.ok(big.seen.alerts[0].includes("'따로·가볍게'로 저장했습니다") && big.seen.alerts[0].includes("'그림' 폴더도 함께 옮기세요"));
-    assert.strictEqual(await big.c.syncToLinkedFolder(), true);
+    assert.strictEqual(await big.c.syncLinkedFolderNow(), true);
     assert.strictEqual(inlineTries, 1, '다음 저장부터는 바로 따로 담는다');
     assert.strictEqual(big.seen.alerts.length, 1, '알림은 한 번');
 });
@@ -899,7 +900,7 @@ testAsync("PC 폴더 자동 저장: '따로·가볍게'로도 저장하지 못�
     };
     const failures = [];
     env.c.markFolderSyncFailed = err => failures.push(err);
-    assert.strictEqual(await env.c.syncToLinkedFolder(), false);
+    assert.strictEqual(await env.c.syncLinkedFolderNow(), false);
     assert.strictEqual(failures.length, 1);
     assert.ok(env.W.isBackupTooBig(failures[0]), '띠에는 크기 안내가 나간다');
     assert.strictEqual(env.folder.files['save_data.yaml'], undefined, '저장 파일은 쓰지 못했다');
@@ -908,7 +909,7 @@ testAsync("PC 폴더 자동 저장: '따로·가볍게'로도 저장하지 못�
     assert.strictEqual(env.seen.alerts.length, 0);
 
     separateFails = false;
-    assert.strictEqual(await env.c.syncToLinkedFolder(), true);
+    assert.strictEqual(await env.c.syncLinkedFolderNow(), true);
     assert.ok(env.folder.files['save_data.yaml'].includes('imageMode: "separate"'));
     assert.strictEqual(env.storage['teacher:backup-images'], 'separate');
     assert.strictEqual(env.seen.alerts.length, 1, "폴더가 처음 '그림' 폴더 방식이 되는 때 알린다");
@@ -992,6 +993,163 @@ test('크기 안내는 할 수 있는 길을 말한다(개요 화면 교과 목�
     const texts = ctx.window.BACKUP_TOO_BIG_TEXT;
     Object.entries(texts).forEach(([kind, text]) => assert.ok(!text.includes('교과별로'), `${kind}: ${text}`));
     ['full', 'subjects', 'folder', 'openFile'].forEach(kind => assert.ok(texts[kind].includes('개요 화면 교과 목록에서 교과를 하나씩 체크해'), kind));
+});
+
+/* ---------- PC 폴더 열기·저장 (묶음 3) ---------- */
+test('찾지 못한 그림은 참조를 그대로 두고, 모양이 맞는 참조만 바꾼다', () => {
+    const W = ctx.window;
+    const png = 'data:image/png;base64,' + 'iVBORw0KGgo'.repeat(20);
+    const jpg = 'data:image/jpeg;base64,' + '/9j/4AAQSkZJRg'.repeat(20);
+    const { value, files } = W.detachBackupImages({ images: { a: png, b: jpg }, title: 'teacher-image:hello' }, 'separate');
+    const jpgRef = value.images.b;
+    delete files[W.backupImageKey(jpg)];
+    const back = W.attachBackupImages(value, files);
+    assert.strictEqual(back.images.a, png, '찾은 그림은 돌아온다');
+    assert.strictEqual(back.images.b, jpgRef, '찾지 못한 그림은 참조 그대로');
+    assert.ok(W.isBackupImageRef(jpgRef));
+    assert.strictEqual(back.title, 'teacher-image:hello', '모양이 틀린 글은 그대로');
+    assert.ok(W.isBackupImageRef('teacher-image:' + W.backupImageKey(png)));
+    ['', 'teacher-image:', 'teacher-image:../x', 'teacher-image:' + 'g'.repeat(18), 'teacher-image:' + 'a'.repeat(16), 'teacher-image:' + 'a'.repeat(25), png, null, 5]
+        .forEach(bad => assert.ok(!W.isBackupImageRef(bad), String(bad).slice(0, 30)));
+});
+
+test('저장본이 가리키는 그림 키를 한 번씩 모으고, 그림 폴더의 파일 이름과 맞춘다', () => {
+    const W = ctx.window;
+    const k1 = 'a'.repeat(18);
+    const k2 = 'b'.repeat(20);
+    const refs = W.backupImageRefs({
+        state: { subjects: [{ lessons: [{ images: { x: 'teacher-image:' + k1, y: 'teacher-image:' + k2 } }] }], lessonTrash: [{ lesson: { images: { z: 'teacher-image:' + k1 } } }] },
+        history: [{ images: { w: 'teacher-image:' + k2 } }],
+        bad: ['teacher-image:xyz', 'teacher-image:' + k1 + '.png']
+    });
+    assert.deepStrictEqual([...refs].sort(), [k1, k2]);
+    const byKey = W.backupImageFileNames([`${k1}.png`, `${k1}.jpg`, `${k2}.webp`, '01_개념.md', 'img_1.png', 'readme.txt']);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify([...byKey.entries()])), [[k1, `${k1}.png`], [k2, `${k2}.webp`]]);
+});
+
+test('그림 이름표를 기억하면 같은 그림을 다시 해시하지 않고, 결과는 그대로다', () => {
+    const W = ctx.window;
+    const png = 'data:image/png;base64,' + 'iVBORw0KGgo'.repeat(20);
+    const jpg = 'data:image/jpeg;base64,' + '/9j/4AAQSkZJRg'.repeat(20);
+    const meta = { a: { images: { x: png, y: jpg } }, h: [{ images: { x: png } }] };
+    const first = W.detachBackupImages(meta, 'separate');
+    const again = W.detachBackupImages(meta, 'separate', first.memo);
+    assert.strictEqual(JSON.stringify(again.value), JSON.stringify(first.value));
+    assert.deepStrictEqual(Object.keys(again.files).sort(), Object.keys(first.files).sort());
+    assert.strictEqual(first.memo.size, 2, '같은 그림은 한 번만 센다');
+    const info = first.memo.get(png);
+    assert.strictEqual(info.key, W.backupImageKey(png));
+    assert.strictEqual(info.name, W.backupImageFile(info.key, png).name);
+    assert.strictEqual(info.bytes, Buffer.from(png.split(',')[1], 'base64').length);
+    const fake = new Map(first.memo);
+    fake.set(png, { key: 'abc', name: 'abc.png', bytes: 1 });
+    assert.strictEqual(W.detachBackupImages(meta, 'separate', fake).value.a.images.x, 'teacher-image:abc', '기억한 이름표를 쓴다');
+    assert.strictEqual(W.detachBackupImages({ a: { images: { y: jpg } } }, 'separate', first.memo).memo.size, 1, '돌려준 기억에는 이번에 본 그림만');
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(W.detachBackupImages({ images: { x: png } }, 'none', first.memo).value)), { images: {} });
+});
+
+test('폴더 열기: 폴더의 그림 담기, 사본 이름, 확인 창·알림 글', () => {
+    const W = ctx.window;
+    assert.strictEqual(W.folderImageModeOf({ imageMode: 'separate' }), 'separate');
+    assert.strictEqual(W.folderImageModeOf({ imageMode: 'none' }), 'separate', '빼기로 저장된 폴더는 앞으로 따로 담는다');
+    [{}, { imageMode: 'inline' }, { imageMode: '이상한값' }, null, undefined].forEach(saved => assert.strictEqual(W.folderImageModeOf(saved), 'inline'));
+    assert.strictEqual(W.folderCopyName('20261105-1530'), 'save_data_이전_20261105-1530.yaml');
+    assert.strictEqual(W.folderCopyName('20261105-1530', 2), 'save_data_이전_20261105-1530_2.yaml');
+    const base = { folderName: '교안<폴더>', subjectCount: 2, incomingCount: 3 };
+    const none = W.folderOpenPrompt(base);
+    assert.strictEqual(none.okLabel, '백업 받고 바꾸기');
+    assert.ok(none.message.startsWith("'교안<폴더>' 폴더의 작업(교과 3개)으로 지금 브라우저의 모든 작업(교과 2개)을 바꿉니다."), none.message);
+    assert.ok(!none.message.includes('그림'), '빠진 그림이 없으면 그림 줄이 없다');
+    const some = W.folderOpenPrompt({ ...base, total: 3, missing: 1, imageNote: '\n\n[빼기 안내]' });
+    assert.strictEqual(some.okLabel, '빠진 채로 열기');
+    assert.ok(some.message.includes('그림 3장 중 1장을') && some.message.includes('작업 기록·휴지통의 그림도 셈'));
+    assert.ok(some.message.indexOf('[빼기 안내]') < some.message.indexOf('그림 3장 중'), '빼기 안내 다음에 빠진 그림 줄');
+    assert.strictEqual(W.folderOpenPrompt({ ...base, total: 3, missing: 3 }).okLabel, '그림 없이 열기');
+    const done = W.folderOpenedMessage({ folderName: 'A', keptName: 'save_data_이전_x.yaml', missing: 2, mode: 'separate' });
+    assert.ok(done.includes('이 폴더에 자동으로 저장합니다') && done.includes('save_data_이전_x.yaml으로') && done.includes("'따로·가볍게'로 바꿨습니다"), done);
+    assert.ok(done.includes('그림 2장(작업 기록·휴지통의 그림도 셈)은 찾지 못해 빈칸으로 남았습니다'), '확인 창처럼 작업 기록·휴지통의 그림도 센다고 말한다');
+    assert.strictEqual(W.folderOpenedMessage({ folderName: 'A' }).split('\n').length, 1, '해당하는 줄만');
+    assert.ok(W.folderOpenedMessage({ folderName: 'A', mode: 'separate', wasNone: true }).includes('그림을 빼고 저장되어 있었습니다'));
+    const unsynced = W.folderOpenedMessage({ folderName: 'A', synced: false });
+    assert.ok(unsynced.includes('이 폴더에 저장하지 못했습니다') && unsynced.includes('브라우저에는 저장됩니다'), unsynced);
+    // 연 작업을 브라우저에 저장하지 못했으면 새로고침 뒤 이 폴더에 이어지지 않는다고 알리고, 브라우저에 저장된다고 하지 않는다
+    const unsaved = W.folderOpenedMessage({ folderName: 'A', browserSaved: false });
+    assert.ok(unsaved.includes('이 폴더에 자동으로 저장합니다') && unsaved.includes('브라우저에는 이 작업을 저장하지 못했습니다') && unsaved.includes("'저장해 둔 폴더 열기'로 이 폴더를 다시 여세요"), unsaved);
+    const neither = W.folderOpenedMessage({ folderName: 'A', synced: false, browserSaved: false });
+    assert.ok(neither.includes('이 폴더에 저장하지 못했습니다') && neither.includes('브라우저에는 이 작업을 저장하지 못했습니다') && !neither.includes('브라우저에는 저장됩니다'), neither);
+});
+
+test('그림 파일은 내용이 이름(키)과 맞을 때만 받는다: 짧아지거나 뒤가 빈 파일은 받지 않고, .png로 쓴 다른 형식과 = 채움이 없던 글은 받는다', () => {
+    const W = ctx.window;
+    const body = dataUrl => dataUrl.split(',')[1];
+    const fromFile = dataUrl => Buffer.from(body(dataUrl), 'base64').toString('base64'); // 파일에서 다시 읽은 글(= 채움이 붙는다)
+    const read = (dataUrl, base64 = fromFile(dataUrl)) => {
+        const key = W.backupImageKey(dataUrl);
+        return W.backupImageFromKeyedFile(key, W.backupImageFile(key, dataUrl).name, base64);
+    };
+    const png = 'data:image/png;base64,' + 'iVBORw0KGgo'.repeat(20);
+    const jpg = 'data:image/jpeg;base64,' + '/9j/4AAQSkZJRg'.repeat(20);
+    const bmp = 'data:image/bmp;base64,' + 'Qk02AAAAAAAAADYAAAAoAAAA'.repeat(10);
+    const avif = 'data:image/avif;base64,' + 'AAAAHGZ0eXBhdmlm'.repeat(15);
+    const unpadded = png + 'AQ';
+    assert.strictEqual(read(png), png);
+    assert.strictEqual(read(jpg), jpg);
+    assert.ok(W.backupImageFile('k', bmp).name.endsWith('.png') && W.backupImageFile('k', avif).name.endsWith('.png'), '확장자가 없는 형식은 .png로 쓴다');
+    assert.strictEqual(read(bmp), bmp, "'image/png'와 이름 길이가 같은 형식은 키로 가려 원래 글 그대로");
+    assert.strictEqual(read(avif), 'data:image/png;base64,' + body(avif), '이름 길이가 다른 형식은 글 길이로 보고 받는다');
+    assert.ok(fromFile(unpadded).endsWith('AQ=='));
+    assert.strictEqual(read(unpadded), unpadded, '= 채움이 없던 글은 원래 글 그대로');
+    [png, jpg, bmp, avif].forEach(dataUrl => assert.strictEqual(read(dataUrl, fromFile(dataUrl).slice(0, 40)), null, `짧아진 파일 ${dataUrl.slice(0, 16)}`));
+    const hollow = dataUrl => {
+        const bytes = Buffer.from(body(dataUrl), 'base64');
+        bytes.fill(0, 30);
+        return bytes.toString('base64');
+    };
+    [png, jpg, bmp].forEach(dataUrl => assert.strictEqual(read(dataUrl, hollow(dataUrl)), null, `크기는 같고 뒤가 빈 파일 ${dataUrl.slice(0, 16)}`));
+});
+
+test('폴더 열기 마침 알림: 넣지 못한 폴더의 작업 기록이 그대로 남는 파일(열기 전에 남긴 사본) 이름을 알린다', () => {
+    const note = ctx.historyMergeNote({ droppedIncoming: 3, droppedCurrent: 0, keptIn: 'save_data_이전_20261105-1530.yaml' }, '폴더');
+    assert.ok(note.includes('폴더에 있던 기록 3개는 넣지 않았고, 폴더의 저장본(save_data.yaml)에서도 빠집니다.'), note);
+    assert.ok(note.includes('그 기록은 save_data_이전_20261105-1530.yaml에 그대로 남아 있습니다.'), note);
+    assert.ok(!ctx.historyMergeNote({ droppedIncoming: 0, droppedCurrent: 2, keptIn: 'x.yaml' }, '폴더').includes('x.yaml'), '넣지 못한 폴더 기록이 없으면 사본 이야기는 하지 않는다');
+    assert.ok(!ctx.historyMergeNote({ droppedIncoming: 3, keptIn: 'x.yaml' }, '파일').includes('x.yaml'), '백업 파일은 그 파일에 남는다고만 한다');
+});
+
+test('불러온 상태 검사(sanitizeState)는 찾지 못한 그림의 참조를 지우지 않고, MD 내보내기에서는 빈 그림이 된다', () => {
+    // 묶음 6이 그림 값 검사를 넣어도 지켜야 하는 약속(값은 data:image 또는 isBackupImageRef)
+    const stateSource = fs.readFileSync(path.join(__dirname, '..', 'js', 'state.js'), 'utf8').replace(/\r\n/g, '\n');
+    const extract = name => {
+        const start = stateSource.indexOf(`function ${name}(`);
+        const end = stateSource.indexOf('\n}\n', start);
+        assert.ok(start >= 0 && end > start, `${name}을 찾지 못함`);
+        return stateSource.slice(start, end + 2);
+    };
+    vm.runInContext(`${extract('generateUniqueId')}\n${extract('sanitizeState')}\n${extract('resolveMarkdownImages')}`, ctx);
+    const png = 'data:image/png;base64,' + 'iVBORw0KGgo'.repeat(20);
+    const ref = 'teacher-image:' + ctx.window.backupImageKey(png);
+    const state = ctx.sanitizeState(JSON.parse(JSON.stringify({ subjects: [{ id: 's1', lessons: [{ id: 1, title: '가', images: { a: ref } }], mainQuest: { title: '평가', images: { q: ref } } }] })));
+    assert.strictEqual(state.subjects[0].lessons[0].images.a, ref);
+    assert.strictEqual(state.subjects[0].mainQuest.images.q, ref);
+    assert.strictEqual(ctx.resolveMarkdownImages('![a](local:x) ![b](local:y)', { x: ref, y: png }), `![a]() ![b](${png})`);
+});
+
+test('PC 폴더: 폴더 저장은 모두 줄을 서고, 폴더 열기는 앞 묶음의 안전장치를 그대로 쓴다(소스 검사)', () => {
+    const state = fs.readFileSync(path.join(__dirname, '..', 'js', 'state.js'), 'utf8').replace(/\r\n/g, '\n');
+    const body = marker => {
+        const start = state.indexOf(marker);
+        assert.ok(start >= 0, marker);
+        return state.slice(start, state.indexOf('\n}\n', start));
+    };
+    const sync = body('async function syncLinkedFolderNow(');
+    assert.ok(sync.includes('folderImageMode()') && !sync.includes('backupImageMode(') && !sync.includes('requestPermission'), '빼기를 받지 않고, 저장 중에 권한 창을 띄우지 않는다');
+    assert.ok(/function syncToLinkedFolder\(\) \{\n {4}return folderSyncRunner\.request\(\);/.test(state), '모든 폴더 저장은 줄을 선다');
+    const open = body('window.loadFromProjectFolder = async function');
+    ['readFolderImages(', 'freeFolderCopyName(', 'safetyBackupOrAsk(', 'mergeBackupExtras(', "historyMergeNote(extras.historyDropped, '폴더')", 'isBackupTooBig(', 'keptIn:'].forEach(name => assert.ok(open.includes(name), name));
+    assert.ok(open.indexOf('freeFolderCopyName(') < open.indexOf('safetyBackupOrAsk(') && open.indexOf('safetyBackupOrAsk(') < open.indexOf('globalState = '), '사본 → 안전 백업 → 한 번에 바꾸기 순서');
+    assert.ok(!open.includes('downloadSafetyBackup('), '폴더 열기 전 백업은 safetyBackupOrAsk로');
+    const [forget, save, remember] = ['forgetFolderHandle(', 'await saveState()', 'rememberFolderHandle('].map(marker => open.indexOf(marker));
+    assert.ok(forget > 0 && forget < save && save < remember, '앞 폴더를 잊고 → 브라우저에 저장한 뒤에야 이 폴더를 기억한다');
 });
 
 (async () => {

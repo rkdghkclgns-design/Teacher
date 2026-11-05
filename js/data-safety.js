@@ -1,4 +1,4 @@
-// data-safety.js - 작업을 잃지 않게: 확인 창(비동기), 복원되는 백업, 불러오기 전 자동 백업, 교과 휴지통, 히스토리 되돌리기, 마지막 백업 시각
+// data-safety.js - 작업을 잃지 않게: 확인 창(비동기), 복원되는 백업, 불러오기 전 자동 백업, 교과 휴지통, 히스토리 되돌리기, 마지막 백업 시각, PC 폴더 열기 문구
 // 계산만 하는 함수(교과 합치기 계획, 백업 나이, 되돌릴 곳)는 DOM 없이 돌고 tests/data-safety.test.js가 확인한다.
 
 const BACKUP_FORMAT = 'teacher-backup';
@@ -194,6 +194,10 @@ const BACKUP_IMAGE_DIR = '그림';
 const BACKUP_DATA_URL = /^data:(image\/[\w.+-]+);base64,([A-Za-z0-9+/=]+)$/;
 const BACKUP_IMAGE_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/svg+xml': 'svg' };
 const BACKUP_IMAGE_MIN = 64; // 이보다 짧은 글은 그림으로 보지 않는다
+// '그림' 파일을 찾지 못한 그림은 이 참조를 그대로 둔다(빈 글로 바꾸지 않는다). 화면과 내보내기에서는 빈 그림으로 보이고
+// (lesson-sanitize.js가 모르는 주소를 지운다), 다음 저장도 참조를 그대로 써서 그림 파일을 채운 뒤 다시 열면 돌아온다
+const BACKUP_IMAGE_REF_RE = /^teacher-image:[0-9a-f]{17,24}$/;
+const isBackupImageRef = value => typeof value === 'string' && BACKUP_IMAGE_REF_RE.test(value);
 
 let backupImagesDropOnce = false; // '빼기'를 골라 두었다(메뉴를 연 채 바로 받는 백업 하나. 기억하지 않는다)
 let backupInlineTooBig = false; // 이 창에서 '함께'가 크기 한도에 걸려 '따로·가볍게'로 바꿨다(저장소에 적지 못해도 따로 담는다)
@@ -321,16 +325,31 @@ function base64ByteLength(base64) {
     return Math.floor(text.length * 3 / 4) - padding;
 }
 
-// 백업 내용에서 그림(data:image 글자 값)을 떼어 낸다. 글 속에 섞인 그림은 건드리지 않는다. 'none'이면 그 항목을 뺀다
-function detachBackupImages(value, mode) {
+// 그림 글 하나의 백업 이름표: 이름(내용 해시)·'그림' 파일 이름·바이트 수. 그림이 아니면 null
+function backupImageInfo(text) {
+    if (!isBackupImage(text)) return null;
+    const key = backupImageKey(text);
+    const file = backupImageFile(key, text);
+    return file ? { key, name: file.name, bytes: base64ByteLength(file.base64) } : null;
+}
+
+// 백업 내용에서 그림(data:image 글자 값)을 떼어 낸다. 글 속에 섞인 그림은 건드리지 않는다. 'none'이면 그 항목을 뺀다.
+// memo: 지난번에 계산한 이름표(Map 글 → 이름표). 있으면 같은 그림을 다시 해시하지 않는다. 돌려주는 memo에는 이번에 본 그림만 든다
+function detachBackupImages(value, mode, memo = null) {
     const files = {};
+    const seen = new Map();
     const DROP = Symbol('drop');
+    const infoOf = text => {
+        if (!seen.has(text)) seen.set(text, memo && memo.has(text) ? memo.get(text) : backupImageInfo(text));
+        return seen.get(text);
+    };
     const walk = node => {
-        if (isBackupImage(node)) {
-            if (mode === 'none') return DROP;
-            const key = backupImageKey(node);
-            files[key] = node;
-            return BACKUP_IMAGE_REF + key;
+        if (typeof node === 'string' && node.length >= BACKUP_IMAGE_MIN && node.startsWith('data:image/')) {
+            if (mode === 'none') return isBackupImage(node) ? DROP : node;
+            const info = infoOf(node);
+            if (!info) return node;
+            files[info.key] = node;
+            return BACKUP_IMAGE_REF + info.key;
         }
         if (Array.isArray(node)) return node.map(walk).filter(item => item !== DROP);
         if (node && typeof node === 'object') {
@@ -338,18 +357,42 @@ function detachBackupImages(value, mode) {
         }
         return node;
     };
-    return { value: walk(value), files };
+    return { value: walk(value), files, memo: seen };
 }
 
-// 떼어 둔 그림을 제자리에 돌려놓는다. 없는 그림은 빈 글로 둔다
+// 떼어 둔 그림을 제자리에 돌려놓는다. 찾지 못한 그림은 참조를 그대로 둔다(빈 글로 지우면 다음 저장에서 폴더의 연결까지 사라진다).
+// 모양이 맞는 참조만 바꾼다('teacher-image:'로 시작하는 보통 글은 그대로)
 function attachBackupImages(value, files) {
     const walk = node => {
-        if (typeof node === 'string') return node.startsWith(BACKUP_IMAGE_REF) ? (files[node.slice(BACKUP_IMAGE_REF.length)] || '') : node;
+        if (typeof node === 'string') return isBackupImageRef(node) ? (files[node.slice(BACKUP_IMAGE_REF.length)] || node) : node;
         if (Array.isArray(node)) return node.map(walk);
         if (node && typeof node === 'object') return Object.fromEntries(Object.entries(node).map(([key, item]) => [key, walk(item)]));
         return node;
     };
     return walk(value);
+}
+
+// 저장 내용이 가리키는 그림 이름(참조의 키)을 한 번씩 모은다. 모양이 맞는 참조만 센다
+function backupImageRefs(value) {
+    const keys = new Set();
+    const walk = node => {
+        if (isBackupImageRef(node)) keys.add(node.slice(BACKUP_IMAGE_REF.length));
+        else if (Array.isArray(node)) node.forEach(walk);
+        else if (node && typeof node === 'object') Object.values(node).forEach(walk);
+    };
+    walk(value);
+    return keys;
+}
+
+// '그림' 폴더의 파일 이름 목록 → 그림 이름(키)별 파일 이름. 백업이 쓴 그림 이름이 아니면 건너뛰고, 같은 키가 둘이면 앞의 것
+function backupImageFileNames(names) {
+    const byKey = new Map();
+    for (const name of names) {
+        if (!isBackupImageName(name)) continue;
+        const key = String(name).replace(/\.[^.]+$/, '');
+        if (!byKey.has(key)) byKey.set(key, String(name));
+    }
+    return byKey;
 }
 
 // 그림(data:image 글자 값) 수. 같은 그림은 한 번만 센다(떼어 내는 기준과 같다. 글 속에 섞인 그림은 세지 않는다)
@@ -395,6 +438,31 @@ function backupImageFromFile(name, base64) {
     const ext = String(name).split('.').pop().toLowerCase();
     const mime = Object.keys(BACKUP_IMAGE_EXT).find(type => BACKUP_IMAGE_EXT[type] === ext) || 'image/png';
     return { key: String(name).replace(/\.[^.]+$/, ''), dataUrl: `data:${mime};base64,${base64}` };
+}
+
+// 확장자가 없는 형식은 .png로 쓴다(backupImageFile). 그 가운데 'image/png'와 이름 길이가 같은 형식은 키로 가린다
+const BACKUP_IMAGE_PNG_ALIKE = ['image/jpg', 'image/bmp'];
+// 키로 가리지 못하는(이름을 모르는) 형식 이름의 길이. 'image/png'(9자)보다 길다
+const BACKUP_IMAGE_TYPE_LENGTH = { min: 10, max: 32 };
+
+// '그림' 폴더에서 읽은 그림 파일(base64) 하나를 그림 글로 되돌린다. 내용이 이름(키: 원래 글의 해시 + 글 길이)과 맞을 때만 돌려주고 아니면 null.
+// 복사가 끊겨 짧아졌거나 크기는 그대로인데 뒤가 빈 파일을 그림으로 받으면, 다음 저장이 망가진 그림을 새 이름으로 써서 폴더 저장본이 원래 그림을 더는 가리키지 않는다.
+// .png 파일은 확장자가 없는 형식일 수도 있어 image/jpg·image/bmp로도 키를 맞춰 보고(맞으면 원래 글 그대로), 이름 길이가 다른 형식이면
+// 원래 글 길이와의 차이가 형식 이름 길이로 맞을 때만 image/png로 받는다. 원래 글에 '=' 채움이 없었을 수도 있어 그것도 맞춰 본다
+function backupImageFromKeyedFile(key, name, base64) {
+    const text = String(base64);
+    const { dataUrl } = backupImageFromFile(name, text);
+    const type = dataUrl.slice('data:'.length, dataUrl.indexOf(';'));
+    const asPng = type === 'image/png';
+    const bodies = [...new Set([text, text.replace(/=+$/, '')])];
+    for (const candidateType of asPng ? [type, ...BACKUP_IMAGE_PNG_ALIKE] : [type]) {
+        for (const body of bodies) {
+            const candidate = `data:${candidateType};base64,${body}`;
+            if (backupImageKey(candidate) === key) return candidate;
+        }
+    }
+    const typeLength = parseInt(String(key).slice(16), 16) - 'data:;base64,'.length - text.length;
+    return asPng && typeLength >= BACKUP_IMAGE_TYPE_LENGTH.min && typeLength <= BACKUP_IMAGE_TYPE_LENGTH.max ? dataUrl : null;
 }
 
 // 백업 ZIP(또는 그 안의 폴더)에 save_data.yaml을 쓴다. 방식에 따라 그림은 안에 두거나, '그림/' 파일로 떼거나, 뺀다.
@@ -511,6 +579,48 @@ function renderBackupIndicator() {
     el.classList.toggle('text-amber-300', age.stale);
     el.classList.toggle('text-white/60', !age.stale);
     el.title = `${age.stale ? '오래 백업하지 않았습니다. ' : ''}작업은 이 브라우저에만 저장됩니다. 눌러서 ZIP으로 백업하세요(내보내기·백업 → 백업 ZIP으로 되살리기로 되살립니다).`;
+}
+
+/* ---------- PC 폴더 열기: 폴더의 그림 담기, 저장본 사본 이름, 확인 창·알림 글 (tests/data-safety.test.js) ---------- */
+// 폴더 저장본이 그림을 담은 방식. 이 폴더에 이어 저장할 때 따른다. '빼기'로 저장된 예전 폴더는 앞으로 그림을 빼지 않게 '따로'로 담는다
+function folderImageModeOf(saved) {
+    return saved?.imageMode === 'separate' || saved?.imageMode === 'none' ? 'separate' : 'inline';
+}
+
+// 저장본 사본 이름. 같은 분에 두 번 남겨도 앞 사본을 덮지 않게 두 번째부터 _2, _3을 붙인다
+function folderCopyName(stamp, n = 1) {
+    return `save_data_이전_${stamp}${n > 1 ? `_${n}` : ''}.yaml`;
+}
+
+// '저장해 둔 폴더 열기' 확인 창. total: 저장본이 가리키는 그림 수, missing: 찾지 못했거나 읽지 못했거나 내용이 이름과 맞지 않는(망가진) 수,
+// imageNote: 그림을 빼고 저장된 폴더 안내(noImagesImportNote, '\n\n'으로 시작)
+function folderOpenPrompt({ folderName, subjectCount, incomingCount, total = 0, missing = 0, imageNote = '' }) {
+    const head = `'${folderName}' 폴더의 작업(교과 ${incomingCount}개)으로 지금 브라우저의 모든 작업(교과 ${subjectCount}개)을 바꿉니다.\n바꾸기 전에 지금 상태를 백업 파일로 내려받습니다.`;
+    const lost = missing > 0
+        ? `\n\n그림 ${total}장 중 ${missing}장을 이 폴더의 '그림' 폴더에서 찾지 못했습니다(파일이 없거나 읽히지 않거나 망가짐, 작업 기록·휴지통의 그림도 셈). 그대로 열면 그 그림은 빈칸으로 보입니다.\n`
+            + "'그림' 폴더까지 다 옮겼는지(복사가 중간에 끊기지 않았는지), OneDrive 같은 곳에서 파일을 모두 내려받았는지 확인해 주세요. 그림 파일을 채운 뒤 이 폴더를 다시 열면 그림이 돌아옵니다."
+        : '';
+    const okLabel = missing <= 0 ? '백업 받고 바꾸기' : missing >= total ? '그림 없이 열기' : '빠진 채로 열기';
+    return { message: head + imageNote + lost, okLabel };
+}
+
+// 폴더를 연 뒤 알림. synced: 첫 폴더 저장이 됐는지, browserSaved: 연 작업을 브라우저에 저장했는지(못 했으면 새로고침 뒤 이 폴더에 이어지지 않는다),
+// missing: 찾지 못한 그림 수(확인 창과 같은 수. 작업 기록·휴지통의 그림도 센다), mode: 그림 담기를 바꿨으면 새 방식, wasNone: 폴더가 '빼기'로 저장돼 있었는지
+function folderOpenedMessage({ folderName, synced = true, browserSaved = true, keptName = '', missing = 0, mode = '', wasNone = false }) {
+    const label = BACKUP_IMAGE_LABEL[mode] || '';
+    const modeLine = !label ? ''
+        : wasNone ? `이 폴더는 그림을 빼고 저장되어 있었습니다. 앞으로는 그림도 담도록 그림 담기를 '${label}'로 바꿨습니다(백업 ZIP에도 같이 쓰입니다).`
+            : `그림 담기를 이 폴더에 맞춰 '${label}'로 바꿨습니다(백업 ZIP에도 같이 쓰입니다. 내보내기·백업 → 그림 담기에서 바꿀 수 있습니다).`;
+    const opened = `'${folderName}' 폴더의 작업을 열었습니다.`;
+    return [
+        synced ? `${opened} 이제 바뀐 내용은 이 폴더에 자동으로 저장합니다.`
+            : browserSaved ? `${opened} 다만 이 폴더에 저장하지 못했습니다. 바뀐 내용은 브라우저에는 저장됩니다(화면 위 알림을 보세요).`
+                : `${opened} 다만 이 폴더에 저장하지 못했습니다(화면 위 알림을 보세요).`,
+        browserSaved ? '' : "브라우저에는 이 작업을 저장하지 못했습니다. 새로고침하거나 창을 다시 열면 이 폴더에 자동으로 이어지지 않고 열기 전 작업이 보일 수 있으니, 그때는 '저장해 둔 폴더 열기'로 이 폴더를 다시 여세요.",
+        keptName ? `열기 전 폴더의 저장본은 ${keptName}으로 남겨 두었습니다.` : '',
+        missing > 0 ? `그림 ${missing}장(작업 기록·휴지통의 그림도 셈)은 찾지 못해 빈칸으로 남았습니다. 그림 파일을 '그림' 폴더에 넣은 뒤 '저장해 둔 폴더 열기'로 이 폴더를 다시 열면 돌아옵니다.` : '',
+        modeLine
+    ].filter(Boolean).join('\n');
 }
 
 /* ---------- 교과 휴지통 ---------- */
@@ -717,10 +827,11 @@ function mergeHistory(current, incoming, now = Date.now(), limit = HISTORY_LIMIT
 
 // 불러오기를 마친 알림 끝에 붙이는 말. 칸이 모자라 남기지 못한 기록이 있을 때만. source: '파일' | '폴더'
 // 넣지 못한 기록은 오래된 것만이 아니다(이 브라우저의 기록이 칸을 채우면 더 새 기록도 넣지 못한다).
-// 백업 파일은 고치지 않으므로 그 파일에 남는다. 폴더는 곧 이어지는 폴더 저장이 저장본(save_data.yaml)을 지금 기록으로 다시 쓰므로 거기서도 빠진다
-function historyMergeNote({ droppedIncoming = 0, droppedCurrent = 0 } = {}, source = '파일') {
+// 백업 파일은 고치지 않으므로 그 파일에 남는다. 폴더는 곧 이어지는 폴더 저장이 저장본(save_data.yaml)을 지금 기록으로 다시 쓰므로 거기서도 빠진다.
+// keptIn: 폴더의 그 기록이 그대로 남는 파일(폴더를 열 때 남긴 save_data.yaml 사본, 예전 save_data.json 폴더는 그 파일). 있으면 그 이름을 알린다
+function historyMergeNote({ droppedIncoming = 0, droppedCurrent = 0, keptIn = '' } = {}, source = '파일') {
     const notTaken = source === '폴더'
-        ? `폴더에 있던 기록 ${droppedIncoming}개는 넣지 않았고, 폴더의 저장본(save_data.yaml)에서도 빠집니다.`
+        ? `폴더에 있던 기록 ${droppedIncoming}개는 넣지 않았고, 폴더의 저장본(save_data.yaml)에서도 빠집니다.${keptIn ? ` 그 기록은 ${keptIn}에 그대로 남아 있습니다.` : ''}`
         : `파일에 있던 기록 ${droppedIncoming}개는 넣지 않았습니다. 그 파일에는 그대로 남아 있습니다.`;
     const lost = [
         droppedIncoming ? notTaken : '',
@@ -772,7 +883,9 @@ if (typeof window !== 'undefined') {
         storedBackupImageMode, takeBackupImageMode, folderImageMode, clearBackupImagesDrop, switchBackupImagesToSeparate,
         isBackupTooBig, backupFileName, withSeparateFallback, buildBackupZip, notifyBackupFallback, finishBackupDownload,
         safetyBackupOrAsk, countBackupImages, currentImageCount, noImagesImportNote,
-        BACKUP_IMAGE_LABEL, BACKUP_NO_IMAGES_TAG, BACKUP_TOO_BIG_TEXT, BACKUP_FALLBACK_TEXT
+        BACKUP_IMAGE_LABEL, BACKUP_NO_IMAGES_TAG, BACKUP_TOO_BIG_TEXT, BACKUP_FALLBACK_TEXT,
+        isBackupImageRef, backupImageInfo, backupImageRefs, backupImageFileNames, folderImageModeOf, folderCopyName,
+        folderOpenPrompt, folderOpenedMessage, backupImageFromKeyedFile
     });
     if (typeof document !== 'undefined' && document.addEventListener) {
         // '빼기'는 메뉴를 연 채 바로 받는 백업 하나에만 쓴다. 메뉴 밖을 누르면 그 버튼이 일하기 전에(잡기 단계) 푼다(머리줄 백업 시각·교과 목록 ZIP 버튼)

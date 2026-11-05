@@ -247,14 +247,15 @@ const DBManager = {
         });
     },
 
+    // 기록이 끝까지 들어간 뒤(transaction complete)에 끝난 것으로 본다. 요청이 성공해도 기록 단계에서 취소될 수 있다(저장 공간이 모자라면 QuotaExceededError).
+    // 그래서 saveState가 '브라우저에 저장했다'고 돌려주는 값을 믿을 수 있다
     async setItem(key, value) {
         const db = await this.init();
         return new Promise((resolve, reject) => {
             const tx = db.transaction(this.storeName, 'readwrite');
-            const store = tx.objectStore(this.storeName);
-            const request = store.put(value, key);
-            request.onsuccess = () => resolve();
-            request.onerror = (e) => reject(e);
+            tx.oncomplete = () => resolve();
+            tx.onabort = () => reject(tx.error || new Error('IndexedDB 저장이 취소되었습니다'));
+            tx.objectStore(this.storeName).put(value, key);
         });
     },
 
@@ -273,10 +274,9 @@ const DBManager = {
         const db = await this.init();
         return new Promise((resolve, reject) => {
             const tx = db.transaction(this.storeName, 'readwrite');
-            const store = tx.objectStore(this.storeName);
-            const request = store.delete(key);
-            request.onsuccess = () => resolve();
-            request.onerror = (e) => reject(e);
+            tx.oncomplete = () => resolve();
+            tx.onabort = () => reject(tx.error || new Error('IndexedDB 지우기가 취소되었습니다'));
+            tx.objectStore(this.storeName).delete(key);
         });
     },
 
@@ -360,7 +360,84 @@ if (_stateTabs) {
     };
 }
 
+/* ---------- 저장 미루기와 PC 폴더 저장 줄 세우기 (DOM 없이 돈다. tests/folder-sync.test.js) ---------- */
+// 짧은 사이에 여러 번 부르면 마지막 부름에서 delay가 지난 뒤 한 번만 한다. flush는 기다리던 일을 바로 하고 그 결과(없으면 null)를, cancel은 버린다.
+// timers 기본값은 감싼 함수다(브라우저에서 { setTimeout }.setTimeout(…)처럼 부르면 Illegal invocation)
+function createDebouncedTask(task, delay, timers = { set: (fn, ms) => setTimeout(fn, ms), clear: id => clearTimeout(id) }) {
+    let timer = null;
+    const cancel = () => {
+        if (timer === null) return;
+        timers.clear(timer);
+        timer = null;
+    };
+    return {
+        schedule() {
+            cancel();
+            timer = timers.set(() => {
+                timer = null;
+                task();
+            }, delay);
+        },
+        flush() {
+            if (timer === null) return null;
+            cancel();
+            return task();
+        },
+        cancel,
+        pending: () => timer !== null
+    };
+}
+
+// 한 번에 하나만 돌린다. 아직 시작하지 않은 요청이 있으면 거기에 합치고(기다리는 일은 하나), 그 일은 시작할 때의 최신 상태로 돈다.
+// 앞 일이 끝나야(실패해도) 다음 일이 시작한다. idle은 지금까지 들어온 일이 모두 끝나면 풀린다
+function createSerialRunner(task) {
+    let tail = Promise.resolve();
+    let waiting = null;
+    const request = () => {
+        if (waiting) return waiting;
+        const run = tail.then(() => {
+            waiting = null;
+            return task();
+        });
+        waiting = run;
+        tail = run.then(() => undefined, () => undefined);
+        return run;
+    };
+    return { request, idle: () => tail };
+}
+
+// 참고자료 칸처럼 글자마다 바뀌는 칸은 입력이 1초 멈춘 뒤 한 번 저장한다(글자마다 과정 전체와 PC 폴더를 다시 쓰지 않게).
+// 칸을 벗어나거나 창이 가려지거나 닫히면 바로 저장한다. 다른 까닭으로 saveState가 돌면 미뤄 둔 저장은 버린다(그 저장이 대신한다)
+const SAVE_SOON_DELAY_MS = 1000;
+const saveSoonTask = createDebouncedTask(() => saveState(), SAVE_SOON_DELAY_MS);
+
+function saveStateSoon() {
+    saveSoonTask.schedule();
+}
+
+// 미뤄 둔 저장이 있으면 지금 한다. 그 저장의 약속, 없으면 null
+function flushSaveStateSoon() {
+    return saveSoonTask.flush();
+}
+
+function cancelSaveStateSoon() {
+    saveSoonTask.cancel();
+}
+
+window.saveStateSoon = saveStateSoon;
+window.flushSaveStateSoon = flushSaveStateSoon;
+window.cancelSaveStateSoon = cancelSaveStateSoon;
+
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') flushSaveStateSoon();
+    });
+}
+if (typeof window.addEventListener === 'function') window.addEventListener('pagehide', () => flushSaveStateSoon());
+
 async function saveState() {
+    window.cancelSaveStateSoon?.(); // 이 저장이 미뤄 둔 저장(참고자료 칸)을 대신한다
+    let savedInBrowser = false;
     try {
         if (currentSubjectId) {
             const subject = globalState.subjects.find(s => s.id === currentSubjectId);
@@ -372,6 +449,7 @@ async function saveState() {
         // 1. IndexedDB에 무제한 비동기 저장 시도
         const stateData = { state: globalState, history: contentHistory };
         await DBManager.setItem(STORAGE_KEY, stateData);
+        savedInBrowser = true;
         _stateTabs?.postMessage('saved');
 
     } catch (e) {
@@ -383,6 +461,7 @@ async function saveState() {
     if (projectFolderHandle) {
         syncToLinkedFolder().catch(e => console.warn('폴더 동기화 경고:', e.message));
     }
+    return savedInBrowser; // 브라우저(IndexedDB)에 저장했는지. 폴더 열기는 저장했을 때만 새로고침 뒤 이어 쓸 폴더를 기억한다
 }
 
 async function restoreState() {
@@ -799,7 +878,7 @@ function resolveMarkdownImages(content, images) {
 
         for (const [imgId, b64] of Object.entries(images)) {
 
-            md = md.split(`local:${imgId}`).join(b64);
+            md = md.split(`local:${imgId}`).join(/^data:image\//.test(b64) ? b64 : ''); // 찾지 못한 그림(teacher-image 참조)·빈 값은 빈 그림으로
 
         }
 
@@ -1539,26 +1618,12 @@ window.connectProjectFolder = async function () {
         });
         // 이미 저장본이 있는 폴더면 덮어쓰기 전에 묻고, 기존 저장본은 다른 이름으로 남긴다
         if (!(await confirmFolderOverwrite(dirHandle))) return;
-        projectFolderHandle = dirHandle;
+        // 표시를 먼저 바꾸고 저장한다(첫 저장이 실패하면 그 알림이 남는다)
+        useLinkedFolder(dirHandle);
+        await rememberFolderHandle(dirHandle);
 
-        // [추가] IndexedDB에 핸들 저장 (새로고침 유지용) - 브라우저 정책상 DataCloneError 발생 시 넘겨감
-        if (typeof DBManager !== 'undefined') {
-            try {
-                await DBManager.setItem('projectFolderHandle', dirHandle);
-            } catch (dbErr) {
-                console.warn('폴더 연결 자체는 성공했으나 핸들(새로고침 유지용) 저장에 실패했습니다:', dbErr);
-            }
-        }
-
-        // 연결 즉시 현재 상태를 폴더에 동기화. 실패했으면 띠로 알렸으므로 '연결됨'으로 바꾸지 않는다
+        // 연결 즉시 현재 상태를 폴더에 저장. 실패했으면 띠로 알렸으므로 연결 알림을 띄우지 않는다
         if (!(await syncToLinkedFolder())) return;
-
-        // UI 업데이트
-        setFolderIndicator('on', dirHandle.name);
-        folderSyncFailed = false;
-        window.hideFolderSyncBanner();
-        // 드롭다운 토글 기능으로 변경
-        document.getElementById('folder-connection-indicator').onclick = toggleFolderDropdown;
 
         window.showToast(`[${dirHandle.name}] 폴더가 연동되었습니다. 이후 모든 변경사항이 자동 동기화됩니다.`);
 
@@ -1575,6 +1640,7 @@ window.connectProjectFolder = async function () {
  */
 window.disconnectProjectFolder = async function () {
     projectFolderHandle = null;
+    folderWriteCache = null; // 다음에 다시 이으면 폴더의 파일을 처음부터 다시 확인한다
 
     // [추가] DB에서 핸들 삭제
     if (typeof DBManager !== 'undefined') {
@@ -1615,6 +1681,95 @@ async function verifyPermission(handle, requestIfNotGranted = false) {
     return false;
 }
 
+const FOLDER_LOCKED_MESSAGE = 'PC 폴더 쓰기 권한이 풀려 자동 저장을 멈췄습니다. 지금 작업은 브라우저에만 저장됩니다.';
+const FOLDER_REOPENED_MESSAGE = '브라우저를 다시 열어 PC 폴더 자동 저장이 멈췄습니다. 지금 작업은 브라우저에만 저장됩니다.';
+const FOLDER_CHANGED_MESSAGE = '이 브라우저가 마지막으로 저장한 뒤 PC 폴더의 저장본이 바뀌었거나(다른 PC나 브라우저에서 저장) 확인할 수 없어, 덮어쓰지 않도록 자동 저장을 멈췄습니다. 지금 작업은 브라우저에만 저장됩니다.';
+
+// 이 폴더에 자동 저장을 켠다(머리줄·드롭다운·실패 알림 정리). 저장은 부른 쪽이 한다. 표시를 먼저 바꾸므로 첫 저장이 실패하면 그 알림이 남는다
+function useLinkedFolder(handle) {
+    projectFolderHandle = handle;
+    folderWriteCache = null;
+    folderSyncFailed = false;
+    setFolderIndicator('on', handle.name);
+    window.hideFolderSyncBanner?.();
+    const indicator = document.getElementById('folder-connection-indicator');
+    if (indicator) indicator.onclick = toggleFolderDropdown;
+}
+
+// 새로고침 뒤에도 같은 폴더에 이어 저장하도록 손잡이를 기억한다(브라우저 정책상 DataCloneError가 나면 넘어간다)
+async function rememberFolderHandle(handle) {
+    try {
+        await DBManager.setItem('projectFolderHandle', handle);
+    } catch (dbErr) {
+        console.warn('폴더 연결은 됐지만 새로고침 뒤 이어 쓰도록 기억하지 못했습니다:', dbErr);
+    }
+}
+
+// 새로고침 뒤 이어 쓸 폴더를 잊는다(지금 창의 연결은 그대로. 지우지 못해도 넘어간다)
+async function forgetFolderHandle() {
+    try {
+        await DBManager.deleteItem('projectFolderHandle');
+    } catch (dbErr) {
+        console.warn('새로고침 뒤 이어 쓸 폴더를 잊지 못했습니다:', dbErr);
+    }
+}
+
+// 자동 저장을 멈추고 머리줄과 띠의 '다시 연결'로만 다시 잇는다(권한 창은 사용자가 누를 때만 뜬다). 손잡이는 IndexedDB에 두어 새로고침해도 다시 연결할 수 있다
+function lockLinkedFolder(handle, message) {
+    projectFolderHandle = null;
+    folderSyncFailed = false;
+    setFolderIndicator('locked', handle.name);
+    const indicator = document.getElementById('folder-connection-indicator');
+    if (indicator) indicator.onclick = () => regrantLinkedFolder(handle, message);
+    showFolderSyncBanner(message, '다시 연결', () => regrantLinkedFolder(handle, message));
+}
+
+// '다시 연결': 클릭 안에서 권한을 다시 받고 바로 저장해 그동안 브라우저에만 저장된 변경을 폴더에 옮긴다.
+// 이 브라우저가 마지막으로 쓴 뒤 저장본이 다른 곳에서 바뀌었으면 덮어쓰기 전에 묻고 기존 저장본은 사본으로 남긴다. 거절·취소하면 멈춘 채로 둔다
+async function regrantLinkedFolder(handle, message = FOLDER_LOCKED_MESSAGE) {
+    try {
+        if (!(await verifyPermission(handle, true))) return lockLinkedFolder(handle, message);
+        if (await folderSaveChangedElsewhere(handle) && !(await confirmFolderOverwrite(handle, { changed: true }))) return lockLinkedFolder(handle, FOLDER_CHANGED_MESSAGE);
+        useLinkedFolder(handle);
+        if (await syncToLinkedFolder()) window.showToast(`[${handle.name}] 폴더에 다시 저장했습니다. 이후 바뀐 내용도 자동으로 저장합니다.`, 'success');
+    } catch (err) {
+        console.error('[PC 폴더] 다시 연결 실패:', err);
+        lockLinkedFolder(handle, message);
+        window.showAlert(`PC 폴더에 다시 연결하지 못했습니다(${err?.message || '알 수 없는 오류'}). 다시 눌러 보거나 다른 폴더를 고르세요.`);
+    }
+}
+
+/* ---------- 이 브라우저가 마지막으로 쓴 저장본의 이름표 (그 뒤에 다른 PC·브라우저가 썼는지 알아본다) ---------- */
+const FOLDER_STAMP_KEY = 'teacher:folder-save-stamp';
+
+// save_data.yaml을 쓴 뒤 그 크기·고친 시각을 이 브라우저에 남긴다(못 남겨도 저장은 된 것이다)
+async function rememberFolderSaveStamp(handle) {
+    try {
+        const file = await (await handle.getFileHandle('save_data.yaml')).getFile();
+        localStorage.setItem(FOLDER_STAMP_KEY, JSON.stringify({ name: handle.name, size: file.size, modified: file.lastModified }));
+    } catch (err) {
+        console.warn('[PC 폴더] 저장본 이름표를 남기지 못했습니다:', err.message);
+    }
+}
+
+// 이 브라우저가 마지막으로 쓴 뒤 그 폴더의 save_data.yaml이 바뀌었는지.
+// 이름표가 없거나 다른 폴더 것이면 알 수 없어 false, 저장본이 없으면 false(지킬 것이 없다), 읽지 못하면 true(묻는 쪽이 안전)
+async function folderSaveChangedElsewhere(handle) {
+    let stamp = null;
+    try {
+        stamp = JSON.parse(localStorage.getItem(FOLDER_STAMP_KEY) || 'null');
+    } catch (err) {
+        stamp = null;
+    }
+    if (!stamp || stamp.name !== handle.name) return false;
+    try {
+        const file = await (await handle.getFileHandle('save_data.yaml')).getFile();
+        return file.size !== stamp.size || file.lastModified !== stamp.modified;
+    } catch (err) {
+        return err?.name !== 'NotFoundError';
+    }
+}
+
 /**
  * 페이지 로드 시 IndexedDB에 저장된 프로젝트 폴더 연결을 복원합니다.
  */
@@ -1633,38 +1788,15 @@ window.restoreProjectFolderConnection = async function () {
         }
 
         if (storedHandle) {
-            // 초기 로딩에는 requestPermission 팝업을 띄우지 못하므로 상태(query)만 체크
-            const hasPermission = await verifyPermission(storedHandle, false);
-
-            if (hasPermission) {
-                // 이미 권한이 유지되어 있다면 바로 복원
-                projectFolderHandle = storedHandle;
-                setFolderIndicator('on', storedHandle.name);
-                document.getElementById('folder-connection-indicator').onclick = toggleFolderDropdown;
-            } else {
-                // 권한이 만료된 상태 -> 사용자가 버튼을 눌렀을 때만 requestPermission 호출
+            // 처음 열 때는 권한 창을 띄우지 못하므로 상태만 본다. 권한이 있으면 바로 이어 쓰고(다음 저장에서 씀), 없으면 '다시 연결'을 기다린다.
+            // 이 브라우저가 마지막으로 쓴 뒤 다른 곳에서 저장본이 바뀌었으면 덮어쓰지 않게 멈추고 '다시 연결'에서 묻는다
+            if (!(await verifyPermission(storedHandle, false))) {
                 console.warn('저장된 폴더 핸들의 권한이 만료되었습니다. 클릭을 통해 재인증이 필요합니다.');
-
-                const indicator = document.getElementById('folder-connection-indicator');
-                setFolderIndicator('locked', storedHandle.name);
-                // 머리줄 글자만 바뀌면 놓치므로 화면 위에도 알린다
-                showFolderSyncBanner('브라우저를 다시 열어 PC 폴더 자동 저장이 멈췄습니다. 지금 작업은 브라우저에만 저장됩니다.', '다시 연결', () => indicator.onclick?.());
-                // 원클릭 재인증 이벤트 바인딩
-                indicator.onclick = async () => {
-                    try {
-                        const granted = await verifyPermission(storedHandle, true); // 클릭 이벤트 컨텍스트에서는 팝업 가능
-                        if (granted) {
-                            projectFolderHandle = storedHandle;
-                            setFolderIndicator('on', storedHandle.name);
-                            window.hideFolderSyncBanner();
-                            indicator.onclick = toggleFolderDropdown; // 드롭다운으로 롤백
-                            window.showToast(`[${storedHandle.name}] 폴더 쓰기 권한이 복원되었습니다.`);
-                        }
-                    } catch (permError) {
-                        console.error('권한 요청 실패', permError);
-                        window.showAlert('폴더 권한 획득에 실패했습니다. 다른 폴더 연결을 시도해주세요.');
-                    }
-                };
+                lockLinkedFolder(storedHandle, FOLDER_REOPENED_MESSAGE);
+            } else if (await folderSaveChangedElsewhere(storedHandle)) {
+                lockLinkedFolder(storedHandle, FOLDER_CHANGED_MESSAGE);
+            } else {
+                useLinkedFolder(storedHandle);
             }
         }
     } catch (e) {
@@ -1683,75 +1815,86 @@ window.loadFromProjectFolder = async function () {
 
     try {
         const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+        // 미뤄 둔 저장과 돌던 폴더 저장을 먼저 마친다(연결된 폴더를 다시 열 때 옛 저장본을 읽지 않게)
+        await flushSaveStateSoon();
+        await waitFolderSync();
 
-        // save_data.yaml 존재 여부 확인
+        // save_data.yaml을 찾는다. 없으면 예전 이름 save_data.json(JSON)
         let saveDataHandle;
+        let isYaml = true;
         try {
             saveDataHandle = await dirHandle.getFileHandle('save_data.yaml');
         } catch (e) {
-            // JSON 폴백 (이전 버전 호환)
-            try { saveDataHandle = await dirHandle.getFileHandle('save_data.json'); }
-            catch (e2) { return window.showAlert('유효한 프로젝트 폴더가 아닙니다.\nsave_data.yaml 파일을 찾을 수 없습니다.'); }
-        }
-
-        const file = await saveDataHandle.getFile();
-        const text = await file.text();
-        const parsed = await readFolderImages(dirHandle, simpleYamlParse(text));
-
-        if (!parsed.state) {
-            return window.showAlert('save_data.yaml에 유효한 상태 데이터가 없습니다.');
-        }
-
-        // 바꾸기 전에 묻고, 지금 상태를 백업 파일로 내려받는다. 그림을 빼고 저장된 폴더('빼기')면 확인 창에 알린다
-        const imageNote = parsed.imageMode === 'none' ? noImagesImportNote('folder', currentImageCount()) : '';
-        const ok = await confirmAsync(`'${dirHandle.name}' 폴더의 작업으로 지금 브라우저의 모든 작업(교과 ${globalState.subjects.length}개)을 바꿉니다.\n바꾸기 전에 지금 상태를 백업 파일로 내려받습니다.${imageNote}`, { okLabel: '백업 받고 바꾸기', title: '작업 폴더에서 불러오기' });
-        if (!ok) return;
-        window.saveRawContent?.(); // 고치던 원문을 먼저 저장해 백업에 들어가게 한다
-        if (!(await safetyBackupOrAsk('폴더연결전'))) return; // 받지 못하면 까닭을 알리고 백업 없이 계속할지 묻는다
-        await archiveContents((courseData || []).filter(Boolean), '불러오기 전');
-        const keptTrash = { lessonTrash: globalState.lessonTrash, subjectTrash: globalState.subjectTrash };
-
-        // 상태 복원
-        const sanitized = sanitizeState(parsed.state);
-        if (sanitized) {
-            globalState = Object.assign(sanitized, keptTrash);
-            closeLessonEditor();
-        }
-
-        // 작업 기록은 백업 ZIP과 같은 규칙으로 합친다. 칸이 모자라면 이 브라우저의 기록(방금 남긴 '불러오기 전' 포함)을 먼저 남긴다
-        const extras = mergeBackupExtras({ history: parsed.history }, { history: contentHistory });
-        if (Array.isArray(parsed.history)) contentHistory = extras.history;
-
-        // 교과 데이터 복원
-        if (globalState.subjects.length > 0) {
-            const firstSubj = globalState.subjects[0];
-            currentSubjectId = firstSubj.id;
-            courseData = firstSubj.lessons || [];
-        }
-
-        // 폴더 연결 유지
-        projectFolderHandle = dirHandle; // linkedDirHandle -> projectFolderHandle
-        if (typeof DBManager !== 'undefined') {
             try {
-                await DBManager.setItem('projectFolderHandle', dirHandle);
-            } catch (dbErr) {
-                console.warn('기존 작업 폴더 연결 자체는 성공했으나 핸들(새로고침 유지용) 저장에 실패했습니다:', dbErr);
+                saveDataHandle = await dirHandle.getFileHandle('save_data.json');
+                isYaml = false;
+            } catch (e2) { return window.showAlert('유효한 프로젝트 폴더가 아닙니다.\nsave_data.yaml 파일을 찾을 수 없습니다.'); }
+        }
+
+        const text = await (await saveDataHandle.getFile()).text();
+        const saved = isYaml ? simpleYamlParse(text) : safeJSONParse(text);
+        const savedState = saved?.state;
+        if (!savedState || typeof savedState !== 'object' || Array.isArray(savedState)) {
+            return window.showAlert(`${isYaml ? 'save_data.yaml' : 'save_data.json'}에 유효한 상태 데이터가 없습니다.`);
+        }
+
+        // 저장본이 가리키는 그림만 파일마다 읽는다. 빠진 수를 확인 창에 보이려고 바꾸기 전에 읽는다. 새 상태도 확인 창보다 먼저 만든다(아직 아무것도 바꾸지 않는다)
+        const images = await readFolderImages(dirHandle, saved);
+        const nextState = sanitizeState(images.value.state);
+        const imageNote = saved.imageMode === 'none' ? noImagesImportNote('folder', currentImageCount()) : ''; // 그림을 빼고 저장된 폴더
+        const ask = folderOpenPrompt({ folderName: dirHandle.name, subjectCount: globalState.subjects.length, incomingCount: nextState.subjects.length, total: images.total, missing: images.missing, imageNote });
+        if (!(await confirmAsync(ask.message, { okLabel: ask.okLabel, title: '작업 폴더에서 불러오기' }))) return;
+
+        // 첫 저장이 save_data.yaml을 다시 쓰기 전에 지금 파일을 다른 이름으로 남긴다. 못 남기면 아무것도 바꾸지 않고 멈춘다
+        // (예전 save_data.json만 있는 폴더는 첫 저장이 새 save_data.yaml을 만들고 save_data.json은 건드리지 않는다)
+        let keptName = '';
+        if (isYaml) {
+            try {
+                keptName = await freeFolderCopyName(dirHandle);
+                await writeTextFile(dirHandle, keptName, text);
+            } catch (copyErr) {
+                console.warn('[폴더 열기] 저장본 사본을 남기지 못했습니다:', copyErr);
+                return window.showAlert(`'${dirHandle.name}' 폴더의 저장본(save_data.yaml)을 다른 이름으로 남기지 못해 열기를 멈췄습니다. 지금 작업은 바뀌지 않았습니다. (${copyErr?.message || '알 수 없는 오류'})`);
             }
         }
 
-        // UI 동기화. 표시를 먼저 바꾸고 저장한다(폴더 저장이 실패하면 그 알림이 남는다)
-        setFolderIndicator('on', dirHandle.name);
-        folderSyncFailed = false;
-        window.hideFolderSyncBanner();
-        document.getElementById('folder-connection-indicator').onclick = toggleFolderDropdown;
-        await saveState();
+        window.saveRawContent?.(); // 고치던 원문을 먼저 저장해 백업에 들어가게 한다
+        if (!(await safetyBackupOrAsk('폴더연결전'))) return; // 받지 못하면 까닭을 알리고 백업 없이 계속할지 묻는다
+        await archiveContents((courseData || []).filter(Boolean), '불러오기 전');
 
+        // 휴지통·작업 기록은 지금 것과 폴더 것을 합친다(백업 ZIP 되살리기와 같은 규칙). 방금 남긴 '불러오기 전' 기록도 들어가게 archiveContents 다음에 한다.
+        // 넣지 못한 폴더의 기록이 그대로 남는 곳(열기 전에 남긴 사본, 예전 save_data.json 폴더는 그 파일)도 마침 알림에 적는다
+        const merged = mergeBackupExtras(
+            { history: images.value.history, trash: { lessonTrash: nextState.lessonTrash, subjectTrash: nextState.subjectTrash } },
+            { history: contentHistory, lessonTrash: globalState.lessonTrash, subjectTrash: globalState.subjectTrash }
+        );
+        const extras = { ...merged, historyDropped: { ...merged.historyDropped, keptIn: isYaml ? keptName : 'save_data.json' } };
+        const firstSubject = nextState.subjects[0] || null;
+        const folderMode = folderImageModeOf(saved);
+        const modeChanged = folderMode !== folderImageMode();
 
+        // 한 번에 바꾼다(이 사이에는 기다리지 않는다)
+        globalState = Object.assign(nextState, { lessonTrash: extras.lessonTrash, subjectTrash: extras.subjectTrash });
+        contentHistory = extras.history;
+        currentSubjectId = firstSubject ? firstSubject.id : null;
+        courseData = firstSubject ? (firstSubject.lessons || []) : [];
+        closeLessonEditor();
+        if (modeChanged) setBackupImageMode(folderMode); // 이 폴더가 그림을 담아 온 방식으로 이어 저장한다
+        useLinkedFolder(dirHandle);
+
+        // 새로고침 뒤 이 폴더에 이어 쓰는 것은 연 작업을 브라우저에 저장한 뒤에야 기억하고, 그 전에 앞서 기억한 폴더는 잊는다.
+        // 그 사이에 창이 닫히거나 브라우저 저장이 실패해도, 다시 열 때 브라우저에 남은 옛 작업이 이 폴더나 앞 폴더의 저장본을 덮지 않게
+        await forgetFolderHandle();
+        const browserSaved = await saveState();
+        if (browserSaved) await rememberFolderHandle(dirHandle);
         if (typeof renderSidebar === 'function') renderSidebar();
         location.hash = '#overview';
 
-        window.showAlert(`✅ 프로젝트 폴더에서 성공적으로 불러왔습니다!\n📁 ${dirHandle.name}\n\n폴더가 자동으로 연결되어 이후 변경사항도 동기화됩니다.${historyMergeNote(extras.historyDropped, '폴더')}`);
-
+        // 첫 폴더 저장이 끝난 뒤 결과대로 알린다(실패했으면 화면 위 띠가 까닭을 알린다)
+        await waitFolderSync();
+        const synced = projectFolderHandle === dirHandle && !folderSyncFailed;
+        window.showAlert(folderOpenedMessage({ folderName: dirHandle.name, synced, browserSaved, keptName, missing: images.missing, mode: modeChanged ? folderMode : '', wasNone: saved.imageMode === 'none' })
+            + historyMergeNote(extras.historyDropped, '폴더')); // 작업 기록을 다 넣지 못했으면 몇 개인지, 그 기록이 어디에 남는지 덧붙인다
     } catch (e) {
         if (e.name === 'AbortError') return;
         console.error('폴더 불러오기 오류:', e);
@@ -1759,119 +1902,80 @@ window.loadFromProjectFolder = async function () {
     }
 }
 
-/**
- * 연결된 폴더에 전체 상태를 동기화 (saveState 후크에서 호출)
- */
-// 저장했으면 true. 실패하면 화면 위 띠로 알리고 false
-async function syncToLinkedFolder() {
-    if (!projectFolderHandle) return false; // linkedDirHandle -> projectFolderHandle
+/* ---------- PC 폴더 저장 줄 세우기 ---------- */
+// 저장이 겹치면 늦게 시작한 저장이 먼저 끝나 옛 상태가 마지막에 남을 수 있다(그림을 따로 담으면 save_data.yaml을 그림 뒤에 쓴다).
+// 한 번에 하나만 돌리고, 도는 동안 들어온 요청은 하나로 합쳐 끝난 뒤 그때의 최신 상태로 한 번 더 쓴다
+const folderSyncRunner = createSerialRunner(syncLinkedFolderNow);
 
+// 연결된 폴더에 저장한다(saveState 등이 부른다). 저장했으면 true, 실패하면 화면 위 띠로 알리고 false
+function syncToLinkedFolder() {
+    return folderSyncRunner.request();
+}
+
+// 도는 폴더 저장과 기다리는 폴더 저장이 모두 끝나면 풀린다
+function waitFolderSync() {
+    return folderSyncRunner.idle();
+}
+
+// 이 앱을 연 뒤 이 폴더에 쓰거나 확인한 파일(메모리에만 둔다). 같은 내용을 다시 쓰지 않는다. 폴더가 바뀌거나 저장이 실패하면 버린다
+let folderWriteCache = null;
+
+function folderWriteCacheFor(handle) {
+    if (!folderWriteCache || folderWriteCache.handle !== handle) {
+        folderWriteCache = { handle, images: new Set(), imageInfo: null, attachments: new Map(), texts: new Map() };
+    }
+    return folderWriteCache;
+}
+
+// 지금 상태를 연결된 폴더에 쓴다. 손잡이와 상태를 처음에 함께 잡아, 도중에 폴더나 상태가 바뀌어도 섞어 쓰지 않는다
+async function syncLinkedFolderNow() {
+    const handle = projectFolderHandle;
+    if (!handle) return false;
+    const snapshot = { state: globalState, history: contentHistory, subjectId: currentSubjectId, lessons: courseData };
+    const cache = folderWriteCacheFor(handle);
     try {
-        // 권한 재확인 (탭 전환 후 권한 만료 방어)
-        const permission = await projectFolderHandle.queryPermission({ mode: 'readwrite' }); // linkedDirHandle -> projectFolderHandle
-        if (permission !== 'granted') {
-            const request = await projectFolderHandle.requestPermission({ mode: 'readwrite' }); // linkedDirHandle -> projectFolderHandle
-            if (request !== 'granted') {
-                projectFolderHandle = null; // linkedDirHandle -> projectFolderHandle
-                // updateFolderConnectionUI(false); // Removed, replaced by direct UI update in disconnect
-                console.warn('폴더 쓰기 권한이 거부되어 연결이 해제되었습니다.');
-                await window.disconnectProjectFolder(); // Call the new disconnect function
-                notifyFolderStopped();
-                return false;
-            }
-        }
-
-        // 1. save_data.yaml (전체 상태 + 히스토리). 그림은 '함께'나 '따로·가볍게'로만 담는다('빼기'는 받지 않는다, data-safety.js folderImageMode).
-        //    '함께'가 크기 한도에 걸리면 '따로·가볍게'로 바꿔 다시 쓰고 한 번 알린다
-        const fullData = {
-            state: globalState,
-            history: contentHistory,
-            lastSync: new Date().toISOString()
-        };
-        const written = await withSeparateFallback(folderImageMode(), async mode => {
-            const saveData = mode === 'inline' ? fullData : await writeFolderImages(projectFolderHandle, fullData, mode);
-            await writeTextFile(projectFolderHandle, 'save_data.yaml', simpleYamlStringify(saveData)); // linkedDirHandle -> projectFolderHandle
-        });
-        if (written.switched) notifyBackupFallback('folder');
-
-        // 2. 교과별 md 파일 및 이미지 동기화
-        const subj = globalState.subjects.find(s => s.id === currentSubjectId);
-        if (subj && Array.isArray(courseData) && courseData.length > 0) {
-            const rawCourseTitle = globalState.courseTitle || '새_교안프로젝트';
-            const safeCourseName = rawCourseTitle.replace(/[\/\?<>\\:\*\|"]/g, '_').trim();
-            const safeSubjName = subj.title.replace(/[\/\?<>\\:\*\|"]/g, '_').trim();
-
-            const courseFolder = await projectFolderHandle.getDirectoryHandle(safeCourseName, { create: true }); // linkedDirHandle -> projectFolderHandle
-            const attachFolder = await courseFolder.getDirectoryHandle('첨부파일', { create: true });
-            const subjFolder = await courseFolder.getDirectoryHandle(safeSubjName, { create: true });
-
-            for (let idx = 0; idx < courseData.length; idx++) {
-                const m = courseData[idx];
-                if (!m.content) continue;
-
-                let markdownContent = m.content;
-                const mdFileName = lessonFileName(m, 'md', subj);
-
-                // 이미지 분리 저장
-                if (m.images && Object.keys(m.images).length > 0) {
-                    for (const [imgId, b64] of Object.entries(m.images)) {
-                        const matches = b64.match(/^data:(image\/\w+);base64,(.*)$/);
-                        if (matches) {
-                            let ext = matches[1].split('/')[1];
-                            if (ext === 'jpeg') ext = 'jpg';
-                            const imgFileName = `${imgId}.${ext}`;
-                            markdownContent = markdownContent.replace(new RegExp(`<!--\\s*\\[IMG:\\s*"?local:${imgId}"?\\]\\s*-->`, 'g'), `![${imgId}](../첨부파일/${imgFileName})`);
-                            markdownContent = markdownContent.replace(new RegExp(`src="local:${imgId}"`, 'g'), `src="../첨부파일/${imgFileName}"`);
-                            await writeBinaryFile(attachFolder, imgFileName, base64ToUint8Array(b64));
-                        }
-                    }
-                }
-
-                const safeName = mdFileName.replace(/[\/\?<>\\:\*\|"]/g, '_');
-                await writeTextFile(subjFolder, safeName, `# ${m.title}\n\n` + markdownContent);
-            }
-
-            // 메인 퀘스트 별도 저장
-            if (subj.mainQuest && subj.mainQuest.content) {
-                const mq = subj.mainQuest;
-                let mqContent = mq.content;
-                const mqFileName = lessonFileName(mq, 'md', subj);
-
-                if (mq.images && Object.keys(mq.images).length > 0) {
-                    for (const [imgId, b64] of Object.entries(mq.images)) {
-                        const matches = b64.match(/^data:(image\/\w+);base64,(.*)$/);
-                        if (matches) {
-                            let ext = matches[1].split('/')[1];
-                            if (ext === 'jpeg') ext = 'jpg';
-                            const imgFileName = `${imgId}.${ext}`;
-                            mqContent = mqContent.replace(new RegExp(`<!--\\s*\\[IMG:\\s*"?local:${imgId}"?\\]\\s*-->`, 'g'), `![${imgId}](../첨부파일/${imgFileName})`);
-                            mqContent = mqContent.replace(new RegExp(`src="local:${imgId}"`, 'g'), `src="../첨부파일/${imgFileName}"`);
-                            await writeBinaryFile(attachFolder, imgFileName, base64ToUint8Array(b64));
-                        }
-                    }
-                }
-                const safeMqName = mqFileName.replace(/[\/\?<>\\:\*\|"]/g, '_');
-                await writeTextFile(subjFolder, safeMqName, `# ${mq.title}\n\n` + mqContent);
-            }
-        }
-
-        markFolderSyncOk(); // 다시 저장되면 실패 알림을 거둔다
-        return true;
-    } catch (e) {
-        console.warn('폴더 동기화 실패:', e.message);
-        // 상태 캐시 에러 처리 (크롬 버그 등 대응)
-        if (e.message && e.message.includes('state cached in an interface object')) {
-            console.warn('File System 핸들 만료 문제. 연결 해제 처리합니다.');
-            projectFolderHandle = null; // linkedDirHandle -> projectFolderHandle
-            await window.disconnectProjectFolder(); // Call the new disconnect function
-            notifyFolderStopped();
+        // 권한이 풀렸으면 묻지 않고 멈춘다(저장은 클릭 없이 돌아 브라우저가 권한 창을 띄우지 못한다)
+        if (await handle.queryPermission({ mode: 'readwrite' }) !== 'granted') {
+            if (projectFolderHandle === handle) lockLinkedFolder(handle, FOLDER_LOCKED_MESSAGE);
             return false;
         }
 
-        // 폴더 접근 실패 시 자동 연결 해제 (예: 폴더 삭제됨, 권한 만료 등)
-        if (e.name === 'NotFoundError' || e.name === 'NotAllowedError') {
-            projectFolderHandle = null; // linkedDirHandle -> projectFolderHandle
-            await window.disconnectProjectFolder(); // Call the new disconnect function
+        // 1. save_data.yaml(전체 상태 + 작업 기록). 그림 파일을 먼저 쓰고 save_data.yaml을 쓴다(저장본이 아직 없는 그림 파일을 가리키지 않게).
+        //    그림은 '함께'나 '따로·가볍게'로만 담는다(data-safety.js folderImageMode). '함께'가 크기 한도에 걸리면 '따로·가볍게'로 바꿔 다시 쓰고 한 번 알린다
+        const fullData = { state: snapshot.state, history: snapshot.history, lastSync: new Date().toISOString() };
+        const written = await withSeparateFallback(folderImageMode(), async mode => {
+            const saveData = mode === 'inline' ? fullData : await writeFolderImages(handle, fullData, mode, cache);
+            await writeTextFile(handle, 'save_data.yaml', simpleYamlStringify(saveData));
+        });
+        if (written.switched) notifyBackupFallback('folder');
+        await rememberFolderSaveStamp(handle);
+
+        // 2. 지금 교과의 차시 MD와 첨부 그림(사람이 읽는 사본, 되살리기에는 쓰지 않는다)
+        await writeSubjectExport(handle, snapshot, cache);
+
+        if (projectFolderHandle === handle) markFolderSyncOk(); // 다시 저장되면 실패 알림을 거둔다
+        return true;
+    } catch (e) {
+        if (folderWriteCache === cache) folderWriteCache = null; // 다음 저장에서 폴더의 파일을 처음부터 다시 확인한다
+        console.warn('폴더 동기화 실패:', e.message);
+        if (projectFolderHandle !== handle) return false; // 그사이 폴더를 바꿨거나 껐으면 지금 표시를 건드리지 않는다
+        // 상태 캐시 에러 처리 (크롬 버그 등 대응)
+        if (e.message && e.message.includes('state cached in an interface object')) {
+            console.warn('File System 핸들 만료 문제. 연결 해제 처리합니다.');
+            projectFolderHandle = null;
+            await window.disconnectProjectFolder();
+            notifyFolderStopped();
+            return false;
+        }
+        // 쓰는 도중 권한이 풀렸으면 끄지 않고 멈춘다('다시 연결'로 이어 쓴다)
+        if (e.name === 'NotAllowedError') {
+            lockLinkedFolder(handle, FOLDER_LOCKED_MESSAGE);
+            return false;
+        }
+        // 폴더가 옮겨졌거나 지워졌으면 자동 저장을 끈다
+        if (e.name === 'NotFoundError') {
+            projectFolderHandle = null;
+            await window.disconnectProjectFolder();
             notifyFolderStopped();
             return false;
         }
@@ -1880,20 +1984,94 @@ async function syncToLinkedFolder() {
     }
 }
 
+// 폴더에 쓰는 파일·폴더 이름. 과정·교과 이름과 그림 이름은 불러온 파일에서 올 수도 있다. 경로를 나누거나 Windows가 받지 않는 글자는 '_'로 바꾸고,
+// 비거나 점뿐이면('.', '..') fallback을 쓴다(브라우저는 그런 이름에 TypeError를 내어 폴더 저장이 매번 실패한다)
+function folderEntryName(name, fallback) {
+    const safe = String(name ?? '').replace(/[\/\?<>\\:\*\|"\u0000-\u001f]/g, '_').trim();
+    return /^[.\s]*$/.test(safe) ? fallback : safe;
+}
+
+// 지금 교과의 차시 MD와 첨부 그림(사람이 읽는 사본). 이 앱을 연 뒤 이 폴더에 같은 내용으로 쓴 파일은 다시 쓰지 않는다.
+// 기억은 이번 저장에서 쓴 파일만 남긴다(지운 그림·다른 교과의 사본을 메모리에 붙잡아 두지 않게)
+async function writeSubjectExport(handle, snapshot, cache) {
+    const subj = snapshot.state.subjects.find(s => s.id === snapshot.subjectId);
+    const lessons = snapshot.lessons;
+    if (!subj || !Array.isArray(lessons) || lessons.length === 0) return;
+    const safeCourseName = folderEntryName(snapshot.state.courseTitle, '새_교안프로젝트');
+    const safeSubjName = folderEntryName(subj.title, `교과_${subj.id}`);
+    const courseFolder = await handle.getDirectoryHandle(safeCourseName, { create: true });
+    const target = {
+        cache,
+        next: { attachments: new Map(), texts: new Map() },
+        base: safeCourseName,
+        subjName: safeSubjName,
+        attachFolder: await courseFolder.getDirectoryHandle('첨부파일', { create: true }),
+        subjFolder: await courseFolder.getDirectoryHandle(safeSubjName, { create: true })
+    };
+    for (const m of lessons) {
+        if (m && m.content) await writeLessonMd(m, subj, target);
+    }
+    // 최종 평가 별도 저장
+    if (subj.mainQuest && subj.mainQuest.content) await writeLessonMd(subj.mainQuest, subj, target);
+    cache.attachments = target.next.attachments;
+    cache.texts = target.next.texts;
+}
+
+// 차시 하나의 MD. 그림 자리는 첨부 그림 경로로 바꾼다(그림 id로 정규식을 만들지 않고 자리마다 id를 견준다). 지난번과 같은 글이면 쓰지 않는다
+async function writeLessonMd(m, subj, target) {
+    const { cache, next, base, subjName, subjFolder } = target;
+    let markdownContent = String(m.content);
+    for (const [imgId, b64] of Object.entries(m.images || {})) {
+        const imgFileName = await writeAttachedImage(imgId, b64, target);
+        if (!imgFileName) continue;
+        markdownContent = markdownContent.replace(/<!--\s*\[IMG:\s*"?local:([^"\]]+)"?\]\s*-->/g, (tag, id) => (id === imgId ? `![${imgId}](../첨부파일/${imgFileName})` : tag));
+        markdownContent = markdownContent.replace(/src="local:([^"]*)"/g, (attr, id) => (id === imgId ? `src="../첨부파일/${imgFileName}"` : attr));
+    }
+    const safeName = folderEntryName(lessonFileName(m, 'md', subj), 'export.md');
+    const text = `# ${m.title}\n\n` + markdownContent;
+    const textKey = `${base}/${subjName}/${safeName}`;
+    // 이번 저장에서 같은 이름으로 먼저 쓴 글이 있으면 그것과 견준다(이름 규칙에 차시 번호가 없으면 두 차시가 한 파일에 쓰고, 마지막 차시가 남는다)
+    const previous = next.texts.has(textKey) ? next.texts.get(textKey) : cache.texts.get(textKey);
+    if (previous !== text) await writeTextFile(subjFolder, safeName, text);
+    next.texts.set(textKey, text);
+}
+
+// 첨부 그림 파일을 쓰고 파일 이름을 돌려준다. 이 앱을 연 뒤 이 폴더에 같은 그림을 이미 썼으면 다시 쓰지 않는다. 그림이 아니면(빈 글·참조) null.
+// 이번 저장에서 쓴 것을 먼저 본다(두 차시가 같은 그림 이름을 쓰면 마지막 그림이 남는다)
+async function writeAttachedImage(imgId, b64, { cache, next, base, attachFolder }) {
+    const cacheKey = `${base}/${imgId}`;
+    const known = next.attachments.get(cacheKey) || cache.attachments.get(cacheKey);
+    if (known && known.data === b64) {
+        next.attachments.set(cacheKey, known);
+        return known.name;
+    }
+    const matches = typeof b64 === 'string' ? b64.match(/^data:(image\/\w+);base64,(.*)$/) : null;
+    if (!matches) return null;
+    let ext = matches[1].split('/')[1];
+    if (ext === 'jpeg') ext = 'jpg';
+    const name = folderEntryName(`${imgId}.${ext}`, `그림.${ext}`);
+    await writeBinaryFile(attachFolder, name, base64ToUint8Array(b64));
+    next.attachments.set(cacheKey, { data: b64, name });
+    return name;
+}
+
 /* ---------- PC 폴더의 '그림' 폴더 (그림을 따로 담을 때) ---------- */
-// 그림을 떼어 '그림/'에 쓰고 그림 대신 이름이 든 저장 내용을 돌려준다.
-// 같은 내용이면 같은 이름이므로, 이름과 크기가 같은 파일이 이미 있으면 다시 쓰지 않는다(크기가 다르면 쓰다 끊긴 파일로 보고 다시 쓴다)
-async function writeFolderImages(dirHandle, data, mode) {
-    const { value, files } = detachBackupImages(data, mode);
+// 그림을 떼어 '그림/'에 쓰고 그림 대신 이름이 든 저장 내용을 돌려준다. 같은 내용이면 같은 이름이다.
+// cache가 있으면 이 앱을 연 뒤 쓰거나 크기를 맞춰 본 이름은 건너뛰고, 처음 보는 이름만 크기를 본다(크기가 다르면 없거나 쓰다 끊긴 파일로 보고 다시 쓴다)
+async function writeFolderImages(dirHandle, data, mode, cache = null) {
+    const { value, files, memo } = detachBackupImages(data, mode, cache?.imageInfo);
     if (mode === 'separate') {
         const imageDir = await dirHandle.getDirectoryHandle(BACKUP_IMAGE_DIR, { create: true });
-        for (const [key, dataUrl] of Object.entries(files)) {
-            const file = backupImageFile(key, dataUrl);
-            if (!file) continue;
-            if (await folderFileSize(imageDir, file.name) === base64ByteLength(file.base64)) continue;
-            await writeBinaryFile(imageDir, file.name, base64ToUint8Array(dataUrl));
+        for (const dataUrl of Object.values(files)) {
+            const info = memo.get(dataUrl);
+            if (!info || cache?.images.has(info.name)) continue;
+            if (await folderFileSize(imageDir, info.name) !== info.bytes) {
+                await writeBinaryFile(imageDir, info.name, base64ToUint8Array(dataUrl));
+            }
+            cache?.images.add(info.name);
         }
     }
+    if (cache) cache.imageInfo = memo;
     return { ...value, imageMode: mode };
 }
 
@@ -1907,23 +2085,43 @@ async function folderFileSize(dirHandle, name) {
     }
 }
 
-// 그림을 따로 담은 저장 내용이면 '그림/' 파일을 읽어 제자리에 돌려놓는다
-async function readFolderImages(dirHandle, parsed) {
-    if (parsed?.imageMode !== 'separate') return parsed;
+// 저장본이 가리키는 그림만 '그림' 폴더에서 파일마다 따로 읽어 제자리에 돌려놓는다. 가리키지 않는 파일은 읽지 않는다.
+// 찾지 못했거나 읽지 못했거나 내용이 이름과 맞지 않는(빈 파일, 복사가 끊긴 파일) 그림은 참조를 그대로 둔다. 그림을 담은 방식과 상관없이 참조가 있으면 읽는다.
+// 돌려주는 값: { value, total: 가리키는 그림 수, missing: 찾지 못했거나 읽지 못했거나 망가진 수 }
+async function readFolderImages(dirHandle, saved) {
+    const keys = backupImageRefs(saved);
+    if (!keys.size) return { value: saved, total: 0, missing: 0 };
+    window.showToast?.(`폴더의 그림 ${keys.size}장을 읽고 있습니다...`, 'info');
     const files = {};
+    let imageDir = null;
     try {
-        const imageDir = await dirHandle.getDirectoryHandle(BACKUP_IMAGE_DIR);
-        for await (const [name, handle] of imageDir.entries()) {
-            if (handle.kind !== 'file' || !isBackupImageName(name)) continue;
-            const buffer = await (await handle.getFile()).arrayBuffer();
-            const image = backupImageFromFile(name, uint8ToBase64(new Uint8Array(buffer)));
-            files[image.key] = image.dataUrl;
-        }
+        imageDir = await dirHandle.getDirectoryHandle(BACKUP_IMAGE_DIR);
     } catch (err) {
-        console.warn('[폴더 열기] 그림 폴더를 읽지 못했습니다:', err.message);
-        window.showToast?.("폴더 안 '그림' 폴더를 다 읽지 못했습니다. 이대로 열면 읽지 못한 그림 자리는 빈칸이 됩니다(다음 확인 창에서 취소할 수 있습니다).", 'warning');
+        console.warn('[폴더 열기] 그림 폴더를 열지 못했습니다:', err.message);
     }
-    return attachBackupImages(parsed, files);
+    if (imageDir) {
+        const names = [];
+        try {
+            for await (const name of imageDir.keys()) names.push(name);
+        } catch (err) {
+            console.warn('[폴더 열기] 그림 폴더 목록을 끝까지 읽지 못했습니다:', err.message);
+        }
+        const byKey = backupImageFileNames(names);
+        for (const key of keys) {
+            const name = byKey.get(key);
+            if (!name) continue;
+            try {
+                const buffer = await (await (await imageDir.getFileHandle(name)).getFile()).arrayBuffer();
+                // 내용이 이름(키)과 맞는 파일만 받는다. 빈 파일·복사가 끊긴 파일을 받으면 다음 저장이 망가진 그림을 새 이름으로 써서 원래 그림을 가리키지 않게 된다
+                const dataUrl = buffer.byteLength ? backupImageFromKeyedFile(key, name, uint8ToBase64(new Uint8Array(buffer))) : null;
+                if (dataUrl) files[key] = dataUrl;
+                else console.warn('[폴더 열기] 그림 파일이 비었거나 내용이 이름과 맞지 않습니다(복사가 끊겼을 수 있음):', name);
+            } catch (err) {
+                console.warn('[폴더 열기] 그림 파일을 읽지 못했습니다:', name, err.message);
+            }
+        }
+    }
+    return { value: attachBackupImages(saved, files), total: keys.size, missing: keys.size - Object.keys(files).length };
 }
 
 function uint8ToBase64(bytes) {
@@ -1991,10 +2189,10 @@ function markFolderSyncOk() {
     window.hideFolderSyncBanner();
 }
 
-// 폴더에 닿지 못해 자동 저장을 껐을 때
+// 폴더에 닿지 못해 자동 저장을 껐을 때(폴더가 사라졌거나 브라우저가 손잡이를 잃음). 쓰기 권한이 풀린 것은 lockLinkedFolder가 따로 알린다
 function notifyFolderStopped() {
     folderSyncFailed = false;
-    showFolderSyncBanner('PC 폴더에 닿지 못해 자동 저장을 껐습니다(폴더가 옮겨졌거나 지워졌거나 권한이 없습니다). 지금 작업은 브라우저에만 저장됩니다.', '다른 폴더에 저장', () => window.connectProjectFolder());
+    showFolderSyncBanner('PC 폴더에 닿지 못해 자동 저장을 껐습니다(폴더가 옮겨졌거나 지워졌거나 브라우저가 폴더 연결을 잃었습니다). 지금 작업은 브라우저에만 저장됩니다.', '다른 폴더에 저장', () => window.connectProjectFolder());
 }
 
 // 고른 폴더에 저장본(save_data.yaml)이 있으면 덮어쓰기 전에 묻는다. 덮어쓰면 기존 파일은 다른 이름으로 남긴다
@@ -2030,7 +2228,19 @@ function folderSaveSummary(text) {
     }
 }
 
-async function confirmFolderOverwrite(dirHandle) {
+const FOLDER_COPY_TRIES = 50;
+
+// 폴더에 아직 없는 저장본 사본 이름(save_data_이전_날짜.yaml, 있으면 _2, _3…). 폴더를 읽지 못하면 오류를 낸다
+async function freeFolderCopyName(dirHandle, stamp = backupStamp()) {
+    for (let n = 1; n <= FOLDER_COPY_TRIES; n++) {
+        const name = folderCopyName(stamp, n);
+        if (await folderFileSize(dirHandle, name) === -1) return name;
+    }
+    throw new Error('저장본 사본 이름을 정하지 못했습니다');
+}
+
+// changed: '다시 연결'에서 이 브라우저가 마지막으로 쓴 뒤 저장본이 바뀐 것을 알았을 때(첫 문장과 제목만 다르다)
+async function confirmFolderOverwrite(dirHandle, { changed = false } = {}) {
     const save = await readFolderSave(dirHandle);
     if (save.status === 'none') return true;
     if (save.status === 'unreadable') {
@@ -2040,12 +2250,15 @@ async function confirmFolderOverwrite(dirHandle) {
     }
     const existing = save.text;
     const summary = folderSaveSummary(existing);
-    const keepName = `save_data_이전_${backupStamp()}.yaml`;
+    const keepName = await freeFolderCopyName(dirHandle);
+    const head = changed
+        ? `이 브라우저가 마지막으로 저장한 뒤 '${dirHandle.name}' 폴더의 저장본이 바뀌었습니다${summary ? `(${summary})` : ''}. 다른 PC나 브라우저에서 저장했을 수 있습니다.`
+        : `'${dirHandle.name}' 폴더에는 이미 저장해 둔 작업이 있습니다${summary ? `(${summary})` : ''}.`;
     const ok = await confirmAsync(
-        `'${dirHandle.name}' 폴더에는 이미 저장해 둔 작업이 있습니다${summary ? `(${summary})` : ''}.\n\n`
+        `${head}\n\n`
         + `그 작업을 열려면 취소한 뒤 내보내기·백업 → '저장해 둔 폴더 열기'를 누르세요.\n`
         + `지금 작업으로 덮어쓰면 기존 저장본은 ${keepName}으로 남겨 둡니다.`,
-        { okLabel: '지금 작업으로 덮어쓰기', title: '이 폴더에 저장본이 있습니다' }
+        { okLabel: '지금 작업으로 덮어쓰기', title: changed ? '폴더 저장본이 바뀌었습니다' : '이 폴더에 저장본이 있습니다' }
     );
     if (!ok) return false;
     await writeTextFile(dirHandle, keepName, existing);

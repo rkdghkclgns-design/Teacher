@@ -2065,7 +2065,7 @@ function onReferenceTextChange() {
     const countEl = document.getElementById('reference-char-count');
     if (countEl) countEl.textContent = textarea.value.length + '자';
     updateReferenceStatus();
-    saveState();
+    saveStateSoon(); // 글자마다 저장하지 않고 입력이 멈춘 뒤 한 번(state.js). 칸을 벗어나면 바로
 }
 
 function updateReferenceStatus() {
@@ -2124,6 +2124,7 @@ async function importReferenceFiles(event) {
     if (added.length) {
         textarea.value = [textarea.value.trim(), ...added].filter(Boolean).join('\n\n---\n\n');
         onReferenceTextChange();
+        flushSaveStateSoon(); // 파일에서 넣은 글은 바로 저장한다
         const over = textarea.value.length > REFERENCE_SENT_CHARS
             ? ` 교안에는 앞 ${REFERENCE_SENT_CHARS.toLocaleString()}자만 보내므로 필요 없는 부분은 지워 주세요.` : '';
         window.showToast?.(`파일 ${added.length}개의 글자를 참고 텍스트에 넣었습니다.${over}`, over ? 'warning' : 'success');
@@ -3157,7 +3158,8 @@ window.downloadImagesAsJPG = function (moduleId) {
     // 현재 탭 이미지만 vs 전체 차시 이미지 선택
     const tabId = typeof currentLessonTab !== 'undefined' ? currentLessonTab : null;
     const tabContent = tabId && mod.tabContents ? (mod.tabContents[tabId] || '') : '';
-    const allImgIds = Object.keys(mod.images);
+    // 받을 수 있는 그림만 센다(찾지 못한 그림의 teacher-image 참조·빈 값은 내려받을 수 없다)
+    const allImgIds = Object.keys(mod.images).filter(id => /^data:image\//.test(String(mod.images[id] || '')));
     const tabImgIds = allImgIds.filter(id => tabContent.includes(id));
 
     if (tabImgIds.length === 0 && allImgIds.length === 0) {
