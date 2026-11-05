@@ -27,14 +27,14 @@ const TUTORIAL_STEPS = [
     {
         id: 'keys', shot: 'settings', nav: 'API 키 넣기', category: '설정',
         title: 'API 키 넣기',
-        lead: '교안을 만들려면 AI 서비스 키가 필요합니다. 오른쪽 위 톱니바퀴에서 키를 넣고 저장하세요.',
+        lead: '교안을 만들려면 AI 키가 <strong>하나</strong> 필요합니다(Gemini나 Claude). 처음이면 설정의 링크에서 Gemini 무료 키를 받아 넣으세요.',
         points: [
             { title: '설정 열기', text: '오른쪽 위 톱니바퀴를 누르면 설정 창이 열립니다.' },
-            { title: 'Gemini API Key', text: '교안 글과 이미지 생성에 씁니다. 키를 붙여 넣고 <strong>저장</strong>을 누르면 아래 표시가 초록으로 바뀝니다.' },
-            { title: 'Claude API Key', text: 'Claude 모델로 교안 글을 쓸 때 넣습니다. 이미지 생성에는 Gemini 키나 Higgsfield 설정이 따로 필요합니다.' },
+            { title: 'Gemini API Key', text: '교안 글과 이미지 생성에 씁니다. 칸 아래 <strong>키 받기</strong> 링크에서 무료로 받습니다. 붙여 넣고 <strong>저장</strong>을 누르면 바로 연결을 확인해 \'연결됨\'(초록)이나 \'키가 맞지 않습니다\'(빨강)를 보여 줍니다.' },
+            { title: 'Claude API Key', text: 'Claude로 교안 글을 쓸 때 넣습니다(유료). Claude 키만 넣으면 글 모델이 Claude로 자동으로 바뀝니다. 이미지 생성에는 Gemini 키나 Higgsfield 설정이 따로 필요합니다.' },
             { title: '이미지 검색 (선택)', text: 'Google 검색 엔진 ID와 키를 넣으면 교안 그림을 검색으로도 찾습니다. 아래 Pixabay 키는 검색이 막혔을 때 대신 씁니다.' }
         ],
-        tips: ['빈 칸으로 저장하면 그 키가 지워집니다.', '여러 사람이 쓰는 PC에서는 키를 넣지 않는 것이 안전합니다.']
+        tips: ['설정 맨 위 <strong>빠르고 저렴하게</strong>는 무료 키로도 되는 설정, <strong>품질 우선</strong>은 느리고 비용이 드는 대신 내용이 더 정확한 설정입니다.', '빈 칸으로 저장하면 그 키가 지워집니다.', '여러 사람이 쓰는 PC에서는 키를 넣지 않는 것이 안전합니다.']
     },
     {
         id: 'models', shot: 'models', nav: '모델·이미지 설정', category: '설정',
@@ -46,7 +46,7 @@ const TUTORIAL_STEPS = [
             { title: '교안 이미지 양', text: '탭을 만들 때 넣을 그림 수입니다(태그마다 / ## 섹션마다 한 장 / 넣지 않음). 줄이면 생성이 빨리 끝나고, 남긴 자리는 나중에 채울 수 있습니다.' },
             { title: 'Higgsfield 이미지 (선택)', text: 'Higgsfield로 그림을 만들려면 키와 <strong>중계 주소</strong>를 넣고 <strong>연결 확인</strong>을 누르세요. 중계 주소는 설정의 안내대로 Cloudflare에 중계를 한 번 배포하면 생깁니다.' }
         ],
-        tips: ['<strong>추론 강도</strong>를 높이면 품질이 좋아지는 대신 시간과 비용이 늘어납니다.']
+        tips: ['<strong>추론 강도</strong>를 높이면 품질이 좋아지는 대신 시간과 비용이 늘어납니다.', '처음 기본값은 빠른 모델·보통 강도·핵심 그림만입니다. 설정 맨 위 두 버튼으로 한 번에 바꿀 수 있습니다.']
     },
     {
         id: 'subject', shot: 'subject', nav: '교과 만들기', category: '과정 만들기',
@@ -57,7 +57,7 @@ const TUTORIAL_STEPS = [
             { title: '교과 카드', text: '누르면 오른쪽에 교과 상세 정보(설명·차시 목록)가 열립니다. 체크해 여러 교과를 함께 다룰 수 있습니다.' },
             { title: '이 교과 편집기 열기', text: '고른 교과의 차시 목록과 교안 편집 화면으로 들어갑니다.' }
         ],
-        tips: ['교과 이름은 교과 상세 정보에서 고칠 수 있습니다.']
+        tips: ['교과 이름은 교과 상세 정보에서 고칠 수 있습니다.', '과정명 아래 <strong>과정 정보</strong>에서 과정명과 <strong>분야</strong>(예: 간호, 회계, 웹 개발)를 넣으세요. AI가 그 분야의 강사로 교안을 씁니다. 처음 보이는 과정은 \'예시\' 표시가 붙은 둘러보기용입니다.']
     },
     {
         id: 'outline', shot: 'outline', nav: '차시 목차 만들기', category: '과정 만들기',

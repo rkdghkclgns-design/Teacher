@@ -315,6 +315,7 @@ function renderOverview() {
     const titleEl = document.getElementById('overview-course-title');
 
     if (titleEl) titleEl.innerText = globalState.courseTitle || '이름 없는 과정';
+    window.renderCourseInfo?.(); // 예시 표시와 분야
 
     renderOverviewLNB();
 

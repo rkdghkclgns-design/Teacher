@@ -556,6 +556,7 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
         vm.runInContext(fs.readFileSync(root + 'claude.js', 'utf8'), settings);
         const effort = name => vm.runInContext(`taskEffort(${JSON.stringify(name)})`, settings);
         const request = role => vm.runInContext('buildClaudeRequest', settings)('claude-opus-5-5', { taskRole: role, contents: [{ role: 'user', parts: [{ text: '질문' }] }] });
+        vm.runInContext("updateReasoningEffort('max')", settings); // 기본값은 '보통'이다. 사용자가 '최대'를 고른 경우를 본다
         assert.strictEqual(effort('fast'), 'max', '끄면 사용자의 최대 설정을 유지');
         assert.strictEqual(request('fast').output_config.effort, 'max');
         vm.runInContext('updateAutoTaskEffort(true)', settings);

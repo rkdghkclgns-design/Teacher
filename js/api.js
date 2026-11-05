@@ -222,45 +222,40 @@ async function fetchWithRetry(url, options, retries = 5, onRetry = null) {
     // 429(호출 한도/쿼터 초과)는 분당 쿼터 리셋에 최대 ~60초가 필요하므로 더 길게 대기
     const rateLimitDelays = [5000, 10000, 20000, 30000, 45000];
 
+    const provider = aiProviderOf(url);
     for (let i = 0; i < retries; i++) {
         try {
-            const res = await fetch(url, options);
+            let res;
+            try {
+                res = await fetch(url, options);
+            } catch (netErr) {
+                throw aiError(0, netErr.message, provider); // 인터넷 끊김·차단
+            }
             if (!res.ok) {
-                // 400/401/403은 재시도해도 실패하므로 즉시 중단
-                if (res.status === 400 || res.status === 401 || res.status === 403) {
-                    const errText = await res.text();
-                    const statusLabel = res.status === 401 ? 'Unauthorized (API 키 확인 필요)' : res.status === 403 ? 'Forbidden' : 'Bad Request';
-                    throw new Error(`HTTP error! status: ${res.status}, ${statusLabel}: ${errText.substring(0, 150)}`);
-                }
+                // 화면에는 한국어 한 줄과 다음에 할 일을, 원문은 err.detail에 둔다(ai-errors.js)
+                const bodyText = await res.text().catch(() => '');
+                const err = aiError(res.status, bodyText, provider);
                 // 429 호출 한도: 응답 본문에 서버 권장 재시도 시간(retryDelay)이 있으면 추출해 존중
-                if (res.status === 429) {
-                    const bodyText = await res.text().catch(() => '');
-                    const err = new Error(`HTTP error! status: 429`);
-                    err.status = 429;
-                    const m = bodyText.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/);
-                    if (m) err.suggestedDelayMs = Math.ceil(parseFloat(m[1]) * 1000);
-                    throw err;
-                }
-                // 500, 503 등은 throw하여 아래 catch 블록에서 지연 재시도를 타게 만듦
-                const err = new Error(`HTTP error! status: ${res.status}`);
-                err.status = res.status;
+                const m = res.status === 429 && bodyText.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/);
+                if (m) err.suggestedDelayMs = Math.ceil(parseFloat(m[1]) * 1000);
                 throw err;
             }
             return await res.json();
         } catch (e) {
-            // 마지막 재시도까지 실패하거나 클라이언트 에러(400/401/403)면 즉시 중단
-            if (i === retries - 1 || /status: (400|401|403)/.test(e.message)) {
+            // 마지막 재시도까지 실패하거나 키·모델 문제(400/401/403/404)면 즉시 중단
+            if (i === retries - 1 || e.noRetry) {
+                console.error(`[AI 호출] 실패 (${e.status ?? '?'}):`, e.detail || e.message);
                 throw e;
             }
 
-            const isRateLimit = e.status === 429 || /status: 429/.test(e.message);
+            const isRateLimit = e.status === 429;
             let delay = isRateLimit ? rateLimitDelays[i] : baseDelays[i];
             // 서버가 명시한 권장 재시도 시간이 더 길면 그 값을 따름 (상한 65초)
             if (e.suggestedDelayMs && e.suggestedDelayMs > delay) {
                 delay = Math.min(e.suggestedDelayMs, 65000);
             }
 
-            console.warn(`[fetchWithRetry] ${isRateLimit ? 'API 호출 한도(429)' : 'API 오류 또는 지연'} 발생. ${Math.round(delay / 1000)}초 후 재시도합니다... (${i + 1}/${retries - 1}) | 사유: ${e.message}`);
+            console.warn(`[fetchWithRetry] ${isRateLimit ? 'API 호출 한도(429)' : 'API 오류 또는 지연'} 발생. ${Math.round(delay / 1000)}초 후 재시도합니다... (${i + 1}/${retries - 1}) | 사유: ${e.status ?? ''} ${e.detail || e.message}`);
             // 호출자에게 재시도 상황 통지 (로딩 문구 갱신 등) — 선택적
             if (typeof onRetry === 'function') {
                 try { onRetry({ attempt: i + 1, total: retries - 1, delayMs: delay, isRateLimit }); } catch (_) { /* 통지 실패는 무시 */ }
@@ -283,7 +278,7 @@ function withGeminiThinking(modelName, { taskRole, ...payload }) {
 // Gemini API 호출 (키가 URL·로그에 남지 않도록 헤더로 전달)
 async function requestGemini(modelName, payload, onRetry) {
     if (!apiKey) {
-        throw new Error('Gemini API 키가 설정되지 않았습니다.\n좌측 하단 설정 버튼에서 Gemini API 키를 먼저 입력해주세요.');
+        throw new Error('Gemini API 키가 없습니다. 오른쪽 위 ⚙ 설정에서 키를 넣어 주세요(무료 키는 aistudio.google.com에서 받습니다).');
     }
     return fetchWithRetry(
         `${GEMINI_API_BASE}/${modelName}:generateContent`,
@@ -542,15 +537,7 @@ async function handleGenerate() {
 
         console.error(err);
 
-        if (err.message && err.message.includes('401')) {
-
-            window.showAlert('API 인증 오류(401)가 발생했습니다. 시스템 토큰 갱신 지연일 수 있으니 10초 후 시도하거나 새로고침(F5) 해주세요.');
-
-        } else {
-
-            window.showAlert('목차 생성 중 오류가 발생했습니다. 다시 시도해주세요.');
-
-        }
+        window.showAlert(`목차를 만들지 못했습니다.\n${err.message || '잠시 뒤 다시 해 주세요.'}`);
 
     } finally {
 
@@ -794,15 +781,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
         console.error("교안 생성 중 에러 상세 (generateModuleContent):", err, err.stack);
         reported = true;
 
-        if (err.message && err.message.includes('401')) {
-
-            window.showAlert('API 인증 오류(401)가 발생했습니다. 시스템 토큰 갱신 지연일 수 있으니 10초 후 시도하거나 새로고침(F5) 해주세요.');
-
-        } else {
-
-            window.showAlert('교안 생성 중 오류가 발생했습니다.\n' + (err.message || ''));
-
-        }
+        window.showAlert(`교안을 만들지 못했습니다.\n${err.message || '잠시 뒤 다시 해 주세요.'}`);
 
         // 부분 생성 복구: 일부 청크가 성공한 경우 저장
         if (fullContent && fullContent.length > 200) {
@@ -925,15 +904,7 @@ async function generateMainQuest() {
 
         console.error(err);
 
-        if (err.message && err.message.includes('401')) {
-
-            window.showAlert('API 인증 오류(401)가 발생했습니다. 시스템 토큰 갱신 지연일 수 있으니 10초 후 시도하거나 새로고침(F5) 해주세요.');
-
-        } else {
-
-            window.showAlert('메인 퀘스트 생성 중 오류가 발생했습니다.');
-
-        }
+        window.showAlert(`메인 퀘스트를 만들지 못했습니다.\n${err.message || '잠시 뒤 다시 해 주세요.'}`);
 
     } finally {
 
@@ -988,15 +959,15 @@ function extractFirstJsonObject(text) {
 }
 
 async function extractSearchIntent(keyword, context) {
-    const systemPrompt = `당신은 게임 기획 및 시장 분석 전문 데이터 리서처이자 이미지 프롬프트 엔지니어입니다.
+    const systemPrompt = `당신은 ${courseFieldLabel('직업훈련')} 분야 교육 자료를 찾는 데이터 리서처이자 이미지 프롬프트 엔지니어입니다.
 주어진 이미지 키워드와 주변 교안 문맥을 분석하여 두 종류의 출력을 생성합니다:
 (A) 웹 검색용 쿼리 — 구글 이미지 등 검색 엔진에서 실제 자료를 찾기 위한 쿼리
 (B) AI 이미지 생성용 프롬프트 — Gemini 이미지 모델이 문맥에 맞는 고품질 일러스트를 생성하도록 하는 프롬프트
 
 [검색 쿼리(A) 지시사항]
-1. 고유명사(게임명, 캐릭터명, 시스템명, 회사명 등)를 쿼리의 핵심에 배치
+1. 고유명사(제품명, 서비스명, 시스템명, 회사명, 인물명 등)를 쿼리의 핵심에 배치
 2. 이미지 종류(일러스트/스크린샷/UI/차트)에 맞는 영어 한정자 추가 ("official art", "gameplay UI", "revenue chart" 등)
-3. 영어 쿼리 위주로, 한국 게임은 한글 쿼리 병행
+3. 영어 쿼리 위주로, 한국 자료는 한글 쿼리 병행
 4. 부정어 연산자로 가비지 배제 ("-fanart -cosplay -reddit")
 5. 공식 스크린샷이 필요하면 "official screenshot", "in-game" 한정자 사용
 
@@ -1012,7 +983,7 @@ async function extractSearchIntent(keyword, context) {
 4. **다이어그램·인포그래픽 형태 권장** — 단계도·플로우차트·카드형 레이아웃 (단, 글자 없이 아이콘/색상 구분).
 5. **간결하게** — 50~120 단어 이내.
 6. **반드시 끝에 추가**: "${LESSON_IMAGE_STYLE}, 16:9 wide composition. No text, no letters, no words, no labels, no watermark anywhere in the image."
-7. **저작권 금지**: 특정 게임·캐릭터 이름 직접 언급 금지.
+7. **저작권 금지**: 특정 상표·작품·캐릭터 이름 직접 언급 금지.
 
 [출력 포맷 JSON — 반드시 준수]
 {
@@ -1095,12 +1066,12 @@ async function validateImageWithVLM(base64Image, searchIntent, context) {
     const base64Data = base64Image.replace(/^data:image\/(png|jpeg|webp);base64,/, "");
     const mimeType = base64Image.match(/^data:(image\/[^;]+);/)[1] || "image/jpeg";
 
-    const systemPrompt = `당신은 게임/IT 교육 자료 품질 검열관입니다.
+    const systemPrompt = `당신은 ${courseFieldLabel('직업훈련')} 교육 자료 품질 검열관입니다.
 수집된 이미지가 교안의 문맥(Context) 및 검색 의도(Intent)에 부합하는지 철저히 평가하십시오.
 다음 조건 중 하나라도 해당되면 "isValid": false 처리하십시오:
 1. 유튜브 썸네일 텍스트 낚시, 조잡한 밈(Meme), 관련 없는 워터마크가 도배된 경우
 2. 의도한 데이터 객체(예: 매출 그래프)를 찾았으나 수치나 텍스트를 전혀 읽을 수 없을 정도로 흐릿한 경우
-3. 실제 게임 스크린샷이나 일러스트가 아닌 팬아트, 코스프레, 모드(Mod) 적용 사진인 경우 (의도된 바가 아니라면)
+3. 실제 화면·자료가 아닌 팬아트, 코스프레, 모드(Mod) 적용 사진인 경우 (의도된 바가 아니라면)
 4. 성인물, 폭력적, 혐오스러운 요소가 포함된 경우
 
 [출력 포맷 JSON]
@@ -1718,8 +1689,8 @@ async function generateImageAPI(prompt) {
                 break;
             } catch (e) {
                 const msg = e.message || String(e);
-                const is429 = msg.includes('429');
-                const is404 = msg.includes('404') || /not\s*found|unsupported/i.test(msg);
+                const is429 = e.status === 429 || msg.includes('429');
+                const is404 = e.status === 404 || msg.includes('404') || /not\s*found|unsupported/i.test(msg);
                 if (is429 && retry < 2) {
                     const waitSec = (retry + 1) * 15;
                     console.warn(`[Image Gen] 429 Rate Limit — ${waitSec}초 대기`);
@@ -1796,7 +1767,7 @@ function extractContextForImage(imgId) {
 
     const mod = getEditingModule();
 
-    if (!mod || !mod.content) return "게임 기획 관련 이미지";
+    if (!mod || !mod.content) return `${courseFieldLabel('교육')} 관련 이미지`;
 
 
 
@@ -1806,7 +1777,7 @@ function extractContextForImage(imgId) {
 
     const idx = text.indexOf(marker);
 
-    if (idx === -1) return "게임 기획 관련 이미지";
+    if (idx === -1) return `${courseFieldLabel('교육')} 관련 이미지`;
 
 
 
@@ -1826,7 +1797,7 @@ function extractContextForImage(imgId) {
 
 
 
-    return context || "게임 기획 관련 이미지";
+    return context || `${courseFieldLabel('교육')} 관련 이미지`;
 
 }
 

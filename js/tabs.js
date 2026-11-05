@@ -428,7 +428,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
     } catch (err) {
         console.error(`[TabGen] ${tabMeta.label} 실패:`, err);
         // 429(호출 한도)는 원인과 대처법을 명확히 안내해 사용자가 무한 재시도하지 않도록 함
-        const is429 = /status:\s*429/.test(err.message || '');
+        const is429 = err.status === 429 || /status:\s*429/.test(err.message || '');
         const message = is429
             ? `${tabMeta.label} 생성 실패: API 호출 한도(429)에 도달했습니다. 1~2분 후 다시 시도해 주세요. (짧은 시간에 여러 탭을 연속 생성하면 한도에 걸릴 수 있습니다.)`
             : `${tabMeta.label} 생성 중 오류: ${err.message}`;

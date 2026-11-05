@@ -285,6 +285,13 @@
             text-underline-offset: 2px;
         }
 
+        /* 설정 빠른 선택: 지금 설정과 같은 묶음 (setup-helpers.js) */
+        [data-settings-preset][aria-pressed="true"] {
+            border-color: #7c5bf5;
+            background: rgba(124, 91, 245, 0.2);
+            box-shadow: inset 0 0 0 1px #7c5bf5;
+        }
+
         /* 두 번 눌러 여는 단락 편집 상자 (paragraph-edit.js) */
         .para-edit {
             margin: 0.75rem 0;
@@ -900,6 +907,23 @@
         </div>
         <div class="p-4 flex flex-col gap-4 overflow-y-auto max-h-[75vh] editor-scroll">
             <div>
+                <div class="flex items-center gap-1.5 text-xs font-bold text-textMuted mb-2"><i
+                        class="ph-fill ph-lightning text-accent/70"></i> 빠른 설정</div>
+                <div class="grid grid-cols-2 gap-2">
+                    <button type="button" data-settings-preset="saving" onclick="applySettingsPreset('saving')" aria-pressed="false"
+                        class="text-left p-2.5 rounded-lg border border-white/10 bg-black/20 hover:bg-white/5 transition-colors">
+                        <span class="block text-xs font-bold text-white">빠르고 저렴하게</span>
+                        <span class="block text-[0.6875rem] text-textMuted mt-0.5">무료 키로도 됩니다 · 처음이면 추천</span>
+                    </button>
+                    <button type="button" data-settings-preset="quality" onclick="applySettingsPreset('quality')" aria-pressed="false"
+                        class="text-left p-2.5 rounded-lg border border-white/10 bg-black/20 hover:bg-white/5 transition-colors">
+                        <span class="block text-xs font-bold text-white">품질 우선</span>
+                        <span class="block text-[0.6875rem] text-textMuted mt-0.5">더 느리고 비용이 듭니다</span>
+                    </button>
+                </div>
+                <p class="text-[0.6875rem] text-textMuted mt-1.5 leading-relaxed">AI 키는 Gemini나 Claude 중 <strong class="text-textLight">하나만</strong> 있으면 됩니다. 처음이면 아래 링크에서 Gemini 무료 키를 받아 넣으세요. 모델·강도는 아래에서 하나씩 바꿀 수도 있습니다.</p>
+            </div>
+            <div>
                 <label class="flex items-center gap-1.5 text-xs font-bold text-textMuted mb-2"><i
                         class="ph-fill ph-key text-accent/70"></i> Gemini API Key</label>
                 <div class="flex gap-2">
@@ -917,8 +941,11 @@
                 </div>
                 <div class="flex items-center gap-1 mt-1.5">
                     <div id="api-key-status-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-400"></div><span
-                        id="api-key-status-text" class="text-[0.6875rem] text-textMuted">Key 등록됨</span>
+                        id="api-key-status-text" class="text-[0.6875rem] text-textMuted">저장됨</span>
+                    <button type="button" onclick="verifyAiKey('gemini')" class="ml-auto text-[0.6875rem] font-bold text-accent hover:underline">연결 확인</button>
                 </div>
+                <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer"
+                    class="inline-flex items-center gap-1 mt-1 text-[0.6875rem] text-sky-300 hover:underline">키 받기: Google AI Studio (무료) <i class="ph-bold ph-arrow-square-out"></i></a>
             </div>
 
             <div>
@@ -939,8 +966,11 @@
                 </div>
                 <div class="flex items-center gap-1 mt-1.5">
                     <div id="claude-key-status-dot" class="w-1.5 h-1.5 rounded-full bg-red-400"></div><span
-                        id="claude-key-status-text" class="text-[0.6875rem] text-textMuted">Key 미등록</span>
+                        id="claude-key-status-text" class="text-[0.6875rem] text-textMuted">키 없음</span>
+                    <button type="button" onclick="verifyAiKey('claude')" class="ml-auto text-[0.6875rem] font-bold text-accent hover:underline">연결 확인</button>
                 </div>
+                <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer"
+                    class="inline-flex items-center gap-1 mt-1 text-[0.6875rem] text-sky-300 hover:underline">키 받기: Claude 콘솔 (유료) <i class="ph-bold ph-arrow-square-out"></i></a>
                 <p class="text-xs text-textMuted mt-1">Claude 모델을 고르면 텍스트 생성에 사용됩니다. 이미지 생성에는 Gemini 키나 Higgsfield 설정이 필요합니다. 빈 칸으로 저장하면 키가 삭제됩니다.</p>
             </div>
 
@@ -992,14 +1022,14 @@
             <div>
                 <label class="flex items-center gap-1.5 text-xs font-bold text-textMuted mb-2"><i
                         class="ph-fill ph-brain text-accent/70"></i> LLM 모델</label>
-                <select id="settings-text-model" onchange="updateTextModel(this.value); renderRoleRouteNote()"
+                <select id="settings-text-model" onchange="updateTextModel(this.value); renderRoleRouteNote(); renderPresetButtons()"
                     class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent transition-all appearance-none cursor-pointer"
                     style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22%238a8ab5%22><path d=%22M7 10l5 5 5-5z%22/></svg>');background-repeat:no-repeat;background-position:right 10px center;">
                 </select>
                 <p class="text-xs text-textMuted mt-1">교안·퀴즈·문체 변환 등 텍스트 생성에 사용</p>
                 <label class="flex items-center gap-1.5 text-xs font-bold text-textMuted mt-3 mb-2"><i
                         class="ph-fill ph-gauge text-accent/70"></i> 추론 강도</label>
-                <select id="settings-reasoning-effort" onchange="updateReasoningEffort(this.value)"
+                <select id="settings-reasoning-effort" onchange="updateReasoningEffort(this.value); renderPresetButtons()"
                     class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent transition-all appearance-none cursor-pointer"
                     style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22%238a8ab5%22><path d=%22M7 10l5 5 5-5z%22/></svg>');background-repeat:no-repeat;background-position:right 10px center;">
                 </select>
@@ -1024,7 +1054,7 @@
                 <p class="text-xs text-textMuted mt-1">교안 내 삽입 이미지 생성에 사용 (16:9). Higgsfield 모델은 아래 Higgsfield 설정을 씁니다. Gemini 키가 없으면 텍스트 모델이 SVG 삽화를 그립니다.</p>
                 <label class="flex items-center gap-1.5 text-xs font-bold text-textMuted mt-3 mb-2"><i
                         class="ph-fill ph-images text-accent/70"></i> 교안 이미지 양</label>
-                <select id="settings-image-amount" onchange="updateLessonImageAmount(this.value)"
+                <select id="settings-image-amount" onchange="updateLessonImageAmount(this.value); renderPresetButtons()"
                     class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-accent transition-all appearance-none cursor-pointer"
                     style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22%238a8ab5%22><path d=%22M7 10l5 5 5-5z%22/></svg>');background-repeat:no-repeat;background-position:right 10px center;">
                 </select>
@@ -1201,6 +1231,11 @@
                         class="w-4 h-4 accent-accent rounded cursor-pointer">
                     <span id="overview-course-title">게임 기획 전문가 양성 과정</span>
                 </label>
+                <div class="flex items-center gap-1.5 mt-1.5">
+                    <span id="overview-example-badge" class="hidden shrink-0 text-[0.625rem] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300" title="둘러보기용 예시 과정입니다. 과정 정보를 바꾸면 사라집니다">예시</span>
+                    <span id="overview-course-field" class="flex-1 min-w-0 truncate text-[0.6875rem] text-textMuted"></span>
+                    <button onclick="openCourseInfo()" class="shrink-0 text-[0.6875rem] font-bold text-accent hover:underline" title="과정명과 분야를 바꿉니다. AI가 그 분야의 강사로 교안을 씁니다"><i class="ph-bold ph-pencil-simple"></i> 과정 정보</button>
+                </div>
 
                 <button onclick="openLessonRun('course')"
                     class="w-full mt-2 h-8 flex items-center justify-center gap-1 rounded bg-white/5 hover:bg-accent text-white text-[0.6875rem] font-bold transition-colors"
@@ -1800,10 +1835,10 @@
                 const txt = document.getElementById('api-key-status-text');
                 if (typeof apiKey !== 'undefined' && apiKey) {
                     if (dot) dot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-400';
-                    if (txt) txt.textContent = 'Key 등록됨';
+                    if (txt) txt.textContent = '저장됨 · 연결 확인 전';
                 } else {
                     if (dot) dot.className = 'w-1.5 h-1.5 rounded-full bg-red-400';
-                    if (txt) txt.textContent = 'Key 미등록';
+                    if (txt) txt.textContent = '키 없음';
                 }
 
                 // Claude API 키 입력값·상태 초기화
@@ -1813,7 +1848,7 @@
                 const claudeTxt = document.getElementById('claude-key-status-text');
                 if (claudeInput) claudeInput.value = hasClaudeKey ? claudeApiKey : '';
                 if (claudeDot) claudeDot.className = `w-1.5 h-1.5 rounded-full ${hasClaudeKey ? 'bg-emerald-400' : 'bg-red-400'}`;
-                if (claudeTxt) claudeTxt.textContent = hasClaudeKey ? 'Key 등록됨' : 'Key 미등록';
+                if (claudeTxt) claudeTxt.textContent = hasClaudeKey ? '저장됨 · 연결 확인 전' : '키 없음';
 
                 // 모델 콤보박스 초기화
                 populateModelSelect('settings-text-model', typeof TEXT_MODEL_OPTIONS !== 'undefined' ? TEXT_MODEL_OPTIONS : [], typeof TEXT_MODEL !== 'undefined' ? TEXT_MODEL : '');
@@ -1823,6 +1858,7 @@
                 document.getElementById('settings-role-routing').checked = ROLE_ROUTING;
                 renderRoleRouteNote();
                 populateModelSelect('settings-reasoning-effort', typeof REASONING_EFFORT_OPTIONS !== 'undefined' ? REASONING_EFFORT_OPTIONS : [], typeof REASONING_EFFORT !== 'undefined' ? REASONING_EFFORT : '');
+                window.renderPresetButtons?.();
 
                 // [Phase F10] 구글 검색 이미지 설정 초기화
                 const cxInput = document.getElementById('settings-google-cx-input');
@@ -1843,24 +1879,21 @@
             const panel = document.getElementById('settings-panel');
             if (panel) panel.classList.add('hidden');
         };
+        // 키를 저장하면 창을 닫지 않고 바로 연결을 확인한다(결과가 키 칸 아래에 보인다, js/setup-helpers.js)
         window.saveApiKeySetting = function () {
             const input = document.getElementById('settings-api-key-input');
-            if (input && typeof updateApiKey === 'function' && updateApiKey(input.value)) {
-                window.showAlert(apiKey ? 'API Key가 저장되었습니다.' : 'API Key가 삭제되었습니다.');
-                closeSettingsPanel();
-            } else {
-                window.showAlert('유효한 API Key를 입력해 주세요.');
-            }
+            if (!input || typeof updateApiKey !== 'function') return;
+            updateApiKey(input.value);
+            window.showToast?.(apiKey ? 'Gemini 키를 저장했습니다. 연결을 확인합니다.' : 'Gemini 키를 지웠습니다.', apiKey ? 'success' : 'info');
+            window.afterAiKeySaved?.('gemini');
         };
 
         window.saveClaudeKeySetting = function () {
             const input = document.getElementById('settings-claude-key-input');
-            if (input && typeof updateClaudeApiKey === 'function' && updateClaudeApiKey(input.value)) {
-                window.showAlert(claudeApiKey ? 'Claude API Key가 저장되었습니다.' : 'Claude API Key가 삭제되었습니다.');
-                closeSettingsPanel();
-            } else {
-                window.showAlert('유효한 Claude API Key를 입력해 주세요.');
-            }
+            if (!input || typeof updateClaudeApiKey !== 'function') return;
+            updateClaudeApiKey(input.value);
+            window.showToast?.(claudeApiKey ? 'Claude 키를 저장했습니다. 연결을 확인합니다.' : 'Claude 키를 지웠습니다.', claudeApiKey ? 'success' : 'info');
+            window.afterAiKeySaved?.('claude');
         };
 
         // [Phase F10] 구글 검색 이미지 설정 저장 핸들러
@@ -1947,6 +1980,8 @@
     <script src="./js/lesson-format.js?v=125"></script>
     <script src="./js/lesson-export.js?v=125"></script>
     <script src="./js/data-safety.js?v=125"></script>
+    <script src="./js/ai-errors.js?v=125"></script>
+    <script src="./js/setup-helpers.js?v=125"></script>
     <script src="./js/state.js?v=125"></script>
     <script src="./js/api.js?v=125"></script>
     <script src="./js/diagram.js?v=125"></script>

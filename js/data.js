@@ -467,11 +467,12 @@ try {
     console.warn("localStorage 접근 불가 (API Key):", e);
 }
 const STORAGE_KEY = 'agent_curriculum_v4_7';
-let TEXT_MODEL = 'gemini-4-argon';
+// 처음 쓰는 사람의 기본값은 무료 키로도 되는 빠른 설정이다. 설정 맨 위 '품질 우선'으로 바꾼다(js/setup-helpers.js)
+let TEXT_MODEL = 'gemini-3.8-flash';
 // 기본 이미지 모델: Nano Banana 2.1 (gemini-3.1-flash-image-preview, Imagen 4 종료 후 공식 후속 모델)
 let IMAGE_MODEL = 'gemini-nano-banana-2.1';
 // 추론 강도: Claude는 output_config.effort, Gemini는 thinkingLevel로 변환되어 적용
-let REASONING_EFFORT = 'max';
+let REASONING_EFFORT = 'medium';
 // 보조 작업 강도 절감: 켜면 분류·판독처럼 정해진 형식의 작업만 낮춰 시간과 비용을 줄인다. 교안 본문은 항상 위 설정을 쓴다.
 // 작업 구분은 develocket-slide(assets/ai-client.js @3a7303f)의 역할별 강도를 따른다.
 let AUTO_TASK_EFFORT = false;
@@ -522,7 +523,7 @@ const LESSON_IMAGE_AMOUNT_OPTIONS = [
     { value: 'section', label: '핵심만 (## 섹션마다 한 장)' },
     { value: 'none', label: '넣지 않음 (나중에 일괄 이미지 찾기)' },
 ];
-let LESSON_IMAGE_AMOUNT = 'all';
+let LESSON_IMAGE_AMOUNT = 'section';
 const REASONING_EFFORT_OPTIONS = [
     { value: 'max', label: '최대 (최고 품질 · 가장 느림)' },
     { value: 'xhigh', label: '매우 높음' },
@@ -632,11 +633,21 @@ function updatePixabaySetting(newKey) {
     return false;
 }
 
+// 과정 정보의 분야. 분야를 넣기 전에 만든 과정은 과정명에서 읽는다('게임 기획 전문가 양성 과정' → '게임 기획').
+// 사용자가 분야를 비워 저장했으면('') fallback(직업훈련)을 쓴다
+function courseFieldLabel(fallback = '') {
+    if (typeof globalState === 'undefined' || !globalState) return fallback;
+    const saved = globalState.courseField;
+    const field = typeof saved === 'string' ? saved : (typeof fieldFromCourseTitle === 'function' ? fieldFromCourseTitle(globalState.courseTitle) : '');
+    return String(field || '').trim() || fallback;
+}
+
 // 2. 프롬프트 생성용 핵심 컨텍스트 (페르소나 및 룰셋)
 const CONTEXT_CORE = {
+    // 과정 정보의 분야(globalState.courseField)를 따른다. 비우면 직업훈련 강사로 쓴다
     personas: {
-        orchestrator: "당신은 [AntiGravity Curriculum Orchestrator]입니다. 게임 기획 교육과정 전문 설계자입니다.",
-        instructor: "당신은 게임 기획 전문 강사입니다.",
+        get orchestrator() { return `당신은 [AntiGravity Curriculum Orchestrator]입니다. ${courseFieldLabel('직업훈련')} 교육과정 전문 설계자입니다.`; },
+        get instructor() { return `당신은 ${courseFieldLabel('직업훈련')} 분야 전문 강사입니다.`; },
         assistant: "당신은 교안 작성 및 수정 보조 AI입니다."
     },
     rules: {
@@ -681,7 +692,7 @@ const CONTEXT_CORE = {
 
         heading_hierarchy: "헤딩 위계를 반드시 준수하세요: Level 1 = '# 📝 [차시 주제]', Level 2 = '## [핵심 섹션]', Level 3 = '### ■ [하위 항목]', Level 4 = '####   ▣ [세부 항목]'. 각 레벨에 지정된 접두 기호(📝, ■, ▣)를 반드시 사용하세요.",
 
-        semantic_icons: "본문 내 핵심 키워드 앞에 시맨틱 아이콘을 삽입하세요: 💡 = 중요 개념/핵심 포인트, ✅ = 학습 체크리스트/확인 사항, 🎮 = 실무·현장 사례/게임 예시, ⚠️ = 주의사항/흔한 실수, ⚙️ = 실습 가이드/따라하기 단계. 아이콘은 해당 문단 또는 불릿(-) 첫머리에 배치합니다. [중요] 숫자 넘버링 리스트(1. 2. 3.)에는 이모지를 사용하지 마세요. 넘버링과 이모지를 함께 쓰지 않습니다. 올바른 예: '1. 게임의 골격 만들기', 잘못된 예: '1. 💡 게임의 골격 만들기'.",
+        semantic_icons: "본문 내 핵심 키워드 앞에 시맨틱 아이콘을 삽입하세요: 💡 = 중요 개념/핵심 포인트, ✅ = 학습 체크리스트/확인 사항, 🎮 = 실무·현장 사례, ⚠️ = 주의사항/흔한 실수, ⚙️ = 실습 가이드/따라하기 단계. 아이콘은 해당 문단 또는 불릿(-) 첫머리에 배치합니다. [중요] 숫자 넘버링 리스트(1. 2. 3.)에는 이모지를 사용하지 마세요. 넘버링과 이모지를 함께 쓰지 않습니다. 올바른 예: '1. 게임의 골격 만들기', 잘못된 예: '1. 💡 게임의 골격 만들기'.",
 
         indentation: "Level 4(####) 이상 헤딩 아래의 접두사가 없는 일반 줄글(텍스트 블록) 첫머리에는 들여쓰기를 위해 명시적으로 '&nbsp;&nbsp;' 문자열을 출력하세요. 주의: 실제 유니코드 특수 공백(U+00A0 등)을 출력하지 말고 문자열 형태를 유지해야 합니다. 단, 일반 줄글 형태 자체를 지양하고 최대한 마크다운 문법(불릿 등)을 활용해 구조화하세요.",
 
@@ -805,7 +816,7 @@ const CONTEXT_CORE = {
             "- 논문 인용 절대 금지 (학술 논문, arXiv, Google Scholar 등)\n" +
             "- 유튜브 링크 절대 금지 (youtube.com, youtu.be URL 포함 금지)\n" +
             "- 유튜브 영상 인용 절대 금지 (영상 제목, 채널명 언급 금지)\n" +
-            "- 허용 출처: 공식 문서(Unity, Unreal, GDC Vault), 위키백과, 게임 위키, 공식 개발자 블로그",
+            "- 허용 출처: 해당 분야의 공식 문서·공공기관·협회 자료, 위키백과, 공식 블로그(예: 게임 분야면 Unity·Unreal 문서, GDC Vault)",
 
         // ── 이모지 사용 규칙 ──
         emoji_rule: "이모지 사용 규칙 [최우선 규칙 — 반드시 준수]:\n" +
@@ -828,7 +839,7 @@ const CONTEXT_CORE = {
             "  - ## 개요: 모든 내용을 불릿(-)으로 작성. 이모지 사용 시 줄 첫번째에 단독 배치\n" +
             "  - ## 학습 목표: 모든 내용을 불릿(-)으로 작성. 이모지 사용 금지\n\n" +
             "기타 규칙:\n" +
-            "1) 💡=핵심, ✅=체크, 🎮=게임사례, ⚠️=주의, ⚙️=실습\n" +
+            "1) 💡=핵심, ✅=체크, 🎮=실무 사례, ⚠️=주의, ⚙️=실습\n" +
             "2) '💡 이론 설명' 같은 이모지+라벨 조합 금지. 이모지 뒤 바로 본문\n" +
             "3) '## 학습 목표' 섹션 이모지 사용 금지\n" +
             "4) 섹션 제목에 영문 괄호 금지"
@@ -935,7 +946,7 @@ const CONTEXT_CORE = {
 ☑️ **강조**: 보조 강조
 ℹ️ **참고**: 추가 정보
 💬 **TMI**: 부가 정보
-🎮 **게임 예시**: **게임 관련** 실무 사례
+🎮 **실무 예시**: 현장 사례
 ⚠️ **주의**: 주의사항
 ⚙️ **실습**: 따라하기 가이드
 
@@ -969,6 +980,8 @@ const MOCK_CONTENT_1 = `# 1. 개요\n게임 기획(Game Design)은 플레이어�
 const INITIAL_MOCK_STATE = {
     courseId: "course_mock_1",
     courseTitle: "게임 기획 전문가 양성 과정",
+    courseField: "게임 기획",
+    isExample: true, // 둘러보기용 예시 과정. 과정 정보를 저장하면 꺼진다
     subjects: [
         {
             id: "subject_1",

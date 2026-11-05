@@ -80,17 +80,14 @@ function toGeminiResponse(message, jsonMode) {
 }
 
 function describeClaudeError(Anthropic, e) {
-    if (e instanceof Anthropic.AuthenticationError) return 'Claude API 키가 올바르지 않습니다. 설정에서 키를 확인해주세요.';
-    if (e instanceof Anthropic.PermissionDeniedError) return `이 Claude API 키로는 해당 모델을 사용할 수 없습니다. (${e.status})`;
-    if (e instanceof Anthropic.RateLimitError) return 'Claude API 호출 한도를 초과했습니다(429). 잠시 후 다시 시도해주세요.';
-    if (e instanceof Anthropic.APIConnectionError) return 'Claude API에 연결하지 못했습니다. 네트워크 상태를 확인해주세요.';
-    if (e instanceof Anthropic.APIError) return `Claude API 오류 (${e.status}): ${e.message}`;
+    if (e instanceof Anthropic.APIConnectionError) return friendlyAiError(0, e.message, 'Claude');
+    if (e instanceof Anthropic.APIError) return friendlyAiError(e.status || 0, e.message, 'Claude'); // 키·권한·한도·서버 문제를 한국어 한 줄로(ai-errors.js)
     return e.message || String(e);
 }
 
 async function callClaude(modelName, payload) {
     if (!claudeApiKey) {
-        throw new Error('Claude API 키가 설정되지 않았습니다.\n좌측 하단 설정 버튼에서 Claude API 키를 먼저 입력해주세요.');
+        throw new Error('Claude API 키가 없습니다. 오른쪽 위 ⚙ 설정에서 키를 넣어 주세요(키는 console.anthropic.com에서 받습니다).');
     }
     const { default: Anthropic } = await loadClaudeSdk();
     const client = new Anthropic({ apiKey: claudeApiKey, maxRetries: CLAUDE_MAX_RETRIES, dangerouslyAllowBrowser: true });
@@ -99,6 +96,8 @@ async function callClaude(modelName, payload) {
         return toGeminiResponse(message, wantsJsonResponse(payload));
     } catch (e) {
         console.error('[Claude] 호출 실패:', e);
-        throw new Error(describeClaudeError(Anthropic, e));
+        const err = new Error(describeClaudeError(Anthropic, e));
+        err.status = e.status;
+        throw err;
     }
 }
