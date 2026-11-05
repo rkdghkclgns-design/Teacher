@@ -769,7 +769,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
 
         if (stopped) {
             reported = true;
-            window.showAlert('교안 생성을 중단했습니다. 받은 내용까지 저장했습니다. 이전 교안은 히스토리에 있습니다.');
+            window.showAlert('교안 생성을 중단했습니다. 받은 내용까지 저장했습니다. 이전 교안은 작업 기록에 있습니다.');
             return;
         }
 
@@ -811,7 +811,7 @@ window.promptAndGenerateModule = function (moduleId) {
     const regenerating = mod.status === 'done';
     const label = regenerating ? `다시 생성: ${mod.title}` : `교안 생성: ${mod.title}`;
     const opts = regenerating
-        ? { warning: '5개 탭과 그림을 모두 새로 만듭니다. 손으로 고친 내용도 바뀝니다. 지금 내용은 히스토리에 남아 되돌릴 수 있습니다. 한 탭만 바꾸려면 그 탭의 "이 탭 생성"을 쓰세요.', okLabel: '모두 다시 생성' }
+        ? { warning: '5개 탭과 그림을 모두 새로 만듭니다. 손으로 고친 내용도 바뀝니다. 지금 내용은 작업 기록에 남아 되돌릴 수 있습니다. 한 탭만 바꾸려면 그 탭의 "이 탭 생성"을 쓰세요.', okLabel: '모두 다시 생성' }
         : {};
     showKeyConceptsPrompt(label, existing, (concepts) => {
         generateModuleContent(moduleId, concepts);
@@ -824,7 +824,7 @@ window.promptAndGenerateMainQuest = function () {
     if (!subj) return;
     const mq = subj.mainQuest;
     const existing = Array.isArray(mq?.keyConcepts) ? mq.keyConcepts : [];
-    showKeyConceptsPrompt('메인 퀘스트 생성', existing, (concepts) => {
+    showKeyConceptsPrompt('최종 평가 만들기', existing, (concepts) => {
         if (concepts.length > 0 && mq) mq.keyConcepts = concepts;
         generateMainQuest();
     });
@@ -904,7 +904,7 @@ async function generateMainQuest() {
 
         console.error(err);
 
-        window.showAlert(`메인 퀘스트를 만들지 못했습니다.\n${err.message || '잠시 뒤 다시 해 주세요.'}`);
+        window.showAlert(`최종 평가를 만들지 못했습니다.\n${err.message || '잠시 뒤 다시 해 주세요.'}`);
 
     } finally {
 
@@ -2067,7 +2067,47 @@ function updateReferenceStatus() {
     }
 }
 
+// 참고 파일의 글자를 뽑아 참고 텍스트 칸 끝에 붙인다(예전 일괄 생성 창의 파일 올리기를 옮겼다).
+// 그림과 스캔 PDF는 AI가 글자를 옮겨 적는다(course-refs.js). 칸은 목차에 앞 4,000자, 교안에 앞 8,000자가 쓰인다
+const REFERENCE_FILE_MAX_BYTES = 20 * 1024 * 1024;
+const REFERENCE_SENT_CHARS = 8000;
+
+async function readReferenceFile(file) {
+    if (file.size > REFERENCE_FILE_MAX_BYTES) throw new Error('20MB가 넘습니다');
+    const text = String(await extractTextFromFile(file)).trim();
+    if (!text) throw new Error('읽을 글자가 없습니다');
+    return `[${file.name}]\n${text}`;
+}
+
+async function importReferenceFiles(event) {
+    const input = event.target;
+    const files = Array.from(input.files || []);
+    input.value = ''; // 같은 파일을 다시 고를 수 있게
+    const textarea = document.getElementById('reference-text-input');
+    if (!files.length || !textarea) return;
+    window.showToast?.(`파일 ${files.length}개의 글자를 읽고 있습니다...`, 'info');
+    const added = [];
+    const failed = [];
+    for (const file of files) {
+        try {
+            added.push(await readReferenceFile(file));
+        } catch (err) {
+            console.error('[참고 파일] 읽기 실패:', file.name, err);
+            failed.push(`${file.name}: ${err.message}`);
+        }
+    }
+    if (added.length) {
+        textarea.value = [textarea.value.trim(), ...added].filter(Boolean).join('\n\n---\n\n');
+        onReferenceTextChange();
+        const over = textarea.value.length > REFERENCE_SENT_CHARS
+            ? ` 교안에는 앞 ${REFERENCE_SENT_CHARS.toLocaleString()}자만 보내므로 필요 없는 부분은 지워 주세요.` : '';
+        window.showToast?.(`파일 ${added.length}개의 글자를 참고 텍스트에 넣었습니다.${over}`, over ? 'warning' : 'success');
+    }
+    if (failed.length) window.showAlert(`읽지 못한 파일이 있습니다.\n${failed.join('\n')}`);
+}
+
 // 전역 등록 — HTML onclick에서 호출
+window.importReferenceFiles = importReferenceFiles;
 window.addReferenceUrl = addReferenceUrl;
 window.removeReferenceUrl = removeReferenceUrl;
 window.onReferenceTextChange = onReferenceTextChange;
@@ -2099,12 +2139,12 @@ function renderSidebar() {
 
 
 
-    // 교과 정보(파일명 규칙)와 메인 퀘스트. 접어도 메인 퀘스트 상태와 열기 버튼은 머리줄에 남는다
+    // 교과 정보(파일명 규칙)와 최종 평가(mainQuest). 접어도 최종 평가 상태와 열기 버튼은 머리줄에 남는다
     const mq = subj.mainQuest;
     const questDone = mq?.status === 'done';
     const allLessonsDone = Array.isArray(subj.lessons) && subj.lessons.length > 0 && subj.lessons.every(l => l.status === 'done');
-    const questChip = `<span class="px-1.5 py-0.5 rounded ${questDone ? 'bg-yellow-500/20 text-yellow-300' : 'bg-white/10 text-textMuted'}">메인 퀘스트 ${questDone ? '완료' : '대기중'}</span>`;
-    const questOpen = `<button onclick="viewModule('mainQuest')" class="shrink-0 text-[0.6875rem] font-bold px-2 py-1 rounded bg-white/10 text-textLight hover:bg-accent transition-colors" title="메인 퀘스트 열기">열기</button>`;
+    const questChip = `<span class="px-1.5 py-0.5 rounded ${questDone ? 'bg-yellow-500/20 text-yellow-300' : 'bg-white/10 text-textMuted'}">최종 평가 ${questDone ? '완료' : '대기중'}</span>`;
+    const questOpen = `<button onclick="viewModule('mainQuest')" class="shrink-0 text-[0.6875rem] font-bold px-2 py-1 rounded bg-white/10 text-textLight hover:bg-accent transition-colors" title="최종 평가 열기">열기</button>`;
     const infoBody = `
         <div class="mb-3">
             <label class="text-[0.6875rem] font-bold text-textMuted mb-1 flex items-center gap-1"><i class="ph-bold ph-file-code"></i> 파일명 규칙</label>
@@ -2114,7 +2154,7 @@ function renderSidebar() {
             <div class="flex items-center justify-between mb-1.5">
                 <div class="flex items-center gap-1">
                     <i class="ph-fill ph-crown text-sm ${questDone ? 'text-yellow-400' : 'text-accent'}"></i>
-                    <span class="text-[0.6875rem] font-bold text-textLight group-hover:text-accent transition-colors">메인 퀘스트</span>
+                    <span class="text-[0.6875rem] font-bold text-textLight group-hover:text-accent transition-colors">최종 평가</span>
                 </div>
                 <span class="text-[0.6875rem] font-bold px-1.5 py-0.5 rounded ${questDone ? 'bg-yellow-500/20 text-yellow-300' : 'bg-white/10 text-white/60'}">${questDone ? '완료' : '대기중'}</span>
             </div>
@@ -2122,12 +2162,12 @@ function renderSidebar() {
             <p class="text-xs text-textMuted line-clamp-2">${escapeHtml(mq?.description || '')}</p>
             <div class="mt-2 flex justify-between items-center pt-2 border-t border-white/5">
                 <span class="text-[0.6875rem] text-white/60">${allLessonsDone ? '🌟 차시 완료' : '⚠️ 진행 필요'}</span>
-                <button onclick="event.stopPropagation(); promptAndGenerateMainQuest()" class="text-[0.6875rem] font-bold px-2 py-1 rounded ${allLessonsDone ? 'bg-accent hover:bg-accentHover' : 'bg-white/10 hover:bg-white/20'} text-white transition-colors" ${!allLessonsDone && !questDone ? 'title="모든 차시를 먼저 생성하는 것을 권장합니다."' : ''}>${questDone ? '재생성' : '발급'}</button>
+                <button onclick="event.stopPropagation(); promptAndGenerateMainQuest()" class="text-[0.6875rem] font-bold px-2 py-1 rounded ${allLessonsDone ? 'bg-accent hover:bg-accentHover' : 'bg-white/10 hover:bg-white/20'} text-white transition-colors" ${!allLessonsDone && !questDone ? 'title="모든 차시를 먼저 생성하는 것을 권장합니다."' : ''}>${questDone ? '다시 만들기' : '만들기'}</button>
             </div>
         </div>`;
 
     let html = renderSubjectNcsCard(subj) + renderSubjectFlowCard(subj)
-        + sidebarSectionHtml('subject-info', { icon: 'ph-sliders-horizontal', title: '교과 정보 및 레벨테스트', summaryHtml: questChip, actions: questOpen }, infoBody);
+        + sidebarSectionHtml('subject-info', { icon: 'ph-sliders-horizontal', title: '교과 정보 · 최종 평가', summaryHtml: questChip, actions: questOpen }, infoBody);
 
     html += `
                 <div class="flex items-center gap-2 mt-4 mb-2 px-1">
@@ -2143,7 +2183,7 @@ function renderSidebar() {
 
     if (!Array.isArray(courseData) || courseData.length === 0) {
 
-        html += `<div class="text-center pt-5 text-textMuted text-sm leading-relaxed">차시 모듈이 없습니다.</div>`;
+        html += `<div class="text-center pt-5 text-textMuted text-sm leading-relaxed">차시가 없습니다.</div>`;
 
     } else {
 
@@ -2237,7 +2277,7 @@ window.deleteModule = function (id) {
 
     if (id === 'mainQuest') return;
 
-    showConfirm('차시 모듈을 삭제하시겠습니까?', () => {
+    showConfirm('이 차시를 휴지통으로 옮길까요?\n30일 안에 차시 목록 위 휴지통에서 되살릴 수 있습니다.', () => {
 
         const mod = getEditingModule(id);
 
@@ -2250,7 +2290,7 @@ window.deleteModule = function (id) {
 
             currentEditingModuleId = null;
 
-            document.getElementById('editor-content-area').innerHTML = '<div class="h-full flex items-center justify-center text-textMuted text-sm">모듈이 삭제되었습니다.</div>';
+            document.getElementById('editor-content-area').innerHTML = '<div class="h-full flex items-center justify-center text-textMuted text-sm">차시를 휴지통으로 옮겼습니다.</div>';
 
             document.getElementById('ai-command-bar').classList.add('hidden'); // 삭제 시 커맨드 바도 숨김 처리
 
@@ -2508,6 +2548,7 @@ function renderEditor(mod) {
                         class="px-2.5 py-1.5 text-[0.6875rem] font-bold text-white bg-accent rounded hover:bg-accentHover transition-colors flex items-center gap-1 shrink-0 ml-1">
                         <i class="ph-bold ph-lightning"></i> 전체 생성
                     </button>
+                    <button onclick="runConventionCheck('${mod.id}')" class="ml-1 px-2.5 py-1.5 text-[0.6875rem] font-bold bg-rose-50 text-rose-600 border border-rose-200 rounded hover:bg-rose-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="콘텐츠 업무 설계 규칙으로 현재 탭 검사"><i class="ph-bold ph-list-checks"></i> 컨벤션 검수<span id="convention-check-count" class="hidden"></span></button>
                             <details id="lesson-tools-menu" class="relative">
                                 <summary class="list-none cursor-pointer px-3 py-1.5 text-xs font-bold bg-gray-50 text-gray-600 border border-gray-200 rounded hover:bg-gray-100 flex items-center gap-1"><i class="ph-bold ph-wrench"></i> 도구</summary>
                                 <div class="absolute right-0 mt-1 z-40 p-2 w-44 bg-white border border-gray-200 rounded-lg shadow-lg flex flex-col gap-1">
@@ -2537,25 +2578,21 @@ function renderEditor(mod) {
 
                     </div>
 
-                    <!-- 보강 재생성 입력 바 -->
-                    <div class="px-4 pb-2 flex items-center gap-2 border-t border-gray-100 pt-2">
-                        <input type="text" id="reinforce-input" placeholder="보강 명령 (예: 예시를 더 추가해줘, 실습 난이도 높여줘)"
-                            class="flex-1 px-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg text-gray-800 placeholder-gray-400 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/20">
-                        <button onclick="reinforceCurrentTab('${mod.id}')" class="px-3 py-1.5 text-[0.6875rem] font-bold bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors flex items-center gap-1 shrink-0 whitespace-nowrap">
-                            <i class="ph-bold ph-arrow-clockwise"></i> 보강 재생성
-                        </button>
-                        <button onclick="runConventionCheck('${mod.id}')" class="px-3 py-1.5 text-[0.6875rem] font-bold bg-rose-50 text-rose-600 border border-rose-200 rounded hover:bg-rose-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="콘텐츠 업무 설계 규칙으로 현재 탭 검사"><i class="ph-bold ph-list-checks"></i> 컨벤션 검수<span id="convention-check-count" class="hidden"></span></button>
+                    <!-- 탐색줄: 위쪽 버튼 줄과 함께 붙어 있게 같은 sticky 안에 둔다(높이가 바뀌어도 틈이 생기지 않는다) -->
+                    <div class="flex items-center gap-0.5 px-4 py-1 bg-white border-t border-gray-200 overflow-x-auto">
+                        <div id="lesson-nav-items" class="flex items-center gap-0.5">${renderTabBar(mod)}</div>
+                        <div class="flex-1"></div>
                     </div>
 
                 </div>
 
-                <!-- 5탭 바 (sticky) -->
-                <div class="sticky top-[105px] z-20 flex items-center gap-0.5 px-4 py-1 bg-white border-b border-gray-200 overflow-x-auto shadow-sm">
-                    <div id="lesson-nav-items" class="flex items-center gap-0.5">${renderTabBar(mod)}</div>
-                    <div class="flex-1"></div>
-                </div>
-
                 <div class="max-w-[800px] mx-auto p-8 pb-32">
+
+                    <div id="lesson-edit-hint" class="${window.lessonEditHintHidden?.() ? 'hidden ' : ''}mb-5 flex items-start gap-2 px-3 py-2 text-xs leading-relaxed text-gray-600 bg-violet-50 border border-violet-100 rounded-lg">
+                        <i class="ph-bold ph-cursor-text text-violet-500 text-sm mt-0.5 shrink-0" aria-hidden="true"></i>
+                        <span class="flex-1">단락을 <strong>두 번 누르면</strong> 바로 고칩니다 · 글자를 <strong>끌어 고르면</strong> 서식 막대와 AI로 수정이 나옵니다 · <strong>아래 칸</strong>에 요청을 쓰면 AI가 고른 부분이나 이 탭 전체를 고칩니다</span>
+                        <button type="button" onclick="hideLessonEditHint()" aria-label="이 안내 닫기" title="닫으면 다시 보이지 않습니다" class="shrink-0 text-gray-400 hover:text-gray-700"><i class="ph-bold ph-x"></i></button>
+                    </div>
 
                     <div id="lesson-inline-panel"></div>
                     <div id="gyosuan-view" class="gyosuan-view hidden"></div>
@@ -2847,7 +2884,7 @@ window.switchAIMode = function (mode) {
 
         btnImg.className = 'px-3 py-1.5 text-xs font-bold rounded-md transition-all text-gray-400 hover:text-white';
 
-        input.placeholder = '텍스트를 드래그 선택 후 요청사항을 입력하세요...';
+        input.placeholder = AI_COMMAND_EDIT_PLACEHOLDER;
 
     } else {
 
@@ -2862,6 +2899,8 @@ window.switchAIMode = function (mode) {
 }
 
 
+
+const AI_COMMAND_EDIT_PLACEHOLDER = '고칠 내용을 쓰세요 · 고른 글만, 안 고르면 이 탭 전체를 고칩니다';
 
 window.executeAICommand = async function () {
 
@@ -2896,7 +2935,8 @@ window.executeAICommand = async function () {
             capturedSelection = rawView.value.substring(selStart, selEnd).trim();
         }
         if (!capturedSelection) {
-            return window.showAlert('수정할 텍스트를 먼저 드래그하여 선택해주세요.');
+            // 고른 글이 없으면 이 탭 전체를 고친다. 바뀐 부분은 미리 보고 골라 반영한다(tabs.js)
+            return reinforceCurrentTab(currentEditingModuleId, command);
         }
     }
 

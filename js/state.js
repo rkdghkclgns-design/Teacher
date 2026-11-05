@@ -173,7 +173,7 @@ function sanitizeState(state) {
         s.autoSlide = typeof s.autoSlide === 'boolean' ? s.autoSlide : false;
         s.lessons = Array.isArray(s.lessons) ? s.lessons : [];
         s.mainQuest = s.mainQuest || {
-            id: 'mainQuest', title: '메인 퀘스트', description: '최종 평가입니다.', status: 'waiting', content: null, images: {}
+            id: 'mainQuest', title: '👑 최종 평가', description: '교과 전체를 종합한 최종 평가입니다.', status: 'waiting', content: null, images: {}
         };
         s.lessons.forEach(l => {
             l.id = l.id || generateUniqueId('lesson_');
@@ -470,7 +470,7 @@ function updateHistoryBadges() {
 async function renderHistoryUI(area) {
     updateHistoryBadges();
     if (!Array.isArray(contentHistory) || contentHistory.length === 0) {
-        area.innerHTML = `<div class="h-full flex items-center justify-center text-textMuted bg-[#12121e]">저장된 히스토리가 없습니다. (차시를 지우거나 다시 만들기 전에 자동으로 남습니다)</div>`;
+        area.innerHTML = `<div class="h-full flex items-center justify-center text-textMuted bg-[#12121e]">작업 기록이 없습니다. (차시를 지우거나 다시 만들기 전에 자동으로 남습니다)</div>`;
         return;
     }
 
@@ -480,7 +480,7 @@ async function renderHistoryUI(area) {
     area.innerHTML = `
         <div class="p-2 flex flex-col h-full animate-fade-in bg-[#12121e]" style="min-height:100%;">
             <div class="flex flex-wrap justify-between items-center gap-2 mb-3">
-                <h2 class="text-sm font-bold text-white/90 flex items-center gap-2"><i class="ph-bold ph-clock-counter-clockwise text-accent"></i> 교안 아카이브 (히스토리)</h2>
+                <h2 class="text-sm font-bold text-white/90 flex items-center gap-2"><i class="ph-bold ph-clock-counter-clockwise text-accent"></i> 작업 기록</h2>
                 <div class="text-xs text-textMuted bg-black/30 px-3 py-1.5 rounded-lg border border-white/10 flex items-center gap-2" id="history-capacity-info">
                     <i class="ph ph-spinner animate-spin"></i> DB 용량 계산중...
                 </div>
@@ -582,7 +582,7 @@ window.toggleSelectAllHistory = function (isChecked) {
 
 window.deleteSelectedHistory = async function () {
     if (selectedHistoryIds.size === 0) return window.showAlert('삭제할 항목을 선택해주세요.');
-    showConfirm(`선택한 ${selectedHistoryIds.size}개의 히스토리를 영구 삭제하시겠습니까?`, async () => {
+    showConfirm(`선택한 ${selectedHistoryIds.size}개의 작업 기록을 영구 삭제할까요?`, async () => {
         contentHistory = contentHistory.filter(h => !selectedHistoryIds.has(h.id));
         selectedHistoryIds.clear();
         await saveState();
@@ -593,8 +593,8 @@ window.deleteSelectedHistory = async function () {
 
 
 window.clearHistory = function () {
-    if (contentHistory.length === 0) return window.showAlert('삭제할 히스토리가 없습니다.');
-    showConfirm(`히스토리 ${contentHistory.length}개를 모두 영구 삭제하시겠습니까?`, async () => {
+    if (contentHistory.length === 0) return window.showAlert('지울 작업 기록이 없습니다.');
+    showConfirm(`작업 기록 ${contentHistory.length}개를 모두 영구 삭제할까요?`, async () => {
         contentHistory = [];
         selectedHistoryIds.clear();
         await saveState();
@@ -614,7 +614,7 @@ window.exportSelectedHistoryMD = function () {
 
         .join('\n\n---\n\n');
 
-    downloadFile(text, `아카이브_선택본_${Date.now()}.md`, 'text/markdown');
+    downloadFile(text, `작업기록_선택본_${Date.now()}.md`, 'text/markdown');
 
 }
 
@@ -731,7 +731,7 @@ window.exportSelectedHistoryPDF = async function () {
 
         margin: 15,
 
-        filename: `아카이브_선택본_${Date.now()}.pdf`,
+        filename: `작업기록_선택본_${Date.now()}.pdf`,
 
         image: { type: 'jpeg', quality: 0.98 },
 
@@ -820,7 +820,7 @@ function extractImagesToZip(markdownContent, images, attachFolder) {
 
 window.viewHistoryItem = function (id) {
     const item = contentHistory.find(h => h.id === id);
-    if (!item) { window.showAlert("해당 히스토리 항목을 찾을 수 없습니다."); return; }
+    if (!item) { window.showAlert("해당 작업 기록을 찾을 수 없습니다."); return; }
 
     try {
         const rawContent = item.content || '(빈 내용)';
@@ -849,7 +849,7 @@ window.viewHistoryItem = function (id) {
         }
 
         const restoreBar = `<div class="not-prose mb-4 flex items-center gap-2 p-3 rounded-lg bg-accent/10 border border-accent/30 text-xs text-gray-700"><span class="flex-1">${escapeHtml(item.date || '')}${item.reason ? ` · ${escapeHtml(item.reason)}` : ''} 기록입니다.</span><button onclick="restoreHistoryItem(${Number(item.id)})" class="px-3 py-1.5 font-bold text-white bg-accent rounded hover:bg-accentHover">이 버전으로 되돌리기</button></div>`;
-        showModal(`히스토리: ${escapeHtml(item.title || '제목 없음')}`, restoreBar + htmlContent);
+        showModal(`작업 기록: ${escapeHtml(item.title || '제목 없음')}`, restoreBar + htmlContent);
 
     } catch (e) {
         console.error("히스토리 복원 오류:", e);
@@ -1315,7 +1315,7 @@ window.importProjectZip = async function (event) {
         }
 
         if (!metaObj) {
-            throw new Error("되살릴 수 있는 백업 파일이 아닙니다(save_data.yaml이 없습니다). 위쪽 ZIP이나 데이터 연동 → zip으로 내보내기로 받은 파일을 골라 주세요.");
+            throw new Error("되살릴 수 있는 백업 파일이 아닙니다(save_data.yaml이 없습니다). 내보내기·백업에서 받은 백업 ZIP을 골라 주세요.");
         }
 
         if (metaObj.scope === 'subjects') {
@@ -1556,9 +1556,9 @@ window.disconnectProjectFolder = async function () {
 
     document.getElementById('folder-connection-indicator').innerHTML = `
         <i class="ph ph-folder-dashed text-sm text-white/60"></i>
-        <span class="text-white/60">연결 안됨</span>
+        <span class="text-white/60">PC 폴더 저장 꺼짐</span>
     `;
-    // 클릭 시 바로 연결 창 띄우기 (미연결 상태)
+    // 클릭 시 바로 연결 창 띄우기 (PC 폴더 저장 꺼짐)
     document.getElementById('folder-connection-indicator').onclick = () => window.connectProjectFolder();
     window.showToast('폴더 연동이 해제되었습니다.');
 };
@@ -1888,53 +1888,9 @@ function updateFolderConnectionUI(connected, folderName = '') {
         indicator.title = `연결됨: ${folderName} (클릭하여 해제)`;
         indicator.onclick = () => window.disconnectProjectFolder(); // Changed to call the new disconnect function
     } else {
-        indicator.innerHTML = `<i class="ph ph-folder-dashed text-sm text-white/60"></i> <span class="text-white/60">미연결</span>`;
-        indicator.title = '프로젝트 폴더 연결하기';
+        indicator.innerHTML = `<i class="ph ph-folder-dashed text-sm text-white/60"></i> <span class="text-white/60">PC 폴더 저장 꺼짐</span>`;
+        indicator.title = 'PC 폴더 자동 저장이 꺼져 있습니다. 눌러서 빈 폴더를 고르면 켜집니다';
         indicator.onclick = () => connectProjectFolder();
-    }
-}
-
-
-// =========================================================================
-// 데이터 관리 드롭다운 (클릭 기반 토글)
-// =========================================================================
-
-window.toggleDataManageDropdown = function (event) {
-    const dropdown = document.getElementById('data-manage-dropdown');
-    if (!dropdown) return;
-
-    const isOpen = !dropdown.classList.contains('hidden');
-
-    if (isOpen) {
-        dropdown.classList.add('hidden');
-        document.removeEventListener('click', _closeDataManageOnOutside);
-        return;
-    }
-
-    // 버튼 위치 기준으로 드롭다운 배치
-    const btn = document.getElementById('data-manage-btn');
-    if (btn) {
-        const rect = btn.getBoundingClientRect();
-        dropdown.style.top = (rect.bottom + 4) + 'px';
-        dropdown.style.left = rect.left + 'px';
-    }
-
-    dropdown.classList.remove('hidden');
-
-    // 외부 클릭으로 닫기 (다음 틱에 등록하여 현재 클릭이 즉시 닫히는 것 방지)
-    setTimeout(() => {
-        document.addEventListener('click', _closeDataManageOnOutside);
-    }, 0);
-
-    if (event) event.stopPropagation();
-}
-
-function _closeDataManageOnOutside(e) {
-    const dropdown = document.getElementById('data-manage-dropdown');
-    const btn = document.getElementById('data-manage-btn');
-    if (dropdown && !dropdown.contains(e.target) && btn && !btn.contains(e.target)) {
-        dropdown.classList.add('hidden');
-        document.removeEventListener('click', _closeDataManageOnOutside);
     }
 }
 

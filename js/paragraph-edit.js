@@ -85,6 +85,26 @@ function mountParagraphEditor(target, ctx) {
     ta.setSelectionRange(ta.value.length, ta.value.length);
 }
 
+/* ---------- 고치는 방법 안내 한 줄 (교안 탭 위, api.js renderEditor) ---------- */
+const LESSON_EDIT_HINT_KEY = 'teacher:edit-hint-hidden';
+
+window.lessonEditHintHidden = function () {
+    try {
+        return localStorage.getItem(LESSON_EDIT_HINT_KEY) === '1';
+    } catch (err) {
+        return false; // 저장소를 못 쓰면 안내를 계속 보여 준다
+    }
+};
+
+window.hideLessonEditHint = function () {
+    try {
+        localStorage.setItem(LESSON_EDIT_HINT_KEY, '1');
+    } catch (err) {
+        console.warn('[안내] 닫은 상태를 저장하지 못했습니다:', err.message);
+    }
+    document.getElementById('lesson-edit-hint')?.classList.add('hidden');
+};
+
 window.openParagraphEditor = function (event) {
     const view = document.getElementById('render-view');
     const mod = typeof getEditingModule === 'function' ? getEditingModule() : null;

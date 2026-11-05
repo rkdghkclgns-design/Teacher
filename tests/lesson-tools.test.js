@@ -536,15 +536,7 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
         ctx.globalState.subjects = [];
     });
 
-    await run('참고 자료: 쪽 범위', async () => {
-        assert.deepStrictEqual([...call('parsePageRange')('1-3, 7, 글자, 9-9')], [1, 2, 3, 7, 9]);
-        const content = '[p.1] 하나\n\n[p.2] 둘\n\n[p.3] 셋';
-        assert.strictEqual(call('filterPageRange')(content, '2-3'), '[p.2] 둘\n\n[p.3] 셋');
-        assert.strictEqual(call('filterPageRange')(content, ''), content, '범위가 없으면 전체');
-        assert.strictEqual(call('filterPageRange')(content, '50'), content, '해당 쪽이 없으면 전체');
-        assert.strictEqual([...call('parsePageRange')('1-100000000')].length, 1000, '범위 상한');
-        assert.strictEqual(call('filterPageRange')('[Slide 1] 가\n[노트] 메모\n\n[Slide 2] 나', '1'), '[Slide 1] 가\n[노트] 메모');
-        assert.strictEqual(call('hasPageLabels')('본문만 있음'), false);
+    await run('참고 자료: 그림을 판독 요청 형식으로 바꾼다', async () => {
         const inline = plain(call('dataUrlToInline')('data:image/png;base64,QUJD'));
         assert.deepStrictEqual(inline, { mimeType: 'image/png', data: 'QUJD' });
     });

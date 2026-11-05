@@ -180,7 +180,7 @@ function renderBackupIndicator() {
     el.textContent = age.text;
     el.classList.toggle('text-amber-300', age.stale);
     el.classList.toggle('text-white/60', !age.stale);
-    el.title = `${age.stale ? '오래 백업하지 않았습니다. ' : ''}작업은 이 브라우저에만 저장됩니다. 눌러서 ZIP으로 백업하세요(데이터 연동 → zip 파일 불러오기로 되살립니다).`;
+    el.title = `${age.stale ? '오래 백업하지 않았습니다. ' : ''}작업은 이 브라우저에만 저장됩니다. 눌러서 ZIP으로 백업하세요(내보내기·백업 → 백업 ZIP으로 되살리기로 되살립니다).`;
 }
 
 /* ---------- 교과 휴지통 ---------- */
@@ -245,16 +245,16 @@ function closeLessonEditor() {
     if (area) area.innerHTML = '<div class="h-full flex items-center justify-center text-textMuted text-sm">왼쪽 목록에서 차시를 고르세요.</div>';
 }
 
-/* ---------- 히스토리 되돌리기 ---------- */
+/* ---------- 작업 기록(히스토리) 되돌리기 ---------- */
 async function restoreHistoryItem(id) {
     const entry = contentHistory.find(item => item.id === id);
-    if (!entry) return window.showAlert('해당 히스토리 항목을 찾을 수 없습니다.');
+    if (!entry) return window.showAlert('해당 작업 기록을 찾을 수 없습니다.');
     const target = historyRestoreTarget(entry, currentSnapshot().subjects);
     const openSubject = globalState.subjects.find(subject => String(subject.id) === String(currentSubjectId));
     const message = target.mode === 'replace'
-        ? `'${target.lesson.title}' 차시를 이 기록(${entry.date})으로 되돌립니다.\n지금 내용은 히스토리에 먼저 남겨 다시 되돌릴 수 있습니다.`
+        ? `'${target.lesson.title}' 차시를 이 기록(${entry.date})으로 되돌립니다.\n지금 내용은 작업 기록에 먼저 남겨 다시 되돌릴 수 있습니다.`
         : `이 기록(${entry.date})을 '${openSubject?.title || '지금 교과'}'에 새 차시로 되살립니다.${entry.tabContents ? '' : '\n예전 기록이라 탭 구분 없이 기본학습 칸에 들어갑니다.'}`;
-    const ok = await confirmAsync(message, { okLabel: target.mode === 'replace' ? '되돌리기' : '새 차시로 되살리기', tone: 'primary', title: '히스토리 되돌리기' });
+    const ok = await confirmAsync(message, { okLabel: target.mode === 'replace' ? '되돌리기' : '새 차시로 되살리기', tone: 'primary', title: '작업 기록 되돌리기' });
     if (!ok) return;
     if (target.mode === 'replace') {
         await archiveContents([target.lesson], '되돌리기 전');

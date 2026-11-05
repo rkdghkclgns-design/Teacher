@@ -48,7 +48,7 @@
 
                         <i class="ph-fill ph-target text-accent text-xl"></i>
 
-                        <div class="text-[0.6875rem] font-bold text-accent uppercase tracking-widest">Course</div>
+                        <div class="text-[0.6875rem] font-bold text-accent tracking-widest">과정</div>
 
                     </div>
 
@@ -74,7 +74,7 @@
 
                                 <div class="flex justify-between items-start mb-3 relative z-10">
 
-                                    <span class="text-xs font-bold text-textLight bg-black/30 border border-white/10 px-2 py-1 rounded">교과 모듈</span>
+                                    <span class="text-xs font-bold text-textLight bg-black/30 border border-white/10 px-2 py-1 rounded">교과</span>
 
                                     <button onclick="event.stopPropagation(); location.hash='#editor/${subj.id}'" class="opacity-0 group-hover:opacity-100 px-3 py-1.5 bg-accent hover:bg-accentHover text-white text-[0.6875rem] font-bold rounded shadow-md transition-all flex items-center gap-1 -mr-1 -mt-1" title="상세 교안 편집기로 이동">
 
@@ -88,7 +88,7 @@
 
                                 <div class="text-xs text-textMuted line-clamp-2 leading-relaxed relative z-10" title="${escapeHtml(subj.description)}">${escapeHtml(subj.description || '교과 설명을 입력해주세요.')}</div>
 
-                                ${subj.mainQuest && subj.mainQuest.status === 'done' ? `<div class="mt-3 text-xs text-yellow-400 font-bold"><i class="ph-fill ph-crown"></i> 메인 퀘스트 완료됨</div>` : ''}
+                                ${subj.mainQuest && subj.mainQuest.status === 'done' ? `<div class="mt-3 text-xs text-yellow-400 font-bold"><i class="ph-fill ph-crown"></i> 최종 평가 완료</div>` : ''}
 
                             </div>
 

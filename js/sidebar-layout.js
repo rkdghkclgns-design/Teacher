@@ -56,7 +56,7 @@ window.toggleSidebarSection = function (id) {
 };
 
 /* ---------- 목차 만들기 영역 ---------- */
-// 주제·참고자료·단원 수·AI 차시 목차 생성. 차시가 생기면 처음에는 접는다 (머리줄의 차시 수와 AI 목차 생성은 늘 보인다)
+// 주제·참고자료·차시 수·AI 차시 목차 생성. 차시가 생기면 처음에는 접는다
 window.applySidebarSetupState = function (lessonCount) {
     const body = document.getElementById('sidebar-setup-body');
     const toggle = document.getElementById('sidebar-setup-toggle');

@@ -203,17 +203,7 @@ window.showKeyConceptsPrompt = function (title, defaultConcepts, onConfirm, opts
 
 // 전역 클릭 감지 (드롭다운 외부 클릭 시 닫기)
 document.addEventListener('click', (event) => {
-    // 1. 데이터 관리 메뉴 (좌상단 설정쪽) 닫기
-    const dataMenu = document.getElementById('data-manage-menu');
-    const dataBtn = document.getElementById('btn-data-manage');
-
-    if (dataMenu && !dataMenu.classList.contains('hidden') &&
-        !dataMenu.contains(event.target) && (!dataBtn || !dataBtn.contains(event.target))) {
-        dataMenu.classList.add('hidden');
-        dataMenu.classList.remove('flex');
-    }
-
-    // 2. PDF 드롭다운 닫기
+    // PDF 드롭다운 닫기
     const pdfMenu = document.getElementById('pdf-dropdown-menu');
     const pdfBtn = document.getElementById('pdf-dropdown-btn');
 
@@ -223,7 +213,7 @@ document.addEventListener('click', (event) => {
         pdfMenu.classList.remove('flex');
     }
 
-    // 3. 폴더 연동 드롭다운 닫기
+    // 폴더 연동 드롭다운 닫기
     const folderMenu = document.getElementById('folder-dropdown-menu');
     const folderIndicator = document.getElementById('folder-connection-indicator');
 
@@ -401,7 +391,7 @@ function renderOverviewLNB() {
                         </span>
 
                         ${subjectOverviewChips(subj)}
-                        ${subj.hasLevelTest ? `<span class="text-[0.6875rem] font-bold bg-yellow-500/20 text-yellow-300 px-2 py-1 rounded-md flex items-center gap-1"><i class="ph-fill ph-crown"></i> 메인 퀘스트</span>` : ''}
+                        ${subj.hasLevelTest ? `<span class="text-[0.6875rem] font-bold bg-yellow-500/20 text-yellow-300 px-2 py-1 rounded-md flex items-center gap-1"><i class="ph-fill ph-crown"></i> 최종 평가</span>` : ''}
 
                     </div>
 
@@ -470,9 +460,9 @@ function createNewSubject() {
 
             id: 'mainQuest',
 
-            title: '👑 메인 퀘스트 (최종 과제)',
+            title: '👑 최종 평가',
 
-            description: '모든 일일 퀘스트를 종합한 최종 평가입니다.',
+            description: '모든 차시의 실습을 종합한 최종 평가입니다.',
 
             status: 'waiting',
 
@@ -587,7 +577,7 @@ function openSubjectDetail(id) {
 
                     <div>
 
-                        <label class="text-[0.6875rem] font-bold text-accent uppercase tracking-widest mb-1.5 block">Subject Title</label>
+                        <label class="text-[0.6875rem] font-bold text-accent tracking-widest mb-1.5 block">교과 이름</label>
 
                         <div class="text-xl font-bold text-white">${escapeHtml(subj.title)}</div>
 
@@ -597,7 +587,7 @@ function openSubjectDetail(id) {
 
                     <div>
 
-                        <label class="text-[0.6875rem] font-bold text-accent uppercase tracking-widest mb-1.5 block">Description</label>
+                        <label class="text-[0.6875rem] font-bold text-accent tracking-widest mb-1.5 block">교과 설명</label>
 
                         <div class="text-sm text-textLight leading-relaxed bg-white/5 p-4 rounded-xl border border-white/5">
 
@@ -613,7 +603,7 @@ function openSubjectDetail(id) {
 
                         <div class="flex justify-between items-end mb-4">
 
-                            <label class="text-[0.6875rem] font-bold text-accent uppercase tracking-widest">Lessons</label>
+                            <label class="text-[0.6875rem] font-bold text-accent tracking-widest">차시</label>
 
                             <span class="text-xs font-bold text-textMuted">총 ${subj.lessons?.length || 0}개</span>
 
@@ -794,9 +784,10 @@ function toggleExportDropdown(event) {
     if (wasHidden) {
         const btn = document.getElementById('export-dropdown-btn');
         if (btn) {
+            // 버튼이 왼쪽에 있으므로 버튼 왼쪽 끝에 맞추고, 화면 밖으로 나가지 않게 한다
             const rect = btn.getBoundingClientRect();
             menu.style.top = (rect.bottom + 4) + 'px';
-            menu.style.left = Math.max(4, rect.right - menu.offsetWidth) + 'px';
+            menu.style.left = Math.max(4, Math.min(rect.left, window.innerWidth - menu.offsetWidth - 4)) + 'px';
         }
     }
 }
@@ -1000,7 +991,7 @@ window.exportSelectedToZip = async function () {
     if (totalFiles === 0) return window.showAlert('내보낼 내용이 없습니다.');
 
     try {
-        zip.file('save_data.yaml', JSON.stringify(subjectsBackupMeta(checkedIds), null, 2)); // 데이터 연동 → zip 파일 불러오기로 이 교과들을 되살린다
+        zip.file('save_data.yaml', JSON.stringify(subjectsBackupMeta(checkedIds), null, 2)); // 내보내기·백업 → 백업 ZIP으로 되살리기로 이 교과들을 되살린다
         const blob = await zip.generateAsync({ type: 'blob' });
         const zipName = checkedIds.length === 1
             ? `${(globalState.subjects.find(s => String(s.id) === String(checkedIds[0]))?.title || '교과').replace(/[^\w가-힣\s]/g, '')}_교안.zip`
@@ -1126,7 +1117,7 @@ window.exportAllToZip = async function () {
     if (totalFiles === 0) return window.showAlert('내보낼 내용이 없습니다.');
 
     try {
-        zip.file('save_data.yaml', JSON.stringify(subjectsBackupMeta([subj.id]), null, 2)); // 데이터 연동 → zip 파일 불러오기로 이 교과를 되살린다
+        zip.file('save_data.yaml', JSON.stringify(subjectsBackupMeta([subj.id]), null, 2)); // 내보내기·백업 → 백업 ZIP으로 되살리기로 이 교과를 되살린다
         const blob = await zip.generateAsync({ type: 'blob' });
         saveAs(blob, `${subjectName}_전체교안.zip`);
         recordBackupTime();
@@ -1137,307 +1128,19 @@ window.exportAllToZip = async function () {
     }
 };
 
-// ------------------------------------------------------------------------
-
-
-// Batch Generation Modal UI Control (Step 1 & 2)
-
-// ------------------------------------------------------------------------
-
-// 다중 파일 지원: { name, size, content, type } 배열
-let batchUploadedFiles = [];
-const BATCH_MAX_FILES = 30;
-const BATCH_MAX_FILE_SIZE = 20 * 1024 * 1024; // 파일당 20MB
-
-// 하위호환: 다중 파일의 내용을 파일명 라벨과 함께 하나의 문자열로 합쳐 반환
-let batchUploadedFileContent = null;
-let batchUploadedFileName = null;
-
-function syncBatchLegacyVars() {
-    if (batchUploadedFiles.length === 0) {
-        batchUploadedFileContent = null;
-        batchUploadedFileName = null;
-    } else {
-        batchUploadedFileContent = batchUploadedFiles
-            .map(f => `[${f.name}]\n${filterPageRange(f.content, f.pageRange)}`)
-            .join('\n\n---\n\n');
-        batchUploadedFileName = batchUploadedFiles.map(f => f.name).join(', ');
-    }
-    renderRefMeter();
-}
-
-
-
-window.openBatchModal = function () {
-
-    const modal = document.getElementById('batch-modal');
-
-    const content = document.getElementById('batch-modal-content');
-
-
-
-    // 파일 목록 초기화 (모달 재오픈 시 이전 상태 유지 원치 않음)
-    batchUploadedFiles = [];
-    syncBatchLegacyVars();
-    if (typeof renderBatchFileList === 'function') renderBatchFileList();
-
-
-
-    // 현재 교과의 제목이 있다면 기본값으로 세팅
-
-    const subj = globalState.subjects.find(s => s.id === currentSubjectId);
-
-    if (subj && subj.title !== '새로운 교과') {
-
-        document.getElementById('batch-title').value = subj.title;
-
-    }
-
-
-
-    // 사이드바 차시 수를 모달에 동기화
-    const sidebarCount = document.getElementById('sidebar-batch-count');
-    const batchCount = document.getElementById('batch-count');
-    if (sidebarCount && batchCount) {
-        batchCount.value = sidebarCount.value;
-    }
-
-    // 등록된 참고자료 목록 렌더링
-    const refSection = document.getElementById('batch-ref-section');
-    const refList = document.getElementById('batch-ref-list');
-    if (refSection && refList && subj) {
-        const urls = Array.isArray(subj.referenceUrls) ? subj.referenceUrls : [];
-        const refText = subj.referenceText || '';
-        const allRefs = [
-            ...urls.map((u, i) => ({ type: 'url', idx: i, label: u.title || u.url, url: u.url })),
-            ...(refText ? [{ type: 'text', idx: 0, label: refText.substring(0, 80) + (refText.length > 80 ? '...' : '') }] : [])
-        ];
-        if (allRefs.length > 0) {
-            refSection.classList.remove('hidden');
-            refList.innerHTML = allRefs.map((ref, i) => {
-                const icon = ref.type === 'url' ? '🔗' : '📄';
-                return `<label class="flex items-center gap-2 text-xs text-textLight hover:bg-white/5 rounded p-1.5 cursor-pointer">
-                    <input type="checkbox" class="batch-ref-checkbox accent-accent" data-ref-type="${ref.type}" data-ref-idx="${ref.idx}" checked>
-                    <span class="truncate">${icon} ${ref.label}</span>
-                </label>`;
-            }).join('');
-        } else {
-            refSection.classList.add('hidden');
-        }
-    }
-
-    modal.classList.remove('hidden');
-
-    requestAnimationFrame(() => {
-
-        modal.classList.remove('opacity-0');
-
-        content.classList.remove('scale-95');
-
-        content.classList.add('scale-100');
-
-    });
-
-};
-
-// 사이드바 차시 수 +/- 조절
+// 사이드바 차시 수 +/- 조절 (AI 차시 목차 생성에 쓴다)
 window.adjustBatchCount = function (delta) {
     const input = document.getElementById('sidebar-batch-count');
     if (!input) return;
-    let val = parseInt(input.value) || 5;
-    val = Math.max(1, Math.min(30, val + delta));
-    input.value = val;
+    input.value = Math.max(1, Math.min(30, (parseInt(input.value) || 5) + delta));
 };
 
-// 사이드바 ↔ 모달 차시 수 동기화
 window.syncBatchCount = function (val) {
-    const num = Math.max(1, Math.min(30, parseInt(val) || 5));
-    const sidebar = document.getElementById('sidebar-batch-count');
-    const modal = document.getElementById('batch-count');
-    if (sidebar) sidebar.value = num;
-    if (modal) modal.value = num;
+    const input = document.getElementById('sidebar-batch-count');
+    if (input) input.value = Math.max(1, Math.min(30, parseInt(val) || 5));
 };
 
-
-
-window.closeBatchModal = function () {
-
-    const modal = document.getElementById('batch-modal');
-
-    const content = document.getElementById('batch-modal-content');
-
-
-
-    modal.classList.add('opacity-0');
-
-    content.classList.remove('scale-100');
-
-    content.classList.add('scale-95');
-
-
-
-    setTimeout(() => {
-
-        modal.classList.add('hidden');
-
-    }, 300);
-
-};
-
-
-
-window.handleConceptEnter = function (e) {
-
-    if (e.key === 'Enter') {
-
-        e.preventDefault();
-
-        addConceptField();
-
-    }
-
-};
-
-
-
-window.addConceptField = function () {
-
-    const list = document.getElementById('batch-concept-list');
-
-    const count = list.children.length + 1;
-
-    const newField = document.createElement('div');
-
-    newField.className = 'flex gap-2 items-center concept-item group animate-fade-in';
-
-    newField.innerHTML = `
-
-                <div class="w-6 h-6 rounded bg-white/5 flex items-center justify-center text-textMuted text-xs font-bold shrink-0">${count}</div>
-
-                <input type="text" class="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-accent transition-colors" placeholder="추가할 핵심 개념을 입력하세요" onkeydown="handleConceptEnter(event)">
-
-                <button type="button" onclick="removeConceptField(this)" class="w-8 h-8 flex items-center justify-center rounded bg-white/5 hover:bg-red-500/20 text-textMuted hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100">
-
-                    <i class="ph-bold ph-trash"></i>
-
-                </button>
-
-            `;
-
-    list.appendChild(newField);
-
-
-
-    // 새 입력 필드로 포커스 이동
-
-    newField.querySelector('input').focus();
-
-
-
-    // 넘버링 재정렬
-
-    reindexConcepts();
-
-};
-
-
-
-window.removeConceptField = function (btn) {
-
-    btn.closest('.concept-item').remove();
-
-    reindexConcepts();
-
-};
-
-
-
-function reindexConcepts() {
-
-    const list = document.getElementById('batch-concept-list');
-
-    Array.from(list.children).forEach((item, idx) => {
-
-        item.querySelector('div').innerText = idx + 1;
-
-    });
-
-}
-
-
-
-function initBatchFileDropzone() {
-
-    const dropzone = document.getElementById('batch-dropzone');
-
-    const fileInput = document.getElementById('batch-file-input');
-
-    if (!dropzone || !fileInput) return;
-
-
-
-    dropzone.addEventListener('dragover', (e) => {
-
-        e.preventDefault();
-
-        dropzone.classList.add('border-accent', 'bg-accent/10');
-
-    });
-
-
-
-    dropzone.addEventListener('dragleave', (e) => {
-
-        e.preventDefault();
-
-        dropzone.classList.remove('border-accent', 'bg-accent/10');
-
-    });
-
-
-
-    dropzone.addEventListener('drop', (e) => {
-
-        e.preventDefault();
-
-        dropzone.classList.remove('border-accent', 'bg-accent/10');
-
-        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-
-            handleBatchFiles(Array.from(e.dataTransfer.files));
-
-        }
-
-    });
-
-
-
-    fileInput.addEventListener('change', (e) => {
-
-        if (e.target.files && e.target.files.length > 0) {
-
-            handleBatchFiles(Array.from(e.target.files));
-
-        }
-
-    });
-
-}
-
-
-
-function humanSize(bytes) {
-
-    if (bytes < 1024) return bytes + ' B';
-
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-
-    return (bytes / 1024 / 1024).toFixed(2) + ' MB';
-
-}
-
-
-
+// 참고 파일의 글자를 뽑는다: 차시 첨부(lesson-attachments.js)와 참고자료 탭(api.js importReferenceFiles)이 쓴다
 async function extractTextFromFile(file) {
 
     const lower = file.name.toLowerCase();
@@ -1572,606 +1275,6 @@ async function extractTextFromFile(file) {
     throw new Error('지원하지 않는 파일 형식입니다.');
 
 }
-
-
-
-async function handleBatchFiles(files) {
-
-    const supported = ['.md', '.txt', '.pdf', '.ppt', '.pptx', '.docx', ...REF_IMAGE_EXTENSIONS];
-
-    const rejected = [];
-
-    const accepted = [];
-
-    for (const f of files) {
-
-        const ok = supported.some((ext) => f.name.toLowerCase().endsWith(ext));
-
-        if (!ok) { rejected.push(`${f.name} (형식)`); continue; }
-
-        if (f.size > BATCH_MAX_FILE_SIZE) { rejected.push(`${f.name} (용량 20MB 초과)`); continue; }
-
-        accepted.push(f);
-
-    }
-
-    if (batchUploadedFiles.length + accepted.length > BATCH_MAX_FILES) {
-
-        const allowed = Math.max(0, BATCH_MAX_FILES - batchUploadedFiles.length);
-
-        window.showAlert(`최대 ${BATCH_MAX_FILES}개까지 업로드할 수 있습니다. 이번 업로드에서 ${allowed}개만 추가합니다.`);
-
-        accepted.splice(allowed);
-
-    }
-
-    if (rejected.length) window.showAlert('일부 파일을 건너뜁니다:\n' + rejected.join('\n'));
-
-
-
-    // 파일 파싱 (진행 표시)
-
-    const fileList = document.getElementById('batch-file-list-items');
-
-    const fileListWrap = document.getElementById('batch-file-list');
-
-    if (fileListWrap) fileListWrap.classList.remove('hidden');
-
-
-
-    for (const file of accepted) {
-
-        const item = {
-
-            name: file.name,
-
-            size: file.size,
-
-            content: '',
-
-            type: (file.name.match(/\.([^.]+)$/) || [])[1] || 'unknown',
-
-            status: 'parsing',
-
-        };
-
-        batchUploadedFiles.push(item);
-
-        renderBatchFileList();
-
-        try {
-
-            item.content = await extractTextFromFile(file);
-
-            item.status = 'ok';
-
-        } catch (e) {
-
-            item.status = 'error';
-
-            item.error = e.message;
-
-            console.warn('[batch file parse]', file.name, e);
-
-        }
-
-        renderBatchFileList();
-
-    }
-
-    syncBatchLegacyVars();
-
-
-
-    // input 초기화 (같은 파일 재업로드 지원)
-
-    const input = document.getElementById('batch-file-input');
-
-    if (input) input.value = '';
-
-}
-
-
-
-function renderBatchFileList() {
-
-    const list = document.getElementById('batch-file-list-items');
-
-    const wrap = document.getElementById('batch-file-list');
-
-    const count = document.getElementById('batch-file-count');
-
-    if (!list || !wrap) return;
-
-    if (batchUploadedFiles.length === 0) {
-
-        wrap.classList.add('hidden');
-
-        list.innerHTML = '';
-
-        if (count) count.innerText = '0개 파일';
-
-        return;
-
-    }
-
-    const iconFor = (type) => ({
-
-        md: 'ph-file-md', txt: 'ph-file-text', pdf: 'ph-file-pdf',
-
-        ppt: 'ph-file-ppt', pptx: 'ph-file-ppt', docx: 'ph-file-doc', png: 'ph-file-image', jpg: 'ph-file-image', jpeg: 'ph-file-image', webp: 'ph-file-image',
-
-    })[type] || 'ph-file';
-
-    list.innerHTML = batchUploadedFiles.map((f, i) => {
-
-        const iconClass = iconFor(f.type);
-
-        const statusBadge = f.status === 'parsing'
-
-            ? '<span class="text-[0.6875rem] text-amber-400 ml-1">파싱 중...</span>'
-
-            : f.status === 'error'
-
-                ? `<span class="text-[0.6875rem] text-red-400 ml-1" title="${(f.error || '').replace(/"/g, '&quot;')}">오류</span>`
-
-                : `<span class="text-[0.6875rem] text-emerald-400 ml-1">${(f.content || '').length}자</span>`;
-
-        return `
-
-            <div class="flex items-center gap-2 bg-white/[0.02] hover:bg-white/5 rounded-md px-2.5 py-1.5 transition-colors">
-
-                <i class="ph-fill ${iconClass} text-base text-accent"></i>
-
-                <div class="flex-1 min-w-0">
-
-                    <div class="text-[0.7rem] font-semibold text-white truncate">${escapeHtml(f.name)}${statusBadge}</div>
-
-                    <div class="text-[0.6875rem] text-textMuted">${humanSize(f.size)}</div>
-                    ${batchFileToolsHtml(f, i)}
-
-                </div>
-
-                <button type="button" onclick="removeBatchFile(${i})"
-
-                    class="w-6 h-6 flex items-center justify-center rounded text-red-400 hover:bg-red-500/20 transition-colors flex-shrink-0"
-
-                    title="삭제"><i class="ph-bold ph-x text-xs"></i></button>
-
-            </div>
-
-        `;
-
-    }).join('');
-
-    if (count) count.innerText = `${batchUploadedFiles.length}개 파일 · ${humanSize(batchUploadedFiles.reduce((s, f) => s + f.size, 0))}`;
-
-}
-
-
-
-window.removeBatchFile = function (index) {
-
-    if (index < 0 || index >= batchUploadedFiles.length) return;
-
-    batchUploadedFiles.splice(index, 1);
-
-    syncBatchLegacyVars();
-
-    renderBatchFileList();
-
-};
-
-
-
-window.clearAllBatchFiles = function (e) {
-
-    if (e) e.stopPropagation();
-
-    batchUploadedFiles = [];
-
-    syncBatchLegacyVars();
-
-    renderBatchFileList();
-
-    const input = document.getElementById('batch-file-input');
-
-    if (input) input.value = '';
-
-};
-
-
-
-// 하위호환 — 기존 clearBatchFile 호출이 남아있을 경우 대비
-
-window.clearBatchFile = function (e) { window.clearAllBatchFiles(e); };
-
-
-
-window.startBatchGeneration = async function () {
-
-    const title = document.getElementById('batch-title').value.trim();
-
-    // 사이드바 차시 수 우선, 없으면 모달 값 사용
-    const sidebarCountEl = document.getElementById('sidebar-batch-count');
-    const batchCountEl = document.getElementById('batch-count');
-    const count = parseInt(sidebarCountEl?.value || batchCountEl?.value || '5');
-
-    const goal = document.getElementById('batch-goal').value.trim();
-
-
-
-    const conceptInputs = document.querySelectorAll('#batch-concept-list input[type="text"]');
-
-    const concepts = Array.from(conceptInputs).map(input => input.value.trim()).filter(val => val !== '');
-
-
-
-    if (!title) return window.showAlert('교과 제목을 입력해주세요.');
-
-    if (isNaN(count) || count < 1 || count > 15) return window.showAlert('생성할 차시 수를 1~15 사이로 입력해주세요.');
-
-    const startSubjectId = currentSubjectId;
-    const replacedLessons = (courseData || []).filter(mod => mod && mod.id !== 'mainQuest');
-    const startSubject = globalState.subjects.find(s => s.id === startSubjectId);
-    const replacedQuest = goal && startSubject?.mainQuest?.content ? startSubject.mainQuest : null;
-    const replaceNotes = [
-        replacedLessons.length ? `차시 ${replacedLessons.length}개를 휴지통으로 옮기고(차시 목록 위 휴지통에서 30일 동안 되살림)` : '',
-        replacedQuest ? '메인 퀘스트를 새 목표로 바꿉니다(지금 내용은 히스토리에 남깁니다)' : ''
-    ].filter(Boolean);
-    if (replaceNotes.length && !(await confirmAsync(`이 교과를 새로 만듭니다.\n· ${replaceNotes.join('\n· ')}`, { okLabel: '새로 만들기', tone: 'primary', title: '교과 다시 만들기' }))) return;
-
-
-
-    const submitBtn = document.getElementById('batch-submit-btn');
-
-    const cancelBtn = document.getElementById('batch-cancel-btn');
-
-    const progressText = document.getElementById('batch-progress-text');
-
-    const progressSpan = progressText.querySelector('span');
-
-
-
-    submitBtn.classList.add('hidden');
-
-    cancelBtn.classList.add('hidden');
-
-    progressText.classList.remove('hidden');
-
-    progressSpan.innerText = '목차(Blueprint) 설계 중... (1/' + (goal ? '3' : '2') + ')';
-
-
-
-    try {
-
-        // 1. Blueprint 생성 — 기존 차시가 있으면 이어서 생성
-        const subj = globalState.subjects.find(s => s.id === currentSubjectId);
-        const existingLessons = subj && Array.isArray(subj.lessons) ? subj.lessons : [];
-        const existingInfo = existingLessons.length > 0
-            ? `\n- 기존 차시 (${existingLessons.length}개, 이미 생성됨 — 이 차시들과 중복되지 않게 이어서 설계):\n${existingLessons.map((l, i) => `  ${i + 1}. ${l.title}: ${l.description || ''}`).join('\n')}\n- 새로 생성할 차시 수: ${count}개 (기존 ${existingLessons.length}개 이후 ${existingLessons.length + 1}번째부터)`
-            : `\n- 차시 수: ${count}`;
-
-        const blueprintPrompt = `
-                    다음 조건에 맞춰 게임 기획 교육과정 목차를 설계해주세요.
-
-                    - 교과 제목: ${title}
-                    ${existingInfo}
-
-                    - 최종 목표(레벨테스트): ${goal || '없음'}
-
-                    - 핵심 개념: ${concepts.length > 0 ? concepts.join(', ') : '자유롭게 구성'}
-
-                    ${batchUploadedFileContent ? `- 참고 자료 요약:\n${cleanForAPI(batchUploadedFileContent).substring(0, REF_OUTLINE_CHARS)}` : ''}
-
-                    응답은 반드시 순수 JSON 배열이어야 합니다. (새로 생성할 ${count}개만 반환)
-
-                    예시: [{"title": "차시명", "description": "이 차시의 학습 목표 및 주요 내용 요약", "hours": 2}]
-
-                `;
-
-
-
-        const bpPayload = {
-            contents: [{ parts: [{ text: blueprintPrompt }] }],
-            systemInstruction: { parts: [{ text: CONTEXT_CORE.personas.orchestrator + "\n[규칙]\n- " + CONTEXT_CORE.rules.json_only }] }
-        };
-
-
-
-        const bpData = await callGemini(TEXT_MODEL, bpPayload);
-
-
-
-        const blueprint = safeJSONParse(extractText(bpData));
-
-        if (!Array.isArray(blueprint)) throw new Error("유효하지 않은 목차 데이터가 반환되었습니다.");
-
-
-
-        // 2. 상세 교안 순차 생성 및 에러 방어 로직 적용
-
-        const generatedLessons = [];
-
-        for (let idx = 0; idx < blueprint.length; idx++) {
-
-            const item = blueprint[idx];
-
-            progressSpan.innerText = `차시 교안 생성 중... (${idx + 1}/${blueprint.length} 진행)`;
-
-
-
-            try {
-
-                const lessonPrompt = `
-
-                            [현재 작업: 상세 교안 작성 (단원 일괄 생성 중)]
-
-                            교과 제목: ${title}
-
-                            차시명: ${item.title}
-
-                            설명/목표: ${item.description}
-
-                            단원 전체 핵심 개념: ${concepts.join(', ')}
-
-                            ${goal ? `최종 목표 연계성: 이 차시 내용은 최종적으로 '${goal}'을(를) 달성하기 위한 빌드업 과정이어야 합니다.` : ''}
-
-                            ${batchUploadedFileContent ? `참고 자료:\n${cleanForAPI(batchUploadedFileContent).substring(0, REF_LESSON_CHARS)}` : ''}
-
-                            
-
-                            위 내용을 바탕으로 우리 교안 규격(1.학습 목표, 2.개요, 3.핵심 내용, 4.실습/예제, 5.요약) 순서에 맞게 마크다운 교안을 작성하세요.
-                            [중요 지침] 본문 작성 시 단순한 이론 나열을 금지합니다. 반드시 최근 업계 트렌드에 부합하는 실제 고유명사 게임 사례나 명확한 실제 데이터를 적극적으로 예시로 들어 설명하세요. (단, 존재하지 않는 허위 데이터나 사례를 지어내는 환각은 절대 금지합니다.)
-
-                            마지막에는 '# ⚔️ 일일 퀘스트 (실습 과제)'를 포함하세요.
-
-                        `;
-
-
-
-                const lessonPayload = {
-                    safetySettings: [
-                        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-                        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-                        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-                        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
-                    ],
-                    contents: [{ parts: [{ text: lessonPrompt }] }],
-                    systemInstruction: { parts: [{ text: buildTaskContext('module', { title: item.title, description: item.description, keyConcepts: concepts }).systemInstruction }] }
-                };
-
-
-
-                const lessonData = await callGemini(TEXT_MODEL, lessonPayload);
-
-
-
-                let rawMarkdown = extractText(lessonData);
-
-                let tempMod = { images: {} };
-
-                rawMarkdown = await processImageTags(tempMod, rawMarkdown);
-
-
-
-                generatedLessons.push({
-
-                    id: Date.now() + idx,
-
-                    title: item.title,
-
-                    description: item.description,
-
-                    hours: item.hours || 2,
-
-                    status: 'done',
-
-                    content: rawMarkdown,
-
-                    images: tempMod.images,
-
-                    tabContents: { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null },
-
-                    uploadedMdName: null,
-
-                    uploadedMdContent: null
-
-                });
-
-
-
-                // [방어 설정] API Rate Limit(RPM) 우회를 위해 차시 생성 간 4초 대기 (Gemini 무료 티어 방어)
-                if (idx < blueprint.length - 1) {
-                    progressSpan.innerText = `API 쿨다운 대기 중... (${idx + 1}/${blueprint.length})`;
-                    await new Promise(resolve => setTimeout(resolve, 4000));
-                }
-
-
-
-            } catch (err) {
-
-                console.error(`[차시 생성 실패] ${item.title}:`, err);
-
-                // [방어 설정] 특정 차시가 실패해도 전체 프로세스가 중단되지 않고, 해당 차시를 '대기중' 상태로 등록
-
-                generatedLessons.push({
-
-                    id: Date.now() + idx,
-
-                    title: item.title,
-
-                    description: item.description,
-
-                    hours: item.hours || 2,
-
-                    status: 'waiting',
-
-                    content: null,
-
-                    images: {},
-
-                    tabContents: { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null },
-
-                    uploadedMdName: null,
-
-                    uploadedMdContent: null
-
-                });
-
-            }
-
-        }
-
-
-
-        // 3. 전역 상태 업데이트 (Step 4)
-
-        const updatedSubj = globalState.subjects.find(s => s.id === currentSubjectId);
-
-        if (updatedSubj) {
-
-            updatedSubj.title = title;
-
-            if (replacedLessons.length) moveLessonsToTrash(replacedLessons, startSubjectId);
-            if (replacedQuest) await archiveContents([{ ...replacedQuest, title: replacedQuest.title || '메인 퀘스트' }], '새로 만들기 전');
-            updatedSubj.lessons = generatedLessons;
-
-
-
-            if (goal) {
-
-                if (!updatedSubj.mainQuest) updatedSubj.mainQuest = { images: {}, status: 'waiting', content: null };
-
-                updatedSubj.mainQuest.title = "👑 메인 퀘스트: " + goal;
-
-                updatedSubj.mainQuest.description = "최종 결과물: " + goal + " (모든 차시의 내용을 종합하여 완성하세요.)";
-
-                updatedSubj.mainQuest.status = 'waiting';
-
-                updatedSubj.mainQuest.content = null;
-
-            }
-
-
-
-            courseData = updatedSubj.lessons;
-
-        }
-
-
-
-        await saveState();
-
-        // 4. 메인 퀘스트 콘텐츠 자동 생성 (goal 입력 시)
-        if (goal) {
-            const subj = globalState.subjects.find(s => s.id === currentSubjectId);
-            if (subj && subj.mainQuest) {
-                progressSpan.innerText = 'API 쿨다운 대기 중... (메인 퀘스트)';
-                await new Promise(resolve => setTimeout(resolve, 3000));
-                progressSpan.innerText = '메인 퀘스트 교안 생성 중...';
-
-                try {
-                    // 생성된 차시들의 컨텍스트 수집
-                    const contextStr = generatedLessons.map(l =>
-                        `- ${l.title}: ${l.description}\n  내용 요약: ${l.content ? cleanForAPI(l.content).substring(0, 150) + '...' : '미작성'}`
-                    ).join('\n\n');
-
-                    const { systemInstruction, userPrompt } = buildTaskContext('main_quest', contextStr);
-
-                    const mqPayload = {
-                        contents: [{ parts: [{ text: userPrompt }] }],
-                        systemInstruction: { parts: [{ text: systemInstruction }] }
-                    };
-
-                    const mqData = await callGemini(TEXT_MODEL, mqPayload);
-
-                    let mqMarkdown = extractText(mqData);
-                    mqMarkdown = await processImageTags(subj.mainQuest, mqMarkdown);
-
-                    subj.mainQuest.content = mqMarkdown;
-                    subj.mainQuest.status = 'done';
-                    await saveState();
-
-                } catch (mqErr) {
-                    console.error('[메인 퀘스트 생성 실패]', mqErr);
-                    // 실패해도 전체 프로세스는 중단하지 않음 — 수동 생성 가능
-                }
-            }
-        }
-
-
-
-        // 4.5. 각 차시에 대해 5탭 자동 생성 (기본학습 → 나머지 4탭)
-        {
-            const subjForTabs = globalState.subjects.find(s => s.id === currentSubjectId);
-            if (subjForTabs && Array.isArray(subjForTabs.lessons)) {
-                const doneLessons = subjForTabs.lessons.filter(l => l.status === 'done' && l.content);
-                for (let ti = 0; ti < doneLessons.length; ti++) {
-                    const lesson = doneLessons[ti];
-                    progressSpan.innerText = `5탭 생성 중... (${ti + 1}/${doneLessons.length}: ${lesson.title})`;
-                    try {
-                        await window.runLessonPipeline(lesson.id, { quiet: true });
-                    } catch (tabErr) {
-                        console.warn(`[5탭 생성 실패] ${lesson.title}:`, tabErr.message);
-                    }
-                    if (window.isTabGenerationStopped?.()) break;
-                    // API 쿨다운
-                    if (ti < doneLessons.length - 1) {
-                        progressSpan.innerText = `API 쿨다운 대기 중... (${ti + 1}/${doneLessons.length})`;
-                        await new Promise(resolve => setTimeout(resolve, 4000));
-                    }
-                }
-                await saveState();
-            }
-        }
-
-        // 화면 동기화
-
-        renderSidebar();
-
-        renderOverviewLNB();
-
-        renderDiagram();
-
-
-
-        // 첫 번째 차시 열기
-
-        if (courseData.length > 0) {
-
-            viewModule(courseData[0].id);
-
-        }
-
-
-
-        closeBatchModal();
-
-        const mqDone = goal && globalState.subjects.find(s => s.id === currentSubjectId)?.mainQuest?.status === 'done';
-        window.showAlert(mqDone
-            ? '🎉 단원 일괄 생성 + 5탭 생성 + 메인 퀘스트 생성이 완료되었습니다!'
-            : '🎉 단원 단위 일괄 생성 + 5탭 생성이 완료되었습니다!' + (goal ? '\n⚠️ 메인 퀘스트는 생성에 실패했습니다. 수동으로 생성해 주세요.' : ''));
-
-
-
-    } catch (e) {
-
-        console.error("일괄 차시 생성 중 에러 발생 상세:", e, e.stack);
-
-        window.showAlert('생성 중 오류가 발생했습니다.\n에러 내용: ' + e.message);
-
-    } finally {
-
-        submitBtn.classList.remove('hidden');
-
-        cancelBtn.classList.remove('hidden');
-
-        progressText.classList.add('hidden');
-
-    }
-}
-
 
 
 // ------------------------------------------------------------------------
@@ -2323,8 +1426,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.key === 'Escape') {
             const modal = document.getElementById('custom-modal');
             if (modal && !modal.classList.contains('hidden')) modal.classList.add('hidden');
-            const batch = document.getElementById('batch-modal');
-            if (batch && !batch.classList.contains('hidden')) batch.classList.add('hidden');
         }
         // Ctrl+S: 수동 저장
         if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -2372,7 +1473,7 @@ function openEditor(subjectId, targetModuleId = null) {
 
             subject.mainQuest = {
 
-                id: 'mainQuest', title: '👑 메인 퀘스트 (최종 과제)', description: '모든 일일 퀘스트를 종합한 최종 평가입니다.', status: 'waiting', content: null, images: {}
+                id: 'mainQuest', title: '👑 최종 평가', description: '모든 차시의 실습을 종합한 최종 평가입니다.', status: 'waiting', content: null, images: {}
 
             };
 
@@ -2396,7 +1497,7 @@ function openEditor(subjectId, targetModuleId = null) {
 
                     <h2 class="text-lg font-bold text-textMuted mb-2">교안 편집 영역</h2>
 
-                    <p class="text-sm leading-relaxed">좌측 목차에서 항목을 선택하거나 생성하면<br>이곳에 상세 내용이 렌더링됩니다.</p>
+                    <p class="text-sm leading-relaxed">왼쪽 차시 목록에서 차시를 누르면<br>이곳에 교안이 열립니다.</p>
 
                 </div>
 
@@ -2615,7 +1716,6 @@ function buildTaskContext(taskScope, additionalContext = "") {
         case 'blueprint':
 
             const sidebarLessonCount = parseInt(document.getElementById('sidebar-batch-count')?.value) || 5;
-            const unitCount = parseInt(document.getElementById('unit-count-input')?.value) || 1;
             const totalLessons = sidebarLessonCount; // 사용자가 설정한 차시 수를 그대로 사용
             systemInstruction = `${CONTEXT_CORE.personas.orchestrator}\n[규칙]\n- ${CONTEXT_CORE.rules.json_only}\n- 차시 수는 반드시 정확히 ${totalLessons}개로 구성하세요. (사용자가 ${totalLessons}차시를 요청했습니다. 더 적게 생성하지 마세요.)`;
 
@@ -2868,7 +1968,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
 }
 
 // =========================================================================
-// [Phase F10] 캐시 보관함 (로컬 이미지 저장소) UI 컨트롤러
+// 검색 그림 저장소(로컬 이미지 캐시) 패널. 설정 → 고급에서 연다
 // =========================================================================
 
 window.toggleCachePanel = function () {

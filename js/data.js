@@ -992,7 +992,7 @@ const INITIAL_MOCK_STATE = {
             hasLevelTest: true,
             mainQuest: {
                 id: 'mainQuest',
-                title: '👑 메인 퀘스트: 기획의 본질 파악',
+                title: '👑 최종 평가: 기획의 본질 파악',
                 description: '모든 차시의 일일 퀘스트를 종합하여 최종 기획서를 완성합니다.',
                 status: 'waiting',
                 content: null,

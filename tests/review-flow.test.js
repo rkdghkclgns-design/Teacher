@@ -88,7 +88,7 @@ function answerPreview(ctx, action, toggles = []) {
 
 function generationContext(callGemini, mod) {
     const ctx = makeContext(callGemini);
-    ['editor-loading', 'editor-loading-text', 'editor-loading-stop', 'reinforce-input'].forEach(id => { ctx.elements[id] = fakeElement(); });
+    ['editor-loading', 'editor-loading-text', 'editor-loading-stop', 'ai-command-input'].forEach(id => { ctx.elements[id] = fakeElement(); });
     ctx.currentMod = mod;
     vm.runInContext('globalState = { subjects: [] }; currentSubjectId = null;', ctx);
     return ctx;
@@ -350,7 +350,7 @@ function generationContext(callGemini, mod) {
         answerPreview(stopping, 'apply', [[0, true]]);
         await call(stopping, 'generateTabContent')(1, 'basicLearn');
         assert.ok(stopping.archived[0].content.includes('이전에 완성한 글입니다.'), '완성본을 덮기 전에 히스토리에 남긴다');
-        assert.ok(stopping.alerts.at(-1).includes('히스토리에 보관'));
+        assert.ok(stopping.alerts.at(-1).includes('작업 기록에 남겼'));
         const labels = [];
         const counting = generationContext(async () => reply(calls++ === 1 ? '## 본문\n\n가나다\n<!-- CONTINUE -->' : '## 뒤\n\n끝입니다.'), { id: 1, title: '차시', tabContents: {} });
         Object.defineProperty(counting.elements['editor-loading-text'], 'textContent', { set: value => labels.push(value), get: () => '' });
@@ -614,32 +614,45 @@ function generationContext(callGemini, mod) {
         const original = '## 본문\n\n원래 글입니다.';
         const mod = { id: 1, title: '차시', tabContents: { basicLearn: original } };
         const aiCtx = generationContext(async () => reply('## 본문\n\n보강한 글입니다.'), mod);
-        aiCtx.elements['reinforce-input'].value = '예시 추가';
+        aiCtx.elements['ai-command-input'].value = '예시 추가';
         answerPreview(aiCtx, 'cancel');
-        await call(aiCtx, 'reinforceCurrentTab')(1);
+        await call(aiCtx, 'reinforceCurrentTab')(1, '예시 추가');
         assert.strictEqual(mod.tabContents.basicLearn, original, '취소하면 그대로');
         assert.strictEqual(aiCtx.archived.length, 0);
+        assert.strictEqual(aiCtx.elements['ai-command-input'].value, '예시 추가', '취소하면 요청을 남긴다');
         answerPreview(aiCtx, 'apply');
-        await call(aiCtx, 'reinforceCurrentTab')(1);
+        await call(aiCtx, 'reinforceCurrentTab')(1, '예시 추가');
+        assert.strictEqual(aiCtx.elements['ai-command-input'].value, '', '반영하면 요청 칸을 비운다');
         assert.ok(mod.tabContents.basicLearn.includes('보강한 글입니다.'));
         assert.strictEqual(aiCtx.archived[0].content, original, '바꾸기 전 내용을 히스토리에 남긴다');
         assert.ok(mod.history[0].note.includes('예시 추가'));
         assert.notStrictEqual(aiCtx.elements['editor-loading'].style.display, 'flex', '화면을 막지 않는다');
         assert.ok(aiCtx.elements['lesson-pipeline-bar']?.removed, '진행 막대를 띄웠다가 닫는다');
-        assert.ok(aiCtx.toasts.some(message => message.includes('보강 재생성을 반영했습니다')), '끝나면 알림으로 알린다');
+        assert.ok(aiCtx.toasts.some(message => message.includes('AI 수정을 반영했습니다')), '끝나면 알림으로 알린다');
     });
 
     await run('보강: 고정 섹션과 잘린 응답', async () => {
         const original = '## 고정\n\n원문입니다.\n\n## 본문\n\n원래 글입니다.';
         const mod = { id: 1, title: '차시', tabContents: { basicLearn: original }, lockedSections: { basicLearn: ['고정'] } };
         const aiCtx = generationContext(async () => reply('## 고정\n\n바뀐 글입니다.\n\n## 본문\n\n보강', 'MAX_TOKENS'), mod);
-        aiCtx.elements['reinforce-input'].value = '보강';
         let html = '';
         aiCtx.onOverlay = overlay => { html = overlay.innerHTML; setImmediate(() => overlay.fire('click', { target: { dataset: { diffAction: 'apply' } } })); };
-        await call(aiCtx, 'reinforceCurrentTab')(1);
+        await call(aiCtx, 'reinforceCurrentTab')(1, '보강');
         assert.ok(html.includes('잘렸습니다'), '잘린 응답을 알린다');
         assert.ok(mod.tabContents.basicLearn.includes('원문입니다.') && !mod.tabContents.basicLearn.includes('바뀐 글'));
         assert.ok(mod.tabContents.basicLearn.includes('원래 글입니다.'), '잘린 마지막 섹션이 본문을 덮지 않는다');
+    });
+
+    await run('탭 전체 AI 수정: 탭 없이 본문만 있는 최종 평가·옛 차시도 고친다', async () => {
+        const original = '## 최종 평가\n\n원래 과제입니다.';
+        const fixed = '## 최종 평가\n\n고친 과제입니다.';
+        const mod = { id: 'mainQuest', title: '최종 평가', content: original };
+        const aiCtx = generationContext(async () => reply(fixed), mod);
+        answerPreview(aiCtx, 'apply');
+        await call(aiCtx, 'reinforceCurrentTab')('mainQuest', '채점 기준을 더해 줘');
+        assert.ok(!aiCtx.alerts.some(message => message.includes('먼저 이 탭의 교안을 생성')), '내용이 있으면 생성하라고 하지 않는다');
+        assert.strictEqual(mod.content, fixed, '탭이 없으면 본문에 반영한다');
+        assert.strictEqual(mod.tabContents, undefined, '탭을 새로 만들지 않는다');
     });
 
     await run('패널: AI 수정 제안은 수락해야 반영한다', async () => {

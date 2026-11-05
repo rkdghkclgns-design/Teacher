@@ -670,7 +670,7 @@ async function onQbankClick(event) {
     if (action === 'subject-csv') saveSubjectCsv();
     if (action === 'course-csv') saveCourseCsv();
     if (action === 'generate') return runQuestionGenerate(mod);
-    if (action === 'delete') return window.showConfirm('이 문항을 삭제할까요? 삭제 전 내용은 히스토리에 보관됩니다.', () => commitQbankMarkdown(mod, removeQuestionMd(qbankMarkdown(mod), index)));
+    if (action === 'delete') return window.showConfirm('이 문항을 삭제할까요? 삭제 전 내용은 작업 기록에 남습니다.', () => commitQbankMarkdown(mod, removeQuestionMd(qbankMarkdown(mod), index)));
     if (action === 'save') return saveQuestionDraft(mod, button.dataset.index);
     renderQbank();
 }

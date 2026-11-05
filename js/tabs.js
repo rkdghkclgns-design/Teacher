@@ -89,6 +89,8 @@ function applyLessonPanel(mod) {
     applyViewMode(_lessonPanel === 'gyosuan' ? 'instructor' : 'student');
     window.syncLessonPanelView();
     document.getElementById('lesson-tab-generate')?.classList.toggle('hidden', !!_lessonPanel);
+    document.getElementById('ai-command-bar')?.classList.toggle('hidden', !!_lessonPanel);
+    document.getElementById('lesson-edit-hint')?.classList.toggle('hidden', !!_lessonPanel || !!window.lessonEditHintHidden?.());
     if (_lessonPanel === 'qbank') window.openQuestionBank(mod.id, { inline: true });
 }
 
@@ -378,7 +380,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             const truncated = stoppedEarly || partialDueToError;
             resultText = await previewAiChange(previous, resultText, {
                 title: `${tabMeta.label} 재생성 미리보기`, tabId, truncated, rewrite: true,
-                note: truncated ? '끝까지 받지 못한 글입니다. 마지막 섹션은 기본으로 고르지 않았습니다.' : '새 글에 없는 이전 섹션은 기본으로 지웁니다. 이전 글은 작업 히스토리에 남습니다.'
+                note: truncated ? '끝까지 받지 못한 글입니다. 마지막 섹션은 기본으로 고르지 않았습니다.' : '새 글에 없는 이전 섹션은 기본으로 지웁니다. 이전 글은 작업 기록에 남습니다.'
             });
             if (resultText === null || resultText.trim() === previous.trim()) return { ok: true, cancelled: true };
             if (!opts.background) document.getElementById('editor-loading').style.display = 'flex'; // 막지 않는 작업은 진행 막대가 이어서 보인다
@@ -417,7 +419,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         else window.refreshLessonNav(mod);
         if (!_suppressTabAlert && !opts.quiet) {
             const doneText = stoppedEarly
-                ? `${tabMeta.label} 생성을 중단했습니다. 받은 ${fullText.length.toLocaleString()}자까지 저장했습니다.${archivePartial ? ' 이전 내용은 히스토리에 보관했습니다.' : ''}`
+                ? `${tabMeta.label} 생성을 중단했습니다. 받은 ${fullText.length.toLocaleString()}자까지 저장했습니다.${archivePartial ? ' 이전 내용은 작업 기록에 남겼습니다.' : ''}`
                 : `${tabMeta.label} 탭이 생성되었습니다.`;
             // 화면을 막지 않고 만든 작업은 끝을 알림으로 알린다. 일부가 빠진 결과는 다시 만들어야 하므로 창으로 알린다
             if (partialDueToError) window.showAlert(`${tabMeta.label} 탭이 생성되었지만, API 호출 한도로 일부 단락이 누락되었을 수 있습니다. 잠시 후(1~2분) 다시 생성하면 전체 분량이 완성됩니다.`);
@@ -463,7 +465,7 @@ async function generateAllTabs(moduleId) {
     if (outcome?.busy) return;
     if (_tabGenStop) return window.showAlert('전체 탭 생성을 중단했습니다. 받은 내용까지 저장했습니다.');
     if (failed.length) return window.showAlert(`${failed.join(', ')} 탭을 만들지 못했습니다. 그 탭에서 다시 생성해 주세요.`);
-    window.notifyLessonJobDone('교안 탭을 모두 다시 만들었습니다. 이전 글은 작업 히스토리에 남았습니다.');
+    window.notifyLessonJobDone('교안 탭을 모두 다시 만들었습니다. 이전 글은 작업 기록에 남았습니다.');
 }
 
 // 일괄 생성용: 빈 탭만 순서대로 채운다. 있는 탭은 건드리지 않고 첫 실패에서 멈춰 결과를 돌려준다.
@@ -485,23 +487,25 @@ async function fillMissingTabs(moduleId, { isStopped = () => false, onTab = () =
     return { ok: true, partial };
 }
 
-// 보강 재생성: 기존 탭 내용 + 사용자 보강 명령으로 재생성. 화면을 막지 않고 진행 막대에서 기다린다
-async function reinforceCurrentTab(moduleId) {
+// 탭 전체 AI 수정: 아래 명령줄에서 글을 고르지 않고 요청하면 온다. 기존 탭 내용 + 요청으로 다시 쓰고,
+// 바뀐 부분을 미리 보고 골라 반영한다. 화면을 막지 않고 진행 막대에서 기다린다
+async function reinforceCurrentTab(moduleId, command = '') {
     const mod = getEditingModule(moduleId);
     if (!mod) return;
     const tabId = currentLessonTab;
-    const existingContent = mod.tabContents?.[tabId];
+    // 원문 전체 수정에서 고치던 글을 먼저 저장해 그 글을 고친다. 최종 평가·옛 차시는 탭 대신 본문(content)을 읽는다
+    saveOpenEditsFor(mod, tabId);
+    const existingContent = storedTabMarkdown(mod, tabId);
     if (!existingContent) return window.showAlert('먼저 이 탭의 교안을 생성해주세요.');
 
-    const reinforceInput = document.getElementById('reinforce-input');
-    const reinforceCmd = (reinforceInput?.value || '').trim();
+    const reinforceCmd = String(command || '').trim();
     const lockedBlocks = lockedSectionBlocks(mod, tabId);
-    if (!reinforceCmd) return window.showAlert('보강 명령을 입력해주세요.');
+    if (!reinforceCmd) return window.showAlert('고칠 내용을 아래 칸에 써 주세요.');
 
     const tabMeta = LESSON_TABS.find(t => t.id === tabId);
-    await window.runLessonJob(moduleId, { label: `${tabMeta.label} 보강 재생성`, current: tabId, alerts: true }, async () => {
+    await window.runLessonJob(moduleId, { label: `${tabMeta.label} AI로 고치기`, current: tabId, alerts: true }, async () => {
         try {
-            window.setPipelineStatus('보강한 글을 받고 있습니다...');
+            window.setPipelineStatus('AI가 고친 글을 받고 있습니다...');
             const systemInstruction = CONTEXT_CORE.personas.instructor +
                 '\n[규칙]\n- 기존 교안 내용을 유지하면서, 사용자의 보강 명령에 따라 내용을 개선하세요.\n- 전체 구조와 서식은 보존하되, 요청된 부분만 보강·수정하세요.\n- ' +
                 CONTEXT_CORE.rules.content_design + '\n- ' +
@@ -523,22 +527,23 @@ async function reinforceCurrentTab(moduleId) {
             const truncated = data?.candidates?.[0]?.finishReason === 'MAX_TOKENS';
             // 기다리는 동안 이 탭을 고쳤으면 고친 글을 지키고, 다시 실행하게 한다
             saveOpenEditsFor(mod, tabId);
-            if (storedTabMarkdown(mod, tabId) !== existingContent) return window.showAlert('보강하는 동안 탭 내용이 바뀌어 반영하지 않았습니다. 다시 실행해 주세요.');
+            if (storedTabMarkdown(mod, tabId) !== existingContent) return window.showAlert('고치는 동안 탭 내용이 바뀌어 반영하지 않았습니다. 다시 실행해 주세요.');
             window.setPipelineStatus('바뀐 섹션을 골라 반영해 주세요.');
             const approved = await previewAiChange(existingContent, resultText, {
-                title: `${tabMeta.label} 보강 미리보기`,
+                title: `${tabMeta.label} AI 수정 미리보기`,
                 tabId,
                 truncated,
                 note: truncated ? '응답이 출력 한도에서 잘렸습니다. 마지막 섹션은 기본으로 고르지 않았습니다.' : ''
             });
             if (approved === null) return;
 
-            if (!(await commitTabChange(mod, tabId, existingContent, approved, `보강 재생성 반영: ${reinforceCmd}`))) return;
-            if (reinforceInput) reinforceInput.value = '';
-            window.notifyLessonJobDone(`${tabMeta.label} 보강 재생성을 반영했습니다.`);
+            if (!(await commitTabChange(mod, tabId, existingContent, approved, `AI 수정 반영(탭 전체): ${reinforceCmd}`))) return;
+            const commandInput = document.getElementById('ai-command-input');
+            if (commandInput && commandInput.value.trim() === reinforceCmd) commandInput.value = ''; // 반영한 요청만 지운다
+            window.notifyLessonJobDone(`${tabMeta.label}에 AI 수정을 반영했습니다.`);
         } catch (err) {
-            console.error('[Reinforce] 실패:', err);
-            window.showAlert('보강 재생성 중 오류: ' + err.message);
+            console.error('[탭 전체 AI 수정] 실패:', err);
+            window.showAlert('AI 수정 중 오류: ' + err.message);
         }
     });
 }

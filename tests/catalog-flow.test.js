@@ -740,30 +740,6 @@ async function run(name, fn) {
         assert.strictEqual(decode(new Uint8Array([0xBE, 0xC8, 0xB3, 0xE7, 0x20, 0x61]).buffer), '안녕 a', '메모장 ANSI(CP949) 파일');
     });
 
-    await run('전달 분량: 잘리는 비율을 알려 준다', async () => {
-        const budget = call('refBudget');
-        assert.deepStrictEqual(plain(budget(1000)), { total: 1000, outline: 1000, lesson: 1000, outlineShare: 100, lessonShare: 100, cut: false });
-        assert.deepStrictEqual(plain(budget(2500)).cut, true);
-        const big = plain(budget(30000));
-        assert.deepStrictEqual([big.outline, big.lesson, big.outlineShare, big.lessonShare], [3000, 2000, 10, 7]);
-        assert.strictEqual(plain(budget(0)).outlineShare, 100, '글자가 없어도 나누기 오류가 없다');
-        assert.ok(call('refMeterHtml')(budget(30000)).includes('30,000자') && call('refMeterHtml')(budget(30000)).includes('쪽 범위'));
-        assert.ok(call('refMeterHtml')(budget(100)).includes('모두 AI에 보냅니다'));
-    });
-
-    await run('추출 글자 보기: 쪽 범위 표시', async () => {
-        const blocks = call('refContentBlocks');
-        const content = '[p.1] 하나\n\n[p.2] 둘\n\n[p.3] 셋';
-        assert.deepStrictEqual(plain(blocks(content, '2-3')).map(block => block.included), [false, true, true]);
-        assert.deepStrictEqual(plain(blocks(content, '')).map(block => block.included), [true, true, true]);
-        assert.deepStrictEqual(plain(blocks(content, '50')).map(block => block.included), [true, true, true], '맞는 쪽이 없으면 전체가 쓰인다');
-        assert.strictEqual(blocks('쪽 표시 없는 글', '1').length, 1);
-        const tools = call('batchFileToolsHtml');
-        assert.ok(tools({ status: 'ok', content: '[p.1] 글', pageRange: '"><b>' }, 2).includes('viewBatchFile(2)'));
-        assert.ok(!tools({ status: 'ok', content: '[p.1] 글', pageRange: '"><b>' }, 2).includes('"><b>'), '쪽 범위를 이스케이프한다');
-        assert.strictEqual(tools({ status: 'parsing', content: '' }, 0), '', '읽는 중에는 보여 줄 글자가 없다');
-    });
-
     console.log('ALL PASSED');
 })().catch(err => {
     console.error('FAILED', err);

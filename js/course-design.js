@@ -230,7 +230,7 @@ function unitToSubject(unit, id, firstLessonId, target) {
         lessonCount: unit.modules.length,
         hasLevelTest: true,
         hours: unit.hours,
-        mainQuest: { id: 'mainQuest', title: '👑 메인 퀘스트 (최종 과제)', description: '모든 일일 퀘스트를 종합한 최종 평가입니다.', status: 'waiting', content: null, images: {} },
+        mainQuest: { id: 'mainQuest', title: '👑 최종 평가', description: '모든 차시의 실습을 종합한 최종 평가입니다.', status: 'waiting', content: null, images: {} },
         lessons: unit.modules.map((module, i) => moduleToLesson(module, firstLessonId + i))
     };
 }

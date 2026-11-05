@@ -137,7 +137,7 @@ const SHOTS = [
             await page.evaluate(() => { if (document.getElementById('sidebar-setup-body')?.classList.contains('hidden')) toggleSidebarSetup(); });
             await page.waitForTimeout(400);
         },
-        markers: ['#sidebar-setup-toggle', '#topic-input', '#unit-count-input', '#generate-btn']
+        markers: ['#sidebar-setup-toggle', '#topic-input', '#sidebar-batch-count-box', '#generate-btn']
     },
     {
         id: 'cards',
@@ -180,7 +180,7 @@ const SHOTS = [
             });
             await page.waitForTimeout(300);
         },
-        markers: ['.para-edit', '#ai-floating-toolbar .format-bar', '#reinforce-input', byText('컨벤션 검수', '#editor-content-area'), '#ai-command-input']
+        markers: ['.para-edit', '#ai-floating-toolbar .format-bar', byText('컨벤션 검수', '#editor-content-area'), '#ai-command-input']
     },
     {
         id: 'tools',
@@ -233,7 +233,7 @@ const SHOTS = [
             await page.click('#export-dropdown-btn');
             await page.waitForTimeout(400);
         },
-        markers: ['#export-dropdown-menu', byText('ZIP', '#toolbar-scroll'), byText('히스토리', '#toolbar-scroll'), byText('데이터 연동', 'header')]
+        markers: [byText('현재 차시', '#export-dropdown-menu'), byText('교과 백업 ZIP', '#export-dropdown-menu'), byText('빈 폴더에 저장 시작', '#export-dropdown-menu'), byText('작업 기록', '#toolbar-scroll')]
     }
 ];
 
