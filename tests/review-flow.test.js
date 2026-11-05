@@ -413,6 +413,88 @@ function generationContext(callGemini, mod) {
         await next;
     });
 
+    await run('중지 신호: 생성마다 새로 만들고, 중지하면 끊으며, 지난번 끊긴 신호를 다시 쓰지 않는다', async () => {
+        const stopCtx = makeContext();
+        stopCtx.AbortController = AbortController;
+        call(stopCtx, 'resetTabGenStop')();
+        const first = call(stopCtx, 'aiStopSignal')();
+        assert.ok(first && first.aborted === false);
+        call(stopCtx, 'requestTabGenerationStop')();
+        assert.strictEqual(first.aborted, true, '중지하면 끊는다');
+        assert.strictEqual(call(stopCtx, 'isTabGenerationStopped')(), true);
+        call(stopCtx, 'resetTabGenStop')();
+        const second = call(stopCtx, 'aiStopSignal')();
+        assert.ok(second !== first && second.aborted === false, '새 생성은 새 신호');
+        assert.strictEqual(call(stopCtx, 'isTabGenerationStopped')(), false);
+        const bare = makeContext();
+        call(bare, 'resetTabGenStop')();
+        assert.strictEqual(call(bare, 'aiStopSignal')(), null, 'AbortController가 없으면 신호 없이 예전처럼');
+    });
+
+    await run('탭 생성: 단락 호출에는 다시 보내기 기다림만 끊는 신호를 넘긴다(받고 있는 단락은 끝까지 받는다)', async () => {
+        const seen = [];
+        const mod = { id: 1, title: '차시', tabContents: {} };
+        const aiCtx = generationContext(async (model, payload) => { seen.push(payload); return reply('## 본문\n\n완성한 글입니다.'); }, mod);
+        aiCtx.AbortController = AbortController;
+        await call(aiCtx, 'generateTabContent')(1, 'basicPrac', { quiet: true });
+        assert.ok(seen[0].waitSignal && seen[0].waitSignal === call(aiCtx, 'aiStopSignal')());
+        assert.ok(!('signal' in seen[0]), '받고 있는 단락은 끊지 않는다');
+    });
+
+    await run('탭 생성: 첫 단락을 다시 보내려고 기다리다 중지하면 실패가 아니라 멈춤으로 알린다', async () => {
+        const mod = { id: 1, title: '차시', tabContents: {} };
+        const aiCtx = generationContext(async () => { throw Object.assign(new Error('중지했습니다.'), { name: 'AbortError' }); }, mod);
+        const result = plain(await call(aiCtx, 'generateTabContent')(1, 'basicPrac'));
+        assert.deepStrictEqual(result, { ok: false, stopped: true });
+        assert.strictEqual(aiCtx.alerts.length, 0, '오류 창을 띄우지 않는다');
+        assert.ok(aiCtx.toasts.some(message => message.includes('생성을 멈췄습니다')), JSON.stringify(aiCtx.toasts));
+    });
+
+    await run('탭 생성: 이어 쓸 단락을 기다리다 중지하면 받은 단락은 남기고 중단으로 알린다', async () => {
+        let calls = 0;
+        const mod = { id: 1, title: '차시', tabContents: {} };
+        const aiCtx = generationContext(async () => {
+            calls += 1;
+            if (calls === 1) return reply('## 1. 첫째\n\n받은 단락입니다.\n<!-- CONTINUE -->');
+            call(aiCtx, 'requestTabGenerationStop')();
+            throw Object.assign(new Error('중지했습니다.'), { name: 'AbortError' });
+        }, mod);
+        const result = await call(aiCtx, 'generateTabContent')(1, 'basicLearn');
+        assert.ok(mod.tabContents.basicLearn.includes('받은 단락입니다.'));
+        assert.strictEqual(result.partial, true);
+        assert.ok(aiCtx.alerts.at(-1).includes('생성을 중단했습니다'), aiCtx.alerts.at(-1));
+    });
+
+    await run('탭 전체 AI 수정: 중지하면 받던 글을 끊고 알리지 않으며 탭은 그대로', async () => {
+        const original = '## 본문\n\n원래 글입니다.';
+        const mod = { id: 1, title: '차시', tabContents: { basicLearn: original } };
+        let sentSignal;
+        const aiCtx = generationContext(async (model, payload) => { sentSignal = payload.signal; throw Object.assign(new Error('중지했습니다.'), { name: 'AbortError' }); }, mod);
+        aiCtx.AbortController = AbortController;
+        await call(aiCtx, 'reinforceCurrentTab')(1, '예시 추가');
+        assert.ok(sentSignal && sentSignal === call(aiCtx, 'aiStopSignal')(), '받던 글을 끊을 신호를 넘긴다');
+        assert.strictEqual(aiCtx.alerts.length, 0);
+        assert.strictEqual(mod.tabContents.basicLearn, original);
+    });
+
+    await run('탭 생성: 하루 한도·한도 0은 1~2분 뒤 다시 하라고 하지 않고 그 안내를 그대로 보인다', async () => {
+        const daily = () => Object.assign(new Error('오늘 쓸 수 있는 AI 사용량을 다 썼습니다(429). 내일 다시 하거나 오른쪽 위 ⚙ 설정에서 다른 모델이나 키로 바꿔 주세요.'), { status: 429, quota: 'daily' });
+        const mod = { id: 1, title: '차시', tabContents: {} };
+        const aiCtx = generationContext(async () => { throw daily(); }, mod);
+        const result = await call(aiCtx, 'generateTabContent')(1, 'basicPrac', { quiet: true });
+        assert.ok(result.error.includes('오늘 쓸 수 있는 AI 사용량') && !result.error.includes('API 호출 한도(429)에 도달했습니다'), result.error);
+        let calls = 0;
+        const contMod = { id: 1, title: '차시', tabContents: {} };
+        const contCtx = generationContext(async () => {
+            calls += 1;
+            if (calls === 1) return reply('## 1. 첫째\n\n받은 단락입니다.\n<!-- CONTINUE -->');
+            throw daily();
+        }, contMod);
+        await call(contCtx, 'generateTabContent')(1, 'basicLearn');
+        assert.ok(contCtx.alerts.at(-1).includes('뒷부분을 받지 못했습니다') && contCtx.alerts.at(-1).includes('오늘 쓸 수 있는'), contCtx.alerts.at(-1));
+        assert.ok(contMod.tabContents.basicLearn.includes('받은 단락입니다.'), '받은 단락은 남긴다');
+    });
+
     await run('미리보기: 제목만 바뀐 섹션은 한 행이고 두 벌로 남지 않는다', async () => {
         const body = '재미의 구조를 세 층으로 나누어 설명합니다. 각 층은 플레이어의 행동과 감정을 연결합니다.';
         const before = `## 옛 제목\n\n${body}\n\n## 다른 섹션\n\n그대로 둘 본문입니다.`;
@@ -568,11 +650,13 @@ function generationContext(callGemini, mod) {
         const mod = { id: 1, title: '차시', tabContents: { basicLearn: body, basicPrac: '## 실습\n\n내용입니다.' }, content: '' };
         const batchCtx = generationContext(async () => reply('{}'), mod);
         vm.runInContext('processImageTags = window.realProcessImageTags;', batchCtx);
+        // 차시는 열린 교과에 있다(일괄 작업은 그리는 동안에도 지금 데이터의 그 차시인지 본다)
+        vm.runInContext("globalState = { subjects: [{ id: 's1', title: '교과', lessons: [window.currentMod] }] }; currentSubjectId = 's1'; courseData = globalState.subjects[0].lessons;", batchCtx);
         assert.deepStrictEqual(plain(call(batchCtx, 'imageTagTabs')(mod)).map(tab => tab.id), ['basicLearn']);
         await call(batchCtx, 'generateAllImagesInModule')(1);
         assert.ok(!mod.tabContents.basicLearn.includes('<!-- [IMG:'), '탭 글의 태그를 채운다');
         assert.ok(!mod.content.includes('<!-- [IMG:'), '합친 본문도 탭 글로 다시 만든다');
-        assert.ok(batchCtx.toasts.some(message => message.includes('이미지 일괄 확보가 완료')));
+        assert.ok(batchCtx.toasts.some(message => message.includes('일괄 이미지 찾기를 마쳤습니다')), JSON.stringify(batchCtx.toasts));
         assert.ok(batchCtx.elements['lesson-pipeline-bar']?.removed, '진행 막대를 썼다가 닫는다');
     });
 

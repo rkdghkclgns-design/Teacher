@@ -120,6 +120,10 @@ const SHOTS = [
                 const box = select.closest('.overflow-y-auto');
                 const label = select.closest('div').querySelector('label') || select;
                 box.scrollTop += label.getBoundingClientRect().top - box.getBoundingClientRect().top - 12; // 모델 칸 제목이 창 위쪽에 오게
+                // 마지막 번호 칸(Higgsfield 키)이 창 아래에 가려지면 그만큼 더 내린다(위 설명이 길어져도 네 칸이 다 보이게)
+                const last = document.getElementById('settings-higgsfield-key-input');
+                const hidden = last.getBoundingClientRect().bottom - box.getBoundingClientRect().bottom + 8;
+                if (hidden > 0) box.scrollTop += hidden;
             });
             await page.waitForTimeout(500);
         },

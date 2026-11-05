@@ -162,9 +162,10 @@ function startPipelineTicker(run) {
 // kind: 'all'(빈 항목을 채우는 전체 생성) | 'job'(사용자가 고른 작업 하나)
 // alerts: 작업 안의 탭 생성이 미리보기와 완료 알림을 띄울지. 전체 생성은 끝에 한 번만 알린다
 window.beginLessonPipeline = function (moduleId, { kind = 'all', label = LESSON_TABS[0].label, current = LESSON_TABS[0].id, alerts = false } = {}) {
-    _pipeline = { moduleId, subjectId: currentSubjectId, kind, stopped: false, moved: false, current, label, status: '', done: 0, total: 0, failed: [], partial: [], skipped: [], startedAt: Date.now(), ticker: null };
+    _pipeline = { moduleId, subjectId: currentSubjectId, kind, stopped: false, moved: false, current, label, status: '', done: 0, total: 0, failed: [], partial: [], skipped: [], startedAt: Date.now(), ticker: null, ownsImageRun: !!window.beginImageRun?.(), imageNote: '' };
     _suppressTabAlert = !alerts;
     _tabGenStop = false;
+    window.resetTabGenStop?.(); // 새 끊기 신호(tabs.js). 캐시에 옛 tabs.js가 남아 있어도 위 줄이 중지를 푼다
     refreshPipelineView(_pipeline);
     _pipeline.ticker = startPipelineTicker(_pipeline);
 };
@@ -179,14 +180,19 @@ window.updateLessonJob = function (step) {
 };
 
 function pipelineSummary(run) {
-    const notes = [
+    const problems = [
         run.moved ? '다른 교과로 옮기거나 차시가 없어져 전체 생성을 멈췄습니다.' : '',
         run.failed.length ? `만들지 못한 항목:\n${run.failed.join('\n')}` : '',
         run.skipped.length ? `교안 탭이 모두 있어야 해서 건너뛴 항목: ${run.skipped.join(', ')}` : '',
         run.partial.length ? `일부 내용이 빠졌을 수 있는 항목: ${run.partial.join(', ')}` : ''
     ].filter(Boolean);
     const retry = run.moved || run.failed.length || run.skipped.length ? '이 차시에서 전체 생성을 다시 누르면 빠진 항목만 만듭니다.' : '내용이 빠진 탭은 해당 탭에서 다시 생성해주세요.';
-    if (notes.length) return { alert: `${notes.join('\n\n')}\n\n${retry}` };
+    if (problems.length) return { alert: `${[...problems, run.imageNote].filter(Boolean).join('\n\n')}\n\n${retry}` };
+    // 그림 모델이 막혀 그림 자리를 남겼으면 창으로 알린다. 작업 하나(job)는 부른 쪽이 끝을 따로 알리므로 안내만 보인다
+    if (run.imageNote) {
+        const head = run.kind === 'all' ? (run.stopped ? '전체 생성을 중지했습니다. 만든 내용은 저장했습니다.' : '전체 생성을 마쳤습니다.') : '';
+        return { alert: [head, run.imageNote].filter(Boolean).join('\n\n') };
+    }
     return run.stopped ? { toast: '전체 생성을 중지했습니다. 만든 내용은 저장했습니다.', kind: 'warning' } : { toast: '전체 생성을 마쳤습니다.', kind: 'success' };
 }
 
@@ -203,6 +209,10 @@ window.finishLessonPipeline = function ({ quiet = false } = {}) {
     if (!run) return;
     _pipeline = null;
     if (run.ticker) clearInterval(run.ticker);
+    if (run.ownsImageRun) { // 이 작업이 연 그림 작업 기록: 남긴 자리 안내를 받고 닫는다(api.js)
+        run.imageNote = window.imageRunNote?.() || '';
+        window.endImageRun?.();
+    }
     _suppressTabAlert = false;
     document.getElementById('lesson-pipeline-bar')?.remove();
     const mod = getEditingModule(run.moduleId);

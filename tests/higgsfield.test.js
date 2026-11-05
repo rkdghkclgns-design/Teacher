@@ -147,6 +147,35 @@ async function run(name, fn) {
         assert.strictEqual(polls, 3);
     });
 
+    await run('생성: 상태를 묻는 동안 중지하면 기다림과 조회를 끊는다(중계 연결 오류로 보이지 않는다)', async () => {
+        // 중지한 뒤에 또 물으면 완료로 답해, 중지를 무시하는 코드는 그림을 받아 이 테스트에 걸린다(끝없이 묻지 않는다)
+        const stoppable = abortOnPoll => {
+            const controller = new AbortController();
+            const seen = { polls: 0, submitSignal: null };
+            const stub = async (url, init = {}) => {
+                const target = String(url);
+                if (target === IMAGE) return new Response(PNG());
+                if (target.includes('/requests/')) {
+                    seen.polls += 1;
+                    if (seen.polls > 1) return jsonResponse({ status: 'completed', images: [{ url: IMAGE }] });
+                    controller.abort();
+                    if (abortOnPoll) throw Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
+                    return jsonResponse({ status: 'queued', request_id: 'req-1' });
+                }
+                seen.submitSignal = init.signal;
+                return jsonResponse({ status: 'queued', request_id: 'req-1' });
+            };
+            return { controller, seen, ctx: makeContext(stub, ready) };
+        };
+        for (const abortOnPoll of [false, true]) {
+            const { controller, seen, ctx } = stoppable(abortOnPoll);
+            await assert.rejects(call(ctx, 'generateHiggsfieldImage')('higgsfield:recraft', '고양이', { signal: controller.signal }),
+                err => err.name === 'AbortError' && !/중계에 연결하지 못했습니다/.test(err.message));
+            assert.strictEqual(seen.polls, 1, '중지한 뒤에는 상태를 다시 묻지 않는다');
+            assert.strictEqual(seen.submitSignal, controller.signal, '요청을 보낼 때도 같은 신호를 넘긴다');
+        }
+    });
+
     await run('연결 확인: 없는 요청을 물어 키와 중계를 확인한다', async () => {
         const check = async (response, stored = ready) => plain(await call(makeContext(async () => response, stored), 'checkHiggsfieldConnection')());
         assert.strictEqual((await check(jsonResponse({ detail: 'Request not found' }, 404))).ok, true, 'Higgsfield가 없는 요청이라고 답하면 통한 것');

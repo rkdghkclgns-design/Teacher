@@ -188,10 +188,13 @@ function buildSvgPrompt(art, description, options = {}) {
     ].filter(line => line !== null).join('\n');
 }
 
-async function requestSvg(prompt) {
+// opts.signal: 중지하면 그리던 호출을 끊는다 / opts.attempts: 보내는 최대 횟수(교안 그림 작업은 한 번만 다시)
+async function requestSvg(prompt, { signal = null, attempts } = {}) {
     const data = await callGemini(TEXT_MODEL, {
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        systemInstruction: { parts: [{ text: '교재 삽화가로서 지정된 SVG 코드만 출력합니다.' }] }
+        systemInstruction: { parts: [{ text: '교재 삽화가로서 지정된 SVG 코드만 출력합니다.' }] },
+        ...(signal ? { signal } : {}),
+        ...(attempts ? { attempts } : {})
     });
     return sanitizeSvg(extractText(data));
 }
@@ -215,20 +218,22 @@ function artBackground(palette) {
 }
 
 // 기준 삽화가 없으면 처음 그린 삽화를 기준으로 삼아 과정 전체의 화풍을 맞춘다
-async function drawSvgIllustration(description) {
+async function drawSvgIllustration(description, opts = {}) {
     const art = courseArt();
-    const { svg, replaced } = snapSvgPalette(await requestSvg(buildSvgPrompt(art, description)), art.palette);
+    const { svg, replaced } = snapSvgPalette(await requestSvg(buildSvgPrompt(art, description), opts), art.palette);
     if (replaced) console.warn(`[SVG 삽화] 팔레트 밖 색 ${replaced}곳을 맞췄습니다.`);
     const png = await svgToPng(svg, artBackground(art.palette));
     if (!art.anchorSvg) globalState.courseArt = { ...(globalState.courseArt || {}), anchorSvg: svg };
     return png;
 }
 
-// generateImageAPI와 같은 계약: 성공하면 data URL, 실패하면 null
-async function generateSvgIllustration(description) {
+// generateImageAPI와 같은 계약: 성공하면 data URL, 실패하면 null. 중지하면 AbortError를 그대로 던진다
+async function generateSvgIllustration(description, opts = {}) {
     try {
-        return await drawSvgIllustration(description);
+        return await drawSvgIllustration(description, opts);
     } catch (err) {
+        if (err?.name === 'AbortError') throw err;
+        window.markImageBlocked?.(SVG_IMAGE_MODEL, err); // 글 모델이 사용 한도·키 문제면 이번 작업의 그림을 멈춘다(api.js)
         console.error('[SVG 삽화] 생성 실패:', err);
         window.showToast?.(`SVG 삽화 생성 실패: ${err.message}`, 'warning');
         return null;

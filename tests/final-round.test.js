@@ -423,6 +423,49 @@ const LESSON_MD = [
         assert.strictEqual(toasts.length, 0, '성공 알림을 띄우지 않는다');
     });
 
+    await run('전체 생성: 그림 모델이 막혀 남긴 자리를 끝에 창으로 알리고, 연 쪽만 닫는다', async () => {
+        const originalTab = ctx.generateTabContent;
+        const full = () => ({ id: 1, title: '재미', gyosuan: { docMd: '#' }, tabContents: Object.fromEntries(TAB_IDS.map(id => [id, `## ${id}\n\n- 내용입니다.`])) });
+        let ended = 0;
+        const toasts = [];
+        ctx.showToast = text => toasts.push(text);
+        ctx.globalState.courseDesign = {};
+        ctx.beginImageRun = () => true;
+        ctx.endImageRun = () => { ended += 1; };
+        ctx.imageRunNote = () => '그림 메모';
+        try {
+            ctx.globalState.subjects = [{ id: 's1', title: '기획', lessons: [full()] }];
+            ctx.courseData = ctx.globalState.subjects[0].lessons;
+            ctx.alerts.length = 0;
+            await call('runLessonPipeline')(1);
+            assert.strictEqual(ctx.alerts.at(-1), '전체 생성을 마쳤습니다.\n\n그림 메모', '마친 줄과 그림 안내를 함께 창으로');
+            assert.strictEqual(ended, 1, '연 그림 작업 기록을 닫는다');
+
+            const missing = full();
+            missing.tabContents.basicPrac = null;
+            ctx.globalState.subjects = [{ id: 's1', title: '기획', lessons: [missing] }];
+            ctx.courseData = ctx.globalState.subjects[0].lessons;
+            ctx.generateTabContent = async () => { throw new Error('호출 한도'); };
+            await call('runLessonPipeline')(1);
+            ['호출 한도', '그림 메모', '다시 누르면'].forEach(text => assert.ok(ctx.alerts.at(-1).includes(text), `${text}: ${ctx.alerts.at(-1)}`));
+            assert.strictEqual(ended, 2);
+
+            ctx.beginImageRun = () => false;
+            ctx.globalState.subjects = [{ id: 's1', title: '기획', lessons: [full()] }];
+            ctx.courseData = ctx.globalState.subjects[0].lessons;
+            const alertCount = ctx.alerts.length;
+            await call('runLessonPipeline')(1);
+            assert.strictEqual(ctx.alerts.length, alertCount, '다른 쪽이 연 그림 작업이면 안내를 보이지 않는다');
+            assert.ok(toasts.at(-1).includes('마쳤습니다'), toasts.at(-1));
+            assert.strictEqual(ended, 2, '연 쪽이 아니면 닫지 않는다');
+        } finally {
+            delete ctx.beginImageRun;
+            delete ctx.endImageRun;
+            delete ctx.imageRunNote;
+            ctx.generateTabContent = originalTab;
+        }
+    });
+
     await run('전체 생성: 교안 뒤에 삽화와 NCS 요소를 채우고 실패해도 잇는다', async () => {
         const lesson = { id: 1, title: '재미', tabContents: Object.fromEntries(TAB_IDS.map(id => [id, LESSON_MD])) };
         ctx.globalState.subjects = [{ id: 's1', title: '기획', lessons: [lesson] }];

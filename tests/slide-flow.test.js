@@ -536,6 +536,35 @@ const draftLesson = () => ({ id: 'm1', title: '재미', hours: 1, tabContents: {
         assert.ok(!out.deckMd.includes('[이미지:') && !out.deckMd.includes('local:'));
     });
 
+    await run('이미지 자동 생성: 중지 신호는 교수안 이미지 단계에서만 넘기고, 그림 모델이 막히면 새 그림을 시작하지 않는다', async () => {
+        const seen = [];
+        const controller = new AbortController();
+        const mod = lesson(undefined);
+        const ctx = withLesson(mod, { storage: { 'kb-auto-img': '1' }, generateImage: async (prompt, opts) => { seen.push(opts?.signal ?? null); return PNG; } });
+        ctx.aiStopSignal = () => controller.signal;
+        const notedOk = [];
+        ctx.noteSlideImagesLeft = count => notedOk.push(count);
+        await ctx.attachGyosuanImages(mod, { docMd: DOC, deckMd: DECK });
+        assert.ok(seen.length >= 1 && seen.every(signal => signal === controller.signal), '교수안 이미지 단계의 그림은 중지하면 끊는다');
+        assert.deepStrictEqual(notedOk, [], '그림 모델이 막히지 않았으면 못 만든 슬라이드 그림으로 적지 않는다');
+        const planned = seen.length; // 이 교수안에 넣을 슬라이드 그림 수
+        await vm.runInContext('KBuilder.genImage', ctx)('그림');
+        assert.strictEqual(seen.at(-1), null, '작업 밖의 슬라이드 칸 그림 만들기는 지난 중지 신호에 끊기지 않는다');
+
+        let called = 0;
+        const blockedMod = lesson(undefined);
+        const blocked = withLesson(blockedMod, { storage: { 'kb-auto-img': '1' }, generateImage: async () => { called++; return PNG; } });
+        blocked.imageGenerationBlocked = () => true;
+        const noted = [];
+        blocked.noteSlideImagesLeft = count => noted.push(count);
+        const out = await blocked.attachGyosuanImages(blockedMod, { docMd: DOC, deckMd: DECK });
+        assert.strictEqual(called, 0, '그림 모델이 모두 막혔으면 부르지 않는다');
+        assert.deepStrictEqual(noted, [planned], '막혀 못 만든 슬라이드 그림 수를 작업 끝 안내에 넣는다(교안에는 자리가 남지 않는다)');
+        assert.deepStrictEqual(plain(out.images), {});
+        assert.strictEqual(out.deckMd, DECK, '글은 그대로');
+        assert.ok(out.note.includes('건너뛰었습니다'), out.note);
+    });
+
     await run('생성 흐름: 슬라이드만 재생성하면 교수안 이미지를 지키고 쓰지 않는 이미지는 지운다', async () => {
         const calls = [];
         const mod = { ...draftLesson(), gyosuan: { docMd: '![](local:keep)', deckMd: '옛', images: { keep: PNG, gone: PNG }, sourceKey: 'k', deckRev: 7 } };

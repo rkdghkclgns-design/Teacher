@@ -5,13 +5,14 @@
 const GYOSUAN_IMAGE_TAG = /\[이미지:([^\]\s]+)\]/g;
 const LESSON_IMAGE_TEXT_LINES = 5; // 이미지 아래에서 내용 비교에 쓸 줄 수
 let _gyosuanImageSkip = false;
+let _gyosuanImageSignal = null; // 교수안 이미지 단계 동안만 쓰는 중지 신호. 작업 밖의 슬라이드 칸 그림 만들기(image-slot)는 끊지 않는다
 
 // auto-images.js가 찾는 AI 연결. 키는 교안 도우미가 관리한다 (스튜디오 쪽은 studio.js)
 function bindGyosuanImageAi() {
     const K = window.KBuilder;
     if (K.genImage) return;
     K.genImage = async prompt => {
-        const url = await generateImageAPI(prompt);
+        const url = await generateImageAPI(prompt, { signal: _gyosuanImageSignal }); // 중지하면 그리던 그림도 끊는다
         if (!url) throw new Error('이미지를 만들지 못했습니다.');
         return url;
     };
@@ -21,7 +22,8 @@ function bindGyosuanImageAi() {
         available: role => (role === 'image' ? K.AI.hasKey() : textModelHasKey()),
         call: async (prompt, opts = {}) => {
             const images = (opts.images || []).map(image => ({ inlineData: { mimeType: image.mime, data: image.data } }));
-            const data = await callGemini(TEXT_MODEL, { contents: [{ role: 'user', parts: [{ text: String(prompt) }, ...images] }], taskRole: opts.role });
+            // 장면 글로 바꾸기·그림 속 글자 확인(auto-images.js)은 짧은 호출이고 실패해도 대신할 값이 있어 tries만큼만 보낸다
+            const data = await callGemini(TEXT_MODEL, { contents: [{ role: 'user', parts: [{ text: String(prompt) }, ...images] }], taskRole: opts.role, signal: _gyosuanImageSignal, attempts: opts.tries || undefined, timing: 'short' });
             return extractText(data);
         }
     };
@@ -92,9 +94,13 @@ window.attachGyosuanImages = async function (mod, texts) {
     A.adopt(lessonImages);
     collectGeneratedRefs(mod);
     const skip = showGyosuanImageSkip();
+    _gyosuanImageSignal = window.aiStopSignal?.() || null;
     try {
         const part = { title: mod.title, docMd: texts.docMd, deckMd: texts.deckMd, images: lessonImages };
-        const result = await A.run([part], (done, total, label) => setGyosuanProgress(label), () => _gyosuanImageSkip || !!window.isTabGenerationStopped?.());
+        // 건너뛰기·중지를 누르거나 이번 작업에서 그림 모델이 모두 막히면 새 그림을 더 시작하지 않는다
+        const result = await A.run([part], (done, total, label) => setGyosuanProgress(label), () => _gyosuanImageSkip || !!window.isTabGenerationStopped?.() || !!window.imageGenerationBlocked?.());
+        // 그림 모델이 막혀 못 만든 슬라이드 그림은 교안에 자리가 남지 않으므로 그 수를 작업 끝 안내에 넣는다(api.js imageRunNote)
+        if (window.imageGenerationBlocked?.()) window.noteSlideImagesLeft?.(Math.max(0, (result.total || 0) - (result.made || 0)));
         const [tagged] = result.parts;
         mod.refImages = K.normalizeRefImages(K.refImages);
         return {
@@ -107,6 +113,7 @@ window.attachGyosuanImages = async function (mod, texts) {
         console.error('[교수안] 이미지 생성 실패:', err);
         return { ...texts, note: '이미지를 만들지 못해 글만 저장했습니다.' };
     } finally {
+        _gyosuanImageSignal = null;
         skip?.remove();
     }
 };

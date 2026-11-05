@@ -9,7 +9,10 @@ const ctx = { console, window: {} };
 vm.createContext(ctx);
 ['ai-errors.js', 'setup-helpers.js'].forEach(file => vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', file), 'utf8'), ctx));
 // function 선언은 ctx에, const 화살표 함수는 window로 내보낸 쪽에 있다
-const { friendlyAiError, aiError, aiProviderOf, keyCheckResult, presetValues, activePreset, autoTextModel, isExampleCourse } = { ...ctx, ...ctx.window };
+const { friendlyAiError, aiError, aiProviderOf, keyCheckResult, aiQuotaKind, presetValues, activePreset, autoTextModel, isExampleCourse } = { ...ctx, ...ctx.window };
+
+// Gemini 429 응답 본문 모양(무료 등급 한도). limit: 0이면 이 키로는 쓸 수 없는 모델, quotaId의 PerDay는 하루 한도
+const quotaBody = (limit, quotaId) => JSON.stringify({ error: { code: 429, message: 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits.\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: ' + limit + ', model: gemini-nano-banana-2.1', status: 'RESOURCE_EXHAUSTED', details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaMetric: 'generativelanguage.googleapis.com/generate_content_free_tier_requests', quotaId }] }, { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '41s' }] } });
 
 let failed = 0;
 let count = 0;
@@ -56,6 +59,30 @@ test('오류 객체: 화면 문장, 상태 코드, 원문은 detail로, 키·모
     assert.strictEqual(aiProviderOf('https://api.anthropic.com/v1/models'), 'Claude');
 });
 
+test('429 한도 종류: 한도 0과 하루 한도는 기다려도 풀리지 않아 따로 알아본다', () => {
+    assert.strictEqual(aiQuotaKind(429, quotaBody(0, 'GenerateRequestsPerDayPerProjectPerModel-FreeTier')), 'zero', '한도 0이 하루 한도보다 먼저');
+    assert.strictEqual(aiQuotaKind(429, quotaBody(250, 'GenerateRequestsPerDayPerProjectPerModel-FreeTier')), 'daily');
+    assert.strictEqual(aiQuotaKind(429, quotaBody(15, 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier')), '', '분당 한도는 기다리면 풀린다');
+    assert.strictEqual(aiQuotaKind(429, '{"quotaValue": "0"}'), 'zero');
+    assert.strictEqual(aiQuotaKind(429, 'limit: 100'), '', '100은 0이 아니다');
+    assert.strictEqual(aiQuotaKind(403, 'limit: 0'), '', '429가 아니면 보지 않는다');
+});
+
+test('429 한도 오류: 한도 0·하루 한도는 다시 보내지 않고 할 일을 알린다', () => {
+    const zero = aiError(429, quotaBody(0, 'GenerateRequestsPerDayPerProjectPerModel-FreeTier'), 'Gemini');
+    assert.deepStrictEqual([zero.quota, zero.noRetry], ['zero', true]);
+    assert.ok(zero.message.includes('무료 사용량 0') && zero.message.includes("'빠르고 저렴하게'"), zero.message);
+    assert.ok(zero.message.startsWith('이 Gemini 키로는 고른 모델을 쓸 수 없습니다(429'), zero.message);
+    assert.strictEqual(zero.detail.length, 300, '원문은 잘라서 detail에');
+    const daily = aiError(429, quotaBody(250, 'GenerateRequestsPerDayPerProjectPerModel-FreeTier'), 'Gemini');
+    assert.ok(daily.message.startsWith('오늘 쓸 수 있는 AI 사용량을 다 썼습니다(429)'), daily.message);
+    assert.strictEqual(daily.noRetry, true);
+    const minute = aiError(429, quotaBody(15, 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier'), 'Gemini');
+    assert.deepStrictEqual([minute.quota, minute.noRetry], ['', false], '분당 한도는 기다렸다 다시 보낸다');
+    assert.ok(minute.message.startsWith('AI 사용 한도를 넘었습니다(429)'), minute.message);
+    assert.deepStrictEqual([aiError(429).quota, aiError(429).noRetry], ['', false]);
+});
+
 test('키 연결 확인 결과', () => {
     assert.strictEqual(keyCheckResult(200).ok, true);
     assert.strictEqual(keyCheckResult(400).text, '키가 맞지 않습니다');
@@ -74,10 +101,16 @@ test('빠른 설정은 가진 키에 맞는 모델을 고른다(Gemini 키가 �
     assert.strictEqual(presetValues('없음', true, false), null);
 });
 
+test('빠르고 저렴하게는 그림을 글 모델이 SVG로 그리고(무료 키로도 됨), 품질 우선은 Nano Banana 2.1로 그린다', () => {
+    [[true, false], [false, true], [false, false]].forEach(([gemini, claude]) => assert.strictEqual(presetValues('saving', gemini, claude).imageModel, 'svg-illustration', `${gemini}/${claude}`));
+    assert.strictEqual(presetValues('quality', true, true).imageModel, 'gemini-nano-banana-2.1');
+});
+
 test('지금 설정과 같은 빠른 설정 묶음을 찾는다', () => {
-    assert.strictEqual(activePreset({ textModel: 'gemini-3.8-flash', effort: 'medium', images: 'section' }, true, false), 'saving');
-    assert.strictEqual(activePreset({ textModel: 'claude-fable-5-1', effort: 'high', images: 'all' }, false, true), 'quality');
-    assert.strictEqual(activePreset({ textModel: 'gemini-3.8-flash', effort: 'high', images: 'section' }, true, false), null, '하나라도 다르면 없음');
+    assert.strictEqual(activePreset({ textModel: 'gemini-3.8-flash', effort: 'medium', images: 'section', imageModel: 'svg-illustration' }, true, false), 'saving');
+    assert.strictEqual(activePreset({ textModel: 'claude-fable-5-1', effort: 'high', images: 'all', imageModel: 'gemini-nano-banana-2.1' }, false, true), 'quality');
+    assert.strictEqual(activePreset({ textModel: 'gemini-3.8-flash', effort: 'high', images: 'section', imageModel: 'svg-illustration' }, true, false), null, '하나라도 다르면 없음');
+    assert.strictEqual(activePreset({ textModel: 'gemini-3.8-flash', effort: 'medium', images: 'section', imageModel: 'gemini-nano-banana-2.1' }, true, false), null, '그림 모델이 다르면 없음');
 });
 
 test('키를 저장하면 고른 모델에 맞는 키가 없을 때만 가진 키의 모델로 바꾼다', () => {

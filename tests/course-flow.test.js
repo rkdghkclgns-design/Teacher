@@ -163,6 +163,45 @@ async function run(name, fn) {
         assert.strictEqual(vm.runInContext('_lessonRun', broken), null);
     });
 
+    await run('일괄 실행 화면: 그림 모델이 막혀 남긴 자리 안내를 보고에 넣고, 연 그림 작업 기록은 끝에 한 번 닫는다', async () => {
+        const start = local => vm.runInContext('startLessonRun', local)('subject');
+        const prepare = ({ owns = true } = {}) => {
+            const local = makeContext();
+            const subject = { id: 's1', title: '교과', lessons: [lesson(1)] };
+            local.globalState.subjects = [subject];
+            local.currentSubjectId = 's1';
+            local.courseData = subject.lessons;
+            ['lesson-run-body', 'lesson-run-footer', 'lesson-run-status'].forEach(id => { local.elements[id] = { innerHTML: '', textContent: '' }; });
+            local.ended = 0;
+            local.beginImageRun = () => owns;
+            local.endImageRun = () => { local.ended += 1; };
+            local.imageRunNote = () => '그림 <메모>';
+            return local;
+        };
+        const local = prepare();
+        await start(local);
+        const body = local.elements['lesson-run-body'].innerHTML;
+        assert.ok(body.includes('완료 1개') && body.includes('그림 &lt;메모&gt;') && !body.includes('<메모>'), body);
+        assert.strictEqual(local.ended, 1);
+
+        const broken = prepare();
+        broken.renderOverviewLNB = () => { throw new Error('그리기 실패'); };
+        await start(broken);
+        assert.ok(broken.elements['lesson-run-body'].innerHTML.includes('그리기 실패'));
+        assert.ok(broken.elements['lesson-run-body'].innerHTML.includes('그림 &lt;메모&gt;'), '오류 화면에도 남긴 그림 자리 안내를 남긴다');
+        assert.strictEqual(broken.ended, 1, '오류가 나도 닫는다');
+
+        const other = prepare({ owns: false });
+        await start(other);
+        assert.ok(!other.elements['lesson-run-body'].innerHTML.includes('메모'), '다른 쪽이 연 기록의 안내는 보이지 않는다');
+        assert.strictEqual(other.ended, 0, '연 쪽이 아니면 닫지 않는다');
+
+        const report = { done: [], partial: [], failed: [], left: [], stopped: false };
+        const html = call('lessonRunReportHtml')(report, { imageNote: '그림 <메모>' });
+        assert.ok(html.includes('그림 &lt;메모&gt;') && !html.includes('<메모>'));
+        assert.ok(!call('lessonRunReportHtml')(report).includes('text-amber-300'), '안내가 없으면 그 줄도 없다');
+    });
+
     await run('일괄 실행 시작: 전체 탭 생성이 대기 중일 때도 진행 중으로 봄', async () => {
         const local = makeContext();
         const busy = () => vm.runInContext('generationBusy()', local);

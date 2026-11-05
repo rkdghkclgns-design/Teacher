@@ -1,10 +1,11 @@
 // setup-helpers.js - 처음 쓰는 사람이 바로 성공하게
-// 설정 빠른 선택(빠르고 저렴하게 / 품질 우선), 키 연결 확인(모델 목록 조회라 비용 없음), 키에 맞춘 글 모델 자동 선택,
+// 설정 빠른 선택(빠르고 저렴하게 / 품질 우선: 글 모델·추론 강도·그림 양·그림 모델), 키 연결 확인(모델 목록 조회라 비용 없음), 키에 맞춘 글 모델 자동 선택,
 // 과정 정보(과정명·분야) 편집과 예시 과정 표시. 계산만 하는 함수는 tests/setup-helpers.test.js가 확인한다.
 
 const SETTINGS_PRESETS = {
-    saving: { gemini: 'gemini-3.8-flash', claude: 'claude-haiku-5-5', effort: 'medium', images: 'section' },
-    quality: { gemini: 'gemini-4-argon', claude: 'claude-fable-5-1', effort: 'high', images: 'all' }
+    // 빠르고 저렴하게: 무료 키로도 되는 글 모델. 그림은 글 모델이 SVG로 그려 그림 요금이 없고 무료 키에서도 그려진다
+    saving: { gemini: 'gemini-3.8-flash', claude: 'claude-haiku-5-5', effort: 'medium', images: 'section', imageModel: 'svg-illustration' }, // = SVG_IMAGE_MODEL (data.js)
+    quality: { gemini: 'gemini-4-argon', claude: 'claude-fable-5-1', effort: 'high', images: 'all', imageModel: 'gemini-nano-banana-2.1' } // = IMAGE_MODEL_OPTIONS[0] (data.js)
 };
 const FALLBACK_MODELS = { gemini: 'gemini-3.8-flash', claude: 'claude-sonnet-5-5' };
 const EXAMPLE_COURSE_ID = 'course_mock_1';
@@ -17,14 +18,14 @@ const presetProvider = (hasGemini, hasClaude) => (!hasGemini && hasClaude ? 'cla
 function presetValues(name, hasGemini, hasClaude) {
     const preset = SETTINGS_PRESETS[name];
     if (!preset) return null;
-    return { textModel: preset[presetProvider(hasGemini, hasClaude)], effort: preset.effort, images: preset.images };
+    return { textModel: preset[presetProvider(hasGemini, hasClaude)], effort: preset.effort, images: preset.images, imageModel: preset.imageModel };
 }
 
 // 지금 설정과 같은 묶음(버튼을 눌린 모양으로 보여 줄 때)
 function activePreset(current, hasGemini, hasClaude) {
     return Object.keys(SETTINGS_PRESETS).find(name => {
         const values = presetValues(name, hasGemini, hasClaude);
-        return values.textModel === current.textModel && values.effort === current.effort && values.images === current.images;
+        return values.textModel === current.textModel && values.effort === current.effort && values.images === current.images && values.imageModel === current.imageModel;
     }) || null;
 }
 
@@ -51,11 +52,12 @@ function syncSettingSelects() {
     set('settings-text-model', TEXT_MODEL);
     set('settings-reasoning-effort', REASONING_EFFORT);
     set('settings-image-amount', LESSON_IMAGE_AMOUNT);
+    set('settings-image-model', IMAGE_MODEL);
     window.renderRoleRouteNote?.();
 }
 
 function renderPresetButtons() {
-    const active = activePreset({ textModel: TEXT_MODEL, effort: REASONING_EFFORT, images: LESSON_IMAGE_AMOUNT }, !!apiKey, !!claudeApiKey);
+    const active = activePreset({ textModel: TEXT_MODEL, effort: REASONING_EFFORT, images: LESSON_IMAGE_AMOUNT, imageModel: IMAGE_MODEL }, !!apiKey, !!claudeApiKey);
     document.querySelectorAll('[data-settings-preset]').forEach(button => {
         const on = button.dataset.settingsPreset === active;
         button.setAttribute('aria-pressed', on ? 'true' : 'false'); // 눌린 모양은 index.html의 [aria-pressed] CSS
@@ -68,10 +70,14 @@ function applySettingsPreset(name) {
     updateTextModel(values.textModel);
     updateReasoningEffort(values.effort);
     updateLessonImageAmount(values.images);
+    updateImageModel(values.imageModel);
     syncSettingSelects();
     renderPresetButtons();
     const label = TEXT_MODEL_OPTIONS.find(option => option.value === values.textModel)?.label || values.textModel;
-    window.showToast?.(`${name === 'saving' ? '빠르고 저렴하게' : '품질 우선'}: ${label}로 맞췄습니다.`, 'success');
+    const imageLabel = String(IMAGE_MODEL_OPTIONS.find(option => option.value === values.imageModel)?.label || values.imageModel).replace(/\s*\(.*\)\s*$/, '');
+    // Gemini 키가 없으면 고른 그림 모델 대신 글 모델이 SVG로 그린다(course-art.js usesSvgIllustration)
+    const svgNote = values.imageModel !== SVG_IMAGE_MODEL && typeof usesSvgIllustration === 'function' && usesSvgIllustration() ? ' Gemini 키가 없어 그림은 글 모델이 SVG로 그립니다.' : '';
+    window.showToast?.(`${name === 'saving' ? '빠르고 저렴하게' : '품질 우선'}: 글은 ${label}, 그림은 ${imageLabel}로 맞췄습니다.${svgNote}`, 'success');
 }
 
 /* ---------- 키 연결 확인 ---------- */

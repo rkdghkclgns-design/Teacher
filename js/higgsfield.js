@@ -29,7 +29,14 @@ try {
 
 const higgsfieldModel = model => (isHiggsfieldModel(model) ? HIGGSFIELD_MODELS[model.slice(HIGGSFIELD_MODEL_PREFIX.length)] || null : null);
 const higgsfieldReady = () => !!higgsfieldKey && !!higgsfieldRelayUrl;
-const pauseHiggsfield = ms => new Promise(resolve => setTimeout(resolve, ms));
+// 기다리다 중지하면 바로 끝낸다(AbortError)
+const higgsfieldStopped = () => Object.assign(new Error('중지했습니다.'), { name: 'AbortError' });
+const pauseHiggsfield = (ms, signal = null) => new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(higgsfieldStopped());
+    const timer = setTimeout(() => { signal?.removeEventListener?.('abort', onAbort); resolve(); }, ms);
+    function onAbort() { clearTimeout(timer); reject(higgsfieldStopped()); }
+    signal?.addEventListener?.('abort', onAbort, { once: true });
+});
 
 /* ---------- 설정 값 ---------- */
 // "Key 아이디:비밀값"을 붙여 넣어도 받는다. 형식이 틀리면 null
@@ -83,6 +90,7 @@ async function higgsfieldFetch(path, init = {}) {
             headers: { Authorization: `Key ${higgsfieldKey}`, ...(init.body ? { 'Content-Type': 'application/json' } : {}) }
         });
     } catch (err) {
+        if (err?.name === 'AbortError') throw higgsfieldStopped(); // 중지: 중계 연결 문제가 아니다
         throw new Error(`Higgsfield 중계에 연결하지 못했습니다 (${err.message}). 중계 주소와 배포 상태를 확인해 주세요`);
     }
     const text = await res.text();
@@ -97,16 +105,16 @@ async function higgsfieldFetch(path, init = {}) {
 }
 
 // 끝날 때까지 상태를 본다. 일시적인 연결 오류와 5xx는 몇 번 다시 묻는다
-async function waitHiggsfieldRequest(requestId) {
+async function waitHiggsfieldRequest(requestId, signal = null) {
     const deadline = Date.now() + HIGGSFIELD_TIMEOUT_MS;
     let misses = 0;
     while (Date.now() < deadline) {
-        await pauseHiggsfield(HIGGSFIELD_POLL_MS);
+        await pauseHiggsfield(HIGGSFIELD_POLL_MS, signal);
         let data;
         try {
-            data = await higgsfieldFetch(`requests/${encodeURIComponent(requestId)}/status`);
+            data = await higgsfieldFetch(`requests/${encodeURIComponent(requestId)}/status`, signal ? { signal } : {});
         } catch (err) {
-            if ((err.status && err.status < 500) || ++misses > HIGGSFIELD_POLL_RETRIES) throw err;
+            if (err?.name === 'AbortError' || (err.status && err.status < 500) || ++misses > HIGGSFIELD_POLL_RETRIES) throw err;
             continue;
         }
         misses = 0;
@@ -148,14 +156,15 @@ async function higgsfieldImageData(url) {
 }
 
 // 성공하면 data URL. 실패하면 이유를 담은 오류를 던진다 (generateImageAPI가 받아 다음 모델로 넘어간다)
-async function generateHiggsfieldImage(modelId, prompt) {
+// 중지하면 기다림과 상태 조회를 끊는다. 이미 보낸 요청은 Higgsfield에서 취소되지 않아 크레딧이 쓰일 수 있다
+async function generateHiggsfieldImage(modelId, prompt, { signal = null } = {}) {
     const model = higgsfieldModel(modelId);
     if (!model) throw new Error('알 수 없는 Higgsfield 모델입니다');
     if (!higgsfieldReady()) throw new Error('설정에서 Higgsfield 키와 중계 주소를 저장해 주세요');
     const body = { prompt: String(prompt).slice(0, HIGGSFIELD_PROMPT_MAX), aspect_ratio: IMAGE_ASPECT_RATIO, ...model.body };
-    const submitted = await higgsfieldFetch(model.path, { method: 'POST', body: JSON.stringify(body) });
+    const submitted = await higgsfieldFetch(model.path, { method: 'POST', body: JSON.stringify(body), ...(signal ? { signal } : {}) });
     if (!submitted?.request_id) throw new Error('Higgsfield 요청 번호를 받지 못했습니다');
-    const done = await waitHiggsfieldRequest(submitted.request_id);
+    const done = await waitHiggsfieldRequest(submitted.request_id, signal);
     const url = done.images?.[0]?.url;
     if (!url) throw new Error('Higgsfield 결과에 이미지가 없습니다');
     return higgsfieldImageData(url);

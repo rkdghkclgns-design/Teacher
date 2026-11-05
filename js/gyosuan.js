@@ -34,7 +34,7 @@ const GYOSUAN_SLIDE_SPECS = {
     }
 };
 
-const GYOSUAN_STOP_LABELS = { idle: '교수안 생성 중지', pending: '받고 있는 응답까지만 기다립니다...' };
+const GYOSUAN_STOP_LABELS = { idle: '교수안 생성 중지', pending: '멈추고 있습니다...' };
 
 let _gyosuanRunning = false;
 let _gyosuanOnStatus = null;
@@ -188,7 +188,8 @@ function gyosuanSystemInstruction(style) {
 async function askGyosuanModel(prompt, system, fewshot = []) {
     const data = await callGemini(TEXT_MODEL, {
         contents: [...fewshot, { role: 'user', parts: [{ text: prompt }] }],
-        systemInstruction: { parts: [{ text: system }] }
+        systemInstruction: { parts: [{ text: system }] },
+        signal: window.aiStopSignal?.() || null // 중지하면 받던 응답을 끊는다(중지하면 받은 전개를 어차피 버린다)
     });
     const parts = data?.candidates?.[0]?.content?.parts || [];
     return parts.filter(p => !p.thought).map(p => p.text || '').join('');

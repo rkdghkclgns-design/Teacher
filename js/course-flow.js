@@ -169,8 +169,12 @@ function lessonRunProgressHtml(item, index, total) {
 // 덮어쓰기로 이전 내용을 휴지통에 넣은 차시 수와 되찾는 곳
 const lessonRunTrashNote = count => (count > 0 ? `<p class="text-xs text-textMuted">차시 ${count}개의 이전 내용은 휴지통에 있습니다. 30일 동안 되살릴 수 있습니다.</p>` : '');
 
+// 그림 모델이 막혀 남긴 그림 자리와 할 일(api.js imageRunNote)
+const lessonRunImageNote = note => (note ? `<p class="text-xs text-amber-300">${escapeHtml(note)}</p>` : '');
+
 // trashed: 덮어쓰기로 이전 내용을 휴지통에 넣은 차시 수
-function lessonRunReportHtml(report, { trashed = 0 } = {}) {
+// imageNote: 그림 모델이 막혀 남긴 그림 자리 안내(api.js imageRunNote)
+function lessonRunReportHtml(report, { trashed = 0, imageNote = '' } = {}) {
     const counts = [`완료 ${report.done.length}개`, `실패 ${report.failed.length}개`, report.left.length ? `남은 ${report.left.length}개` : ''].filter(Boolean).join(' · ');
     const unfinished = report.failed.length || report.left.length;
     return `
@@ -178,7 +182,8 @@ function lessonRunReportHtml(report, { trashed = 0 } = {}) {
         ${lessonRunListHtml('실패해서 건너뛴 차시', report.failed, item => item.error)}
         ${lessonRunListHtml('일부 단락이 누락되었을 수 있는 차시', report.partial)}
         ${unfinished ? '<p class="text-xs text-textMuted">만든 내용은 저장했습니다. 다시 실행하면 남은 탭부터 이어서 생성합니다.</p>' : ''}
-        ${lessonRunTrashNote(trashed)}`;
+        ${lessonRunTrashNote(trashed)}
+        ${lessonRunImageNote(imageNote)}`;
 }
 
 function setLessonRunBody(html) {
@@ -308,20 +313,23 @@ async function startLessonRun(scope, button = null) {
     const run = { stopped: false, withGyosuan, overwrite, cleared: new Map(), trashed: 0 };
     _lessonRun = run;
     setLessonRunButtons(RUN_BUTTONS.stop);
+    const ownsImageRun = !!window.beginImageRun?.(); // 그림 모델이 막히면 이 실행이 끝날 때까지 다시 부르지 않는다(api.js)
+    const imageNote = () => (ownsImageRun ? window.imageRunNote?.() || '' : ''); // 이 실행이 연 기록의 안내만 보인다
     try {
         const report = await runLessonQueue(runnableLessons(runSubjects(scope), withGyosuan, overwrite), item => attemptLesson(item, run), {
             isStopped: () => run.stopped,
             onLesson: (item, index, total) => setLessonRunBody(lessonRunProgressHtml(item, index, total)),
             onRetry: (item, error) => setLessonRunStatus(`${LESSON_RETRY_WAIT_SECONDS}초 뒤 다시 시도합니다... (${error})`)
         });
-        setLessonRunBody(lessonRunReportHtml(report, { trashed: run.trashed }));
+        setLessonRunBody(lessonRunReportHtml(report, { trashed: run.trashed, imageNote: imageNote() }));
         await saveState();
         renderSidebar();
         renderOverviewLNB();
     } catch (err) {
         console.error('[일괄 생성] 실패:', err);
-        setLessonRunBody(`<p class="text-xs text-rose-300">일괄 생성 중 오류가 발생했습니다: ${escapeHtml(err.message)}</p>${lessonRunTrashNote(run.trashed)}`);
+        setLessonRunBody(`<p class="text-xs text-rose-300">일괄 생성 중 오류가 발생했습니다: ${escapeHtml(err.message)}</p>${lessonRunTrashNote(run.trashed)}${lessonRunImageNote(imageNote())}`);
     } finally {
+        if (ownsImageRun) window.endImageRun?.();
         _lessonRun = null;
         setLessonRunButtons(RUN_BUTTONS.close);
     }

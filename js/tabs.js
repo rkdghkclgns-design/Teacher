@@ -4,6 +4,7 @@ let currentLessonTab = 'basicLearn';
 let _lessonPanel = null; // 탭 대신 보고 있는 항목: gyosuan | slides | qbank
 let _suppressTabAlert = false;
 let _tabGenStop = false; // 중단을 누르면 받고 있는 단락까지만 저장하고 다음 단락과 다음 탭을 건너뛴다
+let _tabGenAbort = null; // 중지를 누르면 그림 호출과 다시 보내려고 기다리던 호출도 끊는다. 생성을 시작할 때마다 새로 만든다(resetTabGenStop)
 const TAB_STOP_LABELS = { idle: '이 단락까지만 받고 중단', pending: '받고 있는 단락까지만 저장합니다...' };
 let _tabStopLabels = TAB_STOP_LABELS;
 
@@ -186,9 +187,19 @@ function showTabGenStop(visible, labels = TAB_STOP_LABELS) {
     btn.textContent = labels.idle;
 }
 
+// 중지 상태를 풀고 새 끊기 신호를 만든다(생성을 시작할 때). 이전 생성의 끊긴 신호를 다시 쓰지 않는다
+function resetTabGenStop() {
+    _tabGenStop = false;
+    _tabGenAbort = typeof AbortController === 'function' ? new AbortController() : null;
+}
+window.resetTabGenStop = resetTabGenStop;
+
+// 지금 생성의 끊기 신호. 생성 안의 AI 호출에만 넘긴다(작업 밖의 호출에 넘기면 지난번 중지가 남아 바로 끊긴다)
+window.aiStopSignal = () => _tabGenAbort?.signal || null;
+
 // 교안 전체 생성과 교수안 생성도 같은 중단 버튼을 쓴다
 window.beginGenerationStop = function (labels) {
-    _tabGenStop = false;
+    resetTabGenStop();
     showTabGenStop(true, labels);
 };
 
@@ -199,6 +210,7 @@ window.isTabGenerationStopped = () => _tabGenStop;
 
 window.requestTabGenerationStop = function () {
     _tabGenStop = true;
+    _tabGenAbort?.abort(); // 그리던 그림 호출과 다시 보내려고 기다리던 호출을 끊는다
     const btn = document.getElementById('editor-loading-stop');
     if (!btn) return;
     btn.disabled = true;
@@ -260,8 +272,9 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
 
     try {
         if (!opts.background) document.getElementById('editor-loading').style.display = 'flex';
-        if (!_suppressTabAlert) _tabGenStop = false; // 일괄 생성은 묶음 시작에서 한 번만 초기화한다
+        if (!_suppressTabAlert) resetTabGenStop(); // 일괄 생성은 묶음 시작에서 한 번만 초기화한다
         showTabGenStop(!opts.background);
+        const stopSignal = window.aiStopSignal(); // 중지하면 다시 보내려고 기다리던 단락 호출을 끊는다(받고 있는 단락은 끝까지 받는다)
 
         // 진행도 표기: 로딩 오버레이의 안내 문구를 단계별로 갱신해 사용자가 현재 진행 상황을 알 수 있게 함
         const setLoadingText = (txt) => {
@@ -294,10 +307,12 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             generationConfig: { maxOutputTokens: 65536 }
         };
 
-        let fullText = extractText(await callGemini(TEXT_MODEL, firstPayload, onRetry));
+        let fullText = extractText(await callGemini(TEXT_MODEL, { ...firstPayload, waitSignal: stopSignal }, onRetry));
         let chunkCount = 1;
         // 이어쓰기 단계에서 호출 한도 등으로 실패하면, 이미 만든 단락은 버리지 않고 보존하기 위한 플래그
         let partialDueToError = false;
+        let partialError = null; // 이어쓰기를 멈추게 한 오류(한도 0·하루 한도면 그 안내를 그대로 보인다)
+        let stoppedWhileWaiting = false; // 이어 쓸 단락을 다시 보내려고 기다리다 중지했다
 
         while (fullText.includes(CONTINUE_MARKER) && chunkCount < MAX_CHUNKS && !_tabGenStop) {
             // 마커 제거 후 이어쓰기 준비
@@ -323,11 +338,16 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
 
             let contText;
             try {
-                contText = extractText(await callGemini(TEXT_MODEL, contPayload, onRetry));
+                contText = extractText(await callGemini(TEXT_MODEL, { ...contPayload, waitSignal: stopSignal }, onRetry));
             } catch (contErr) {
+                if (contErr?.name === 'AbortError') { // 중지: 받은 단락은 남기고 멈춘다
+                    stoppedWhileWaiting = true;
+                    break;
+                }
                 // 이어쓰기 청크 실패(예: 429 호출 한도) — 첫 청크는 이미 성공했으므로
                 // 지금까지 생성된 분량을 보존하고 루프를 종료한다 (전체 폐기 방지)
                 partialDueToError = true;
+                partialError = contErr;
                 break;
             }
 
@@ -347,7 +367,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             chunkCount++;
         }
 
-        const stoppedEarly = _tabGenStop && fullText.includes(CONTINUE_MARKER);
+        const stoppedEarly = _tabGenStop && (fullText.includes(CONTINUE_MARKER) || stoppedWhileWaiting); // 마커는 이어쓰기 전에 지웠으므로 기다리다 멈춘 것은 따로 센다
 
         // 잔여 마커 정리
         fullText = fullText
@@ -422,15 +442,21 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
                 ? `${tabMeta.label} 생성을 중단했습니다. 받은 ${fullText.length.toLocaleString()}자까지 저장했습니다.${archivePartial ? ' 이전 내용은 작업 기록에 남겼습니다.' : ''}`
                 : `${tabMeta.label} 탭이 생성되었습니다.`;
             // 화면을 막지 않고 만든 작업은 끝을 알림으로 알린다. 일부가 빠진 결과는 다시 만들어야 하므로 창으로 알린다
-            if (partialDueToError) window.showAlert(`${tabMeta.label} 탭이 생성되었지만, API 호출 한도로 일부 단락이 누락되었을 수 있습니다. 잠시 후(1~2분) 다시 생성하면 전체 분량이 완성됩니다.`);
+            if (partialDueToError) window.showAlert(partialError?.quota
+                ? `${tabMeta.label} 탭은 만들었지만 뒷부분을 받지 못했습니다. ${partialError.message}`
+                : `${tabMeta.label} 탭이 생성되었지만, API 호출 한도로 일부 단락이 누락되었을 수 있습니다. 잠시 후(1~2분) 다시 생성하면 전체 분량이 완성됩니다.`);
             else if (opts.background) window.notifyLessonJobDone?.(doneText, stoppedEarly ? 'warning' : 'success');
             else window.showAlert(doneText);
         }
         return { ok: true, partial: partialDueToError || stoppedEarly };
     } catch (err) {
+        if (err?.name === 'AbortError') { // 첫 단락을 다시 보내려고 기다리다 중지했다. 받은 글이 없어 지금 글은 그대로다
+            if (!_suppressTabAlert && !opts.quiet) window.showToast?.(`${tabMeta.label} 생성을 멈췄습니다.`, 'warning');
+            return { ok: false, stopped: true };
+        }
         console.error(`[TabGen] ${tabMeta.label} 실패:`, err);
         // 429(호출 한도)는 원인과 대처법을 명확히 안내해 사용자가 무한 재시도하지 않도록 함
-        const is429 = err.status === 429 || /status:\s*429/.test(err.message || '');
+        const is429 = !err.quota && (err.status === 429 || /status:\s*429/.test(err.message || '')); // 한도 0·하루 한도는 기다려도 안 되므로 ai-errors.js 안내를 그대로 둔다
         const message = is429
             ? `${tabMeta.label} 생성 실패: API 호출 한도(429)에 도달했습니다. 1~2분 후 다시 시도해 주세요. (짧은 시간에 여러 탭을 연속 생성하면 한도에 걸릴 수 있습니다.)`
             : `${tabMeta.label} 생성 중 오류: ${err.message}`;
@@ -480,7 +506,7 @@ async function fillMissingTabs(moduleId, { isStopped = () => false, onTab = () =
         if (isStopped()) return { ok: false, stopped: true, partial };
         onTab(LESSON_TABS.find(tab => tab.id === missing[i]), i, missing.length);
         const result = await generateTabContent(moduleId, missing[i], { quiet: true, onStatus, lockedBlocks: lockedByTab[missing[i]] });
-        if (!result.ok) return { ok: false, partial, error: result.error };
+        if (!result.ok) return { ok: false, partial, error: result.error, stopped: !!result.stopped };
         partial = partial || !!result.partial;
         await new Promise(r => setTimeout(r, 2000));
     }
@@ -521,7 +547,7 @@ async function reinforceCurrentTab(moduleId, command = '') {
                 generationConfig: { maxOutputTokens: 65536 }
             };
 
-            const data = await callGemini(TEXT_MODEL, payload);
+            const data = await callGemini(TEXT_MODEL, { ...payload, signal: window.aiStopSignal() }); // 중지하면 받던 글을 끊는다(반영하지 않는 글이다)
             if (_tabGenStop) return; // 중지하면 받은 글을 반영하지 않는다
 
             const resultText = restoreLockedSections(extractText(data), lockedBlocks);
@@ -543,6 +569,7 @@ async function reinforceCurrentTab(moduleId, command = '') {
             if (commandInput && commandInput.value.trim() === reinforceCmd) commandInput.value = ''; // 반영한 요청만 지운다
             window.notifyLessonJobDone(`${shownLabel}에 AI 수정을 반영했습니다.`);
         } catch (err) {
+            if (err?.name === 'AbortError') return; // 중지: 반영할 글이 없다
             console.error('[탭 전체 AI 수정] 실패:', err);
             window.showAlert('AI 수정 중 오류: ' + err.message);
         }

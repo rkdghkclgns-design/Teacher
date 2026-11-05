@@ -104,5 +104,21 @@ test("내보내기 단계의 '그림 담기'는 빼기가 바로 받는 백업 �
     assert.ok(!point.text.includes('글만 담습니다'), '빼기가 늘 글만 담는다고 말하지 않는다');
 });
 
+test('도구 단계는 콘텐츠 정리가 일괄 이미지 찾기 바로 아래에 있다고 말한다(도구 메뉴의 순서와 같다)', () => {
+    const api = fs.readFileSync(path.join(root, 'js', 'api.js'), 'utf8');
+    assert.ok(api.indexOf('id="img-batch-btn"') < api.indexOf('id="sanitize-btn"'), '도구 메뉴에서 일괄 이미지 찾기가 위');
+    const point = steps.find(s => s.id === 'tools').points.find(p => p.title === '일괄 이미지 찾기');
+    assert.ok(point.text.includes('바로 아래의 <strong>콘텐츠 정리</strong>') && !point.text.includes('그 위의'), point.text);
+});
+
+test('Claude 키 설명은 Gemini 키가 없으면 글 모델이 SVG 삽화를 그린다고 말한다(설정 창 설명과 같다)', () => {
+    const point = steps.find(s => s.id === 'keys').points.find(p => p.title === 'Claude API Key');
+    const help = html.match(/Claude 모델을 고르면 텍스트 생성에 사용됩니다\.[^<]*/)[0];
+    [point.text, help].forEach(text => {
+        assert.ok(text.includes('글 모델이 SVG 삽화로 그립니다'), text);
+        assert.ok(!text.includes('Higgsfield 설정이 따로 필요') && !text.includes('Higgsfield 설정이 필요합니다'), text);
+    });
+});
+
 console.log(`\n${count - failed}/${count} passed`);
 if (failed) process.exit(1);

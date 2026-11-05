@@ -85,16 +85,22 @@ function describeClaudeError(Anthropic, e) {
     return e.message || String(e);
 }
 
-async function callClaude(modelName, payload) {
+// opts.signal: 중지하면 받던 응답을 끊는다 / opts.attempts: 보내는 최대 횟수(SDK의 다시 보내기 횟수로 바꾼다)
+async function callClaude(modelName, payload, { signal = null, attempts = 0 } = {}) {
     if (!claudeApiKey) {
         throw new Error('Claude API 키가 없습니다. 오른쪽 위 ⚙ 설정에서 키를 넣어 주세요(키는 console.anthropic.com에서 받습니다).');
     }
     const { default: Anthropic } = await loadClaudeSdk();
+    const stopped = () => Object.assign(new Error('중지했습니다.'), { name: 'AbortError' });
+    if (signal?.aborted) throw stopped();
     const client = new Anthropic({ apiKey: claudeApiKey, maxRetries: CLAUDE_MAX_RETRIES, dangerouslyAllowBrowser: true });
+    const options = { ...(signal ? { signal } : {}), ...(attempts > 0 ? { maxRetries: attempts - 1 } : {}) };
     try {
-        const message = await client.beta.messages.stream(buildClaudeRequest(modelName, payload)).finalMessage();
+        const message = await client.beta.messages.stream(buildClaudeRequest(modelName, payload), options).finalMessage();
         return toGeminiResponse(message, wantsJsonResponse(payload));
     } catch (e) {
+        // 중지로 끊은 호출은 실패가 아니다. SDK는 APIUserAbortError(상태 코드 없음)를 던져 그대로 두면 '인터넷' 오류로 보인다
+        if (signal?.aborted || (typeof Anthropic.APIUserAbortError === 'function' && e instanceof Anthropic.APIUserAbortError)) throw stopped();
         console.error('[Claude] 호출 실패:', e);
         const err = new Error(describeClaudeError(Anthropic, e));
         err.status = e.status;

@@ -216,19 +216,48 @@ function getReferenceContext(maxChars = 8000) {
     return ctx;
 }
 
-async function fetchWithRetry(url, options, retries = 5, onRetry = null) {
+const IMAGE_CALL_ATTEMPTS = 2; // 그림 쪽 호출(그림 모델·그림 검색어·판정·SVG 삽화)은 한 번만 다시 보낸다. 모델을 차례로 바꿔 보므로 기다림을 겹치지 않는다
+
+// 중지로 끊은 AI 호출. 받는 쪽은 err.name === 'AbortError'로 알아본다(fetch가 끊길 때 내는 오류와 같은 이름)
+function abortError() {
+    const err = new Error('중지했습니다.');
+    err.name = 'AbortError';
+    return err;
+}
+
+// ms만큼 기다린다. signal로 중지하면 바로 AbortError로 끝난다
+function waitMs(ms, signal = null) {
+    return new Promise((resolve, reject) => {
+        if (signal?.aborted) return reject(abortError());
+        const timer = setTimeout(() => {
+            signal?.removeEventListener?.('abort', onAbort);
+            resolve();
+        }, ms);
+        function onAbort() {
+            clearTimeout(timer);
+            reject(abortError());
+        }
+        signal?.addEventListener?.('abort', onAbort, { once: true });
+    });
+}
+
+// AI 호출을 보내고, 잠깐의 오류(서버 바쁨·분당 한도)는 기다렸다 다시 보낸다
+// opts.attempts: 보내는 최대 횟수 / opts.onRetry: 다시 보내기 전에 알린다({ attempt, total, delayMs, isRateLimit })
+// opts.signal: 중지하면 보낸 호출도 끊는다 / opts.waitSignal: 중지하면 다시 보내려고 기다리는 것만 멈춘다(보낸 호출은 끝까지 받는다)
+async function fetchWithRetry(url, options, { attempts = 5, onRetry = null, signal = null, waitSignal = signal } = {}) {
     // 503 과부하 에러 등 일반 지연 대비 기본 백오프 (1.5s, 3s, 6s, 10s, 15s)
     const baseDelays = [1500, 3000, 6000, 10000, 15000];
     // 429(호출 한도/쿼터 초과)는 분당 쿼터 리셋에 최대 ~60초가 필요하므로 더 길게 대기
     const rateLimitDelays = [5000, 10000, 20000, 30000, 45000];
 
     const provider = aiProviderOf(url);
-    for (let i = 0; i < retries; i++) {
+    for (let i = 0; i < attempts; i++) {
         try {
             let res;
             try {
-                res = await fetch(url, options);
+                res = await fetch(url, signal ? { ...options, signal } : options);
             } catch (netErr) {
+                if (netErr?.name === 'AbortError') throw abortError(); // 중지로 끊었다. 인터넷 문제가 아니다
                 throw aiError(0, netErr.message, provider); // 인터넷 끊김·차단
             }
             if (!res.ok) {
@@ -242,8 +271,9 @@ async function fetchWithRetry(url, options, retries = 5, onRetry = null) {
             }
             return await res.json();
         } catch (e) {
-            // 마지막 재시도까지 실패하거나 키·모델 문제(400/401/403/404)면 즉시 중단
-            if (i === retries - 1 || e.noRetry) {
+            if (e?.name === 'AbortError') throw abortError(); // 중지: 다시 보내지 않는다(브라우저 영어 문구는 앱 문구로 바꾼다)
+            // 마지막 시도까지 실패하거나, 다시 보내도 같은 오류(키·모델 문제 400/401/403/404, 한도 0·하루 한도)면 바로 멈춘다
+            if (i === attempts - 1 || e.noRetry) {
                 console.error(`[AI 호출] 실패 (${e.status ?? '?'}):`, e.detail || e.message);
                 throw e;
             }
@@ -255,12 +285,12 @@ async function fetchWithRetry(url, options, retries = 5, onRetry = null) {
                 delay = Math.min(e.suggestedDelayMs, 65000);
             }
 
-            console.warn(`[fetchWithRetry] ${isRateLimit ? 'API 호출 한도(429)' : 'API 오류 또는 지연'} 발생. ${Math.round(delay / 1000)}초 후 재시도합니다... (${i + 1}/${retries - 1}) | 사유: ${e.status ?? ''} ${e.detail || e.message}`);
+            console.warn(`[fetchWithRetry] ${isRateLimit ? 'API 호출 한도(429)' : 'API 오류 또는 지연'} 발생. ${Math.round(delay / 1000)}초 후 재시도합니다... (${i + 1}/${attempts - 1}) | 사유: ${e.status ?? ''} ${e.detail || e.message}`);
             // 호출자에게 재시도 상황 통지 (로딩 문구 갱신 등) — 선택적
             if (typeof onRetry === 'function') {
-                try { onRetry({ attempt: i + 1, total: retries - 1, delayMs: delay, isRateLimit }); } catch (_) { /* 통지 실패는 무시 */ }
+                try { onRetry({ attempt: i + 1, total: attempts - 1, delayMs: delay, isRateLimit }); } catch (_) { /* 통지 실패는 무시 */ }
             }
-            await new Promise(r => setTimeout(r, delay));
+            await waitMs(delay, waitSignal); // 중지하면 기다리지 않고 AbortError로 끝난다
         }
     }
 }
@@ -275,8 +305,8 @@ function withGeminiThinking(modelName, { taskRole, ...payload }) {
     return { ...payload, generationConfig: { ...payload.generationConfig, thinkingConfig } };
 }
 
-// Gemini API 호출 (키가 URL·로그에 남지 않도록 헤더로 전달)
-async function requestGemini(modelName, payload, onRetry) {
+// Gemini API 호출 (키가 URL·로그에 남지 않도록 헤더로 전달). opts는 fetchWithRetry로 넘긴다
+async function requestGemini(modelName, payload, { onRetry = null, signal = null, waitSignal = null, attempts = 5 } = {}) {
     if (!apiKey) {
         throw new Error('Gemini API 키가 없습니다. 오른쪽 위 ⚙ 설정에서 키를 넣어 주세요(무료 키는 aistudio.google.com에서 받습니다).');
     }
@@ -287,8 +317,7 @@ async function requestGemini(modelName, payload, onRetry) {
             headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
             body: JSON.stringify(withGeminiThinking(modelName, payload))
         },
-        5,
-        onRetry
+        { attempts, onRetry, signal, waitSignal: waitSignal || signal }
     );
 }
 
@@ -296,13 +325,19 @@ async function requestGemini(modelName, payload, onRetry) {
 // claude- 모델이면 어댑터(claude.js)가 요청과 응답을 변환한다.
 // onRetry: 재시도 발생 시 호출되는 선택적 콜백 ({ attempt, total, delayMs, isRateLimit })
 // 텍스트 모델 호출은 역할별 AI 분배를 따른다. 교차 판단처럼 모델을 일부러 고른 호출은 pinModel을 넘긴다
-function callGemini(modelName, { pinModel, ...payload }, onRetry = null) {
+// payload와 같은 자리에 받는 호출 설정(요청에는 싣지 않는다): signal(중지하면 보낸 호출도 끊는다),
+// waitSignal(중지하면 다시 보내려고 기다리는 것만 멈춘다), attempts(보내는 최대 횟수, 기본 5), timing('short'면 짧은 호출로 따로 잰다)
+// Claude는 waitSignal을 받지 않는다: 다시 보내기를 SDK가 안에서 하므로 그 기다림만 따로 끊을 수 없다(signal을 주면 호출째 끊는다)
+function callGemini(modelName, { pinModel, signal = null, waitSignal = null, attempts, timing = '', ...payload }, onRetry = null) {
     const model = modelName === TEXT_MODEL && !pinModel ? roleModel(payload.taskRole) : modelName;
+    if (signal?.aborted || waitSignal?.aborted) return Promise.reject(abortError());
     const started = Date.now();
-    const call = isClaudeModel(model) ? callClaude(model, payload) : requestGemini(model, payload, onRetry);
-    // 성공한 호출에 걸린 시간을 모델별로 모아 일괄 작업 예고 시간에 쓴다(cost-estimate.js)
+    const call = isClaudeModel(model)
+        ? callClaude(model, payload, { signal, attempts })
+        : requestGemini(model, payload, { onRetry, signal, waitSignal, attempts });
+    // 성공한 호출에 걸린 시간을 모델별로(짧은 호출은 따로) 모아 일괄 작업 예고 시간에 쓴다(cost-estimate.js)
     return call.then(result => {
-        window.recordAiTiming?.(model, Date.now() - started);
+        window.recordAiTiming?.(model, Date.now() - started, timing);
         return result;
     });
 }
@@ -972,7 +1007,7 @@ function extractFirstJsonObject(text) {
     return null; // 닫히지 않은 객체 → 파싱 불가
 }
 
-async function extractSearchIntent(keyword, context) {
+async function extractSearchIntent(keyword, context, signal = null) {
     const systemPrompt = `당신은 ${courseFieldLabel('직업훈련')} 분야 교육 자료를 찾는 데이터 리서처이자 이미지 프롬프트 엔지니어입니다.
 주어진 이미지 키워드와 주변 교안 문맥을 분석하여 두 종류의 출력을 생성합니다:
 (A) 웹 검색용 쿼리 — 구글 이미지 등 검색 엔진에서 실제 자료를 찾기 위한 쿼리
@@ -1019,7 +1054,7 @@ async function extractSearchIntent(keyword, context) {
     };
 
     try {
-        const response = await callGemini(TEXT_MODEL, payload);
+        const response = await callGemini(TEXT_MODEL, { ...payload, signal, attempts: IMAGE_CALL_ATTEMPTS, timing: 'short' });
         const textResp = extractText(response);
         // v7.3: JSON 파싱 전 제어 문자 제거 (Gemini가 줄바꿈/탭을 문자열 내부에 삽입하는 문제)
         const sanitized = textResp
@@ -1031,6 +1066,7 @@ async function extractSearchIntent(keyword, context) {
         const firstObject = extractFirstJsonObject(sanitized);
         return firstObject ? JSON.parse(firstObject) : null;
     } catch (e) {
+        if (e?.name === 'AbortError') throw e; // 중지: 그림 처리를 멈춘다
         console.warn("검색어 의도 추출 에이전트 실패 (폴백 사용):", e.message);
         return null; // 실패 시 기존 키워드 Fallback을 위해 Null 반환
     }
@@ -1073,7 +1109,7 @@ async function fetchImageAsBase64(imageUrl) {
 }
 
 // [Phase F10] VLM(Vision-Language Model) 기반 웹 검색 이미지 유효성 검열
-async function validateImageWithVLM(base64Image, searchIntent, context) {
+async function validateImageWithVLM(base64Image, searchIntent, context, signal = null) {
     if (!base64Image) return { isValid: false, reason: "이미지 데이터 없음" };
 
     // "data:image/jpeg;base64,..."에서 데이터 부분만 추출
@@ -1116,11 +1152,12 @@ async function validateImageWithVLM(base64Image, searchIntent, context) {
 
     try {
         // 이미지 검열용 모델은 안전장치가 강한 모델 사용 권장. 설정된 모델(TEXT_MODEL) 재활용
-        const response = await callGemini(TEXT_MODEL, payload);
+        const response = await callGemini(TEXT_MODEL, { ...payload, signal, attempts: IMAGE_CALL_ATTEMPTS, timing: 'short' });
         const textResp = extractText(response);
         const result = JSON.parse(textResp);
         return result;
     } catch (e) {
+        if (e?.name === 'AbortError') throw e; // 중지: 판정 실패로 그림을 통과시키지 않는다
         console.error("[VLM Validator] 에러 발생 (기본 통과 처리):", e);
         // 검열기 자체 오류면 차단보단 일단 통과시켜 흐름 유지 (False Positive 방어)
         return { isValid: true, reason: "VLM 통신 에러로 자동 패스", confidence: 0 };
@@ -1297,7 +1334,6 @@ function autoInjectImageTags(markdown) {
 window.autoInjectImageTags = autoInjectImageTags;
 
 const IMAGE_TAG_GAP_MS = 7000; // 이미지 하나에 검색 의도·판정·생성 호출이 이어지므로 무료 등급 분당 호출 한도를 피한다
-const IMAGE_TAG_MARK = '<!-- [IMG:';
 
 // 이미지 양 설정에 따라 만들 태그를 고른다. 고르지 않은 태그는 본문에 남아 나중에 '일괄 이미지 찾기'로 채운다
 function pickImageTags(markdown, tags, amount) {
@@ -1315,48 +1351,46 @@ function pickImageTags(markdown, tags, amount) {
     });
 }
 
-// opts.onStatus: 진행 문구(장수·남은 시간)를 받는다 / opts.isStopped: 중지하면 남은 태그를 그대로 둔다
+const IMAGE_TAG_RE = /<!--\s*\[IMG:\s*"?([^"]+)"?\]\s*-->/g;
+const IMAGE_SKIP_SECTIONS = /학습\s*목표|objectives?|개요|overview|요약|정리|마무리|summary/i;
+
+// 태그 바로 앞 500자 안의 가장 가까운 # 제목이 학습 목표·개요·요약 같은 글 위주 섹션인지
+function inSkippedImageSection(markdown, fullMatch) {
+    const pos = markdown.indexOf(fullMatch);
+    const before = markdown.substring(Math.max(0, pos - 500), pos);
+    const heading = Math.max(before.lastIndexOf('## '), before.lastIndexOf('# '));
+    return heading >= 0 && IMAGE_SKIP_SECTIONS.test(before.substring(heading, heading + 60));
+}
+
+// 이 글에서 실제로 처리할 그림 자리. 글 위주 섹션의 태그와 이미 있는 그림을 가리키는 local: 태그(백업 ZIP 되살리기)는 빼고,
+// 이미지 양 설정으로 고른다. 예고(일괄 이미지 찾기·콘텐츠 정리)와 실제 처리가 같은 수를 쓴다
+function pendingImageTags(markdown, amount = 'all') {
+    const text = String(markdown || '');
+    const tags = [...text.matchAll(IMAGE_TAG_RE)].map(match => ({ fullMatch: match[0], keyword: match[1].trim() }));
+    return pickImageTags(text, tags.filter(tag => !/^local:/.test(tag.keyword) && !inSkippedImageSection(text, tag.fullMatch)), amount);
+}
+window.pendingImageTags = pendingImageTags;
+
+// 교안 그림 칸(다시 찾기 버튼과 한글 설명). alt·caption은 이미 이스케이프한 글이어야 한다
+function imageWrapperHtml(imgId, keyword, alt, caption) {
+    return `<div class="image-wrapper"><img src="local:${imgId}" alt="${alt}" class="rounded-lg border-2 border-accent/30 shadow-md max-w-full"><button class="image-regenerate-btn px-3 py-1.5 text-xs text-white font-bold rounded flex items-center gap-1 border border-accent/50 hover:bg-accent transition-colors" data-lesson-action="regenerate-image" data-keyword="${escapeHtml(keyword)}" data-img-id="${imgId}"><i class="ph-bold ph-arrows-clockwise"></i> 다시 찾기</button><div class="image-caption" style="margin-top:8px;text-align:center;font-size:0.85rem;color:#6b7280;font-style:italic;font-weight:500;letter-spacing:-0.01em;line-height:1.4;max-width:100%;">${caption}</div></div>`;
+}
+
+// 그림을 못 만든 자리. 그 자리의 '다시 검색'을 누르면 새 그림을 만들어 이 자리에 넣는다(doRegenerateImage). text는 이미 이스케이프한 글이어야 한다
+function imagePlaceholderHtml(text, keyword) {
+    return `\n<div class="image-placeholder" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:24px;margin:12px 0;border:2px dashed rgba(156,163,175,0.4);border-radius:8px;background:rgba(31,41,55,0.3);color:#9ca3af;font-size:0.85rem;"><i class="ph-bold ph-image" style="font-size:1.4rem;opacity:0.6;"></i> <span>${text}</span> <button data-lesson-action="regenerate-image" data-keyword="${escapeHtml(keyword)}" class="ml-2 px-2 py-1 text-xs bg-accent/20 text-accent border border-accent/40 rounded hover:bg-accent/30 transition-colors" style="cursor:pointer;">🔄 다시 검색</button></div>\n`;
+}
+
+// opts.onStatus: 진행 문구(장수·남은 시간)를 받는다 / opts.isStopped·opts.signal: 중지하면 남은 태그를 그대로 두고 그리던 그림 호출도 끊는다
 // opts.amount: 'all' | 'section' | 'none' (기본은 설정의 이미지 양) / opts.latest: 다 만든 뒤 이미지를 넣을 최신 글을 돌려준다
-async function processImageTags(mod, markdown, { onStatus = null, isStopped = () => !!window.isTabGenerationStopped?.(), amount = LESSON_IMAGE_AMOUNT, latest = null } = {}) {
+// opts.inject: 그림 자리가 빠진 섹션에 태그를 보탤지. 새로 만든 글만 켠다(남은 자리를 채울 때 켜면 이미 그림이 있는 섹션에 또 그린다)
+// opts.quiet: 끝 알림을 띄우지 않는다(부른 쪽이 모아서 알린다) / opts.stats: { made, failed }에 이번 결과를 더한다
+async function processImageTags(mod, markdown, { onStatus = null, isStopped = () => !!window.isTabGenerationStopped?.(), signal = window.aiStopSignal?.() || null, amount = LESSON_IMAGE_AMOUNT, latest = null, inject = true, quiet = false, stats = null } = {}) {
 
-    // LLM이 태그를 누락했을 경우 자동 주입 (이미지 0장 방지)
-    markdown = autoInjectImageTags(markdown);
-
-    const regex = /<!--\s*\[IMG:\s*"?([^"]+)"?\]\s*-->/g;
-
-    let result = markdown;
-
-    let match;
-
-
-
-    const tagsToReplace = [];
-    while ((match = regex.exec(markdown)) !== null) {
-        tagsToReplace.push({ fullMatch: match[0], keyword: match[1].trim() });
-    }
-
-    if (tagsToReplace.length === 0) return result;
-
-    // 학습 목표·개요·요약 등 텍스트 위주 섹션의 이미지 태그 제외
-    const SKIP_SECTIONS = /학습\s*목표|objectives?|개요|overview|요약|정리|마무리|summary/i;
-    const filteredTags = tagsToReplace.filter(tag => {
-        const pos = markdown.indexOf(tag.fullMatch);
-        const beforeText = markdown.substring(Math.max(0, pos - 500), pos);
-        // 가장 가까운 ## 헤딩 찾기
-        const lastH2 = beforeText.lastIndexOf('## ');
-        const lastH1 = beforeText.lastIndexOf('# ');
-        const lastHeading = Math.max(lastH2, lastH1);
-        if (lastHeading >= 0) {
-            const sectionTitle = beforeText.substring(lastHeading, lastHeading + 60);
-            if (SKIP_SECTIONS.test(sectionTitle)) {
-                return false;
-            }
-        }
-        return true;
-    });
-
-    if (filteredTags.length === 0) return result;
-    const pickedTags = pickImageTags(markdown, filteredTags, amount);
+    // LLM이 태그를 누락했을 경우 자동 주입 (이미지 0장 방지). 남은 자리를 채우는 작업은 보태지 않는다
+    if (inject) markdown = autoInjectImageTags(markdown);
+    const result = markdown;
+    const pickedTags = pendingImageTags(markdown, amount);
     if (pickedTags.length === 0) return result;
 
     // 부른 쪽 진행 막대에 장수와 남은 시간을 보인다. 남은 시간은 지금까지 걸린 평균으로 잰다
@@ -1368,30 +1402,35 @@ async function processImageTags(mod, markdown, { onStatus = null, isStopped = ()
     };
 
     // 시작 알림 — 사용자가 진행 상황을 인지할 수 있도록 toast 표시
-    if (window.showToast) {
-        if (!onStatus) window.showToast(`🎨 이미지 ${pickedTags.length}개를 차례로 만듭니다. 한 장에 수십 초가 걸릴 수 있습니다.`, 'info');
-    }
+    if (window.showToast && !quiet && !onStatus) window.showToast(`🎨 이미지 ${pickedTags.length}개를 차례로 만듭니다. 한 장에 수십 초가 걸릴 수 있습니다.`, 'info');
 
     // Rate Limit(429) 방지: 순차 처리 + 요청 간 7초 간격
     let successCount = 0;
     let failCount = 0;
-    const replacements = [];
     let skipped = 0;
+    let blockedLeft = 0; // 그림 모델이 모두 막혀 그대로 둔 태그 수
+    const replacements = [];
     for (let index = 0; index < pickedTags.length; index++) {
         // 요청 사이 간격을 둔 뒤 중지를 확인한다. 중지하면 남은 태그는 본문에 두어 '일괄 이미지 찾기'로 이어서 만든다
-        if (index > 0) await new Promise(r => setTimeout(r, IMAGE_TAG_GAP_MS));
-        if (isStopped()) {
+        if (index > 0) await waitMs(IMAGE_TAG_GAP_MS, signal).catch(() => {}); // 중지하면 간격을 다 기다리지 않는다
+        if (isStopped() || signal?.aborted) {
             skipped = pickedTags.length - index;
+            break;
+        }
+        // 그림 모델이 모두 막혔고 검색으로 찾을 길도 없으면 남은 태그는 부르지 않고 둔다(비용 없음)
+        if (imageGenerationBlocked() && !imageSearchReady()) {
+            blockedLeft += pickedTags.length - index;
             break;
         }
         reportImage(index);
         const tag = pickedTags[index];
+        let outcome = ''; // 'stopped' | 'blocked'이면 이 태그는 글에 그대로 둔다
         const replacement = await (async () => {
         try {
 
             // [Phase F10] 1. 문맥 기반 검색어 튜닝 에이전트 가동
             const context = getContextWindow(markdown, tag.fullMatch, 400);
-            const intent = await extractSearchIntent(tag.keyword, context);
+            const intent = await extractSearchIntent(tag.keyword, context, signal);
             const searchQuery = (intent && intent.search_query) ? intent.search_query : tag.keyword;
 
 
@@ -1411,7 +1450,7 @@ async function processImageTags(mod, markdown, { onStatus = null, isStopped = ()
 
                 if (searchResult && searchResult.b64) {
                     // [Phase F10] 2-3. VLM(Vision-Language Model) 기반 이미지 유효성 심사
-                    const validation = await validateImageWithVLM(searchResult.b64, intent, context);
+                    const validation = await validateImageWithVLM(searchResult.b64, intent, context, signal);
 
                     if (validation && validation.isValid !== false) {
                         b64Image = searchResult.b64;
@@ -1440,6 +1479,10 @@ async function processImageTags(mod, markdown, { onStatus = null, isStopped = ()
 
             // [Phase F10] 4. Fallback 체인 최종: AI 이미지 생성 (모든 외부 검색/통과 실패 시)
             if (!b64Image) {
+                if (imageGenerationBlocked()) { // 그림 모델이 모두 막혔다: 이 자리는 남긴다(검색으로만 찾는 중)
+                    outcome = 'blocked';
+                    return null;
+                }
                 // 우선순위:
                 // 1) extractSearchIntent가 생성한 image_gen_prompt (문맥 기반 고품질)
                 // 2) 레거시 방식 (Context + Query) - 이전 응답 호환
@@ -1470,13 +1513,20 @@ async function processImageTags(mod, markdown, { onStatus = null, isStopped = ()
                     // V8: 영어 전용 + 글자 금지 (한국어 "교육용 일러스트" 제거 — 이미지에 글자가 박히던 문제 해결)
                     generatePrompt = `Educational concept illustration representing "${cleanedKeyword}", ${LESSON_IMAGE_STYLE}, 16:9 wide composition.${NO_TEXT_SUFFIX}`;
                 }
-                b64Image = await generateImageAPI(generatePrompt);
+                b64Image = await generateImageAPI(generatePrompt, {
+                    signal,
+                    onRetry: ({ delayMs, isRateLimit }) => onStatus?.(`🖼️ 이미지 ${index + 1}/${pickedTags.length}: ${isRateLimit ? '그림 모델 사용 한도에 걸려' : '그림 모델 호출이 실패해'} ${Math.round((delayMs || 0) / 1000)}초 뒤 한 번 더 해 봅니다`)
+                });
                 vendorLabel = "AI 생성 이미지";
+                if (!b64Image && imageGenerationBlocked()) { // 이 그림에서 그림 모델이 모두 막혔다: 이 자리도 남긴다
+                    outcome = 'blocked';
+                    return null;
+                }
             }
 
-            // v5.9: 한글 설명 생성 — intent.reasoning 또는 키워드 한글화
-            const koreanDesc = (intent && intent.reasoning) ? intent.reasoning : tag.keyword;
-            const safeKoreanDesc = koreanDesc.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            // v5.9: 한글 설명 — intent.reasoning 또는 키워드. 남이 준 파일의 글일 수 있어 HTML로 이스케이프한다
+            const koreanDesc = String((intent && intent.reasoning) ? intent.reasoning : tag.keyword);
+            const safeKoreanDesc = escapeHtml(koreanDesc);
 
             if (b64Image) {
                 if (!mod.images) mod.images = {};
@@ -1489,79 +1539,164 @@ async function processImageTags(mod, markdown, { onStatus = null, isStopped = ()
                 else if (vendorLabel.includes('캐시')) vendorIcon = 'ph-images';
 
                 // 한글 캡션 텍스트 (이미지 안에 깨진 한글이 그려지는 대신 HTML로 정확히 표시)
-                // tag.keyword가 영어면 intent.reasoning(한글) 또는 fallback
-                const captionText = (intent && intent.reasoning && /[가-힣]/.test(intent.reasoning))
-                    ? intent.reasoning.replace(/'/g, "\\'").replace(/"/g, '&quot;').slice(0, 80)
-                    : (/[가-힣]/.test(tag.keyword) ? tag.keyword.replace(/'/g, "\\'").replace(/"/g, '&quot;').slice(0, 80) : safeKoreanDesc.slice(0, 80));
-                const imgHTML = `\n<div class="image-wrapper"><img src="local:${imgId}" alt="${safeKoreanDesc}" class="rounded-lg border-2 border-accent/30 shadow-md max-w-full"><button class="image-regenerate-btn px-3 py-1.5 text-xs text-white font-bold rounded flex items-center gap-1 border border-accent/50 hover:bg-accent transition-colors" data-lesson-action="regenerate-image" data-keyword="${escapeHtml(tag.keyword)}" data-img-id="${imgId}"><i class="ph-bold ph-arrows-clockwise"></i> 다시 찾기</button><div class="image-caption" style="margin-top:8px;text-align:center;font-size:0.85rem;color:#6b7280;font-style:italic;font-weight:500;letter-spacing:-0.01em;line-height:1.4;max-width:100%;">${captionText}</div></div>\n`;
+                // tag.keyword가 영어면 intent.reasoning(한글) 또는 fallback. 자른 뒤 이스케이프해야 &quot; 같은 표시가 반쯤 잘리지 않는다
+                const captionSource = (intent && typeof intent.reasoning === 'string' && /[가-힣]/.test(intent.reasoning))
+                    ? intent.reasoning
+                    : (/[가-힣]/.test(tag.keyword) ? tag.keyword : koreanDesc);
+                const captionText = escapeHtml(captionSource.slice(0, 80));
+                const imgHTML = `\n${imageWrapperHtml(imgId, tag.keyword, safeKoreanDesc, captionText)}\n`;
 
                 successCount++;
                 return { fullMatch: tag.fullMatch, html: imgHTML };
             } else {
                 failCount++;
                 console.warn(`[Image Pipeline] (${index + 1}/${pickedTags.length}) ⚠️ 이미지 미확보: ${tag.keyword}`);
-                return { fullMatch: tag.fullMatch, html: `\n<div class="image-placeholder" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:24px;margin:12px 0;border:2px dashed rgba(156,163,175,0.4);border-radius:8px;background:rgba(31,41,55,0.3);color:#9ca3af;font-size:0.85rem;"><i class="ph-bold ph-image" style="font-size:1.4rem;opacity:0.6;"></i> <span>이미지 영역: ${safeKoreanDesc}</span> <button data-lesson-action="regenerate-image" data-keyword="${escapeHtml(tag.keyword)}" class="ml-2 px-2 py-1 text-xs bg-accent/20 text-accent border border-accent/40 rounded hover:bg-accent/30 transition-colors" style="cursor:pointer;">🔄 다시 검색</button></div>\n` };
+                return { fullMatch: tag.fullMatch, html: imagePlaceholderHtml(`이미지 영역: ${safeKoreanDesc}`, tag.keyword) };
             }
 
         } catch (e) {
+            if (e?.name === 'AbortError') { // 중지: 이 태그는 남긴다
+                outcome = 'stopped';
+                return null;
+            }
             failCount++;
             console.error(`이미지 처리 실패 (${tag.keyword}):`, e);
-            return { fullMatch: tag.fullMatch, html: `\n<div class="image-placeholder" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:24px;margin:12px 0;border:2px dashed rgba(156,163,175,0.4);border-radius:8px;background:rgba(31,41,55,0.3);color:#9ca3af;font-size:0.85rem;"><i class="ph-bold ph-image" style="font-size:1.4rem;opacity:0.6;"></i> <span>이미지 확보 실패: ${tag.keyword}</span></div>\n` };
+            return { fullMatch: tag.fullMatch, html: imagePlaceholderHtml(`이미지 확보 실패: ${escapeHtml(tag.keyword)}`, tag.keyword) };
         }
         })();
+        if (outcome === 'stopped') {
+            skipped = pickedTags.length - index;
+            break;
+        }
+        if (outcome === 'blocked') { // 이 자리는 두고, 다음 자리는 검색으로만 찾는다(검색 키가 없으면 위에서 멈춘다)
+            blockedLeft += 1;
+            continue;
+        }
         replacements.push(replacement);
     }
 
     // 기다리는 동안 글이 바뀌었으면 최신 글에 넣는다. 지운 태그 자리의 이미지는 넣지 않는다
-    // 최신 글에도 같은 기준으로 태그를 보충해야 자동으로 넣은 태그 자리의 이미지가 빠지지 않는다
-    let output = latest ? autoInjectImageTags(latest()) : result;
+    // 새로 만든 글이면 최신 글에도 같은 기준으로 태그를 보충해야 자동으로 넣은 태그 자리의 이미지가 빠지지 않는다
+    let output = latest ? (inject ? autoInjectImageTags(latest()) : latest()) : result;
     for (const rep of replacements) {
-        if (rep) output = output.replace(rep.fullMatch, rep.html);
+        if (rep) output = output.replace(rep.fullMatch, () => rep.html); // 함수로 넘겨야 그림 설명 속 $ 기호를 바꿀 글 규칙으로 읽지 않는다
     }
+    if (stats) {
+        stats.made += successCount;
+        stats.failed += failCount;
+    }
+    if (blockedLeft && _imageRun) _imageRun.left += blockedLeft;
 
     // 완료 토스트 — 성공/실패 카운트 표시. 중지로 남긴 태그가 있으면 이어서 만드는 법을 알린다
-    if (skipped) {
-        window.showToast?.(`이미지 ${successCount}건을 만들고 ${skipped}건은 남겨 두었습니다. '일괄 이미지 찾기'로 이어서 만들 수 있습니다.`, 'warning');
-    } else if (window.showToast) {
-        if (successCount > 0 && failCount === 0) {
-            window.showToast(`✅ 이미지 ${successCount}건 생성 완료`, 'success');
-        } else if (successCount > 0 && failCount > 0) {
-            window.showToast(`⚠️ 이미지 ${successCount}건 성공 · ${failCount}건 실패 (실패한 이미지는 '다시 찾기' 버튼으로 재시도)`, 'warning');
-        } else if (failCount > 0) {
-            window.showToast(`❌ 이미지 ${failCount}건 모두 실패 — Gemini 이미지 모델이 응답하지 않습니다`, 'error');
+    // 부른 쪽이 모아서 알리거나(quiet) 그림 모델이 막혀 남긴 자리가 있으면(이미 한 번 알렸고 작업 끝에 다시 알린다) 띄우지 않는다
+    if (!quiet && !blockedLeft) {
+        if (skipped) {
+            window.showToast?.(`이미지 ${successCount}건을 만들고 ${skipped}건은 남겨 두었습니다. '일괄 이미지 찾기'로 이어서 만들 수 있습니다.`, 'warning');
+        } else if (window.showToast) {
+            if (successCount > 0 && failCount === 0) {
+                window.showToast(`✅ 이미지 ${successCount}건 생성 완료`, 'success');
+            } else if (successCount > 0 && failCount > 0) {
+                window.showToast(`⚠️ 이미지 ${successCount}건 성공 · ${failCount}건 실패 (실패한 자리는 '다시 검색'으로 다시 해 보세요)`, 'warning');
+            } else if (failCount > 0) {
+                window.showToast(`❌ 그림 ${failCount}장을 모두 만들지 못했습니다. 설정의 이미지 생성 모델과 키를 확인해 주세요.`, 'error');
+            }
         }
     }
 
     return output;
 }
 
-// 처리하지 않은 이미지 태그가 남은 탭. 탭으로 나뉘기 전의 옛 본문은 기본학습으로 본다
+// 그림 자리를 채울 글: 탭이 있는 차시는 글이 있는 탭마다, 탭으로 나뉘기 전 차시와 최종 평가는 본문 하나
+// (탭이 있으면 mod.content는 탭을 이어 붙인 글이라 따로 다루지 않는다. setTabMarkdown이 다시 만든다)
+function lessonTextParts(mod) {
+    if (LESSON_TABS.some(tab => mod?.tabContents?.[tab.id])) return LESSON_TABS.filter(tab => mod.tabContents[tab.id]);
+    return mod?.content ? [{ id: 'basicLearn', label: '본문' }] : [];
+}
+
+// 아직 채우지 않은 그림 자리가 남은 글(일괄 이미지 찾기)
 function imageTagTabs(mod) {
-    if (!mod.tabContents) return mod.content?.includes(IMAGE_TAG_MARK) ? [{ id: 'basicLearn', label: '본문' }] : [];
-    return LESSON_TABS.filter(tab => (mod.tabContents[tab.id] || '').includes(IMAGE_TAG_MARK));
+    return lessonTextParts(mod).filter(part => pendingImageTags(storedTabMarkdown(mod, part.id)).length);
+}
+
+// 그림 자리 수. 실제 처리와 같은 기준(pendingImageTags, 'all')으로 센다. clean: 세기 전에 글에 적용할 정리(콘텐츠 정리는 서식 정리 뒤를 센다)
+function countImageSlots(mod, parts = lessonTextParts(mod), clean = text => text) {
+    return parts.reduce((sum, part) => sum + pendingImageTags(clean(storedTabMarkdown(mod, part.id))).length, 0);
+}
+
+// 그림을 채운 작업의 끝 알림. slots: 시작할 때 센 자리 수(중지·한도로 못 간 자리는 남은 자리로 센다)
+// 못 만든 자리는 그림 없는 자리(이미지 영역·이미지 확보 실패)가 되고, 그 자리의 '다시 검색'이 새 그림을 만들어 넣는다(doRegenerateImage)
+function imageFillSummary({ made = 0, failed = 0 }, slots = 0) {
+    const left = Math.max(0, slots - made - failed);
+    const retry = "그 자리의 '다시 검색'으로 다시 해 보세요.";
+    const madeText = made ? `그림 ${made}장을 넣었습니다.` : '넣은 그림은 없습니다.';
+    const head = !failed ? madeText
+        : made ? `${madeText} 못 만든 ${failed}곳은 ${retry}`
+            : `그림을 하나도 넣지 못했습니다(${failed}곳). 설정의 이미지 생성 모델과 키를 확인한 뒤 ${retry}`;
+    const text = left ? `${head} 그림 자리 ${left}개는 그대로 남겨 두었습니다.` : head;
+    return { text, kind: failed && !made ? 'error' : failed || left ? 'warning' : 'success' };
+}
+window.lessonTextParts = lessonTextParts;
+window.countImageSlots = countImageSlots;
+window.imageFillSummary = imageFillSummary;
+
+// 일괄 작업이 시작할 때 잡은 차시(최종 평가)가 아직 지금 데이터의 그 객체인지. 백업·PC 폴더를 불러오거나 교과·차시를 지우면(휴지통)
+// 같은 번호라도 다른 객체이거나 없다. 그런 차시에 그림을 넣고 화면에 그리면 다음 원문 저장이 불러온 글을 옛 글로 덮는다
+function lessonStillLive(subj, mod) {
+    if (!subj || !mod || !globalState.subjects.includes(subj)) return false;
+    if (mod === subj.mainQuest) return true;
+    const lessons = subj.id === currentSubjectId ? courseData : subj.lessons; // 열린 교과는 courseData가 먼저 바뀐다(saveState가 맞춘다)
+    return Array.isArray(lessons) && lessons.includes(mod);
+}
+
+// 그 차시의 그 탭을 지금 화면에서 보고 있는지. 다른 교과의 같은 번호 차시나 불러온 차시(같은 번호, 다른 객체)는 아니다
+const isShowingLessonTab = (subj, mod, tabId) => currentSubjectId === subj?.id && getEditingModule(mod.id) === mod && isViewingTab(mod, tabId);
+
+const SAVE_AGAIN_HINT = '브라우저 저장 공간을 확인한 뒤 Ctrl+S로 다시 저장해 주세요.';
+
+// 일괄 이미지 찾기의 탭 하나. 그리는 동안 차시가 지워지거나 불러온 내용으로 바뀌면 넣지 않고 'gone', 저장하지 못하면 'save', 아니면 ''
+async function fillTabImages(subj, mod, tabId, stats) {
+    if (!lessonStillLive(subj, mod)) return 'gone';
+    const snapshot = storedTabMarkdown(mod, tabId);
+    const tabStats = { made: 0, failed: 0 }; // 넣은 탭의 그림만 끝 알림에 센다
+    const processed = await processImageTags(mod, snapshot, {
+        amount: 'all', inject: false, quiet: true, stats: tabStats, onStatus: window.setPipelineStatus,
+        isStopped: () => window.isTabGenerationStopped() || !lessonStillLive(subj, mod), // 차시가 사라지면 남은 그림을 더 부르지 않는다
+        latest: () => latestTabMarkdown(mod, tabId, snapshot)
+    });
+    if (!lessonStillLive(subj, mod)) return 'gone';
+    stats.made += tabStats.made;
+    stats.failed += tabStats.failed;
+    setTabMarkdown(mod, tabId, processed);
+    const saved = (await saveState()) !== false; // 브라우저에 저장하지 못하면 false(알림은 saveState가 띄운다)
+    if (isShowingLessonTab(subj, mod, tabId)) renderEditor(mod);
+    return saved ? '' : 'save';
 }
 
 // 남은 이미지 태그를 탭마다 채운다. 화면을 막지 않고 진행 막대에 장수·남은 시간·중지를 보인다.
 // 탭 글을 고쳐 저장해야 화면과 내보내기에 반영된다 (합친 본문만 고치면 다음 저장 때 사라진다)
+// 이미 그림이 있는 섹션에 또 그리지 않도록 태그를 보태지 않고(inject: false), 예고한 자리 수 그대로 채운다
 async function generateAllImagesInModule(moduleId) {
     const mod = getEditingModule(moduleId);
     if (!mod) return;
+    if (window.isLessonPipelineRunning?.()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
     const tabs = imageTagTabs(mod);
-    if (!tabs.length) return window.showToast('본문에 처리 대기 중인 이미지 태그가 없습니다.', 'info');
-    const slots = tabs.reduce((sum, tab) => sum + (storedTabMarkdown(mod, tab.id).split(IMAGE_TAG_MARK).length - 1), 0);
-    if (!(await confirmWithEstimate(`탭 ${tabs.length}개에 남은 그림 자리 ${slots}개를 검색이나 AI 생성으로 채웁니다.`, { images: slots }, { title: '일괄 이미지 찾기', okLabel: '찾기 시작' }))) return;
+    if (!tabs.length) return window.showToast('아직 채우지 않은 그림 자리가 없습니다.', 'info');
+    const slots = countImageSlots(mod, tabs);
+    if (!(await confirmWithEstimate(`탭 ${tabs.length}개에서 아직 채우지 않은 그림 자리 ${slots}개를 검색이나 AI로 채웁니다.`, { images: slots }, { title: '일괄 이미지 찾기', okLabel: '찾기 시작', exactImages: true }))) return;
+    const subj = globalState.subjects.find(s => s.id === currentSubjectId);
+    const stats = { made: 0, failed: 0 };
+    let halt = ''; // fillTabImages가 멈춘 까닭('gone' · 'save')
     await window.runLessonJob(moduleId, { label: '일괄 이미지 찾기', current: tabs[0].id, total: tabs.length, alerts: true }, async () => {
         try {
-            for (let i = 0; i < tabs.length && !window.isTabGenerationStopped(); i++) {
-                const tab = tabs[i];
-                window.updateLessonJob({ current: tab.id, label: `${tab.label} 이미지`, done: i });
-                const snapshot = storedTabMarkdown(mod, tab.id);
-                const processed = await processImageTags(mod, snapshot, { amount: 'all', onStatus: window.setPipelineStatus, latest: () => latestTabMarkdown(mod, tab.id, snapshot) });
-                setTabMarkdown(mod, tab.id, processed);
-                await saveState();
-                if (isViewingTab(mod, tab.id)) renderEditor(mod);
+            for (let i = 0; i < tabs.length && !halt && !window.isTabGenerationStopped(); i++) {
+                window.updateLessonJob({ current: tabs[i].id, label: `${tabs[i].label} 이미지`, done: i });
+                halt = await fillTabImages(subj, mod, tabs[i].id, stats);
             }
-            if (!window.isTabGenerationStopped()) window.notifyLessonJobDone('이미지 일괄 확보가 완료되었습니다.');
+            const summary = imageFillSummary(stats, slots);
+            if (halt === 'gone') window.notifyLessonJobDone('일괄 이미지 찾기를 멈췄습니다. 그사이 이 차시를 지우거나 옮겼거나, 백업·PC 폴더를 불러와 내용이 바뀌었습니다.', 'warning');
+            else if (halt === 'save') window.notifyLessonJobDone(`저장하지 못해 일괄 이미지 찾기를 멈췄습니다. 마지막에 넣은 그림은 아직 저장되지 않았습니다. ${SAVE_AGAIN_HINT}`, 'error');
+            else if (window.isTabGenerationStopped()) window.notifyLessonJobDone(`일괄 이미지 찾기를 멈췄습니다. ${summary.text} 다시 누르면 남은 자리부터 이어서 채웁니다.`, 'warning');
+            else window.notifyLessonJobDone(`일괄 이미지 찾기를 마쳤습니다. ${summary.text}`, summary.kind);
         } catch (e) {
             console.error('이미지 일괄 확보 실패:', e);
             window.showAlert('이미지 검색/생성 중 오류가 발생했습니다.');
@@ -1571,158 +1706,256 @@ async function generateAllImagesInModule(moduleId) {
 
 
 
-// 현재 교과의 모든 차시를 정리: 마크다운 sanitize + 누락 이미지 일괄 생성
-window.sanitizeAllContent = async function () {
-    const subjForEstimate = globalState.subjects.find(s => s.id === currentSubjectId);
-    const slots = (courseData || []).reduce((sum, mod) => sum + LESSON_TABS.reduce((tabSum, tab) => tabSum + (storedTabMarkdown(mod, tab.id).split(IMAGE_TAG_MARK).length - 1), 0), 0);
-    if (!(await confirmWithEstimate(`'${subjForEstimate?.title || '이 교과'}'의 모든 차시에 마크다운 정리와 빠진 그림 채우기를 합니다(그림 자리 ${slots}개).`, { images: slots }, { title: '콘텐츠 정리', okLabel: '정리 시작' }))) return;
+// 교과의 차시와 최종 평가. 차시 목록 안의 id 'mainQuest' 항목은 편집기에서 열리지 않으므로(getEditingModule은 subj.mainQuest를 연다) 빼고,
+// 같은 객체가 두 번 들어가지 않게 한다
+const cleanupTargets = subj => [...new Set([...(subj.lessons || []).filter(lesson => lesson && lesson.id !== 'mainQuest'), subj.mainQuest].filter(Boolean))];
 
-    const subj = globalState.subjects.find(s => s.id === currentSubjectId);
-    if (!subj) { window.showAlert('교과를 먼저 선택하세요.'); return; }
+// 탭(옛 본문은 하나)마다 글 서식을 정리한다. 고친 글 수를 돌려준다
+function cleanLessonMarkdown(mod) {
+    if (typeof sanitizeMarkdownContent !== 'function') return 0;
+    return lessonTextParts(mod).reduce((count, part) => {
+        saveOpenEditsFor(mod, part.id); // 원문 칸에서 고치던 글을 먼저 저장해 덮어쓰지 않는다(tabs.js)
+        const before = storedTabMarkdown(mod, part.id);
+        const after = sanitizeMarkdownContent(before);
+        if (after === before) return count;
+        setTabMarkdown(mod, part.id, after);
+        return count + 1;
+    }, 0);
+}
 
-    const btn = document.getElementById('sanitize-btn');
-    const originalHTML = btn ? btn.innerHTML : '';
-    if (btn) { btn.innerHTML = '<i class="ph-bold ph-spinner animate-spin"></i> 정리 중...'; btn.disabled = true; }
-
-    const loading = document.getElementById('editor-loading');
-    const loadingText = document.getElementById('editor-loading-text');
-    if (loading) loading.style.display = 'flex';
-
-    let sanitized = 0;
-    let imagesDone = 0;
-    const targets = [...(subj.lessons || []), subj.mainQuest].filter(Boolean);
-
-    try {
-        // Pass 1: 마크다운 정리 (모든 탭·메인 컨텐츠)
-        for (let i = 0; i < targets.length; i++) {
-            const mod = targets[i];
-            if (loadingText) loadingText.textContent = `마크다운 정리 (${i + 1}/${targets.length}): ${mod.title || ''}`;
-            if (mod.content && typeof sanitizeMarkdownContent === 'function') {
-                const before = mod.content;
-                mod.content = sanitizeMarkdownContent(before);
-                if (before !== mod.content) sanitized++;
-            }
-            if (mod.tabContents) {
-                for (const tab of Object.keys(mod.tabContents)) {
-                    if (mod.tabContents[tab]) {
-                        const before = mod.tabContents[tab];
-                        mod.tabContents[tab] = sanitizeMarkdownContent(before);
-                        if (before !== mod.tabContents[tab]) sanitized++;
-                    }
-                }
-            }
+// 콘텐츠 정리의 차시 하나: 서식을 고치고 남은 그림 자리를 채운다. 그리는 동안 차시가 지워지거나 불러온 내용으로 바뀌면 { lost: true }
+async function cleanupLesson(subj, mod, run) {
+    const stats = { made: 0, failed: 0 };
+    const changed = cleanLessonMarkdown(mod);
+    let touched = changed > 0;
+    if (changed && lessonTextParts(mod).some(part => isShowingLessonTab(subj, mod, part.id))) renderEditor(mod);
+    for (const part of lessonTextParts(mod)) {
+        if (run.stopped) break;
+        const snapshot = storedTabMarkdown(mod, part.id);
+        if (!pendingImageTags(snapshot).length) continue;
+        const processed = await processImageTags(mod, snapshot, {
+            amount: 'all', inject: false, quiet: true, stats, onStatus: window.setPipelineStatus,
+            isStopped: () => window.isTabGenerationStopped() || !lessonStillLive(subj, mod), // 차시가 사라지면 남은 그림을 더 부르지 않는다
+            latest: () => latestTabMarkdown(mod, part.id, snapshot)
+        });
+        if (!lessonStillLive(subj, mod)) return { lost: true };
+        if (processed !== storedTabMarkdown(mod, part.id)) {
+            setTabMarkdown(mod, part.id, processed);
+            touched = true;
         }
-
-        // Pass 2: 누락 이미지 처리 (<!-- [IMG: ... ] --> 가 남아있는 차시)
-        for (let i = 0; i < targets.length; i++) {
-            const mod = targets[i];
-            const hasTag = (mod.content && mod.content.includes('<!-- [IMG:'))
-                || (mod.tabContents && Object.values(mod.tabContents).some(c => c && c.includes('<!-- [IMG:')));
-            if (!hasTag) continue;
-            if (loadingText) loadingText.textContent = `이미지 처리 (${i + 1}/${targets.length}): ${mod.title || ''}`;
-            try {
-                // 메인 content
-                if (mod.content && mod.content.includes('<!-- [IMG:')) {
-                    mod.content = await processImageTags(mod, mod.content);
-                    imagesDone++;
-                }
-                // 탭별 content
-                if (mod.tabContents) {
-                    for (const tab of Object.keys(mod.tabContents)) {
-                        if (mod.tabContents[tab] && mod.tabContents[tab].includes('<!-- [IMG:')) {
-                            mod.tabContents[tab] = await processImageTags(mod, mod.tabContents[tab]);
-                            imagesDone++;
-                        }
-                    }
-                }
-            } catch (e) {
-                console.warn('[sanitizeAllContent] 이미지 처리 실패:', mod.title, e);
-            }
-        }
-
-        await saveState();
-        // 현재 열린 에디터가 있으면 리렌더
-        const editing = typeof getEditingModule === 'function' ? getEditingModule() : null;
-        if (editing) renderEditor(editing);
-
-        window.showToast(`✅ 정리 완료 — 마크다운 ${sanitized}건, 이미지 ${imagesDone}건`, 'success');
-    } catch (e) {
-        console.error('[sanitizeAllContent]', e);
-        window.showAlert('정리 중 오류: ' + (e.message || e));
-    } finally {
-        if (loading) loading.style.display = 'none';
-        if (btn) { btn.innerHTML = originalHTML; btn.disabled = false; }
+        if (isShowingLessonTab(subj, mod, part.id)) renderEditor(mod);
     }
+    return { lost: false, changed, touched, stats };
+}
+
+// 콘텐츠 정리: 교과의 모든 차시와 최종 평가에서 글 서식을 고치고 아직 채우지 않은 그림 자리를 모두 채운다(이미지 양 설정과 상관없이).
+// 화면을 막지 않고 진행 막대(runLessonJob)에서 차시 순서·그림 장수·중지를 보인다. 바뀐 차시마다 저장하므로 멈춰도 한 데까지 남는다
+window.sanitizeAllContent = async function () {
+    const subj = globalState.subjects.find(s => s.id === currentSubjectId);
+    if (!subj) return window.showAlert('교과를 먼저 선택하세요.');
+    if (window.isLessonPipelineRunning?.()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
+    const targets = cleanupTargets(subj);
+    const cleanText = typeof sanitizeMarkdownContent === 'function' ? sanitizeMarkdownContent : text => text;
+    const slotsOf = targets.map(mod => countImageSlots(mod, undefined, cleanText)); // 서식 정리가 고치는 깨진 태그까지 센다
+    const slots = slotsOf.reduce((sum, count) => sum + count, 0);
+    const lessonCount = targets.filter(mod => mod.id !== 'mainQuest').length;
+    const hasFinal = !!subj.mainQuest && lessonTextParts(subj.mainQuest).length > 0;
+    const where = `${subj.title ? `'${subj.title}'의` : '이 교과의'} 차시 ${lessonCount}개${hasFinal ? '와 최종 평가' : ''}에서`;
+    const ok = slots
+        ? await confirmWithEstimate(`${where} 글 서식을 고치고, 아직 채우지 않은 그림 자리 ${slots}개를 채웁니다. 오른쪽 아래 막대에서 언제든 멈출 수 있습니다.`, { images: slots }, { title: '콘텐츠 정리', okLabel: '정리 시작', exactImages: true })
+        : await confirmAsync(`${where} 글 서식을 고칩니다. 채울 그림 자리는 없습니다.`, { title: '콘텐츠 정리', okLabel: '정리 시작', tone: 'primary' });
+    if (!ok) return;
+    const stats = { made: 0, failed: 0 };
+    let cleaned = 0;
+    let dropped = 0; // 정리하는 동안 지운 차시의 그림 자리. 끝 알림의 남긴 자리에서 뺀다
+    let halt = ''; // 'gone': 교과를 지웠거나 불러온 내용으로 바뀌었다 · 'save': 저장하지 못했다
+    const outcome = await window.runLessonJob(currentEditingModuleId ?? targets[0]?.id, { label: '콘텐츠 정리', total: targets.length }, async run => {
+        try {
+            for (let i = 0; i < targets.length && !run.stopped && !halt; i++) {
+                const mod = targets[i];
+                window.updateLessonJob({ label: `콘텐츠 정리 · ${mod.title || '차시'}`, done: i });
+                const done = lessonStillLive(subj, mod) ? await cleanupLesson(subj, mod, run) : { lost: true };
+                if (done.lost) { // 그사이 지운 차시는 건너뛰고(그 자리 수도 빼고), 교과째 바뀌었으면 멈춘다
+                    dropped += slotsOf[i];
+                    if (!globalState.subjects.includes(subj)) halt = 'gone';
+                    continue;
+                }
+                cleaned += done.changed;
+                stats.made += done.stats.made;
+                stats.failed += done.stats.failed;
+                // 바뀐 차시만 저장한다(저장마다 PC 폴더 동기화가 돈다). 저장하지 못하면 그림을 더 부르지 않는다
+                if (done.touched && (await saveState()) === false) halt = 'save';
+            }
+            if (!halt && !globalState.subjects.includes(subj)) halt = 'gone';
+            return { ok: true };
+        } catch (e) {
+            console.error('[콘텐츠 정리]', e);
+            window.showAlert(`정리 중 오류가 나 멈췄습니다. 앞의 차시까지 고친 내용은 저장했습니다.\n${e.message || e}`);
+            return { ok: false };
+        }
+    });
+    if (!outcome?.ok) return; // 다른 생성이 돌고 있었거나(busy) 오류를 이미 알렸다
+    // 교과째 바뀌었으면 넣은 그림 수를 말하지 않는다(그 그림은 지금 데이터에 없다)
+    if (halt === 'gone') return window.notifyLessonJobDone('콘텐츠 정리를 멈췄습니다. 그사이 이 교과를 지우거나 백업·PC 폴더를 불러와 내용이 바뀌었습니다.', 'warning');
+    if (halt === 'save') return window.notifyLessonJobDone(`저장하지 못해 콘텐츠 정리를 멈췄습니다. 마지막에 고친 차시는 아직 저장되지 않았습니다. ${SAVE_AGAIN_HINT}`, 'error');
+    const formatted = cleaned ? `글 ${cleaned}개의 서식을 고쳤습니다.` : '고칠 서식은 없었습니다.';
+    const summary = slots ? imageFillSummary(stats, slots - dropped) : null; // 채울 자리가 없었으면 그림 이야기는 하지 않는다
+    const report = summary ? `${formatted} ${summary.text}` : formatted;
+    if (window.isTabGenerationStopped()) return window.notifyLessonJobDone(`콘텐츠 정리를 멈췄습니다. ${report} 다시 누르면 남은 곳부터 이어서 합니다.`, 'warning');
+    window.notifyLessonJobDone(`콘텐츠 정리를 마쳤습니다. ${report}`, summary ? summary.kind : 'success');
 };
+window.cleanupTargets = cleanupTargets;
+window.cleanLessonMarkdown = cleanLessonMarkdown;
+window.lessonStillLive = lessonStillLive;
 
 // 차시 삽화는 과정 전체가 같은 화풍을 쓴다. 사용자가 직접 쓴 이미지 명령에는 붙이지 않는다.
 function withLessonImageStyle(prompt) {
     return prompt.includes(LESSON_IMAGE_STYLE) ? prompt : `${prompt}, ${LESSON_IMAGE_STYLE}`;
 }
 
-async function generateImageAPI(prompt) {
-    if (usesSvgIllustration()) return generateSvgIllustration(prompt);
+// 한 작업(전체 생성·남은 차시 생성·일괄 작업) 동안 다시 불러도 안 되는 그림 모델을 적어 둔다. 작업이 끝나면 잊는다
+// left: 그림 없이 남긴 교안 그림 자리(태그) 수 · slides: 만들지 못한 교수안 슬라이드 그림 수(슬라이드 그림은 교안에 자리가 남지 않는다)
+let _imageRun = null; // { blocked: Map(모델 → 'zero'|'daily'|'credit'|'unavailable'), told, kind, svg, left, slides }
+const IMAGE_BLOCK_NOTICE = '그림 모델을 더 쓸 수 없어 남은 그림은 건너뜁니다. 그림 자리는 그대로 둡니다.';
+const IMAGE_BLOCK_NOTICE_SEARCH = '그림 모델을 더 쓸 수 없어 남은 교안 그림은 검색으로만 찾습니다. 못 찾은 자리는 그대로 둡니다.'; // 검색 키가 있을 때
+// 막힌 까닭(cause)과 다시 해 볼 때(then). then 뒤에 남긴 곳에 맞는 할 일을 붙인다(imageRunNote)
+const IMAGE_BLOCK_ADVICE = {
+    zero: { cause: "이 키로는 고른 그림 모델을 쓸 수 없습니다(사용 한도 0). 설정의 이미지 생성 모델에서 'SVG 삽화'를 고르면 글 모델이 그림을 그립니다.", then: '그다음' },
+    daily: { cause: '오늘 쓸 수 있는 그림 모델 사용량을 다 썼습니다.', then: '내일' },
+    credit: { cause: '그림 모델의 잔액(크레딧)이 모자랍니다.', then: '충전한 뒤' },
+    unavailable: { cause: '고른 그림 모델을 이 키로 쓸 수 없습니다.', then: '설정의 이미지 생성 모델을 바꾼 뒤' },
+    svg: { cause: '글 모델의 사용 한도나 키 문제로 SVG 삽화를 그리지 못했습니다.', then: '설정의 키와 모델을 확인하거나 한도가 풀린 뒤' }
+};
+// 교안 그림 자리는 태그로 남아 일괄 작업이 채운다. 슬라이드 그림은 교안에 자리가 없어 슬라이드 스튜디오나 교수안 다시 만들기로 채운다
+const IMAGE_FILL_LATER = "'일괄 이미지 찾기'(차시)나 '콘텐츠 정리'(교과 전체)로 채우세요.";
+const SLIDE_IMAGES_LATER = '슬라이드 스튜디오에서 빈 이미지 칸에 AI 그림을 넣거나 교수안을 다시 만드세요.';
+
+// 작업을 시작할 때 연다. 이미 열려 있으면 그대로 두고 false. true를 받은 쪽만 끝날 때(finally) endImageRun을 부른다
+window.beginImageRun = function () {
+    if (_imageRun) return false;
+    _imageRun = { blocked: new Map(), told: false, kind: '', svg: false, left: 0, slides: 0 };
+    return true;
+};
+window.endImageRun = function () { _imageRun = null; };
+
+// 그림 모델이 막혀 만들지 못한 교수안 슬라이드 그림 수를 적는다(gyosuan-images.js). 작업 밖이면 적지 않는다
+window.noteSlideImagesLeft = function (count) {
+    if (_imageRun && count > 0) _imageRun.slides += count;
+};
+
+// 작업이 끝날 때 한 번 보일 안내: 남긴 곳(교안 그림 자리·슬라이드 그림), 막힌 까닭, 남긴 곳에 맞는 할 일. 그림 모델이 모두 막히지 않았으면 ''
+window.imageRunNote = function () {
+    if (!_imageRun?.told) return '';
+    const { left, slides } = _imageRun;
+    const advice = _imageRun.svg ? IMAGE_BLOCK_ADVICE.svg : (IMAGE_BLOCK_ADVICE[_imageRun.kind] || IMAGE_BLOCK_ADVICE.unavailable);
+    const where = [left ? `그림 자리 ${left}개는 그림 없이 남겼습니다.` : '', slides ? `교수안 슬라이드 그림 ${slides}장은 만들지 못했습니다.` : ''];
+    const todo = [left ? IMAGE_FILL_LATER : '', slides ? `${left ? '슬라이드 그림은 ' : ''}${SLIDE_IMAGES_LATER}` : ''].filter(Boolean).join(' ');
+    return [...where, advice.cause, todo ? `${advice.then} ${todo}` : ''].filter(Boolean).join(' ');
+};
+
+// 그림 모델 오류 가운데 이번 작업 동안 다시 불러도 안 되는 것: 사용 한도(한도 0·하루)·잔액·권한·없는 모델
+function imageBlockKind(err) {
+    if (err?.quota) return err.quota; // 'zero' · 'daily' (ai-errors.js)
+    if (err?.status === 402) return 'credit';
+    if ([401, 403, 404].includes(err?.status)) return 'unavailable';
+    return '';
+}
+
+// 그런 오류면 이번 작업 동안 그 모델을 건너뛰게 적어 둔다. 적었으면 true (course-art.js의 SVG 삽화도 부른다)
+function markImageBlocked(model, err) {
+    const kind = imageBlockKind(err);
+    if (!kind || !_imageRun) return false;
+    _imageRun.blocked.set(model, kind);
+    return true;
+}
+window.markImageBlocked = markImageBlocked;
+
+// 그림을 그려 볼 모델 순서(generateImageAPI와 예고가 같이 쓴다): SVG 삽화면 글 모델 하나,
+// 아니면 고른 Higgsfield 모델 → (Gemini 키가 있으면) 고른 Gemini 모델 → 나머지 Gemini 그림 모델
+function imageModelChain() {
+    if (typeof usesSvgIllustration === 'function' && usesSvgIllustration()) return [SVG_IMAGE_MODEL];
+    const higgsfield = isHiggsfieldModel(IMAGE_MODEL) ? [IMAGE_MODEL] : [];
+    if (higgsfield.length && !apiKey) return higgsfield;
+    const gemini = [...new Set([IMAGE_MODEL, ...IMAGE_MODEL_OPTIONS.map(o => o.value)])].filter(model => model !== SVG_IMAGE_MODEL && !isHiggsfieldModel(model));
+    return [...higgsfield, ...gemini];
+}
+
+// 이번 작업에서 그려 볼 그림 모델이 모두 막혔는지. 작업 밖이거나 막힌 모델이 없으면 바로 false(설정 함수를 부르지 않는다)
+function imageGenerationBlocked() {
+    if (!_imageRun?.blocked.size) return false;
+    const chain = imageModelChain();
+    return chain.length > 0 && chain.every(model => _imageRun.blocked.has(model));
+}
+window.imageGenerationBlocked = imageGenerationBlocked;
+
+// 그림 모델 없이 그림을 찾을 수 있는지(Google 검색·Pixabay 키). 그림 모델이 막혀도 검색은 계속한다
+function imageSearchReady() {
+    const google = !!googleSearchCx && Array.isArray(googleSearchApiKeys) && googleSearchApiKeys.length > 0;
+    const pixabay = !!pixabayApiKey && _pixabayRejectedKey !== pixabayApiKey;
+    return google || pixabay;
+}
+
+// 모두 막힌 것을 이 작업에서 처음 알았을 때 한 번만 알린다
+function tellImageBlockOnce() {
+    if (!_imageRun || _imageRun.told) return;
+    const chain = imageModelChain();
+    _imageRun.told = true;
+    _imageRun.svg = chain.length === 1 && chain[0] === SVG_IMAGE_MODEL;
+    _imageRun.kind = _imageRun.blocked.get(chain[0]) || 'unavailable';
+    window.showToast?.(imageSearchReady() ? IMAGE_BLOCK_NOTICE_SEARCH : IMAGE_BLOCK_NOTICE, 'warning');
+}
+
+// Gemini 그림 모델 하나에 보낸다(한도·서버 문제면 한 번만 다시). 그림이 없으면 이유를 담은 오류
+async function requestImageModel(model, prompt, { signal = null, onRetry = null } = {}) {
+    const data = await callGemini(model, {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+            responseModalities: ["TEXT", "IMAGE"],
+            imageConfig: { aspectRatio: IMAGE_ASPECT_RATIO, imageSize: IMAGE_SIZE }
+        },
+        signal, attempts: IMAGE_CALL_ATTEMPTS
+    }, onRetry);
+    const imgPart = data?.candidates?.[0]?.content?.parts?.find(p => p.inlineData?.mimeType?.startsWith('image/'));
+    if (imgPart) return `data:${imgPart.inlineData.mimeType};base64,${imgPart.inlineData.data}`;
+    const reason = data?.promptFeedback?.blockReason || data?.candidates?.[0]?.finishReason || '이미지 파트 없음';
+    console.warn(`[Image Gen] Gemini ${model} 응답에 이미지 없음 — ${reason}`, data);
+    throw new Error(reason);
+}
+
+// 성공하면 data URL, 실패하면 null. opts.signal을 주면 중지할 때 AbortError를 던진다(주지 않으면 던지지 않는다)
+// opts.onRetry: 그림 모델 호출이 한도·서버·연결 문제로 실패해 다시 보내기 전에({ delayMs, isRateLimit }). 작업 안에서 그림 모델이 모두 막히면 한 번 알리고, 그 뒤로는 부르지 않고 null
+async function generateImageAPI(prompt, { signal = null, onRetry = null } = {}) {
+    if (signal?.aborted) throw abortError();
+    if (imageGenerationBlocked()) return null;
+    if (typeof usesSvgIllustration === 'function' && usesSvgIllustration()) {
+        const svg = await generateSvgIllustration(prompt, { signal, attempts: IMAGE_CALL_ATTEMPTS });
+        if (!svg && imageGenerationBlocked()) tellImageBlockOnce();
+        return svg;
+    }
 
     const errorHistory = [];
-    // Higgsfield를 골랐으면 먼저 쓰고, 실패하면 Gemini 키가 있을 때만 Gemini 모델로 넘어간다
-    if (isHiggsfieldModel(IMAGE_MODEL)) {
-        try {
-            return await generateHiggsfieldImage(IMAGE_MODEL, prompt);
-        } catch (e) {
-            console.error('[Image Gen] Higgsfield 에러:', e.message);
-            errorHistory.push(e.message);
-        }
-    }
-
-    // 폴백 체인: 선택한 모델 → 나머지 Gemini 이미지 모델 순서
+    // Higgsfield를 골랐으면 먼저 쓰고, 실패하면 Gemini 키가 있을 때만 Gemini 모델로 넘어간다(imageModelChain)
     // (gemini-3.1-flash-image-preview, Imagen 4는 2026년 서비스 종료로 제거)
-    const geminiModels = errorHistory.length && !apiKey ? [] : [...new Set([IMAGE_MODEL, ...IMAGE_MODEL_OPTIONS.map(o => o.value)])]
-        .filter(model => model !== SVG_IMAGE_MODEL && !isHiggsfieldModel(model));
-
-    for (const model of geminiModels) {
-        const payload = {
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: {
-                responseModalities: ["TEXT", "IMAGE"],
-                imageConfig: { aspectRatio: IMAGE_ASPECT_RATIO, imageSize: IMAGE_SIZE }
-            }
-        };
-
-        for (let retry = 0; retry < 3; retry++) {
-            try {
-                const data = await callGemini(model, payload);
-
-                const parts = data?.candidates?.[0]?.content?.parts;
-                if (parts) {
-                    const imgPart = parts.find(p => p.inlineData && p.inlineData.mimeType && p.inlineData.mimeType.startsWith('image/'));
-                    if (imgPart) {
-                        return `data:${imgPart.inlineData.mimeType};base64,${imgPart.inlineData.data}`;
-                    }
-                }
-                const blockReason = data?.promptFeedback?.blockReason
-                    || data?.candidates?.[0]?.finishReason
-                    || '이미지 파트 없음';
-                console.warn(`[Image Gen] Gemini ${model} 응답에 이미지 없음 — ${blockReason}`, data);
-                errorHistory.push(`${model}: ${blockReason}`);
-                break;
-            } catch (e) {
-                const msg = e.message || String(e);
-                const is429 = e.status === 429 || msg.includes('429');
-                const is404 = e.status === 404 || msg.includes('404') || /not\s*found|unsupported/i.test(msg);
-                if (is429 && retry < 2) {
-                    const waitSec = (retry + 1) * 15;
-                    console.warn(`[Image Gen] 429 Rate Limit — ${waitSec}초 대기`);
-                    if (window.showToast) window.showToast(`이미지 생성 대기 중... (${waitSec}초)`, 'warning');
-                    await new Promise(r => setTimeout(r, waitSec * 1000));
-                    continue;
-                }
-                console.error(`[Image Gen] Gemini ${model} 에러:`, msg);
-                errorHistory.push(`${model}: ${is404 ? '모델 미지원' : msg.slice(0, 80)}`);
-                break;
-            }
+    for (const model of imageModelChain()) {
+        if (_imageRun?.blocked.has(model)) continue;
+        try {
+            if (!isHiggsfieldModel(model)) return await requestImageModel(model, prompt, { signal, onRetry });
+            const started = Date.now();
+            const url = await generateHiggsfieldImage(model, prompt, { signal });
+            window.recordAiTiming?.(model, Date.now() - started); // Higgsfield는 callGemini를 거치지 않아 여기서 잰다
+            return url;
+        } catch (e) {
+            if (e?.name === 'AbortError') throw e;
+            markImageBlocked(model, e);
+            const msg = e.message || String(e);
+            console.error(`[Image Gen] ${model} 에러:`, msg);
+            errorHistory.push(isHiggsfieldModel(model) ? msg : `${model}: ${e.status === 404 ? '모델 미지원' : msg.slice(0, 80)}`);
         }
     }
-
+    if (imageGenerationBlocked()) {
+        tellImageBlockOnce();
+        return null;
+    }
     console.error("[Image Gen] 모든 모델 실패:", errorHistory);
     if (window.showToast && errorHistory.length) {
         window.showToast(`⚠️ 이미지 생성 실패 (${errorHistory[0]})`, 'error');
@@ -1730,13 +1963,53 @@ async function generateImageAPI(prompt) {
     return null;
 }
 
+/* ---------- 그림을 못 만든 자리의 '다시 검색' ---------- */
+// 그림을 못 만든 자리(imagePlaceholderHtml) 블록. 안에 div가 없어 처음 만나는 </div>가 그 자리의 끝이다
+const IMAGE_PLACEHOLDER_BLOCK = /<div class="image-placeholder"[\s\S]*?<\/div>/g;
 
+// 화면에 보이는 '그림을 못 만든 자리'의 원문 위치(화면 순서). 첫머리 정리(cleanLessonOpening)가 숨기는 자리는 뺀다:
+// 자리마다 번호 표시로 바꿔 같은 정리를 돌려 보고 남는 번호만 고른다
+function shownPlaceholderBlocks(source) {
+    const text = String(source || '');
+    const blocks = [...text.matchAll(IMAGE_PLACEHOLDER_BLOCK)].map((match, n) => ({ n, start: match.index, raw: match[0] }));
+    if (!blocks.length || typeof cleanLessonOpening !== 'function') return blocks;
+    let n = 0;
+    const numbered = text.replace(IMAGE_PLACEHOLDER_BLOCK, () => `<div class="image-placeholder" data-slot-n="${n++}"></div>`);
+    const shown = new Set([...String(cleanLessonOpening(numbered)).matchAll(/data-slot-n="(\d+)"/g)].map(match => Number(match[1])));
+    return blocks.filter(block => shown.has(block.n));
+}
+
+// 누른 자리가 원문의 어느 블록인지. 화면의 자리 수와 원문에서 보이는 자리 수가 같을 때만 순서로 짝짓는다. 못 찾으면 null
+function locateImagePlaceholder(source, placeholder) {
+    const onScreen = [...(document.getElementById('render-view')?.querySelectorAll('.image-placeholder') || [])];
+    const blocks = shownPlaceholderBlocks(source);
+    const at = onScreen.indexOf(placeholder);
+    return at >= 0 && onScreen.length === blocks.length ? blocks[at] : null;
+}
+
+// 그림을 못 만든 자리를 새 그림 칸으로 바꿔 저장한다. 그림을 만드는 사이 탭 글이 바뀌어 그 자리를 찾지 못하면 false
+async function fillImagePlaceholder(mod, tabId, block, b64, keyword, desc) {
+    const source = storedTabMarkdown(mod, tabId);
+    const unmoved = source.slice(block.start, block.start + block.raw.length) === block.raw;
+    const once = source.indexOf(block.raw) === source.lastIndexOf(block.raw); // 옮겨졌으면 한 곳에만 있을 때 그 자리로 본다
+    const start = unmoved ? block.start : (once ? source.indexOf(block.raw) : -1);
+    if (start < 0) return false;
+    const imgId = 'img_' + Date.now() + Math.floor(Math.random() * 1000);
+    mod.images = { ...(mod.images || {}), [imgId]: b64 };
+    const html = imageWrapperHtml(imgId, keyword, escapeHtml(desc), escapeHtml(desc.slice(0, 80)));
+    setTabMarkdown(mod, tabId, source.slice(0, start) + html + source.slice(start + block.raw.length));
+    await saveState();
+    if (getEditingModule() === mod && isViewingTab(mod, tabId)) renderEditor(mod);
+    return true;
+}
 
 window.promptRegenerateImage = function (btn, fallbackKeyword, imgId) {
 
     const wrapper = btn.closest('.image-wrapper') || btn.closest('.image-placeholder');
 
     if (!wrapper || wrapper.querySelector('.prompt-overlay')) return;
+
+    if (wrapper.classList.contains('image-placeholder')) wrapper.style.position = 'relative'; // 입력 창이 그 자리 위에 뜨게(그림 칸은 CSS가 맞춘다)
 
 
 
@@ -1821,27 +2094,27 @@ function extractContextForImage(imgId) {
 
 
 
+// 그림 칸의 '다시 찾기'는 그 그림을 바꾸고, 그림을 못 만든 자리의 '다시 검색'은 그 자리를 새 그림 칸으로 바꾼다.
+// 만드는 동안 다른 차시·탭으로 옮겨도 누른 차시에 넣는다. 넣을 곳을 원문에서 찾지 못하면 만들지 않는다(비용만 든다)
 window.doRegenerateImage = async function (submitBtn, fallbackKeyword, imgId) {
-
     const overlay = submitBtn.closest('.prompt-overlay');
-
     const wrapper = overlay.closest('.image-wrapper');
-
-    const textarea = overlay.querySelector('textarea');
-
-    let prompt = textarea.value.trim();
-
-
-
-    if (!prompt) {
-
-        const context = extractContextForImage(imgId);
-
-        prompt = `다음 문맥에 어울리는 이미지: ${context} (주요 키워드: ${fallbackKeyword})`;
-
+    const placeholder = wrapper ? null : overlay.closest('.image-placeholder');
+    const mod = getEditingModule();
+    const tabId = currentLessonTab;
+    const slot = placeholder && mod ? locateImagePlaceholder(storedTabMarkdown(mod, tabId), placeholder) : null;
+    if (!mod || (wrapper ? !imgId : !slot)) {
+        overlay.remove();
+        return window.showAlert("이 그림 자리를 교안 원문에서 찾지 못했습니다. 도구 → 원문 전체 수정에서 그 자리를 지운 뒤 '이미지 삽입'으로 그림을 넣어 주세요.");
     }
-
-
+    // 그림을 못 만든 자리의 설명('이미지 영역: …')은 새 그림의 설명과 기본 요청에 쓴다
+    const desc = slot ? ((placeholder.querySelector('span')?.textContent || '').replace(/^이미지 (?:영역|확보 실패):\s*/, '').trim() || fallbackKeyword) : '';
+    const textarea = overlay.querySelector('textarea');
+    let prompt = textarea.value.trim();
+    if (!prompt) {
+        const context = slot ? desc : extractContextForImage(imgId);
+        prompt = `다음 문맥에 어울리는 이미지: ${context} (주요 키워드: ${fallbackKeyword})`;
+    }
 
     overlay.innerHTML = `
 
@@ -1860,33 +2133,18 @@ window.doRegenerateImage = async function (submitBtn, fallbackKeyword, imgId) {
 
 
     try {
-
         const newB64 = await generateImageAPI(withLessonImageStyle(prompt));
-
-        if (newB64) {
-
-            const mod = getEditingModule();
-
-            if (mod) {
-
-                if (!mod.images) mod.images = {};
-
-                mod.images[imgId] = newB64;
-
-                saveState().then(() => {
-                    const imgEl = wrapper.querySelector('img');
-
-                    if (imgEl) imgEl.src = newB64;
-                });
-
-            }
-
-        } else {
-
+        if (!newB64) {
             window.showAlert('이미지 생성에 실패했습니다.');
-
+        } else if (slot) {
+            if (!(await fillImagePlaceholder(mod, tabId, slot, newB64, fallbackKeyword, desc))) window.showAlert('그림을 만드는 동안 탭 글이 바뀌어 그 자리를 찾지 못했습니다. 다시 눌러 주세요.');
+        } else {
+            mod.images = { ...(mod.images || {}), [imgId]: newB64 };
+            saveState().then(() => {
+                const imgEl = wrapper.querySelector('img');
+                if (imgEl) imgEl.src = newB64;
+            });
         }
-
     } catch (e) {
 
         window.showAlert('이미지 재생성 중 오류가 발생했습니다.');
@@ -2578,7 +2836,7 @@ function renderEditor(mod) {
                                 <div class="absolute right-0 mt-1 z-40 p-2 w-44 bg-white border border-gray-200 rounded-lg shadow-lg flex flex-col gap-1">
                             <button onclick="toggleEditorMode('edit'); this.closest('details').open = false" id="raw-edit-btn" class="px-3 py-1.5 text-xs font-bold bg-gray-50 text-gray-700 border border-gray-200 rounded hover:bg-gray-100 flex items-center gap-1 transition-colors" title="이 탭의 마크다운 원문 전체를 고칩니다. 단락 하나는 본문을 두 번 눌러 고칩니다"><i class="ph-bold ph-code"></i> 원문 전체 수정</button>
                             <button onclick="generateAllImagesInModule('${mod.id}')" id="img-batch-btn" class="px-3 py-1.5 text-xs font-bold bg-purple-50 text-purple-600 border border-purple-200 rounded hover:bg-purple-100 flex items-center gap-1 transition-colors hover:-translate-y-0.5"><i class="ph-bold ph-image-square"></i> 일괄 이미지 찾기</button>
-                            <button onclick="sanitizeAllContent()" id="sanitize-btn" class="px-3 py-1.5 text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 flex items-center gap-1 transition-colors hover:-translate-y-0.5" title="마크다운 문법 오류 일괄 정리 + 누락 이미지 일괄 생성"><i class="ph-bold ph-sparkle"></i> 콘텐츠 정리</button>
+                            <button onclick="sanitizeAllContent()" id="sanitize-btn" class="px-3 py-1.5 text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 flex items-center gap-1 transition-colors hover:-translate-y-0.5" title="교과의 모든 차시와 최종 평가에서 글 서식을 고치고, 아직 채우지 않은 그림 자리를 채웁니다"><i class="ph-bold ph-sparkle"></i> 콘텐츠 정리</button>
                             <label class="cursor-pointer px-3 py-1.5 text-xs font-bold bg-blue-50 text-blue-600 border border-blue-200 rounded hover:bg-blue-100 flex items-center gap-1 transition-colors" title="에디터에 이미지 삽입">
                                 <i class="ph-bold ph-image"></i> 이미지 삽입
                                 <input type="file" accept="image/*" class="hidden" multiple onchange="handleImageInputSelect(event)">
