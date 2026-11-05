@@ -96,11 +96,12 @@ test('되돌릴 곳: 같은 차시 id가 두 교과에 있으면 기록을 남�
 });
 
 test('백업 파일을 불러와도 지금 히스토리·휴지통과 파일의 것을 합쳐 잃지 않는다', () => {
+    const [T1, T2, T9] = ['2026-11-01T00:00:00.000Z', '2026-11-02T00:00:00.000Z', '2026-11-09T00:00:00.000Z']; // 지운 날짜는 ISO로 검사한다(묶음 6)
     const meta = {
         history: [{ id: 1, title: '파일' }, { id: 3, title: '겹침' }],
-        trash: { lessonTrash: [{ at: 't1', lesson: { id: 'a' } }], subjectTrash: [{ at: 't2', subject: { id: 's' } }] }
+        trash: { lessonTrash: [{ at: T1, lesson: { id: 'a' } }], subjectTrash: [{ at: T2, subject: { id: 's' } }] }
     };
-    const current = { history: [{ id: 3, title: '겹침' }, { id: 2, title: '지금' }], lessonTrash: [{ at: 't1', lesson: { id: 'a' } }, { at: 't9', lesson: { id: 'b' } }], subjectTrash: [] };
+    const current = { history: [{ id: 3, title: '겹침' }, { id: 2, title: '지금' }], lessonTrash: [{ at: T1, lesson: { id: 'a' } }, { at: T9, lesson: { id: 'b' } }], subjectTrash: [] };
     const merged = ctx.mergeBackupExtras(meta, current);
     assert.strictEqual(JSON.stringify(merged.history.map(h => h.id)), '[1,2,3]');
     assert.strictEqual(merged.lessonTrash.length, 2, '같은 항목은 한 번만');
@@ -855,7 +856,7 @@ function loadFolderSync(stored = {}) {
     const folder = fakeFolder();
     const env = loadSafety(stored, {
         globalState: { courseTitle: '과정', subjects: [{ id: 's1', title: '국어', lessons }], lessonTrash: [], subjectTrash: [] },
-        currentSubjectId: null, projectFolderHandle: folder, folderWriteCache: null, FOLDER_STAMP_KEY: 'teacher:folder-save-stamp',
+        currentSubjectId: null, projectFolderHandle: folder, folderWriteCache: null, FOLDER_STAMP_KEY: 'teacher:folder-save-stamp', stateLoadFailed: false,
         atob: text => Buffer.from(text, 'base64').toString('binary'),
         markFolderSyncOk() {}, markFolderSyncFailed(err) { throw err; }, notifyFolderStopped() {}
     });
@@ -925,10 +926,13 @@ function loadZipImport() {
         courseData: lessons, currentSubjectId: 's1', location: { hash: '' },
         safeJSONParse: text => JSON.parse(text),
         sanitizeState: state => (state ? JSON.parse(JSON.stringify({ subjects: [], ...state })) : null),
-        archived: 0, saves: 0
+        archived: 0, saves: 0,
+        // state.js의 읽지 못한 상태 도우미와 값(묶음 6). 이 시험은 읽은 상태에서 되살린다. PC 폴더는 잇지 않았다(브라우저에 저장한 뒤에만 폴더에 쓴다)
+        isStateLoadFailed: () => false, markStateLoaded() {}, showOverviewAfterRestore() {}, unreadRecord: undefined,
+        projectFolderHandle: null, pruneUnreadCopies: async () => {}
     });
     env.c.archiveContents = async () => { env.c.archived++; };
-    env.c.saveState = async () => { env.c.saves++; };
+    env.c.saveState = async () => { env.c.saves++; return true; }; // 진짜 saveState처럼 브라우저에 저장했으면 true
     env.c.renderSidebar = () => {};
     vm.runInContext(stateFn('window.importProjectZip = async function', '\n};\n'), env.c);
     return env;
@@ -1208,7 +1212,7 @@ test("그 글이 쓰는 그림 고르기: 글을 한 번만 훑어도 글에 'lo
 
 test('저장해 둔 기록 정리: 그림 키가 아주 많고 글이 길어도 곧 끝난다(남이 준 백업의 기록으로 앱 열기가 멈추지 않게)', () => {
     // 백업 불러오기(mergeHistory)로 들어와 저장된 기록 하나: 그림 키 5만 개, 글 4백만 자(ZIP에서는 거의 0으로 줄어든다). 키마다 글 전체를 찾으면 몇 초가 걸린다
-    const images = Object.fromEntries(Array.from({ length: 50000 }, (_, i) => [`img_${i}`, 'x']));
+    const images = Object.fromEntries(Array.from({ length: 50000 }, (_, i) => [`img_${i}`, PNG]));
     const stored = ctx.mergeHistory([], [{ id: 1, title: '큰 기록', date: 'd', content: `${'a'.repeat(4e6)} ![](local:img_7)`, images }], Date.now()).list;
     const started = process.hrtime.bigint();
     const tidy = hist.tidyStoredHistory(stored);
@@ -1245,10 +1249,13 @@ test('되돌릴 곳·확인 창: 남이 준 기록의 이상한 값으로 멈추
 
 test('탭 하나 되돌리기: 그 탭만 바꾸고(옛 단일 본문·탭 없는 최종 평가 포함) 그림은 더하기만 한다', () => {
     const lesson = { id: 1, content: 'a\n\n---\n\nb', images: { x: 'X' }, tabContents: { basicLearn: 'a', basicPrac: 'b', advLearn: null, advPrac: null, assessment: null }, status: 'waiting' };
-    ctx.applyHistoryEntry(lesson, { tabId: 'basicPrac', content: '옛 b ![](local:y)', images: { y: 'Y', odd: 7 } });
+    ctx.applyHistoryEntry(lesson, { tabId: 'basicPrac', content: '옛 b ![](local:y)', images: { y: png(7), odd: 7 } });
     assert.deepStrictEqual(plainJson(lesson.tabContents), { basicLearn: 'a', basicPrac: '옛 b ![](local:y)', advLearn: null, advPrac: null, assessment: null });
     assert.strictEqual(lesson.content, 'a\n\n---\n\n옛 b ![](local:y)', '합친 글도 맞춘다');
-    assert.deepStrictEqual(plainJson(lesson.images), { x: 'X', y: 'Y' });
+    assert.deepStrictEqual(plainJson(lesson.images), { x: 'X', y: png(7) });
+    const textOnly = { id: 9, content: '글', images: {}, tabContents: { basicLearn: '글' } };
+    ctx.applyHistoryEntry(textOnly, { tabId: 'basicLearn', content: '글 ![](local:t)', images: { t: 'Y' } });
+    assert.deepStrictEqual(plainJson(textOnly.images), {}, '그림이 아닌 글자 값은 차시에 넣지 않는다(묶음 6)');
     assert.strictEqual(lesson.status, 'done');
     const legacy = { id: 2, content: '옛 본문', tabContents: { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null } };
     ctx.applyHistoryEntry(legacy, { tabId: 'basicPrac', content: '실습' });
@@ -1259,9 +1266,9 @@ test('탭 하나 되돌리기: 그 탭만 바꾸고(옛 단일 본문·탭 없�
     assert.strictEqual(quest.content, '예전 과제');
     assert.strictEqual(quest.tabContents, undefined, '탭이 없는 최종 평가에 탭을 새로 만들지 않는다');
     const whole = { id: 3, content: '지금', images: { k: 'K' }, tabContents: { basicLearn: '지금' } };
-    ctx.applyHistoryEntry(whole, { content: '예전', tabContents: { basicLearn: '예전', basicPrac: '실습' }, images: { j: 'J' } });
+    ctx.applyHistoryEntry(whole, { content: '예전', tabContents: { basicLearn: '예전', basicPrac: '실습' }, images: { j: png(8) } });
     assert.deepStrictEqual(plainJson(whole.tabContents), { basicLearn: '예전', basicPrac: '실습' }, '차시 기록은 5개 탭을 모두 바꾼다');
-    assert.deepStrictEqual(plainJson(whole.images), { k: 'K', j: 'J' });
+    assert.deepStrictEqual(plainJson(whole.images), { k: 'K', j: png(8) });
 });
 
 test('되돌리기의 그림: 찾지 못한 그림 자리·빈 값은 차시의 진짜 그림을 덮지 않고, 차시 쪽이 그림 자리면 기록의 그림으로 채운다', () => {
@@ -1299,12 +1306,13 @@ test('탭의 지금 글과 되돌리기 전에 남길 내용', () => {
 });
 
 test('새 차시로 되살리기: 탭 하나 기록은 그 탭에 넣고 그림은 글자 값만', () => {
-    const lesson = lessonFromHistory({ title: '차시 · 기본실습', content: '실습 ![](local:a)', tabId: 'basicPrac', images: { a: 'A', odd: 1 } }, 5);
+    const lesson = lessonFromHistory({ title: '차시 · 기본실습', content: '실습 ![](local:a)', tabId: 'basicPrac', images: { a: png(5), odd: 1 } }, 5);
     assert.strictEqual(lesson.title, '차시 · 기본실습 (되살림)');
     assert.strictEqual(lesson.tabContents.basicPrac, '실습 ![](local:a)');
     assert.strictEqual(lesson.tabContents.basicLearn, null);
     assert.strictEqual(lesson.content, '실습 ![](local:a)');
-    assert.deepStrictEqual(plainJson(lesson.images), { a: 'A' });
+    assert.deepStrictEqual(plainJson(lesson.images), { a: png(5) });
+    assert.deepStrictEqual(plainJson(lessonFromHistory({ content: '글', images: { a: 'A', '(': png(5) } }, 6).images), {}, '그림이 아닌 값과 바르지 않은 키는 넣지 않는다(묶음 6)');
 });
 
 test('되돌리기 확인 창: 무엇을 어디로 되돌리는지 말한다', () => {
@@ -1378,10 +1386,11 @@ test('저장해 둔 기록 정리: 객체가 아닌 칸만 빼고, 겹치거나 
     assert.ok(odd.every(item => Number.isSafeInteger(item.id) && item.id >= 0), '모두 화면에서 찾을 수 있는 id');
     assert.strictEqual(new Set(odd.map(item => item.id)).size, 9, '더 나눌 수 없는 큰 id에서도 끝없이 돌지 않고 겹치지 않는다');
     assert.strictEqual(odd[0].id, Number.MAX_SAFE_INTEGER, '바른 id는 그대로');
-    const slim = hist.tidyStoredHistory([{ id: 1, content: '![](local:a)', images: { a: 'A', b: 'B' } }, { id: 2, content: '글', tabContents: {}, images: { a: 'A' } }]);
+    const slim = hist.tidyStoredHistory([{ id: 1, content: '![](local:a)', images: { a: png(1), b: png(2) } }, { id: 2, content: '글', tabContents: {}, images: { a: png(1) } }]);
     assert.deepStrictEqual(plainJson(slim.map(item => Object.keys(item.images))), [['a'], ['a']], '차시 기록(5개 탭)은 그대로 둔다');
-    const kept = { id: 3, content: '![](local:a)', images: { a: 'A' } };
+    const kept = { id: 3, content: '![](local:a)', images: { a: png(1) } };
     assert.strictEqual(hist.tidyStoredHistory([kept])[0], kept, '바꿀 것이 없으면 같은 객체');
+    assert.deepStrictEqual(plainJson(hist.tidyStoredHistory([{ id: 4, content: '![](local:a)', images: { a: 'A' } }])[0].images), {}, '그림이 아닌 값은 뺀다(묶음 6)');
     assert.deepStrictEqual(plainJson(hist.tidyStoredHistory(undefined)), []);
     const again = hist.tidyStoredHistory(tidy);
     assert.deepStrictEqual(plainJson(again.map(item => item.id)), plainJson(tidy.map(item => item.id)), '다시 열어도 같은 id');
@@ -1509,10 +1518,10 @@ function historyRestoreSetup() {
 
 testAsync('탭 하나 되돌리기: 남긴 교과의 그 차시의 그 탭만 바꾸고, 지금 글을 먼저 남긴다', async () => {
     const { asked, archived, notes, inA, inB } = historyRestoreSetup();
-    ctx.contentHistory = [{ id: 5, title: '7차시 · 학습이해도', date: '어제', lessonId: 7, subjectId: 's1', tabId: 'assessment', content: '예전 평가 ![](local:b)', images: { b: 'data:b' } }];
+    ctx.contentHistory = [{ id: 5, title: '7차시 · 학습이해도', date: '어제', lessonId: 7, subjectId: 's1', tabId: 'assessment', content: '예전 평가 ![](local:b)', images: { b: png(3) } }];
     await ctx.restoreHistoryItem(5);
     assert.strictEqual(inA.tabContents.assessment, '예전 평가 ![](local:b)');
-    assert.strictEqual(inA.images.b, 'data:b');
+    assert.strictEqual(inA.images.b, png(3));
     assert.strictEqual(inB.tabContents.basicLearn, 'B 글', '연 교과의 같은 id 차시는 그대로');
     assert.strictEqual(archived.length, 1);
     assert.strictEqual(archived[0].reason, '되돌리기 전');
@@ -1591,6 +1600,252 @@ testAsync('차시가 없으면 연 교과에 새 차시로 그 탭에 넣고, �
     await ctx.restoreHistoryItem(6);
     assert.strictEqual(asked.length, 1, '연 교과가 없으면 확인 창을 띄우지 않는다');
     assert.deepStrictEqual(notes.at(-1), ['되살릴 교과를 먼저 여세요(교과 편집기에서 다시 누르세요).', 'alert']);
+});
+
+/* ---------- 불러온 상태의 안쪽 값(묶음 6) ---------- */
+const W6 = { ...ctx, ...ctx.window };
+const plain6 = value => JSON.parse(JSON.stringify(value));
+const PNG6 = 'data:image/png;base64,' + 'iVBORw0KGgo'.repeat(8);
+const JPG6 = 'data:image/jpeg;base64,/9j/4AAQSkZJRg==';
+const REF6 = 'teacher-image:0123456789abcdef1a';
+const sanitize6 = state => ctx.sanitizeState(JSON.parse(JSON.stringify(state)));
+
+test('그림: 앱이 만든 키·값은 그대로(같은 객체), 정규식·속성을 깨는 키와 값은 뺀다', () => {
+    const good = {
+        img_17300000000001: PNG6, img_mock_123: 'data:image/svg+xml;base64,PHN2Zz4=', ai1x2y3: 'data:image/webp;base64,UklGRg==',
+        img_1730: JPG6, gif_1: 'data:image/gif;base64,R0lGODlh', kept_ref: REF6, img_param: 'data:image/png;charset=binary;base64,QUJD'
+    };
+    assert.strictEqual(W6.safeImageMap(good), good, '고칠 것이 없으면 같은 객체');
+    const bad = {
+        ...good, '(': PNG6, '(a+)+$': PNG6, 'a b': PNG6, ['x'.repeat(81)]: PNG6,
+        num: 5, empty: '', js: 'javascript:alert(1)', html: 'data:text/html;base64,PHNjcmlwdD4=',
+        quote: 'data:image/png;base64,AAA" onerror="x', svgText: 'data:image/svg+xml;utf8,<svg onload=alert(1)>',
+        upper: 'data:image/PNG;base64,QUJD', under: 'data:image/x_y;base64,QUJD', shortRef: 'teacher-image:abc', noData: 'data:image/png;base64,'
+    };
+    assert.deepStrictEqual(Object.keys(W6.safeImageMap(bad)).sort(), Object.keys(good).sort());
+    assert.deepStrictEqual(plain6(W6.safeImageMap(null)), {});
+    assert.deepStrictEqual(plain6(W6.safeImageMap([PNG6])), {});
+    assert.strictEqual(W6.isSafeImageKey(JSON.parse('{"toString":null}')), false, '객체 키에도 던지지 않는다');
+    assert.strictEqual(W6.isSafeImageKey(5), true);
+    assert.strictEqual(W6.isSafeImageValue(JSON.parse('{"toString":null}')), false);
+});
+
+test('탭 글: 글이 아니면 빈 탭, 이름이 이상한 탭은 뺀다. 모두 바르면 같은 객체', () => {
+    const tabs = { basicLearn: '# 기본', basicPrac: null, advLearn: '심화' };
+    assert.strictEqual(W6.safeTabContents(tabs), tabs);
+    const out = W6.safeTabContents({ basicLearn: '# 기본', basicPrac: { evil: 1 }, advLearn: 5, advPrac: null, '../x': 'a', 'a b': 'b', '1abc': 'c', __proto__x: 'd', newTab2: '미래 탭' });
+    assert.deepStrictEqual(plain6(out), { basicLearn: '# 기본', basicPrac: null, advLearn: null, advPrac: null, newTab2: '미래 탭' });
+    assert.strictEqual(W6.safeTabContents('글'), null);
+    assert.strictEqual(W6.safeTabContents([]), null);
+});
+
+test('차시 안쪽 값: 글·목록·삽화·교수안을 고치고, 바른 값과 없는 칸은 그대로 둔다', () => {
+    const lesson = {
+        content: { a: 1 }, uploadedMdContent: 7, images: { '(': PNG6, ok_1: PNG6 }, objectives: '목표', tools: [{ name: 'x' }], refImages: null,
+        illustrations: [null, { id: 'a', imgId: '(a+)+$' }, { id: 'b', imgId: 'img_1' }, { id: 'c', imgId: null }, { id: 'd', imgId: JSON.parse('{"toString":null}') }],
+        tabContents: { basicLearn: { x: 1 } },
+        gyosuan: { docMd: '# 교수안', deckMd: {}, deckHtml: 3, sessionDecks: { 0: '<div>1</div>', 1: { x: 1 } }, images: { '(': PNG6, g: PNG6 }, deckRev: 2 }
+    };
+    W6.cleanLessonFields(lesson);
+    assert.strictEqual(lesson.content, null);
+    assert.strictEqual(lesson.uploadedMdContent, null);
+    assert.deepStrictEqual(Object.keys(lesson.images), ['ok_1']);
+    assert.deepStrictEqual(plain6(lesson.objectives), []);
+    assert.strictEqual(lesson.tools.length, 1);
+    assert.strictEqual(lesson.refImages, null, 'null 목록은 그대로');
+    assert.deepStrictEqual(plain6(lesson.illustrations.map(item => item.imgId)), [null, 'img_1', null, null]);
+    assert.deepStrictEqual(plain6(lesson.tabContents), { basicLearn: null });
+    assert.deepStrictEqual(plain6(lesson.gyosuan), { docMd: '# 교수안', deckMd: null, deckHtml: null, sessionDecks: { 0: '<div>1</div>' }, images: { g: PNG6 }, deckRev: 2 });
+    const empty = W6.cleanLessonFields({});
+    assert.ok(!('content' in empty) && !('gyosuan' in empty) && !('tabContents' in empty), '없는 칸은 만들지 않는다(그림 목록만 만든다)');
+    assert.strictEqual(W6.cleanLessonFields({ gyosuan: null }).gyosuan, null);
+    const illustrations = [{ id: 'a', imgId: 'img_1', svg: '<svg/>' }, { id: 'b', imgId: null }];
+    assert.strictEqual(W6.cleanLessonFields({ illustrations }).illustrations, illustrations, '바른 삽화 목록은 같은 목록');
+});
+
+test('sanitizeState: 바른 차시는 바뀌지 않고(그림·탭·교수안은 같은 객체), 이상한 안쪽 값만 고친다', () => {
+    const images = { img_1: PNG6, img_2: JPG6 };
+    const tabContents = { basicLearn: '# 기본 <img src="local:img_1">', basicPrac: null, advLearn: '심화', advPrac: null, assessment: '평가' };
+    const gyosuan = { docMd: '# 교수안', deckMd: '# 편성안', deckHtml: null, sessionDecks: {}, images: { g1: PNG6 }, deckRev: 3, deckDirty: false, sourceKey: '123', updatedAt: '2026-11-05T00:00:00.000Z' };
+    const lesson = { id: 101, title: 'C++ 기초', description: '설명', status: 'done', content: '합친 글', images, tabContents, gyosuan, illustrations: [{ id: 'i1', imgId: 'img_2', svg: '<svg/>' }], objectives: ['목표'], history: [{ at: '2026-11-05T00:00:00.000Z', note: '노트' }] };
+    const before = plain6(lesson);
+    const state = { courseTitle: '과정', subjects: [{ id: 'subject_1', title: '교과', lessons: [lesson, { id: 102, tabContents: { basicLearn: { x: 1 } }, images: { '(': PNG6 } }], mainQuest: { title: '평가', content: 5, images: { '(': PNG6, m: PNG6 }, tabContents: { basicLearn: [] } } }] };
+    const out = ctx.sanitizeState(state);
+    const [kept, odd] = out.subjects[0].lessons;
+    assert.deepStrictEqual(plain6(kept), before, '앱이 만든 차시는 한 글자도 바뀌지 않는다');
+    assert.ok(kept.images === images && kept.tabContents === tabContents && kept.gyosuan === gyosuan, '바른 묶음은 같은 객체(시작할 때 큰 그림 목록을 복사하지 않는다)');
+    assert.strictEqual(odd.tabContents.basicLearn, null);
+    assert.deepStrictEqual(plain6(odd.images), {});
+    const mq = out.subjects[0].mainQuest;
+    assert.deepStrictEqual([mq.content, Object.keys(mq.images), plain6(mq.tabContents)], [null, ['m'], { basicLearn: null }]);
+    assert.doesNotThrow(() => sanitize6({ subjects: [{ lessons: [{ illustrations: [{ imgId: { toString: null } }] }] }] }), '어떤 값에도 던지지 않는다');
+});
+
+test('sanitizeState: 휴지통은 모양을 보고 지운 날짜를 ISO로 맞춘다(먼 미래는 지금으로). 없으면 만들지 않는다', () => {
+    const iso = '2026-11-01T00:00:00.000Z';
+    const good = { at: iso, lesson: { id: 1, title: '바른' } };
+    const out = sanitize6({ subjects: [], lessonTrash: [good, null, { at: 1793836800000, lesson: {} }, { at: '2026-11-05', lesson: {} }, { at: 'abc', lesson: {} }, { at: 8.64e15, lesson: {} }, { at: iso, lesson: 'x' }], subjectTrash: {} });
+    assert.strictEqual(out.lessonTrash.length, 5);
+    assert.deepStrictEqual(plain6(out.lessonTrash[0]), plain6(good));
+    assert.strictEqual(out.lessonTrash[1].at, '2026-11-05T00:00:00.000Z');
+    assert.strictEqual(out.lessonTrash[2].at, '2026-11-05T00:00:00.000Z');
+    out.lessonTrash.slice(3).forEach(entry => assert.ok(Math.abs(Date.parse(entry.at) - Date.now()) < 60000, '못 읽거나 먼 미래면 지금 시각'));
+    assert.deepStrictEqual(plain6(out.subjectTrash), []);
+    assert.ok(!('lessonTrash' in sanitize6({ subjects: [] })));
+    const now = Date.parse('2026-11-06T00:00:00.000Z');
+    const once = W6.validTrash([{ at: 1793836800000, lesson: { id: 2 } }], 'lesson', now);
+    assert.deepStrictEqual(plain6(W6.validTrash(once, 'lesson', now)), plain6(once), '다시 해도 같다');
+    assert.strictEqual(W6.validTrash(once, 'lesson', now)[0], once[0], '바른 칸은 같은 객체');
+    assert.strictEqual(W6.validTrash([{ at: { x: 1 }, lesson: {} }], 'lesson', now)[0].at, '2026-11-06T00:00:00.000Z');
+    const rewrite = { at: '2026-11-05T09:00:00.000Z', kind: 'rewrite', subjectId: 's1', lesson: { id: 3 } };
+    assert.strictEqual(W6.validTrash([rewrite], 'lesson', now)[0], rewrite, '다시 만들기 전 사본도 그대로(묶음 1)');
+});
+
+test('작업 기록 한 칸: id는 숫자로, 있는 칸만 고친다. 바르면 같은 객체, 모양이 틀리면 뺀다', () => {
+    const item = { id: 1793836800000, title: '기록', date: '2026. 11. 5.', content: '글 local:a', images: { a: PNG6 }, lessonId: 101, subjectId: 'subject_1', tabContents: { basicLearn: '글' }, reason: '다시 생성 전', tabId: 'basicLearn' };
+    assert.strictEqual(W6.cleanHistoryItem(item), item);
+    const out = W6.cleanHistoryItem({ id: '1793836800000', title: 7, date: null, content: {}, reason: 3, images: { '(': PNG6, ok: PNG6 }, tabContents: { basicLearn: '글', advLearn: {} }, lessonId: '101', subjectId: 'x" onmouseover="a()', tabId: 'basicLearn' });
+    assert.deepStrictEqual(plain6(out), { id: 1793836800000, title: '7', date: '', content: null, reason: '3', images: { ok: PNG6 }, tabContents: { basicLearn: '글', advLearn: null }, lessonId: 101, tabId: 'basicLearn' });
+    assert.ok(!('images' in W6.cleanHistoryItem({ id: 5, title: 't' })), '없는 칸은 만들지 않는다');
+    assert.strictEqual(W6.cleanHistoryItem({ id: 5, lessonId: 'mainQuest' }).lessonId, 'mainQuest', '최종 평가 기록은 그대로');
+    [null, 5, 'x', [], { id: 'abc' }, { id: null }, { id: '' }, { id: true }, { id: ' 12' }, { id: 1.5 }, { id: -1 }].forEach(bad => assert.strictEqual(W6.cleanHistoryItem(bad), null, JSON.stringify(bad)));
+    assert.deepStrictEqual(plain6(W6.validHistory([null, { id: 3, title: 'a' }, { id: 'x' }]).map(h => h.id)), [3]);
+});
+
+test('저장해 둔 기록 정리: 이 브라우저의 기록은 id가 이상해도 빼지 않고(새 수를 준다) 칸 검사를 거친다', () => {
+    const tidy = W6.tidyStoredHistory([{ id: 'x', title: 7, images: { '(': PNG6, ok: PNG6 }, content: '![](local:ok)' }, { id: 5, tabContents: 'x', lessonId: '9' }]);
+    assert.strictEqual(tidy.length, 2, '이 브라우저의 기록은 id 모양 때문에 지우지 않는다');
+    assert.deepStrictEqual(plain6(tidy[0]), { id: 0, title: '7', images: { ok: PNG6 }, content: '![](local:ok)' });
+    assert.deepStrictEqual(plain6(tidy[1]), { id: 5, lessonId: 9 });
+    const same = { id: 6, title: '그대로', content: '글', images: { a: PNG6 }, tabContents: { basicLearn: '글' } };
+    assert.strictEqual(W6.tidyStoredHistory([same])[0], same);
+});
+
+test('작업 기록 합치기: 이 브라우저의 기록과 파일에서 온 같은 기록은 같은 칸 검사를 거쳐 같은 기록으로 알아본다', () => {
+    const record = { id: 10, title: '기록', date: 'd', reason: '다시 생성 전', lessonId: '7', subjectId: 's1', content: { x: 1 }, tabContents: { basicLearn: '글', advLearn: { x: 1 }, '../x': 'y' } };
+    const mine = W6.tidyStoredHistory([plain6(record)]);
+    const merged = ctx.mergeHistory(mine, [plain6(record)], Date.parse('2026-11-06T00:00:00.000Z'));
+    assert.strictEqual(merged.list.length, 1, '파일의 같은 기록을 또 넣지 않는다');
+    assert.strictEqual(merged.list[0], mine[0]);
+});
+
+test('백업·폴더 기록 합치기도 칸마다 검사한다(같은 기록은 지금 것 그대로)', () => {
+    const mine = { id: 3, title: '지금', date: 'd1' };
+    const merged = ctx.mergeBackupExtras({ history: [null, { id: 1, title: '파일', images: { '(': PNG6, ok: PNG6 }, tabContents: { basicLearn: {} } }] }, { history: [mine], lessonTrash: [], subjectTrash: [] });
+    assert.deepStrictEqual(plain6(merged.history.map(h => h.id)), [1, 3]);
+    assert.deepStrictEqual(Object.keys(merged.history[0].images), ['ok']);
+    assert.strictEqual(merged.history[0].tabContents.basicLearn, null);
+    assert.strictEqual(merged.history[1], mine, '지금 기록은 같은 객체');
+});
+
+test('기록의 그림을 차시에 넣는 길(historyImages)도 차시 그림과 같은 규칙(바른 키, 그림 값·찾지 못한 그림 자리)', () => {
+    assert.deepStrictEqual(plain6(W6.historyImages({ images: { ok: PNG6, ref: REF6, '(': PNG6, text: 'A', num: 1, empty: '' } })), { ok: PNG6, ref: REF6 });
+    assert.deepStrictEqual(plain6(W6.historyImages({ images: null })), {});
+});
+
+test('백업 MD: 제목을 글자 그대로 비교하고, 제목이 꼭 같은 파일을 한 번씩만 쓴다', () => {
+    ['C++ 기초', '1) 개요', '(a+)+$', '[심화] 자료 (스택', 'a\\b'].forEach(title => {
+        assert.strictEqual(W6.backupMarkdownBody(`# ${title}\n\n본문`, title), '본문', title);
+        assert.strictEqual(W6.backupMarkdownBody(`# ${title}\r\n\r\n본문`, title), '본문', `${title} CRLF`);
+    });
+    assert.strictEqual(W6.backupMarkdownBody('---\nk: v\n---\n\n본문', 'x'), '본문');
+    assert.strictEqual(W6.backupMarkdownBody('# 다른 제목\n\n본문', 'x'), '# 다른 제목\n\n본문');
+    const files = ['# 개요 심화\n\n심화 글', '# 개요\n\n첫 글', '# 개요\n\n둘째 글'].map(content => ({ path: 'a.md', content }));
+    const used = new Set();
+    assert.strictEqual(W6.takeBackupMarkdown(files, '심화', used), null, '제목 일부만 같으면 쓰지 않는다');
+    assert.strictEqual(W6.takeBackupMarkdown(files, '개요', used).content, '# 개요\n\n첫 글');
+    assert.strictEqual(W6.takeBackupMarkdown(files, '개요', used).content, '# 개요\n\n둘째 글');
+    assert.strictEqual(W6.takeBackupMarkdown(files, '개요', used), null);
+});
+
+test('백업 MD 첨부 그림: 바른 키만 되돌리고, 이미 있는 그림은 바꾸지 않으며(찾지 못한 그림 자리는 채운다), 이상한 이름에도 멈추지 않는다', () => {
+    const attached = new Map([['img_1.png', PNG6], ['img_2.jpg', JPG6], ['(a+)+$.png', PNG6], ['img_3.svg', 'data:image/png;base64,AA" x'], ['constructor.png', PNG6], ['__proto__.png', PNG6]]);
+    const md = '![a](../첨부파일/img_1.png) ![b](../첨부파일/(a+)+$.png) <img src="../첨부파일/img_3.svg"> ![c](../첨부파일/img_2.jpg) ![d](../첨부파일/img_9.png) ![e](../첨부파일/constructor.png) ![f](../첨부파일/__proto__.png)';
+    const kept = { img_2: JPG6 };
+    const out = W6.relinkAttachedImages(md, attached, kept);
+    assert.ok(out.content.startsWith('<!-- [IMG: "local:img_1"] --> ![b](../첨부파일/(a+)+$.png) <img src="local:img_3"> <!-- [IMG: "local:img_2"] --> <!-- [IMG: "local:img_9"] -->'));
+    assert.deepStrictEqual(Object.keys(out.images).sort(), ['__proto__', 'constructor', 'img_1', 'img_2'].sort());
+    assert.strictEqual(out.images.img_2, JPG6);
+    assert.strictEqual(({}).polluted, undefined);
+    assert.strictEqual(Object.getPrototypeOf(out.images), vm.runInContext('Object.prototype', ctx), '프로토타입은 바뀌지 않는다');
+    assert.strictEqual(W6.relinkAttachedImages('![a](../첨부파일/img_1.png)', attached, { img_1: REF6 }).images.img_1, PNG6, '찾지 못한 그림 자리는 첨부 그림으로 채운다');
+    const subject = { lessons: [{ title: 'C++ 기초', content: '옛 글', images: {} }, { title: '다른', content: '그대로', images: {} }] };
+    W6.applyBackupMarkdown(subject, [{ path: 'x/01.md', content: '# C++ 기초\r\n\r\n새 글 ![a](../첨부파일/img_1.png)' }], attached);
+    assert.deepStrictEqual(plain6(subject.lessons.map(l => l.content)), ['새 글 <!-- [IMG: "local:img_1"] -->', '그대로']);
+    assert.strictEqual(subject.lessons[0].images.img_1, PNG6);
+    assert.strictEqual(W6.applyBackupMarkdown(undefined, [], attached), undefined);
+});
+
+test('백업 ZIP·PC 폴더 MD의 첨부 그림: id를 정규식에 넣지 않고 글자 그대로 바꾼다', () => {
+    const png = 'data:image/png;base64,QUJD';
+    const jpg = 'data:image/jpeg;base64,REVG';
+    const md = '<!-- [IMG: "local:img_1"] --> <!-- [IMG: local:img_1] --> <img src="local:img_1"> <img src="local:img_10"> <img src="local:(a+)+$"> ![](local:img_1) <!-- [IMG: "local:none"] -->';
+    const out = W6.attachmentImages(md, { img_1: png, img_10: jpg, '(a+)+$': png, svg: 'data:image/svg+xml;base64,PHN2Zz4=', bad: 5 });
+    assert.strictEqual(out.content, '![img_1](../첨부파일/img_1.png) ![img_1](../첨부파일/img_1.png) <img src="../첨부파일/img_1.png"> <img src="../첨부파일/img_10.jpg"> <img src="../첨부파일/(a+)+$.png"> ![](local:img_1) <!-- [IMG: "local:none"] -->');
+    assert.deepStrictEqual(plain6(out.files.map(f => f.name)), ['img_1.png', 'img_10.jpg', '(a+)+$.png'], 'svg와 글이 아닌 값은 파일로 쓰지 않는다(예전과 같음)');
+    assert.strictEqual(out.files[0].base64, 'QUJD');
+    assert.strictEqual(W6.relinkLocalImages('src="local:img_10"', new Map([['img_1', 'img_1.png']])), 'src="local:img_10"', 'img_1이 img_10을 건드리지 않는다');
+    const started = Date.now();
+    W6.attachmentImages('local:' + 'a'.repeat(5000) + '!', { '(a+)+$': png });
+    assert.ok(Date.now() - started < 200, '멈추지 않는다');
+});
+
+test('그림 id·제목으로 정규식을 만들지 않는다(되돌아옴 방지)', () => {
+    const re = /new RegExp\(`[^`]*\$\{(?:imgId|id|key|[\w.]*[tT]itle)\}/;
+    ['state.js', 'api.js', 'course-illustrations.js', 'data-safety.js'].forEach(file => {
+        assert.ok(!re.test(fs.readFileSync(path.join(__dirname, '..', 'js', file), 'utf8')), file);
+    });
+    assert.ok(!/new RegExp\(/.test(fs.readFileSync(path.join(__dirname, '..', 'js', 'course-illustrations.js'), 'utf8')), '삽화 블록은 정해 둔 정규식으로 찾고 id를 글자 그대로 견준다');
+});
+
+test('읽지 못한 저장본 내려받기: 조각을 이으면 JSON.stringify와 같다(아주 큰 저장본도 글 하나로 만들지 않는다)', () => {
+    const sparse = [1];
+    sparse[3] = 'x';
+    const values = [
+        { state: { courseTitle: '과정 "따옴표" \\ 역슬래시', subjects: [{ id: 's1', lessons: [{ id: 1, images: { a: PNG6 }, n: NaN, u: undefined, f() {} }] }] }, history: [null, 1.5, true, '줄\n바꿈', [undefined, () => 1]] },
+        { d: new Date(Date.UTC(2026, 10, 6)), empty: {}, list: [], deep: { a: { b: { c: [{}] } } }, 숫자키: { 2: 'b', 1: 'a' } },
+        sparse, 'x', 7, null
+    ];
+    values.forEach(value => [1, 5, 64, 1 << 20].forEach(size => {
+        const parts = W6.jsonTextParts(value, size);
+        assert.strictEqual(parts.join(''), JSON.stringify(value), `${JSON.stringify(value).slice(0, 30)} / ${size}`);
+        if (size === 5) assert.ok(parts.length > 1 || JSON.stringify(value).length <= 5, '조각으로 나눈다');
+    }));
+});
+
+test('읽지 못한 저장본 사본은 새것 셋만 남긴다(이 모양이 아닌 이름은 건드리지 않는다)', () => {
+    const prefix = 'k:읽지못함:';
+    const keys = [`${prefix}100`, `${prefix}400`, 'k', `${prefix}메모`, `${prefix}300`, `${prefix}200`, 5, `${prefix}12a`];
+    assert.deepStrictEqual(plain6(W6.staleUnreadCopies(keys, prefix, 3)), [`${prefix}100`]);
+    assert.deepStrictEqual(plain6(W6.staleUnreadCopies(keys, prefix, 1)), [`${prefix}300`, `${prefix}200`, `${prefix}100`]);
+    assert.deepStrictEqual(plain6(W6.staleUnreadCopies(null, prefix, 3)), []);
+});
+
+test("'저장해 둔 폴더 열기' 확인 창: 읽지 못한 저장본 대신 열 때는 백업을 받지 않는다고 말한다", () => {
+    const unread = W6.folderOpenPrompt({ folderName: '내 폴더', subjectCount: 0, incomingCount: 2, unread: true });
+    assert.ok(unread.message.startsWith("읽지 못한 브라우저 저장본 대신 '내 폴더' 폴더의 작업(교과 2개)으로 엽니다.\n읽지 못한 저장본은 이 폴더 내용으로 바뀝니다."), unread.message);
+    assert.ok(!unread.message.includes('백업 파일로 내려받습니다'));
+    assert.strictEqual(unread.okLabel, '이 폴더로 되살리기');
+    assert.strictEqual(W6.folderOpenPrompt({ folderName: 'A', subjectCount: 1, incomingCount: 2, unread: true, total: 2, missing: 1 }).okLabel, '빠진 채로 열기');
+    const normal = W6.folderOpenPrompt({ folderName: 'A', subjectCount: 1, incomingCount: 2 });
+    assert.ok(normal.message.startsWith("'A' 폴더의 작업(교과 2개)으로 지금 브라우저의 모든 작업(교과 1개)을 바꿉니다."));
+    assert.strictEqual(normal.okLabel, '백업 받고 바꾸기');
+});
+
+test('폴더를 연 뒤 알림: 읽지 못한 상태에서 열어 브라우저에 저장하지 못했으면 새로고침 뒤 열기 전 작업이 아니라 읽지 못한 창이 다시 뜰 수 있다고 말한다', () => {
+    const unread = W6.folderOpenedMessage({ folderName: 'A', browserSaved: false, unread: true });
+    assert.ok(unread.includes("'저장된 작업을 읽지 못했습니다' 창이 다시 뜰 수 있으니") && unread.includes("그 창의 '저장해 둔 폴더 열기'로 이 폴더를 다시 여세요"), unread);
+    assert.ok(!unread.includes('열기 전 작업이 보일'), unread);
+    assert.ok(W6.folderOpenedMessage({ folderName: 'A', browserSaved: false }).includes('열기 전 작업이 보일 수 있으니'), '읽은 상태에서 열었으면 그대로');
+    assert.strictEqual(W6.folderOpenedMessage({ folderName: 'A', unread: true }), W6.folderOpenedMessage({ folderName: 'A' }), '브라우저에 저장했으면 같은 글');
+});
+
+test('폴더의 저장본을 풀지 못했으면 교과가 없다고 하지 않고 읽을 수 없다고 알린다(save_data.yaml이면 열 때 남긴 사본으로 여는 길)', () => {
+    const yaml = W6.folderSaveUnreadableText('save_data.yaml');
+    assert.ok(yaml.startsWith('이 폴더의 저장본(save_data.yaml)을 읽을 수 없습니다.') && yaml.includes('지금 작업은 바뀌지 않았습니다') && yaml.includes('save_data_이전_날짜.yaml 사본'), yaml);
+    assert.ok(!yaml.includes('교과가 없습니다'), yaml);
+    const json = W6.folderSaveUnreadableText('save_data.json');
+    assert.ok(json.startsWith('이 폴더의 저장본(save_data.json)을 읽을 수 없습니다.') && !json.includes('save_data_이전'), '예전 save_data.json 폴더는 사본을 만들지 않는다');
 });
 
 (async () => {

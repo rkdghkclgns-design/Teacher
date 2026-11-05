@@ -2741,17 +2741,9 @@ function renderEditor(mod) {
     // [이슈#2] 현재 탭에 생성된 내용이 없는지 판별 (심화학습 등 미생성 탭의 빈 화면 방지)
     const _tabEmpty = !renderText || !String(renderText).trim();
 
-    // [최적화 & 버그픽스] 렌더 시 Base64 이미지로 교체 (정규표현식 글로벌 치환으로 안전하게 처리)
-    if (mod.images) {
-        for (const [imgId, b64] of Object.entries(mod.images)) {
-            const regex = new RegExp(`local:${imgId}`, 'g');
-            renderText = renderText.replace(regex, b64);
-        }
-    }
-
-    // AI가 규칙을 무시하고 출력한 미할당(환각) local: 이미지 링크 일괄 제거 (네트워크 병목 방지)
-    renderText = renderText.replace(/src="local:[^"]+"/g, 'src="" alt="[이미지 생성 누락]"');
-    renderText = renderText.replace(/\(local:[^\)]+\)/g, '()');
+    // 렌더 시 local:그림 id를 저장된 그림으로 바꾸고, 없는 그림 자리(AI가 규칙을 무시하고 낸 local: 링크 포함)는 비운다(내보내기와 같은 규칙, lesson-export.js inlineLessonImages).
+    // 그림 id는 이스케이프해 찾으므로 이상한 id로 차시가 열리지 않거나 멈추지 않고, img_1이 img_10을 건드리지 않는다
+    renderText = inlineLessonImages(renderText, mod.images);
 
     // v7.6: 공통 마크다운 전처리 적용
     renderText = preprocessMarkdown(renderText);
@@ -3001,17 +2993,8 @@ window.toggleEditorMode = function (mode) {
             // 칸에는 저장된 원문이 있다. 화면에는 첫머리를 정리해 그린다(renderEditor와 같은 모양)
             let renderText = typeof cleanLessonOpening === 'function' ? cleanLessonOpening(rawView.value) : rawView.value;
 
-            // [최적화 & 버그픽스] 보기 모드 전환 시 Base64 글로벌 교체
-            if (mod.images) {
-                for (const [imgId, b64] of Object.entries(mod.images)) {
-                    const regex = new RegExp(`local:${imgId}`, 'g');
-                    renderText = renderText.replace(regex, b64);
-                }
-            }
-
-            // 환각 미처리 local: 링크 역시 렌더링 시 방어
-            renderText = renderText.replace(/src="local:[^"]+"/g, 'src="" alt="[이미지 생성 누락]"');
-            renderText = renderText.replace(/\(local:[^\)]+\)/g, '()');
+            // 보기 모드로 돌아올 때도 같은 규칙으로 그림을 넣고 없는 그림 자리는 비운다(lesson-export.js inlineLessonImages)
+            renderText = inlineLessonImages(renderText, mod.images);
 
             // v7.6: 마크다운 전처리 (두 번째 렌더 경로에도 동일 적용)
             renderText = preprocessMarkdown(renderText);

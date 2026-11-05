@@ -39,6 +39,7 @@ window.showAlert = function (message) {
     const overlay = document.createElement('div');
 
     overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] animate-fade-in';
+    overlay.dataset.appDialog = ''; // 저장본을 읽지 못한 창이 뒤 화면을 막을 때(inert)도 이 알림은 누를 수 있게(state.js)
 
     overlay.onclick = () => overlay.remove();
 
@@ -79,6 +80,7 @@ window.showConfirm = function (message, onConfirm, opts = {}) {
     const overlay = document.createElement('div');
 
     overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] animate-fade-in';
+    overlay.dataset.appDialog = ''; // 저장본을 읽지 못한 창이 뒤 화면을 막을 때(inert)도 이 확인 창은 누를 수 있게(state.js)
 
     const cancel = () => {
         overlay.remove();
@@ -1441,8 +1443,9 @@ document.addEventListener('DOMContentLoaded', () => {
         // Ctrl+S: 수동 저장
         if ((e.ctrlKey || e.metaKey) && e.key === 's') {
             e.preventDefault();
-            saveState();
-            window.showAlert('저장되었습니다.');
+            if (window.isStateLoadFailed?.()) return window.showStateLoadFailedDialog?.(); // 저장본을 읽지 못한 동안은 저장하지 않는다(거짓 '저장되었습니다' 없이)
+            // 브라우저에 저장했을 때만 저장했다고 알린다. 저장하지 못했으면 saveState가 까닭을 알린다(저장 공간이 모자랄 때 '저장되었습니다'가 같이 뜨지 않게)
+            saveState().then(saved => { if (saved) window.showAlert('저장되었습니다.'); });
         }
         // F1: 도움말
         if (e.key === 'F1') {

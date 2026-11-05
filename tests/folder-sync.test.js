@@ -143,6 +143,9 @@ function makeApp({ mode = 'inline' } = {}) {
     return { ctx, exec };
 }
 
+// 폴더 저장본에 손으로 넣는 교과(차시 없음)
+const FOLDER_SUBJECTS = [{ id: 's9', title: '폴더 교과', lessons: [] }];
+
 // 교과 하나, 차시 하나(그림 두 장을 쓰는 글)
 function seed(exec, { title = '과정', images = { img_1: PNG, img_2: JPG } } = {}) {
     const state = { courseTitle: title, subjects: [{ id: 's1', title: '교과', lessons: [{ id: 1, title: '차시', content: '글 <img src="local:img_1"> <img src="local:img_2">', images }] }] };
@@ -410,13 +413,14 @@ test('F12 폴더 열기를 취소하면 폴더에도 브라우저에도 아무�
     const { ctx, exec } = makeApp();
     seed(exec);
     const b = fakeDir('B');
-    await putFile(b, 'save_data.yaml', 'state:\n  courseTitle: "폴더"\n  subjects: []\n');
+    // 교과가 하나 있는 폴더(교과가 없는 저장본은 묻지 않고 멈춘다. 묶음 6, tests/import-restore.test.js)
+    await putFile(b, 'save_data.yaml', `state:\n  courseTitle: "폴더"\n  subjects: ${JSON.stringify(FOLDER_SUBJECTS)}\n`);
     const before = exec('globalState');
     ctx.confirmAnswer = false;
     ctx.showDirectoryPicker = async () => b;
     await ctx.loadFromProjectFolder();
     assert.strictEqual(ctx.confirms.length, 1);
-    assert.ok(ctx.confirms[0].message.includes("'B' 폴더의 작업(교과 0개)으로"), '새 상태를 확인 창보다 먼저 만들어 폴더의 교과 수를 보인다');
+    assert.ok(ctx.confirms[0].message.includes("'B' 폴더의 작업(교과 1개)으로"), '새 상태를 확인 창보다 먼저 만들어 폴더의 교과 수를 보인다');
     assert.deepStrictEqual(b.shared.log, []);
     assert.strictEqual(exec('globalState'), before);
     assert.strictEqual(exec('projectFolderHandle'), null);
@@ -544,7 +548,7 @@ test('F17 폴더 열기: 칸이 모자라 넣지 못한 폴더의 작업 기록�
     exec(`contentHistory = ${JSON.stringify(Array.from({ length: 200 }, (_, i) => ({ id: 1000 + i, title: `내 기록 ${i}`, date: `d${i}` })))};`);
     const b = fakeDir('B');
     const folderHistory = [{ id: 5, title: '폴더 기록 1', date: 'f1' }, { id: 6, title: '폴더 기록 2', date: 'f2' }];
-    await putFile(b, 'save_data.yaml', `state:\n  courseTitle: "폴더"\n  subjects: []\nhistory: ${JSON.stringify(folderHistory)}\n`);
+    await putFile(b, 'save_data.yaml', `state:\n  courseTitle: "폴더"\n  subjects: ${JSON.stringify(FOLDER_SUBJECTS)}\nhistory: ${JSON.stringify(folderHistory)}\n`);
     ctx.showDirectoryPicker = async () => b;
     await ctx.loadFromProjectFolder();
     const copy = b.shared.log.find(p => p.startsWith('save_data_이전_'));
@@ -556,7 +560,9 @@ test('F17 폴더 열기: 칸이 모자라 넣지 못한 폴더의 작업 기록�
 
 test('F18 차시 MD의 그림 자리: img_1이 img_10을 건드리지 않고, 정규식에 쓰이는 글자가 든 그림 이름에도 저장이 멈추지 않는다', async () => {
     const { ctx, exec } = makeApp();
-    seed(exec, { images: { img_1: PNG, img_10: JPG, 'img(2': PNG2 } });
+    seed(exec, { images: { img_1: PNG, img_10: JPG } });
+    // 불러온 상태 검사(묶음 6)는 이런 그림 이름을 받지 않는다. 그래도 그런 이름이 있으면 폴더 저장이 멈추지 않는지 본다
+    exec(`courseData[0].images['img(2'] = ${JSON.stringify(PNG2)};`);
     exec(`courseData[0].content = '<!-- [IMG: "local:img_1"] --> <img src="local:img_10"> <img src="local:img(2">';`);
     const dir = fakeDir('A');
     await connect(ctx, dir);
@@ -635,7 +641,7 @@ test('F21 폴더 열기: 연 작업을 브라우저에 저장한 뒤에야 그 �
     };
     const folderB = async () => {
         const dir = fakeDir('B');
-        await putFile(dir, 'save_data.yaml', 'state:\n  courseTitle: "폴더작업"\n  subjects: []\n');
+        await putFile(dir, 'save_data.yaml', `state:\n  courseTitle: "폴더작업"\n  subjects: ${JSON.stringify(FOLDER_SUBJECTS)}\n`);
         return dir;
     };
     const a = fakeDir('A');
@@ -681,6 +687,8 @@ test('F22 불러온 파일에서 온 이름(그림 이름 a/b, 빈칸뿐인 교�
     const { ctx, exec } = makeApp();
     const state = { courseTitle: '..', subjects: [{ id: 's1', title: '   ', lessons: [{ id: 1, title: '차시', content: '글 <img src="local:a/b">', images: { 'a/b': PNG } }] }] };
     exec(`globalState = sanitizeState(${JSON.stringify(state)}); currentSubjectId = 's1'; courseData = globalState.subjects[0].lessons; contentHistory = [];`);
+    // 불러온 상태 검사(묶음 6)는 그림 이름 a/b를 받지 않는다. 그래도 그런 이름이 있으면 폴더 저장이 멈추지 않는지 본다
+    exec(`courseData[0].images['a/b'] = ${JSON.stringify(PNG)};`);
     const dir = fakeDir('A');
     await connect(ctx, dir);
     assert.ok(ctx.toasts.some(t => t.includes('[A] 폴더가 연동되었습니다')), '저장이 실패하지 않는다');

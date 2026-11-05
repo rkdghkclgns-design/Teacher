@@ -752,6 +752,9 @@ async function run(name, fn) {
         assert.ok(!back.includes('image-wrapper'));
         assert.strictEqual(back.replace(/\s+/g, ''), LESSON_MD.replace(/\s+/g, ''), '다른 글자는 그대로');
         assert.strictEqual(call('removeIllustrationMd')(LESSON_MD, 'img_9'), LESSON_MD, '없으면 바꾸지 않는다');
+        const odd = call('insertIllustrationMd')(LESSON_MD, call('illustrationHtml')('img_(1)', { title: '제목' }), 'end');
+        assert.ok(!call('removeIllustrationMd')(odd, 'img_(1)').includes('image-wrapper'), '괄호가 든 그림 id도 지운다');
+        assert.strictEqual(call('removeIllustrationMd')(LESSON_MD, '(a+)+$'), LESSON_MD, '정규식 글자가 든 id로 멈추지 않는다');
     });
 
     await run('삽화 배치: 본문 이미지는 비트맵만, 옮겨도 한 장', async () => {

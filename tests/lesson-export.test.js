@@ -56,5 +56,17 @@ test('문서 틀: 제목을 이스케이프하고, 화면과 같은 서식과 �
     });
 });
 
+test('화면 그림 넣기: 이상한 그림 id로 멈추거나 깨지지 않는다(차시 화면도 이 함수를 쓴다)', () => {
+    const png = 'data:image/png;base64,QUJD';
+    const started = Date.now();
+    const view = inlineLessonImages('local:' + 'a'.repeat(40) + '! <img src="local:(">', { '(a+)+$': png, '(': png });
+    assert.ok(Date.now() - started < 200, '멈추지 않는다');
+    assert.ok(view.includes(`src="${png}"`), '괄호가 든 id도 글자 그대로 찾는다');
+    // 차시 화면(렌더·보기 전환)도 그림 id로 정규식을 만들지 않고 이 함수로 그린다(묶음 6)
+    const api = fs.readFileSync(path.join(__dirname, '..', 'js', 'api.js'), 'utf8');
+    assert.strictEqual((api.match(/inlineLessonImages\(renderText, mod\.images\)/g) || []).length, 2, 'renderEditor·toggleEditorMode');
+    assert.ok(!/new RegExp\(`local:\$\{imgId\}`/.test(api));
+});
+
 console.log(`\n${count - failed}/${count} passed`);
 if (failed) process.exit(1);

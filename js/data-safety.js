@@ -42,15 +42,18 @@ function mergeUnique(first, second, keyOf) {
 const trashKey = entry => `${entry.at}|${(entry.lesson || entry.subject || {}).id}`;
 
 // 백업 파일의 히스토리·휴지통을 지금 것과 합친다(불러와도 기록을 잃지 않게)
-// 휴지통 항목은 모양만 확인한다. 안의 교과·차시는 되살릴 때 sanitizeState를 거친다(restoreSubject, restoreLesson)
+// 휴지통 항목은 모양과 지운 날짜(at)를 확인한다. 안의 교과·차시는 되살릴 때 sanitizeState를 거친다(restoreSubject, restoreLesson)
 const isObject = value => !!value && typeof value === 'object' && !Array.isArray(value);
-const validTrash = (list, key) => (Array.isArray(list) ? list : []).filter(entry => isObject(entry) && isObject(entry[key]));
+const validTrash = (list, key, now = Date.now()) => (Array.isArray(list) ? list : [])
+    .filter(entry => isObject(entry) && isObject(entry[key]))
+    .map(entry => withTrashTime(entry, now)); // 지운 날짜도 ISO로 맞춘다(바르면 같은 객체)
 // 작업 기록 id는 남긴 시각(ms)이다. 0 이상의 안전한 정수이거나 숫자만 든 글자일 때만 받는다(화면은 Number(id)로 찾는다). 아니면 null
 const historyIdOf = item => {
     const id = typeof item?.id === 'string' && /^\d{1,15}$/.test(item.id) ? Number(item.id) : item?.id;
     return Number.isSafeInteger(id) && id >= 0 ? id : null;
 };
-const validHistory = list => (Array.isArray(list) ? list : []).filter(item => isObject(item) && historyIdOf(item) !== null);
+// 다른 곳(백업 파일·PC 폴더)에서 온 기록: 칸마다 id·글·그림·탭 글을 검사하고(cleanHistoryItem) 쓸 수 없는 id의 기록은 뺀다. 고칠 것이 없는 칸은 같은 객체
+const validHistory = list => (Array.isArray(list) ? list : []).map(cleanHistoryItem).filter(Boolean);
 
 // now: 미래 시각 id를 가르는 기준(테스트에서 고정한다). historyDropped: 칸이 모자라 남기지 못한 기록 수(마침 알림에 쓴다)
 function mergeBackupExtras(meta, current, now = Date.now()) {
@@ -170,8 +173,10 @@ const referencedImages = (text, images) => {
 const historyText = mod => [mod.content, ...Object.values(isObject(mod.tabContents) ? mod.tabContents : {}), mod.gyosuan?.docMd, mod.gyosuan?.deckMd]
     .filter(text => typeof text === 'string').join('\n');
 
-// 되돌리거나 새 차시로 되살릴 때 차시에 넣는 그림. 기록은 남이 준 파일에서 왔을 수 있어 글자 값만 받는다
-const historyImages = entry => Object.fromEntries(Object.entries(isObject(entry.images) ? entry.images : {}).filter(([, data]) => typeof data === 'string'));
+// 되돌리거나 새 차시로 되살릴 때 차시에 넣는 그림(기록의 그림이 차시에 들어가는 길은 이것 하나다).
+// 기록은 남이 준 파일에서 왔을 수 있어 차시 그림과 같은 규칙으로 바른 키와 그림 값(data:image…;base64, 찾지 못한 그림 자리 teacher-image:…)만 받는다
+const historyImages = entry => Object.fromEntries(Object.entries(isObject(entry.images) ? entry.images : {})
+    .filter(([id, data]) => isSafeImageKey(id) && isSafeImageValue(data)));
 
 // 진짜 그림(data:image)인지. 아니면 찾지 못한 그림 자리(teacher-image 참조)나 빈 값이다(화면에는 빈 그림으로 보인다)
 const isPictureData = data => typeof data === 'string' && data.startsWith('data:image/');
@@ -223,7 +228,8 @@ function slimHistoryEntry(entry) {
 
 // 저장해 둔 기록을 열 때 한 번. 객체가 아닌 칸은 뺀다(목록을 그리지 못한다). 이 브라우저의 기록이라 id 모양 때문에 지우지는 않는다(mergeHistory와 같다).
 // id는 0 이상의 정수로 맞춘다(숫자만 든 글자는 숫자로). 같은 id가 또 나오면(같은 순간에 남긴 기록) 아래쪽 빈 수로, 쓸 수 없는 id(소수·객체 등)는 0부터 빈 수로 나눈다
-// (freeHistoryId. 목록에서 줄마다 따로 고르고 지우고 되돌릴 수 있게). 바른 id는 바꾸지 않고, 바꿀 것이 없는 기록은 같은 객체를 돌려준다
+// (freeHistoryId. 목록에서 줄마다 따로 고르고 지우고 되돌릴 수 있게). id를 고친 뒤 백업·폴더에서 온 기록과 같은 칸 검사(cleanHistoryItem)를 거친다
+// (같은 기록이면 합칠 때 같은 기록으로 알아보게, historyRecordKey). 바른 id는 바꾸지 않고, 바꿀 것이 없는 기록은 같은 객체를 돌려준다
 function tidyStoredHistory(list) {
     const items = (Array.isArray(list) ? list : []).filter(isObject);
     const ids = items.map(historyIdOf);
@@ -233,8 +239,8 @@ function tidyStoredHistory(list) {
         const valid = ids[index];
         const id = valid !== null && !seen.has(valid) ? valid : freeHistoryId(valid ?? 0, taken);
         seen.add(id);
-        const slim = slimHistoryEntry(item);
-        return id === slim.id ? slim : { ...slim, id };
+        const numbered = id === item.id ? item : { ...item, id };
+        return slimHistoryEntry(cleanHistoryItem(numbered)); // id가 이미 바르므로 칸 검사가 기록을 빼지 않는다
     });
 }
 
@@ -824,34 +830,49 @@ function folderCopyName(stamp, n = 1) {
 }
 
 // '저장해 둔 폴더 열기' 확인 창. total: 저장본이 가리키는 그림 수, missing: 찾지 못했거나 읽지 못했거나 내용이 이름과 맞지 않는(망가진) 수,
-// imageNote: 그림을 빼고 저장된 폴더 안내(noImagesImportNote, '\n\n'으로 시작)
-function folderOpenPrompt({ folderName, subjectCount, incomingCount, total = 0, missing = 0, imageNote = '' }) {
-    const head = `'${folderName}' 폴더의 작업(교과 ${incomingCount}개)으로 지금 브라우저의 모든 작업(교과 ${subjectCount}개)을 바꿉니다.\n바꾸기 전에 지금 상태를 백업 파일로 내려받습니다.`;
+// imageNote: 그림을 빼고 저장된 폴더 안내(noImagesImportNote, '\n\n'으로 시작), unread: 브라우저 저장본을 읽지 못한 상태에서 여는지(바꿀 지금 작업이 없어 백업 파일을 받지 않는다)
+function folderOpenPrompt({ folderName, subjectCount, incomingCount, unread = false, total = 0, missing = 0, imageNote = '' }) {
+    const head = unread
+        ? `읽지 못한 브라우저 저장본 대신 '${folderName}' 폴더의 작업(교과 ${incomingCount}개)으로 엽니다.\n읽지 못한 저장본은 이 폴더 내용으로 바뀝니다.`
+        : `'${folderName}' 폴더의 작업(교과 ${incomingCount}개)으로 지금 브라우저의 모든 작업(교과 ${subjectCount}개)을 바꿉니다.\n바꾸기 전에 지금 상태를 백업 파일로 내려받습니다.`;
     const lost = missing > 0
         ? `\n\n그림 ${total}장 중 ${missing}장을 이 폴더의 '그림' 폴더에서 찾지 못했습니다(파일이 없거나 읽히지 않거나 망가짐, 작업 기록·휴지통의 그림도 셈). 그대로 열면 그 그림은 빈칸으로 보입니다.\n`
             + "'그림' 폴더까지 다 옮겼는지(복사가 중간에 끊기지 않았는지), OneDrive 같은 곳에서 파일을 모두 내려받았는지 확인해 주세요. 그림 파일을 채운 뒤 이 폴더를 다시 열면 그림이 돌아옵니다."
         : '';
-    const okLabel = missing <= 0 ? '백업 받고 바꾸기' : missing >= total ? '그림 없이 열기' : '빠진 채로 열기';
+    const okLabel = missing <= 0 ? (unread ? '이 폴더로 되살리기' : '백업 받고 바꾸기') : missing >= total ? '그림 없이 열기' : '빠진 채로 열기';
     return { message: head + imageNote + lost, okLabel };
 }
 
 // 폴더를 연 뒤 알림. synced: 첫 폴더 저장이 됐는지, browserSaved: 연 작업을 브라우저에 저장했는지(못 했으면 새로고침 뒤 이 폴더에 이어지지 않는다),
+// unread: 브라우저 저장본을 읽지 못한 상태에서 열었는지(브라우저에 저장하지 못했으면 새로고침 뒤 열기 전 작업이 아니라 읽지 못한 창이 다시 뜰 수 있다),
 // missing: 찾지 못한 그림 수(확인 창과 같은 수. 작업 기록·휴지통의 그림도 센다), mode: 그림 담기를 바꿨으면 새 방식, wasNone: 폴더가 '빼기'로 저장돼 있었는지
-function folderOpenedMessage({ folderName, synced = true, browserSaved = true, keptName = '', missing = 0, mode = '', wasNone = false }) {
+function folderOpenedMessage({ folderName, synced = true, browserSaved = true, unread = false, keptName = '', missing = 0, mode = '', wasNone = false }) {
     const label = BACKUP_IMAGE_LABEL[mode] || '';
     const modeLine = !label ? ''
         : wasNone ? `이 폴더는 그림을 빼고 저장되어 있었습니다. 앞으로는 그림도 담도록 그림 담기를 '${label}'로 바꿨습니다(백업 ZIP에도 같이 쓰입니다).`
             : `그림 담기를 이 폴더에 맞춰 '${label}'로 바꿨습니다(백업 ZIP에도 같이 쓰입니다. 내보내기·백업 → 그림 담기에서 바꿀 수 있습니다).`;
     const opened = `'${folderName}' 폴더의 작업을 열었습니다.`;
+    const unsaved = unread
+        ? "브라우저에는 이 작업을 저장하지 못했습니다. 새로고침하거나 창을 다시 열면 이 폴더에 자동으로 이어지지 않고 '저장된 작업을 읽지 못했습니다' 창이 다시 뜰 수 있으니, 그때는 그 창의 '저장해 둔 폴더 열기'로 이 폴더를 다시 여세요."
+        : "브라우저에는 이 작업을 저장하지 못했습니다. 새로고침하거나 창을 다시 열면 이 폴더에 자동으로 이어지지 않고 열기 전 작업이 보일 수 있으니, 그때는 '저장해 둔 폴더 열기'로 이 폴더를 다시 여세요.";
     return [
         synced ? `${opened} 이제 바뀐 내용은 이 폴더에 자동으로 저장합니다.`
             : browserSaved ? `${opened} 다만 이 폴더에 저장하지 못했습니다. 바뀐 내용은 브라우저에는 저장됩니다(화면 위 알림을 보세요).`
                 : `${opened} 다만 이 폴더에 저장하지 못했습니다(화면 위 알림을 보세요).`,
-        browserSaved ? '' : "브라우저에는 이 작업을 저장하지 못했습니다. 새로고침하거나 창을 다시 열면 이 폴더에 자동으로 이어지지 않고 열기 전 작업이 보일 수 있으니, 그때는 '저장해 둔 폴더 열기'로 이 폴더를 다시 여세요.",
+        browserSaved ? '' : unsaved,
         keptName ? `열기 전 폴더의 저장본은 ${keptName}으로 남겨 두었습니다.` : '',
         missing > 0 ? `그림 ${missing}장(작업 기록·휴지통의 그림도 셈)은 찾지 못해 빈칸으로 남았습니다. 그림 파일을 '그림' 폴더에 넣은 뒤 '저장해 둔 폴더 열기'로 이 폴더를 다시 열면 돌아옵니다.` : '',
         modeLine
     ].filter(Boolean).join('\n');
+}
+
+// 폴더의 저장본을 풀지 못했거나 모양이 틀렸을 때 알림(교과가 없는 저장본과 다르게 알린다). fileName: 'save_data.yaml' | 'save_data.json'.
+// save_data.yaml이면 폴더를 열 때 남겨 둔 사본(save_data_이전_날짜.yaml)으로 열 수 있다고 알린다(예전 save_data.json만 있는 폴더는 사본을 만들지 않는다)
+function folderSaveUnreadableText(fileName) {
+    const copyHint = fileName === 'save_data.yaml'
+        ? '\n폴더에 save_data_이전_날짜.yaml 사본이 있으면, 망가진 save_data.yaml은 다른 이름으로 바꿔 두고 그 사본의 이름을 save_data.yaml로 바꾼 뒤 다시 열어 보세요.'
+        : '';
+    return `이 폴더의 저장본(${fileName})을 읽을 수 없습니다. 망가졌거나 이 앱의 저장본이 아닐 수 있습니다. 지금 작업은 바뀌지 않았습니다.${copyHint}`;
 }
 
 /* ---------- 교과 휴지통 ---------- */
@@ -890,6 +911,8 @@ function restoreSubject(index) {
 /* ---------- 교과 백업 불러오기 (위쪽 ZIP) ---------- */
 // 파일의 교과만 합친다. 같은 교과는 지금 내용을 교과 휴지통에 넣고 바꾸며, 다른 교과는 그대로 둔다
 async function importSubjectsBackup(meta) {
+    // 저장된 작업을 읽지 못한 동안에는 교과만 불러오지 않는다(합칠 지금 작업이 없다. 과정 전체 백업으로만 되살린다)
+    if (typeof isStateLoadFailed === 'function' && isStateLoadFailed()) return window.showAlert(UNREAD_PARTIAL_BACKUP_TEXT);
     const incoming = (sanitizeState({ subjects: meta.context?.subjects || [] }) || { subjects: [] }).subjects;
     if (!incoming.length) return window.showAlert('이 파일에는 되살릴 교과가 없습니다.');
     const plan = planSubjectImport(globalState.subjects, incoming);
@@ -936,6 +959,258 @@ function safeReferenceUrls(list) {
     return (Array.isArray(list) ? list : [])
         .filter(ref => ref && typeof ref === 'object' && typeof ref.url === 'string' && /^https?:\/\//i.test(ref.url))
         .map(ref => ({ ...ref, title: stateText(ref.title) }));
+}
+
+/* ---------- 불러온 상태의 안쪽 값: 그림·탭 글·교수안·휴지통 날짜·작업 기록 ---------- */
+// 백업 ZIP·PC 폴더·브라우저 저장본에서 온 값 가운데 화면·내보내기를 멈추게 하는 것만 고친다.
+// 바른 값은 같은 객체 그대로 둔다. 검사는 어떤 값에도 던지지 않는다(던지면 저장된 작업 전체를 읽지 못한 것으로 본다)
+// 그림 키: 글 속 local:키, 파일 이름, 화면 코드에 그대로 쓰이므로 이 글자만 받는다(앱이 만드는 img_123·ai1x2y 모양)
+const SAFE_IMAGE_KEY = /^[\w-]{1,80}$/;
+// 그림 값: data:image/형식(;이름=값)*;base64,글자 만 받는다. 따옴표·꺾쇠·빈칸이 들어갈 수 없어 속성·마크다운에 넣어도 안전하다.
+// 형식(소문자·숫자·. + -)을 png·jpeg 등으로 좁히지 않는다(그림 서비스가 알려 준 형식 그대로 저장한 내 그림을 시작할 때 지우지 않게. 남이 준 교안 HTML은 output-import.js가 더 좁게 본다).
+// 찾지 못한 그림 자리(teacher-image:…)는 isBackupImageRef가 따로 받는다
+const SAFE_IMAGE_DATA = /^data:image\/[a-z0-9.+-]{1,40}(?:;[\w.+-]{1,40}=[\w.+-]{1,40})*;base64,[A-Za-z0-9+/=]+$/;
+// 탭 이름(basicLearn 등): 영문자로 시작하는 영문·숫자·_ 만. 교과 백업 ZIP에서 파일 이름이 된다
+const SAFE_TAB_KEY = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
+// 차시에서 목록이어야 하는 칸(아니면 .map에서 화면이 멈춘다)과 글이어야 하는 칸
+const LESSON_LIST_FIELDS = ['objectives', 'tools', 'prereqs', 'illustrations', 'refImages', 'history'];
+const LESSON_TEXT_FIELDS = ['content', 'uploadedMdName', 'uploadedMdContent'];
+const GYOSUAN_TEXT_FIELDS = ['docMd', 'deckMd', 'deckHtml'];
+const TRASH_FUTURE_MS = 24 * 60 * 60 * 1000; // 이보다 먼 미래로 적힌 지운 날짜는 지금으로 본다(영영 비워지지 않는 일이 없게)
+
+const textOrNull = value => (typeof value === 'string' ? value : null);
+const isSafeImageKey = key => (typeof key === 'string' || typeof key === 'number') && SAFE_IMAGE_KEY.test(String(key));
+const isSafeImageValue = value => typeof value === 'string' && (SAFE_IMAGE_DATA.test(value) || isBackupImageRef(value));
+// 두 객체의 칸이 모두 같은 값인가(고칠 것이 없으면 처음 객체를 그대로 돌려줄 때 쓴다)
+const sameFields = (a, b) => Object.keys(a).length === Object.keys(b).length && Object.keys(a).every(key => Object.is(a[key], b[key]));
+
+// 바른 키와 그림만 남긴다. 모두 바르면 같은 객체, 객체가 아니면 빈 목록
+function safeImageMap(images) {
+    if (!isObject(images)) return {};
+    const kept = Object.fromEntries(Object.entries(images).filter(([key, value]) => isSafeImageKey(key) && isSafeImageValue(value)));
+    return sameFields(kept, images) ? images : kept;
+}
+
+// 탭 글: 이름이 바른 탭만 두고, 글이 아니면 빈 탭(null)으로. 모두 바르면 같은 객체, 객체가 아니면 null
+function safeTabContents(tabs) {
+    if (!isObject(tabs)) return null;
+    const kept = Object.fromEntries(Object.entries(tabs).filter(([key]) => SAFE_TAB_KEY.test(key)).map(([key, value]) => [key, textOrNull(value)]));
+    return sameFields(kept, tabs) ? tabs : kept;
+}
+
+// 교수안: 글·화면 편집본은 글만, 차시별 화면 편집본(sessionDecks)도 글만, 그림은 차시 그림과 같은 규칙. 모두 바르면 같은 객체, 객체가 아니면 null
+function safeGyosuan(gyosuan) {
+    if (!isObject(gyosuan)) return null;
+    const next = { ...gyosuan };
+    GYOSUAN_TEXT_FIELDS.forEach(field => { if (next[field] !== undefined) next[field] = textOrNull(next[field]); });
+    if (next.sessionDecks !== undefined) {
+        const decks = isObject(next.sessionDecks) ? Object.fromEntries(Object.entries(next.sessionDecks).filter(([, html]) => typeof html === 'string')) : {};
+        next.sessionDecks = isObject(next.sessionDecks) && sameFields(decks, next.sessionDecks) ? next.sessionDecks : decks;
+    }
+    if (next.images !== undefined) next.images = safeImageMap(next.images);
+    return sameFields(next, gyosuan) ? gyosuan : next;
+}
+
+// 삽화 목록: 객체만 두고, 바르지 않은 그림 키(imgId)는 비운다(그 삽화는 본문에 다시 넣을 수 있다). 고칠 것이 없으면 같은 목록
+function safeIllustrations(list) {
+    const kept = list.filter(isObject).map(item => (item.imgId == null || isSafeImageKey(item.imgId) ? item : { ...item, imgId: null }));
+    return kept.length === list.length && kept.every((item, index) => item === list[index]) ? list : kept;
+}
+
+// 차시(최종 평가 포함)의 안쪽 값을 그 자리에서 고친다(sanitizeState가 부른다)
+function cleanLessonFields(lesson) {
+    lesson.images = safeImageMap(lesson.images);
+    LESSON_TEXT_FIELDS.forEach(field => { if (lesson[field] !== undefined) lesson[field] = textOrNull(lesson[field]); });
+    LESSON_LIST_FIELDS.forEach(field => { if (lesson[field] != null && !Array.isArray(lesson[field])) lesson[field] = []; });
+    if (Array.isArray(lesson.illustrations)) lesson.illustrations = safeIllustrations(lesson.illustrations);
+    if (lesson.tabContents !== undefined) lesson.tabContents = safeTabContents(lesson.tabContents);
+    if (lesson.gyosuan !== undefined) lesson.gyosuan = safeGyosuan(lesson.gyosuan);
+    return lesson;
+}
+
+// 지운 날짜(at)를 ISO 글자로. 읽을 수 있으면 같은 시각의 ISO(다시 해도 같다), 못 읽거나 하루 넘게 미래면 null
+function trashTimeIso(at, now = Date.now()) {
+    const parsed = typeof at === 'number' ? at : typeof at === 'string' ? Date.parse(at) : NaN;
+    const time = new Date(parsed).getTime(); // 나타낼 수 없는 시각은 NaN
+    return Number.isFinite(time) && time <= now + TRASH_FUTURE_MS ? new Date(time).toISOString() : null;
+}
+
+// 휴지통 한 칸의 지운 날짜를 맞춘다. 못 읽으면 지금 시각(30일 뒤 비워진다). 바르면 같은 객체
+function withTrashTime(entry, now = Date.now()) {
+    const at = trashTimeIso(entry.at, now) || new Date(now).toISOString();
+    return at === entry.at ? entry : { ...entry, at };
+}
+
+// 작업 기록 한 칸. id는 숫자로(historyIdOf), 있는 칸만 고친다: 제목·날짜·까닭은 글로, 본문은 글이나 null로, 그림·탭 글·교수안은 차시와 같은 규칙으로.
+// 모르는 칸(tabId 등)은 그대로 둔다. 고칠 것이 없으면 같은 객체, 모양이 틀리면(객체가 아니거나 쓸 수 없는 id) null
+function cleanHistoryItem(item) {
+    if (!isObject(item)) return null;
+    const id = historyIdOf(item);
+    if (id === null) return null;
+    const next = { ...item, id };
+    ['title', 'date', 'reason'].forEach(field => { if (item[field] !== undefined) next[field] = stateText(item[field]); });
+    if (item.content !== undefined) next.content = textOrNull(item.content);
+    if (item.images !== undefined) next.images = safeImageMap(item.images);
+    if (item.tabContents !== undefined) {
+        const tabs = safeTabContents(item.tabContents);
+        if (tabs) next.tabContents = tabs;
+        else delete next.tabContents;
+    }
+    if (item.gyosuan !== undefined) next.gyosuan = safeGyosuan(item.gyosuan);
+    if (item.lessonId !== undefined) {
+        const lessonId = normalizeLessonId(item.lessonId);
+        if (lessonId === null) delete next.lessonId;
+        else next.lessonId = lessonId;
+    }
+    if (item.subjectId !== undefined && !isSafeStateId(item.subjectId)) delete next.subjectId;
+    return sameFields(next, item) ? item : next;
+}
+
+/* ---------- 과정 전체 백업 ZIP의 차시 MD 맞추기 ---------- */
+// 앞머리(---로 시작해 '---\n\n'까지)나 '# 차시 제목' 머리를 뗀 본문. 제목은 글자 그대로 비교한다('C++ 기초', '1) 개요'도 된다)
+function backupMarkdownBody(md, title) {
+    const text = String(md || '').replace(/\r\n/g, '\n');
+    const yamlEnd = text.indexOf('---\n\n');
+    if (yamlEnd !== -1 && text.startsWith('---')) return text.substring(yamlEnd + 5);
+    const head = `# ${title}\n\n`;
+    return text.startsWith(head) ? text.slice(head.length) : text;
+}
+
+// 과정 전체 백업은 차시 MD를 '# 차시 제목'으로 시작한다(exportAllModules). 제목이 꼭 같은 파일을 앞에서부터 한 번씩만 쓴다
+// (예전에는 경로나 글에 제목 일부만 있어도 골라 다른 차시의 글로 덮었다). mdFiles의 content는 줄바꿈을 \n으로 맞춘 것
+function takeBackupMarkdown(mdFiles, title, used) {
+    const head = `# ${title}\n\n`;
+    const index = (mdFiles || []).findIndex((file, i) => !used.has(i) && file.content.startsWith(head));
+    if (index === -1) return null;
+    used.add(index);
+    return mdFiles[index];
+}
+
+// MD의 ../첨부파일/이름 을 local:키 로 되돌리고 그 그림을 넣는다. 키는 파일 이름에서 확장자를 뗀 것이다.
+// 바르지 않은 키는 그 자리를 그대로 두고, 이미 있는 진짜 그림은 바꾸지 않는다(찾지 못한 그림 자리면 첨부 그림으로 채운다). attached: 파일 이름 → data URL (Map)
+function relinkAttachedImages(content, attached, images = {}) {
+    const found = new Map();
+    const keyOf = fileName => {
+        const key = String(fileName).split('.')[0];
+        if (!isSafeImageKey(key)) return null;
+        const data = attached?.get?.(fileName);
+        const current = Object.prototype.hasOwnProperty.call(images, key) ? images[key] : undefined;
+        if (!isPictureData(current) && isSafeImageValue(data)) found.set(key, data);
+        return key;
+    };
+    const text = String(content || '')
+        .replace(/!\[([^\]]+)\]\(\.\.\/첨부파일\/([^)]+)\)/g, (match, alt, fileName) => {
+            const key = keyOf(fileName);
+            return key ? `<!-- [IMG: "local:${key}"] -->` : match;
+        })
+        .replace(/src="\.\.\/첨부파일\/([^"]+)"/g, (match, fileName) => {
+            const key = keyOf(fileName);
+            return key ? `src="local:${key}"` : match;
+        });
+    return { content: text, images: found.size ? { ...images, ...Object.fromEntries(found) } : images };
+}
+
+// 그 교과의 차시 글을 백업의 MD로 맞춘다(MD를 고쳐 넣었으면 그 글을 쓴다). 첨부 그림도 되돌린다. 새 상태(지역 변수)에만 쓴다
+function applyBackupMarkdown(subject, mdFiles, attached) {
+    if (!subject) return subject;
+    const files = (mdFiles || []).map(file => ({ ...file, content: String(file.content || '').replace(/\r\n/g, '\n') }));
+    const used = new Set();
+    (subject.lessons || []).forEach(lesson => {
+        const file = takeBackupMarkdown(files, lesson.title, used);
+        if (!file) return;
+        const relinked = relinkAttachedImages(backupMarkdownBody(file.content, lesson.title), attached, lesson.images || {});
+        lesson.content = relinked.content;
+        lesson.images = relinked.images;
+    });
+    return subject;
+}
+
+/* ---------- 백업 ZIP·PC 폴더의 차시 MD: 그림 자리를 첨부 파일로 ---------- */
+// 정해 둔 두 모양(<!-- [IMG: "local:id"] -->, src="local:id")만 찾고 그림 id는 글자 그대로 비교한다(id로 정규식을 만들지 않는다)
+const MD_IMAGE_TAG_LOCAL = /<!--\s*\[IMG:\s*"?local:([^"\]\s]+)"?\]\s*-->/g;
+const MD_IMAGE_SRC_LOCAL = /src="local:([^"]+)"/g;
+const MD_ATTACH_DATA_URL = /^data:(image\/\w+);base64,(.*)$/;
+
+// names: 그림 id → 첨부 파일 이름(Map). names에 없는 id의 자리는 그대로 둔다
+function relinkLocalImages(markdown, names) {
+    return String(markdown || '')
+        .replace(MD_IMAGE_TAG_LOCAL, (match, id) => (names.has(id) ? `![${id}](../첨부파일/${names.get(id)})` : match))
+        .replace(MD_IMAGE_SRC_LOCAL, (match, id) => (names.has(id) ? `src="../첨부파일/${names.get(id)}"` : match));
+}
+
+// 첨부 파일로 쓸 그림의 이름과 base64. data:image/형식;base64, 모양이 아니면 null(svg+xml 등은 예전처럼 쓰지 않는다)
+function attachedImageFile(imgId, dataUrl) {
+    const match = typeof dataUrl === 'string' ? dataUrl.match(MD_ATTACH_DATA_URL) : null;
+    if (!match) return null;
+    const type = match[1].split('/')[1];
+    return { name: `${imgId}.${type === 'jpeg' ? 'jpg' : type}`, base64: match[2] };
+}
+
+// 백업 ZIP의 차시 MD: 그림 자리를 ../첨부파일/로 바꾸고 첨부할 그림 파일 목록을 돌려준다(state.js extractImagesToZip)
+function attachmentImages(markdown, images) {
+    const names = new Map();
+    const files = [];
+    Object.entries(isObject(images) ? images : {}).forEach(([imgId, dataUrl]) => {
+        const file = attachedImageFile(imgId, dataUrl);
+        if (!file) return;
+        names.set(imgId, file.name);
+        files.push(file);
+    });
+    return { content: relinkLocalImages(markdown, names), files };
+}
+
+// 저장된 작업을 읽지 못한 동안 교과·차시만 담은 백업을 고르면 보이는 말(그 상태에서는 과정 전체로만 되살린다)
+const UNREAD_PARTIAL_BACKUP_TEXT = '이 파일은 교과(또는 차시)만 담은 백업이라, 읽지 못한 저장본 대신 열 수 없습니다.\n'
+    + "과정 전체 백업 ZIP(파일 이름에 '과정전체백업'이나 '교안백업'이 든 것)을 골라 주세요. 없으면 '새로 시작'을 누른 뒤 이 파일을 불러오세요.";
+
+/* ---------- 읽지 못한 저장본: 내려받을 글 조각, 남길 사본 (state.js가 쓴다) ---------- */
+// 값을 JSON 글로 만들되 글 하나가 아니라 조각 목록으로 돌려준다(그림이 많은 저장본도 브라우저의 글 길이 한도에 걸리지 않게. 조각을 Blob에 그대로 넣는다).
+// 조각을 이으면 JSON.stringify(value)와 같다(객체 안의 undefined·함수는 빼고, 목록 안이면 null). size: 조각 하나를 이만큼 모은 뒤 끊는다
+function jsonTextParts(value, size = 1 << 20) {
+    const parts = [];
+    let buffer = '';
+    const push = text => {
+        buffer += text;
+        if (buffer.length < size) return;
+        parts.push(buffer);
+        buffer = '';
+    };
+    const write = node => {
+        if (node === null || typeof node !== 'object' || typeof node.toJSON === 'function') {
+            const text = JSON.stringify(node);
+            push(text === undefined ? 'null' : text);
+        } else if (Array.isArray(node)) {
+            push('[');
+            for (let index = 0; index < node.length; index++) {
+                if (index) push(',');
+                write(node[index]);
+            }
+            push(']');
+        } else {
+            push('{');
+            let first = true;
+            for (const key of Object.keys(node)) {
+                const item = node[key];
+                if (item === undefined || typeof item === 'function' || typeof item === 'symbol') continue;
+                push(`${first ? '' : ','}${JSON.stringify(key)}:`);
+                first = false;
+                write(item);
+            }
+            push('}');
+        }
+    };
+    write(value);
+    if (buffer) parts.push(buffer);
+    return parts;
+}
+
+// 따로 옮겨 둔 사본 이름(prefix + 옮긴 시각 ms) 가운데 지울 것: 새것부터 keep개를 남긴 나머지. 이 모양이 아닌 이름은 건드리지 않는다
+function staleUnreadCopies(keys, prefix, keep) {
+    const at = key => Number(key.slice(prefix.length));
+    return (Array.isArray(keys) ? keys : [])
+        .filter(key => typeof key === 'string' && key.startsWith(prefix) && /^\d{1,16}$/.test(key.slice(prefix.length)))
+        .sort((a, b) => at(b) - at(a))
+        .slice(Math.max(0, keep));
 }
 
 // 차시 id는 화면 코드에 따옴표 없이 들어가므로 숫자여야 한다. 예전 형식에서 차시 목록에 든 최종 평가('mainQuest')는 그대로 둔다
@@ -1126,7 +1401,10 @@ if (typeof window !== 'undefined') {
         safetyBackupOrAsk, countBackupImages, currentImageCount, noImagesImportNote,
         BACKUP_IMAGE_LABEL, BACKUP_NO_IMAGES_TAG, BACKUP_TOO_BIG_TEXT, BACKUP_FALLBACK_TEXT,
         isBackupImageRef, backupImageInfo, backupImageRefs, backupImageFileNames, folderImageModeOf, folderCopyName,
-        folderOpenPrompt, folderOpenedMessage, backupImageFromKeyedFile
+        folderOpenPrompt, folderOpenedMessage, folderSaveUnreadableText, backupImageFromKeyedFile,
+        safeImageMap, safeTabContents, safeGyosuan, cleanLessonFields, cleanHistoryItem, isSafeImageKey, isSafeImageValue, validHistory, validTrash,
+        trashTimeIso, withTrashTime, backupMarkdownBody, takeBackupMarkdown, relinkAttachedImages, applyBackupMarkdown,
+        relinkLocalImages, attachedImageFile, attachmentImages, UNREAD_PARTIAL_BACKUP_TEXT, jsonTextParts, staleUnreadCopies
     });
     if (typeof document !== 'undefined' && document.addEventListener) {
         // '빼기'는 메뉴를 연 채 바로 받는 백업 하나에만 쓴다. 메뉴 밖을 누르면 그 버튼이 일하기 전에(잡기 단계) 푼다(머리줄 백업 시각·교과 목록 ZIP 버튼)

@@ -38,7 +38,17 @@ function illustrationHtml(imgId, illustration) {
     return `<div class="image-wrapper"><img src="local:${imgId}" alt="${escapeHtml(illustration.caption || illustration.title)}" class="rounded-lg border-2 border-accent/30 shadow-md max-w-full">${caption}</div>`;
 }
 
-const illustrationBlock = imgId => new RegExp(`<div class="image-wrapper"><img src="local:${imgId}"[^>]*>(?:<div class="image-caption"[^>]*>[\\s\\S]*?</div>)?</div>`);
+// 본문의 삽화 블록. 그림 id로 정규식을 만들지 않는다: 정해 둔 모양으로 블록을 찾고 그 블록의 id를 글자 그대로 견준다(이상한 id로 깨지거나 멈추지 않게)
+const ILLUSTRATION_BLOCKS = /<div class="image-wrapper"><img src="local:([^"]*)"[^>]*>(?:<div class="image-caption"[^>]*>[\s\S]*?<\/div>)?<\/div>/g;
+
+// 그 그림 id의 첫 삽화 블록 자리 { start, end }. 없으면 null
+function findIllustrationBlock(md, imgId) {
+    const target = String(imgId);
+    for (const match of String(md).matchAll(ILLUSTRATION_BLOCKS)) {
+        if (match[1] === target) return { start: match.index, end: match.index + match[0].length };
+    }
+    return null;
+}
 
 // 섹션 끝이나 문서 끝에 넣는다. 본문은 공백 외에는 바꾸지 않는다.
 function insertIllustrationMd(md, html, placement) {
@@ -48,8 +58,14 @@ function insertIllustrationMd(md, html, placement) {
     return `${[md.slice(0, position).trimEnd(), html, md.slice(position).trimStart()].filter(Boolean).join('\n\n')}\n`;
 }
 
+// 블록과 그 앞뒤 빈 줄을 빈 줄 하나로 바꾼다
 function removeIllustrationMd(md, imgId) {
-    return md.replace(new RegExp(`\\n*${illustrationBlock(imgId).source}\\n*`), '\n\n').trimStart();
+    const found = findIllustrationBlock(md, imgId);
+    if (!found) return md.trimStart();
+    let { start, end } = found;
+    while (start > 0 && md[start - 1] === '\n') start -= 1;
+    while (end < md.length && md[end] === '\n') end += 1;
+    return `${md.slice(0, start)}\n\n${md.slice(end)}`.trimStart();
 }
 
 function illustrationTab(mod, imgId) {
@@ -108,9 +124,11 @@ async function refreshPlacedIllustration(mod, illustration) {
 function replaceIllustrationCaption(mod, illustration) {
     const tabId = illustrationTab(mod, illustration.imgId);
     if (!tabId) return;
-    // 캡션의 $ 기호가 치환 패턴으로 읽히지 않도록 함수로 넘긴다
-    const md = lessonArtTabMd(mod, tabId).replace(illustrationBlock(illustration.imgId), () => illustrationHtml(illustration.imgId, illustration));
-    mod.tabContents = { ...mod.tabContents, [tabId]: md };
+    // 글을 잘라 붙인다(캡션의 $ 기호가 치환 패턴으로 읽히지 않는다)
+    const md = lessonArtTabMd(mod, tabId);
+    const found = findIllustrationBlock(md, illustration.imgId);
+    const next = found ? `${md.slice(0, found.start)}${illustrationHtml(illustration.imgId, illustration)}${md.slice(found.end)}` : md;
+    mod.tabContents = { ...mod.tabContents, [tabId]: next };
 }
 
 /* ---------- 아이디어 ---------- */
