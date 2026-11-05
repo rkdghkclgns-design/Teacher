@@ -115,6 +115,15 @@ function findLessonPrereq(prereq, selfId) {
     return { ...hit, state: String(hit.lesson.id) === String(selfId) ? 'self' : 'ok' };
 }
 
+// 저장해 둔 시각(ISO 글자, UTC)을 이 컴퓨터 시각 'YYYY-MM-DD HH:MM'으로. 글자가 아니거나 읽을 수 없으면 빈 글(휴지통·변경 이력·수동 검수)
+function localTimeText(value) {
+    if (typeof value !== 'string') return '';
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) return '';
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 /* ---------- 휴지통 ---------- */
 const trashAgeDays = (entry, now) => Math.floor((now - Date.parse(entry.at)) / DAY_MS);
 
@@ -202,7 +211,7 @@ function renderSubjectTrashRows() {
     const entries = typeof liveSubjectTrash === 'function' ? liveSubjectTrash() : [];
     return entries.map((entry, index) => `
             <div class="flex items-center gap-2 p-2 rounded-lg bg-amber-500/10 text-xs text-textLight">
-                <span class="flex-1 min-w-0 truncate"><i class="ph-bold ph-books"></i> 교과 · ${escapeHtml(entry.subject.title)}<span class="block text-[0.6875rem] text-textMuted">차시 ${(entry.subject.lessons || []).length}개 · ${escapeHtml(entry.at.slice(0, 16).replace('T', ' '))}${entry.reason ? ` · ${escapeHtml(entry.reason)}` : ''} · 남은 기간 ${trashDaysLeft(entry)}일</span></span>
+                <span class="flex-1 min-w-0 truncate"><i class="ph-bold ph-books"></i> 교과 · ${escapeHtml(entry.subject.title)}<span class="block text-[0.6875rem] text-textMuted">차시 ${(entry.subject.lessons || []).length}개 · ${escapeHtml(localTimeText(entry.at))}${entry.reason ? ` · ${escapeHtml(entry.reason)}` : ''} · 남은 기간 ${trashDaysLeft(entry)}일</span></span>
                 <button data-trash-action="restore-subject" data-index="${index}" class="px-2 py-1 font-bold bg-accent text-white rounded">복원</button>
                 <button data-trash-action="purge-subject" data-index="${index}" class="px-2 py-1 font-bold bg-white/10 text-rose-300 rounded">완전 삭제</button>
             </div>`).join('');
@@ -215,7 +224,7 @@ function renderTrashRows() {
         // 까닭('다시 만들기 전')이 붙으면 부제가 길어지므로 잘라 내지 않고 줄을 바꿔 남은 기간까지 보인다
         return `
             <div class="flex items-center gap-2 p-2 rounded-lg bg-white/5 text-xs text-textLight">
-                <span class="flex-1 min-w-0 truncate">${escapeHtml(entry.lesson.title)}<span class="block text-[0.6875rem] text-textMuted whitespace-normal break-keep">${escapeHtml(subject?.title || '삭제된 교과')} · ${escapeHtml(entry.at.slice(0, 16).replace('T', ' '))}${entry.reason ? ` · ${escapeHtml(entry.reason)}` : ''} · 남은 기간 ${trashDaysLeft(entry)}일</span></span>
+                <span class="flex-1 min-w-0 truncate">${escapeHtml(entry.lesson.title)}<span class="block text-[0.6875rem] text-textMuted whitespace-normal break-keep">${escapeHtml(subject?.title || '삭제된 교과')} · ${escapeHtml(localTimeText(entry.at))}${entry.reason ? ` · ${escapeHtml(entry.reason)}` : ''} · 남은 기간 ${trashDaysLeft(entry)}일</span></span>
                 <button data-trash-action="restore" data-index="${index}" class="px-2 py-1 font-bold bg-accent text-white rounded">복원</button>
                 <button data-trash-action="purge" data-index="${index}" class="px-2 py-1 font-bold bg-white/10 text-rose-300 rounded">완전 삭제</button>
             </div>`;
@@ -452,7 +461,7 @@ function metaPrereqRows(mod) {
 
 function metaHistoryRows(mod) {
     if (!(mod.history || []).length) return '<p class="text-xs text-textMuted">변경 이력이 없습니다.</p>';
-    return mod.history.map(row => `<div class="text-[0.6875rem] text-textMuted">${escapeHtml(row.at.slice(0, 16).replace('T', ' '))} · ${escapeHtml(row.note)}</div>`).join('');
+    return mod.history.map(row => `<div class="text-[0.6875rem] text-textMuted">${escapeHtml(localTimeText(row.at))} · ${escapeHtml(row.note)}</div>`).join('');
 }
 
 function metaBasicsHtml(subject, mod, label, field) {

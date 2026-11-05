@@ -255,16 +255,23 @@ const DBManager = {
         });
     },
 
+    writing: 0, // 끝나지 않은 쓰기 수. 창을 닫기 전에 묻는다(isSavePending)
+
     // 기록이 끝까지 들어간 뒤(transaction complete)에 끝난 것으로 본다. 요청이 성공해도 기록 단계에서 취소될 수 있다(저장 공간이 모자라면 QuotaExceededError).
     // 그래서 saveState가 '브라우저에 저장했다'고 돌려주는 값을 믿을 수 있다
     async setItem(key, value) {
-        const db = await this.init();
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(this.storeName, 'readwrite');
-            tx.oncomplete = () => resolve();
-            tx.onabort = () => reject(tx.error || new Error('IndexedDB 저장이 취소되었습니다'));
-            tx.objectStore(this.storeName).put(value, key);
-        });
+        this.writing += 1; // 부른 즉시 센다(창을 닫기 직전에 시작한 저장도 센다)
+        try {
+            const db = await this.init();
+            return await new Promise((resolve, reject) => {
+                const tx = db.transaction(this.storeName, 'readwrite');
+                tx.oncomplete = () => resolve();
+                tx.onabort = () => reject(tx.error || new Error('IndexedDB 저장이 취소되었습니다'));
+                tx.objectStore(this.storeName).put(value, key);
+            });
+        } finally {
+            this.writing -= 1;
+        }
     },
 
     async getItem(key) {
@@ -453,6 +460,8 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
 }
 if (typeof window.addEventListener === 'function') window.addEventListener('pagehide', () => flushSaveStateSoon());
 
+// 브라우저 저장소(IndexedDB)에 쓴다. 끝까지 썼으면 true, 실패하면 알린 뒤 false(읽지 못한 동안은 쓰지 않고 false). 던지지 않는다.
+// PC 폴더 저장은 기다리지 않는다(실패는 띠로 알린다)
 // folder: false면 이어진 PC 폴더에는 쓰지 않는다(백업 ZIP 되살리기는 브라우저에 저장한 뒤에야 폴더에 쓴다. 저장하지 못해 되돌린 상태가 폴더에 남지 않게)
 async function saveState({ folder = true } = {}) {
     // 저장된 작업을 읽지 못한 동안은 저장하지 않는다(읽지 못한 저장본과 PC 폴더를 빈 화면으로 덮지 않게)
@@ -486,6 +495,12 @@ async function saveState({ folder = true } = {}) {
         syncToLinkedFolder().catch(e => console.warn('폴더 동기화 경고:', e.message));
     }
     return savedInBrowser; // 브라우저(IndexedDB)에 저장했는지. 폴더 열기는 저장했을 때만 새로고침 뒤 이어 쓸 폴더를 기억한다
+}
+
+// 끝나지 않은 브라우저 저장이 있거나, 입력이 멈추기를 기다리는 저장(saveSoonTask)이 있으면 true. 창을 닫기 전에 묻는다(ui.js warnBeforeUnload).
+// PC 폴더 쓰기는 세지 않는다(임시 파일에 쓰고 닫을 때 바꾸므로 끊겨도 폴더의 이전 저장본은 그대로이고, 다음 저장이 따라잡는다)
+function isSavePending() {
+    return DBManager.writing > 0 || (typeof saveSoonTask !== 'undefined' && !!saveSoonTask.pending?.());
 }
 
 function isStateLoadFailed() {

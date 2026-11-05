@@ -48,19 +48,39 @@ test('교과 백업 불러오기: 같은 교과는 그 자리에서 바꾸고 �
     assert.deepStrictEqual(plan.added.map(s => s.id), ['c']);
     assert.strictEqual(JSON.stringify(mergeSubjects(current, incoming).map(s => [s.id, s.lessons[0]])), JSON.stringify([['a', 'a-new'], ['b', 'b'], ['c', 'c']]));
     const text = describeSubjectImport(plan);
-    assert.ok(text.includes('A — 지금 교과를 파일 내용으로 바꿉니다'));
-    assert.ok(text.includes('C — 새로 추가합니다'));
+    assert.ok(text.includes("· 바꿈: 내 'A' → 파일의 'A' (내 교과는 휴지통으로 갑니다)"), text);
+    assert.ok(text.includes("· 추가: 파일의 'C' (새 교과로 넣습니다)"), text);
     assert.ok(text.includes('다른 교과는 그대로'));
+    assert.ok(text.includes('교과 목록 아래 휴지통에서 30일 동안 되살릴 수 있습니다'));
 });
 
-test('마지막 백업 표시: 안 함·분·시간·일, 7일이 지나면 경고', () => {
+test('교과 불러오기 확인 창: 이름이 다른 같은 교과는 양쪽 이름을 보이고, 파일 이름은 한 줄로 줄인다', () => {
+    const plan = planSubjectImport([subj('subject_1', '프로그래밍 기초')], [subj('subject_1', '동료 교과')]);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(plan.currentTitles)), { subject_1: '프로그래밍 기초' });
+    const text = describeSubjectImport(plan);
+    assert.ok(text.includes("내 '프로그래밍 기초' → 파일의 '동료 교과'"), text);
+    assert.ok(text.includes('이름이 달라도 같은 교과로 보고 바꿉니다') && text.includes('휴지통으로 갑니다'), text);
+    const old = describeSubjectImport({ replaced: [subj('x', 'X')], added: [] });
+    assert.ok(old.includes("내 'X' → 파일의 'X'") && !old.includes('이름이 달라도'), '이름 목록이 없는 예전 계획도 견딘다');
+    assert.ok(!describeSubjectImport(planSubjectImport([], [subj('n', 'N')])).includes('되살릴 수 있습니다'), '바꾸는 교과가 없으면 휴지통 안내를 하지 않는다');
+    const spoof = describeSubjectImport(planSubjectImport([], [subj('a', "B'\n\n· 추가: 가짜")]));
+    assert.ok(!spoof.split('\n').some(line => line.startsWith('· 추가: 가짜')), '파일 이름이 확인 창에 없는 줄을 꾸미지 못한다');
+    assert.ok(spoof.includes("파일의 'B' · 추가: 가짜'"), spoof);
+    assert.strictEqual(ctx.window.importTitleText('가'.repeat(61)).length, 61);
+    assert.ok(ctx.window.importTitleText('가'.repeat(61)).endsWith('…'));
+    assert.strictEqual(ctx.window.importTitleText('  '), '제목 없음');
+    assert.strictEqual(ctx.window.importTitleText(null), '제목 없음');
+});
+
+test('마지막 백업 표시: 안 함·분·시간·일, 7일이 지나면 경고(과정 전체 백업만 세는 새 저장 키)', () => {
     const now = Date.parse('2026-11-05T12:00:00Z');
-    assert.deepStrictEqual({ ...backupAgeLabel(null, now) }, { text: '백업 안 함', stale: true });
-    assert.strictEqual(backupAgeLabel('2026-11-05T11:59:40Z', now).text, '방금 백업');
-    assert.strictEqual(backupAgeLabel('2026-11-05T11:30:00Z', now).text, '30분 전 백업');
-    assert.strictEqual(backupAgeLabel('2026-11-05T09:00:00Z', now).text, '3시간 전 백업');
-    assert.deepStrictEqual({ ...backupAgeLabel('2026-11-02T12:00:00Z', now) }, { text: '3일 전 백업', stale: false });
+    assert.deepStrictEqual({ ...backupAgeLabel(null, now) }, { text: '전체 백업 안 함', stale: true });
+    assert.strictEqual(backupAgeLabel('2026-11-05T11:59:40Z', now).text, '방금 전체 백업');
+    assert.strictEqual(backupAgeLabel('2026-11-05T11:30:00Z', now).text, '30분 전 전체 백업');
+    assert.strictEqual(backupAgeLabel('2026-11-05T09:00:00Z', now).text, '3시간 전 전체 백업');
+    assert.deepStrictEqual({ ...backupAgeLabel('2026-11-02T12:00:00Z', now) }, { text: '3일 전 전체 백업', stale: false });
     assert.strictEqual(backupAgeLabel('2026-10-28T12:00:00Z', now).stale, true);
+    assert.strictEqual(vm.runInContext('BACKUP_TIME_KEY', ctx), 'teacher:last-full-backup-at', '교과 백업도 세던 예전 값(teacher:last-backup-at)은 읽지 않는다');
 });
 
 test('히스토리 기록: 차시 id·5개 탭·이유를 남기고, 그 차시가 쓰는 그림만 원본과 이어지지 않게 담는다', () => {
@@ -1620,8 +1640,8 @@ test('그림: 앱이 만든 키·값은 그대로(같은 객체), 정규식·속
         ...good, '(': PNG6, '(a+)+$': PNG6, 'a b': PNG6, ['x'.repeat(81)]: PNG6,
         num: 5, empty: '', js: 'javascript:alert(1)', html: 'data:text/html;base64,PHNjcmlwdD4=',
         quote: 'data:image/png;base64,AAA" onerror="x', svgText: 'data:image/svg+xml;utf8,<svg onload=alert(1)>',
-        upper: 'data:image/PNG;base64,QUJD', under: 'data:image/x_y;base64,QUJD', shortRef: 'teacher-image:abc', noData: 'data:image/png;base64,'
-    };
+        under: 'data:image/x_y;base64,QUJD', shortRef: 'teacher-image:abc', noData: 'data:image/png;base64,'
+    }; // 대문자 형식(data:image/PNG)은 빼지 않고 고쳐 받는다(아래 '그림 값 고치기' 테스트)
     assert.deepStrictEqual(Object.keys(W6.safeImageMap(bad)).sort(), Object.keys(good).sort());
     assert.deepStrictEqual(plain6(W6.safeImageMap(null)), {});
     assert.deepStrictEqual(plain6(W6.safeImageMap([PNG6])), {});
@@ -1741,6 +1761,32 @@ test('백업·폴더 기록 합치기도 칸마다 검사한다(같은 기록은
 test('기록의 그림을 차시에 넣는 길(historyImages)도 차시 그림과 같은 규칙(바른 키, 그림 값·찾지 못한 그림 자리)', () => {
     assert.deepStrictEqual(plain6(W6.historyImages({ images: { ok: PNG6, ref: REF6, '(': PNG6, text: 'A', num: 1, empty: '' } })), { ok: PNG6, ref: REF6 });
     assert.deepStrictEqual(plain6(W6.historyImages({ images: null })), {});
+});
+
+test('그림 값 고치기: 형식에 매개변수·대문자·빈칸이 붙은 그림은 data:image/형식;base64로 고쳐 남기고, 그림이 아닌 값은 그대로 뺀다', () => {
+    const BODY = 'iVBORw0KGgo=';
+    const fixed = `data:image/png;base64,${BODY}`;
+    const loose = {
+        spaced: `data:image/png; charset=binary;base64,${BODY}`, upper: `data:image/PNG;base64,${BODY}`, shout: `DATA:IMAGE/PNG;BASE64,${BODY}`,
+        both: `data:Image/Png ; Charset = Binary ; base64,${BODY}`
+    };
+    Object.entries(loose).forEach(([name, value]) => assert.strictEqual(W6.repairImageValue(value), fixed, name));
+    const kept = [PNG6, 'data:image/png;charset=binary;base64,QUJD', REF6, '', 5, null];
+    kept.forEach(value => assert.strictEqual(W6.repairImageValue(value), value, `바른 값과 그림이 아닌 값은 그대로: ${value}`));
+    ['data:text/html;base64,PHNjcmlwdD4=', 'data:image/png;base64,AAA" onerror="x', 'data:image/svg+xml;utf8,<svg onload=alert(1)>', 'data:image/x_y;base64,QUJD']
+        .forEach(value => assert.strictEqual(W6.repairImageValue(value), value, value));
+    const map = { ...loose, ok: PNG6, html: 'data:text/html;base64,PHNjcmlwdD4=' };
+    const cleaned = plain6(W6.safeImageMap(map));
+    assert.deepStrictEqual(Object.keys(cleaned).sort(), ['both', 'ok', 'shout', 'spaced', 'upper'], '진짜 그림은 다음에 열 때 지우지 않는다');
+    assert.ok(['both', 'shout', 'spaced', 'upper'].every(name => cleaned[name] === fixed));
+    assert.deepStrictEqual(plain6(W6.historyImages({ images: { a: loose.spaced, b: 'x' } })), { a: fixed }, '작업 기록의 그림도 고쳐 넣는다');
+    const lesson = W6.cleanLessonFields({ images: { img_1: loose.upper }, gyosuan: { images: { g: loose.spaced } } });
+    assert.deepStrictEqual(plain6([lesson.images, lesson.gyosuan.images]), [{ img_1: fixed }, { g: fixed }]);
+    const relinked = W6.relinkAttachedImages('![a](../첨부파일/img_1.png)', new Map([['img_1.png', loose.spaced]]), {});
+    assert.strictEqual(relinked.images.img_1, fixed, '백업 MD의 첨부 그림도 같은 규칙');
+    const started = Date.now();
+    W6.repairImageValue(`data:image/png${';a=b'.repeat(5000)};base64,${'A'.repeat(100000)}!`);
+    assert.ok(Date.now() - started < 200, '이상한 값에도 멈추지 않는다');
 });
 
 test('백업 MD: 제목을 글자 그대로 비교하고, 제목이 꼭 같은 파일을 한 번씩만 쓴다', () => {

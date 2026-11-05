@@ -584,32 +584,44 @@ test('시작: 읽지 못하면 폴더를 다시 잇지 않고 막는 창을 열�
     assert.ok(/if \(loaded !== 'failed' && typeof restoreProjectFolderConnection === 'function'\)/.test(html));
     assert.ok(/if \(loaded === 'failed'\) \{\s*showStateLoadFailedDialog\(\);/.test(html));
     assert.ok(/if \(!window\.isStateLoadFailed\?\.\(\)\) startTutorial\(\);/.test(html));
-    const ui = fs.readFileSync(path.join(root, 'ui.js'), 'utf8');
-    assert.ok(/if \(window\.isStateLoadFailed\?\.\(\)\) return window\.showStateLoadFailedDialog\?\.\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*saveState\(\)/.test(ui.replace(/\r\n/g, '\n')), 'Ctrl+S는 저장하기 전에 막는다');
+    const ui = fs.readFileSync(path.join(root, 'ui.js'), 'utf8').replace(/\r\n/g, '\n');
+    // Ctrl+S는 saveNow로 저장한다. saveNow는 무엇보다 먼저 읽지 못한 상태를 막는다(묶음 8이 원문 칸 넣기를 더했다)
+    assert.ok(/if \(isSaveShortcut\(e\)\) \{\n\s*e\.preventDefault\(\);\n\s*if \(!e\.repeat\) saveNow\(\)/.test(ui), 'Ctrl+S는 saveNow로 저장한다');
+    assert.ok(/async function saveNow\(\) \{\n\s*if \(window\.isStateLoadFailed\?\.\(\)\) return window\.showStateLoadFailedDialog\?\.\(\);/.test(ui), 'Ctrl+S는 저장하기 전에 막는다');
     assert.strictEqual((ui.match(/overlay\.dataset\.appDialog = '';/g) || []).length, 2, '알림·확인 창은 막는 창 위에서도 누를 수 있다');
 });
 
-test("Ctrl+S: 브라우저에 저장했을 때만 '저장되었습니다'라고 한다(저장하지 못하면 saveState의 오류 알림만 뜬다)", async () => {
+test("Ctrl+S: 브라우저에 저장했을 때만 '저장했습니다'라고 한다(저장하지 못하면 saveState의 오류 알림 뒤에 저장하지 못했다고 알린다)", async () => {
     const ui = fs.readFileSync(path.join(root, 'ui.js'), 'utf8').replace(/\r\n/g, '\n');
-    const start = ui.indexOf("document.addEventListener('keydown'");
-    const end = ui.indexOf('\n    });\n', start);
-    assert.ok(start >= 0 && end > start, 'ui.js의 단축키 처리를 찾지 못함');
+    const slice = (head, tail) => {
+        const start = ui.indexOf(head);
+        const end = ui.indexOf(tail, start);
+        assert.ok(start >= 0 && end > start, `ui.js에서 ${head}을 찾지 못함`);
+        return ui.slice(start, end + tail.length);
+    };
+    const source = [slice('function isSaveShortcut(', '\n}\n'), slice('async function saveNow(', '\n}\n'), slice("document.addEventListener('keydown'", '\n    });')].join('\n');
     const press = async ({ saved, unread = false }) => {
-        const seen = { alerts: [], dialogs: 0, saves: 0 };
+        const seen = { alerts: [], toasts: [], dialogs: 0, saves: 0 };
         const keyCtx = {
-            document: { addEventListener: (type, fn) => { if (type === 'keydown') keyCtx.onKey = fn; }, getElementById: () => null },
-            window: { showAlert: text => seen.alerts.push(text), isStateLoadFailed: () => unread, showStateLoadFailedDialog: () => { seen.dialogs += 1; } },
+            console: { error() {} },
+            document: { addEventListener: (type, fn) => { if (type === 'keydown') keyCtx.onKey = fn; }, getElementById: () => null, activeElement: null },
+            window: {
+                showAlert: text => seen.alerts.push(text), showToast: (text, type) => seen.toasts.push([text, type]),
+                isStateLoadFailed: () => unread, showStateLoadFailedDialog: () => { seen.dialogs += 1; }
+            },
             saveState: async () => { seen.saves += 1; return saved; }
         };
         vm.createContext(keyCtx);
-        vm.runInContext(ui.slice(start, end + '\n    });'.length), keyCtx);
-        keyCtx.onKey({ ctrlKey: true, key: 's', preventDefault() {} });
+        vm.runInContext(source, keyCtx);
+        keyCtx.onKey({ ctrlKey: true, key: 's', code: 'KeyS', preventDefault() {} });
         await new Promise(resolve => setTimeout(resolve, 0));
         return seen;
     };
-    assert.deepStrictEqual(await press({ saved: true }), { alerts: ['저장되었습니다.'], dialogs: 0, saves: 1 });
-    assert.deepStrictEqual(await press({ saved: false }), { alerts: [], dialogs: 0, saves: 1 }, '저장하지 못했으면 저장되었다고 하지 않는다');
-    assert.deepStrictEqual(await press({ saved: true, unread: true }), { alerts: [], dialogs: 1, saves: 0 }, '읽지 못한 동안은 저장하지 않고 그 창을 연다');
+    assert.deepStrictEqual(await press({ saved: true }), { alerts: [], toasts: [['저장했습니다.', 'success']], dialogs: 0, saves: 1 });
+    const failed = await press({ saved: false });
+    assert.deepStrictEqual([failed.saves, failed.alerts.length, failed.toasts.length, failed.toasts[0][1]], [1, 0, 1, 'error'], '저장하지 못했으면 저장했다고 하지 않는다');
+    assert.ok(failed.toasts[0][0].startsWith('브라우저에 저장하지 못했습니다'), failed.toasts[0][0]);
+    assert.deepStrictEqual(await press({ saved: true, unread: true }), { alerts: [], toasts: [], dialogs: 1, saves: 0 }, '읽지 못한 동안은 저장하지 않고 그 창을 연다');
 });
 
 (async () => {

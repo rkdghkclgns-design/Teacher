@@ -133,9 +133,14 @@ function blobToDataUrl(blob) {
     });
 }
 
-// 형식을 알려 주지 않는 저장소도 있어 주소의 확장자로 채운다
+// 그림 형식만 남긴다: ';' 앞의 글을 다듬고 소문자로('Image/PNG; charset=binary' → 'image/png').
+// 서버가 준 형식을 그대로 쓰면 'data:image/png; charset=binary;base64,…'가 되어 다음에 열 때 그림으로 받지 않는다(data-safety.js)
+const bareImageType = type => String(type || '').split(';')[0].trim().toLowerCase();
+
+// 형식을 알려 주지 않는 저장소도 있어 주소의 확장자로 채운다. 그림 형식은 매개변수 없이 형식만 둔다(blobToDataUrl이 그 형식으로 data URL을 만든다)
 function asImageBlob(blob, url) {
-    if (blob.type.startsWith('image/')) return blob;
+    const type = bareImageType(blob.type);
+    if (type.startsWith('image/')) return type === blob.type ? blob : new Blob([blob], { type });
     const ext = (String(url).split('?')[0].match(/\.(\w+)$/) || [])[1]?.toLowerCase();
     return HIGGSFIELD_IMAGE_TYPES[ext] ? new Blob([blob], { type: HIGGSFIELD_IMAGE_TYPES[ext] }) : null;
 }

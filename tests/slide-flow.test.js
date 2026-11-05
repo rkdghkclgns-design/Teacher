@@ -288,6 +288,28 @@ const draftLesson = () => ({ id: 'm1', title: '재미', hours: 1, tabContents: {
         assert.strictEqual(ctx.saved, saved, '바뀐 것이 없으면 저장하지 않는다');
     });
 
+    await run('교수안 원문 칸: 넣지 않은 글이 있는지 알려 준다(Ctrl+S 결과·창 닫기 경고)', async () => {
+        const mod = lesson({ docMd: DOC, deckMd: DECK, sourceKey: 'k' });
+        const ctx = withLesson(mod);
+        assert.strictEqual(ctx.hasPendingGyosuanRaw(), false, '칸이 없으면 없음');
+        ctx.toggleGyosuanEdit('docMd');
+        ctx.elements['gyosuan-raw'] = { value: DOC };
+        assert.strictEqual(ctx.hasPendingGyosuanRaw(), false, '같은 글');
+        ctx.elements['gyosuan-raw'].value = `${DOC}\n추가`;
+        assert.strictEqual(ctx.hasPendingGyosuanRaw(), true);
+        await ctx.saveGyosuanRaw();
+        assert.strictEqual(ctx.hasPendingGyosuanRaw(), false);
+        assert.strictEqual(mod.gyosuan.docMd, `${DOC}\n추가`);
+        const noDeck = lesson({ docMd: DOC, sourceKey: 'k' });
+        const ctx2 = withLesson(noDeck);
+        ctx2.toggleGyosuanEdit('deckMd');
+        ctx2.elements['gyosuan-raw'] = { value: '' };
+        assert.strictEqual(ctx2.hasPendingGyosuanRaw(), false, '빈 칸과 없는 편성안은 같은 글로 본다');
+        await ctx2.saveGyosuanRaw();
+        assert.strictEqual(ctx2.saved, undefined, '빈 칸과 없는 편성안은 같은 글로 본다(저장하지 않는다)');
+        assert.strictEqual(noDeck.gyosuan.deckMd, undefined);
+    });
+
     await run('편성안 수정: 차시 덱만 고쳐 둔 경우에도 다시 만들기를 안내', async () => {
         const mod = lesson({ docMd: DOC, deckMd: DECK, sessionDecks: { 1: '<y>' }, sourceKey: 'k' });
         const ctx = withLesson(mod);

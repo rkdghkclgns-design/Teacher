@@ -121,11 +121,20 @@ function runMdTool(ta, id) {
     if (tool) applyMdEdit(ta, tool.edit(ta.value, ta.selectionStart, ta.selectionEnd));
 }
 
+// 그림 넣기는 보기 화면과 같은 규칙(lesson-export.js inlineLessonImages): 정해 둔 그림 키 모양(local:키) 하나로 찾아 진짜 그림(data:image)만 넣고,
+// 넣지 못한 자리는 비운다. local:img_1이 local:img_10 안에서 바뀌지 않고, 찾지 못한 그림 자리(teacher-image:…)·빈 값은 넣지 않는다.
+// inlineLessonImages가 없을 때(lesson-export.js를 싣지 않은 테스트)도 같은 규칙으로 넣는다
+const MD_PREVIEW_IMAGE_REF = /local:([\w-]{1,80})(?![\w-])/g;
+function mdPreviewImages(md, images) {
+    if (typeof inlineLessonImages === 'function') return inlineLessonImages(md, images);
+    const pictures = new Map(Object.entries(images && typeof images === 'object' ? images : {}).filter(([, data]) => typeof data === 'string' && data.startsWith('data:image/')));
+    return String(md || '').replace(MD_PREVIEW_IMAGE_REF, (whole, id) => (pictures.has(id) ? pictures.get(id) : whole))
+        .replace(/src="local:[^"]+"/g, 'src="" alt="[이미지 생성 누락]"').replace(/\(local:[^)]+\)/g, '()');
+}
+
 function mdPreviewHtml(mod, text) {
     const shown = typeof cleanLessonOpening === 'function' ? cleanLessonOpening(text) : text; // 보기 화면과 같게 첫머리를 정리해 그린다
-    const withImages = Object.entries(mod?.images || {}).reduce((md, [id, src]) => md.split(`local:${id}`).join(src), shown);
-    const clean = withImages.replace(/src="local:[^"]+"/g, 'src="" alt="[이미지 생성 누락]"').replace(/\(local:[^)]+\)/g, '()');
-    return renderLessonHTML(preprocessMarkdown(clean));
+    return renderLessonHTML(preprocessMarkdown(mdPreviewImages(shown, mod?.images)));
 }
 
 // 미리 보기는 입력하는 동안 계속 그리므로, 붙여 넣은 글의 스크립트가 돌지 않게 비활성 template에서 걷어 낸 뒤 넣는다
@@ -212,8 +221,7 @@ function bindMdTextarea(box, ta) {
     });
     ta.addEventListener('keydown', event => {
         shiftEnter = event.key === 'Enter' && event.shiftKey;
-        if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
-        if (event.code === 'KeyS') saveRawContent(); // 전역 Ctrl+S는 입력 중인 내용을 모른다
+        if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return; // Ctrl+S는 문서의 단축키가 이 칸의 글까지 넣고 저장한다(ui.js saveNow)
         if (MD_SHORTCUTS[event.code]) {
             event.preventDefault();
             runMdTool(ta, MD_SHORTCUTS[event.code]);

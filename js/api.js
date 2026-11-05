@@ -620,9 +620,11 @@ async function generateModuleContent(moduleId, keyConcepts) {
     if (mod.status === 'done' || (mod.tabContents && Object.values(mod.tabContents).some(v => v))) {
         await archiveContents([mod], '다시 생성 전'); // 중단하거나 실패해도 히스토리에서 이전 교안(5개 탭)으로 되돌릴 수 있게 한다
         mod.tabContents = { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null };
-        // 재생성 시 옛 이미지 캐시도 비움 (새 본문에 맞는 이미지로 갱신)
-        mod.images = {};
         mod.content = '';
+        // 다시 만들면 옛 본문 그림은 비운다(새 본문에 맞는 그림으로 갱신). 교수안·편성안에 붙여 넣은 그림, 삽화·판서 영상이 쓰는 그림,
+        // 다시 만든 탭에 그대로 돌려 넣을 고정 섹션의 그림은 남긴다(tabs.js dropUnusedLessonImages)
+        if (!mod.images || typeof mod.images !== 'object') mod.images = {};
+        dropUnusedLessonImages(mod, Object.values(lockedByTab).flat().map(block => block.text));
     }
 
 
@@ -3084,50 +3086,48 @@ window.toggleEditorMode = function (mode) {
 
 
 
-window.saveRawContent = function () {
-
+// 원문 칸(#raw-view)에 아직 넣지 않은 글. { mod, tabId, rawView, value }, 없으면 null.
+// 편집기를 그릴 때의 차시·탭에 넣는다(화면이 바뀌는 도중의 change가 다른 탭을 덮어쓰지 않게)
+function pendingRawEdit() {
     const rawView = document.getElementById('raw-view');
-
-    // 편집기를 그릴 때의 차시·탭에 저장한다. 화면이 바뀌는 도중의 change가 다른 탭을 덮어쓰지 않게 한다.
-    const mod = getEditingModule(rawView?.dataset.moduleId || undefined);
-
-    if (mod && rawView) {
-
-        const tabId = rawView.dataset.tabId || currentLessonTab;
-
-        const stored = (mod.tabContents ? mod.tabContents[tabId] : mod.content) || '';
-        // 편집기는 첫머리를 정리해 보여 준다. 고치지 않았으면 저장도 이미지 정리도 하지 않는다
-        if (rawView.value === stored || rawView.value === cleanLessonOpening(stored)) return;
-
-        setTabMarkdown(mod, tabId, rawView.value);
-
-
-
-        // [가비지 컬렉션] 텍스트에서 삭제된 이미지 데이터 찌꺼기를 찾아 완전 삭제 (용량 확보)
-
-        if (mod.images) {
-
-            for (const imgId in mod.images) {
-
-                if (!mod.content.includes(`local:${imgId}`)) {
-
-                    delete mod.images[imgId];
-
-                }
-
-            }
-
-        }
-
-        saveState();
-
-        window.syncReviewBadge?.(mod);
-
-        window.refreshMdPreview?.();
-
-    }
-
+    if (!rawView) return null;
+    const mod = getEditingModule(rawView.dataset.moduleId || undefined);
+    if (!mod) return null;
+    const tabId = rawView.dataset.tabId || currentLessonTab;
+    // 그린 뒤(또는 마지막으로 넣은 뒤) 손대지 않은 칸은 넣을 것이 없다. 처음 기준은 칸을 그린 글(defaultValue), 넣은 뒤에는 넣은 글(lastSaved).
+    // 그사이 삽화 배치 같은 다른 기능이 탭을 바꿨어도 옛 글로 덮지 않는다
+    const base = typeof rawView.lastSaved === 'string' ? rawView.lastSaved : rawView.defaultValue;
+    if (typeof base === 'string' && rawView.value === base) return null;
+    // 칸을 채운 글과 같으면 고치지 않은 것이다(편집기는 첫머리를 정리해 보여 줄 때도 있다)
+    const shown = tabSourceFor(mod, tabId);
+    if (rawView.value === shown || rawView.value === cleanLessonOpening(shown)) return null;
+    return { mod, tabId, rawView, value: rawView.value };
 }
+
+window.saveRawContent = function () {
+    const edit = pendingRawEdit();
+    if (!edit) return;
+    const { mod, tabId, rawView, value } = edit;
+    setTabMarkdown(mod, tabId, value);
+    rawView.lastSaved = value; // 넣은 글이 이 칸의 새 기준이다(손대지 않으면 다시 넣지 않는다)
+    // 어디에서도 쓰지 않게 된 그림만 지운다(용량 확보). 교수안·편성안에 붙여 넣은 그림, 삽화·판서 영상이 쓰는 그림은 남긴다(tabs.js)
+    if (mod.images) dropUnusedLessonImages(mod);
+    saveState();
+    window.syncReviewBadge?.(mod);
+    window.refreshMdPreview?.();
+};
+
+// 열어 둔(수정 모드) 원문 칸에서 고친 글만 넣는다. 숨은 칸은 다시 그리기 전의 글일 수 있어 넣지 않는다(Ctrl+S·창 닫기·AI 결과)
+window.flushVisibleRawView = function () {
+    const raw = document.getElementById('raw-view');
+    if (raw && !raw.classList.contains('hidden')) window.saveRawContent();
+};
+
+// 열어 둔 원문 칸에 넣지 않은 글이 있는가(창을 닫기 전에 묻는다)
+window.hasPendingRawEdit = function () {
+    const raw = document.getElementById('raw-view');
+    return !!raw && !raw.classList.contains('hidden') && !!pendingRawEdit();
+};
 
 
 
@@ -3168,6 +3168,11 @@ window.switchAIMode = function (mode) {
 const AI_COMMAND_EDIT_PLACEHOLDER = '고칠 내용을 쓰세요 · 고른 글만, 안 고르면 이 탭 전체를 고칩니다';
 
 let aiCommandBusy = false;
+// AI에 보낸 명령의 결과를 기다리거나 아직 넣지 않았다(응답을 기다리는 동안, 다른 곳으로 옮겨 묻는 창·바뀐 부분 미리 보기가 떠 있는 동안). 창을 닫으면 그 결과를 잃는다
+let aiCommandResultPending = false;
+
+// 창을 닫기 전에 묻는다(ui.js hasUnsavedWork). 탭 전체를 고칠지 묻는 동안처럼 아직 보내지 않았으면 false
+window.isAiResultPending = () => aiCommandResultPending;
 
 // 한 번에 하나만 실행한다(한글 Enter·연타로 두 번 부르지 않게). 보기 화면에서 시작했으면 어떻게 끝나든 보기로 돌아온다
 window.executeAICommand = async function () {
@@ -3175,13 +3180,14 @@ window.executeAICommand = async function () {
     aiCommandBusy = true;
     const renderView = document.getElementById('render-view');
     const startedInView = !!renderView && !renderView.classList.contains('hidden');
-    const startedOn = currentEditingModuleId;
+    const startedOn = aiEditTargetNow();
     try {
         await runAICommand();
     } finally {
         aiCommandBusy = false;
         const raw = document.getElementById('raw-view');
-        if (startedInView && String(currentEditingModuleId) === String(startedOn) && raw && !raw.classList.contains('hidden')) {
+        // 시작한 교과·차시·탭이 그대로일 때만(다른 교과의 같은 번호 차시나 다른 탭이면 그 화면을 건드리지 않는다)
+        if (startedInView && sameAiEditTarget(startedOn, aiEditTargetNow()) && raw && !raw.classList.contains('hidden')) {
             window.saveRawContent?.(); // 기다리는 동안 원문 칸에 쓴 글을 잃지 않게
             toggleEditorMode('view');
         }
@@ -3198,6 +3204,9 @@ async function runAICommand() {
     const renderView = document.getElementById('render-view');
     const rawView = document.getElementById('raw-view');
     if (!rawView) return;
+    // 시작한 교과·차시·탭. 응답이 오면 이 자리가 그대로 열려 있을 때만 바로 넣는다
+    const target = aiEditTargetNow();
+    if (target.tabId == null) return; // 탭을 보고 있지 않으면(교수안 같은 항목·편집기 밖) 넣을 탭이 없다. 그때 명령줄은 숨어 있다
 
     // ── 1. 실행 전 선택 텍스트 캡처 (보기 모드 / 수정 모드 양쪽 지원) ──
     let capturedSelection = '';
@@ -3279,8 +3288,10 @@ async function runAICommand() {
 
     input.disabled = true;
     btn.innerHTML = '<i class="ph-bold ph-spinner animate-spin"></i>';
+    aiCommandResultPending = true; // 여기서 보낸다. 결과를 넣거나 버릴 때까지 창을 닫기 전에 묻는다
 
     try {
+        let result = null;
         if (aiCommandMode === 'edit') {
             if (selStart === selEnd || selStart < 0) throw new Error("수정할 텍스트를 영역 선택해주세요.");
 
@@ -3291,51 +3302,135 @@ async function runAICommand() {
             const { systemInstruction, userPrompt } = buildTaskContext('edit', { context, selectedText, command });
 
             const res = await callGemini(TEXT_MODEL, {
-                        contents: [{ parts: [{ text: userPrompt + lessonAttachmentPrompt(currentEditingModuleId) }] }],
-                        systemInstruction: { parts: [{ text: systemInstruction }] }
+                contents: [{ parts: [{ text: userPrompt + lessonAttachmentPrompt(currentEditingModuleId) }] }],
+                systemInstruction: { parts: [{ text: systemInstruction }] }
             });
 
             let newText = extractText(res);
             newText = newText.replace(/^```\w*\n?/i, '').replace(/\n?```$/i, '').trim();
-
-            if (!(await confirmAiEdit(selectedText, newText))) return;
-            rawView.value = text.substring(0, selStart) + newText + text.substring(selEnd);
-
-            if (typeof clearAISelection === 'function') clearAISelection();
+            result = { kind: 'edit', target, selStart, selEnd, selectedText, newText };
 
         } else if (aiCommandMode === 'image') {
+            const baseText = rawView.value;
+            // 보기 모드에서 진입한 경우 커서가 0이므로 문서 끝에 삽입
+            const pos = (isViewMode || rawView.selectionStart === 0) ? baseText.length : rawView.selectionStart;
             const b64 = await generateImageAPI(command);
-            if (b64) {
-                const mod = getEditingModule();
-                if (!mod.images) mod.images = {};
-                const imgId = 'img_' + Date.now() + Math.floor(Math.random() * 1000);
-                mod.images[imgId] = b64;
-
-                const safeCmd = String(command).replace(/'/g, "\\'").replace(/"/g, '&quot;').slice(0, 80);
-                const imgTag = `\n<div class="image-wrapper"><img src="local:${imgId}" alt="${command}" class="rounded-lg border-2 border-accent/30 shadow-md max-w-full"><span class="absolute bottom-3 left-3 bg-black/80 text-white text-[0.6875rem] px-2 py-1 rounded border border-white/20 flex items-center gap-1 pointer-events-none"><i class="ph-fill ph-sparkle text-accent"></i> AI 생성 이미지</span><button class="image-regenerate-btn px-3 py-1.5 text-xs text-white font-bold rounded flex items-center gap-1 border border-accent/50 hover:bg-accent transition-colors" data-lesson-action="regenerate-image" data-keyword="${escapeHtml(command)}" data-img-id="${imgId}"><i class="ph-bold ph-arrows-clockwise"></i> 다시 생성</button><div class="image-caption" style="margin-top:8px;text-align:center;font-size:0.85rem;color:#6b7280;font-style:italic;font-weight:500;letter-spacing:-0.01em;line-height:1.4;max-width:100%;">${safeCmd}</div></div>\n`;
-
-                const text = rawView.value;
-                // 보기 모드에서 진입한 경우 커서가 0이므로 문서 끝에 삽입
-                const pos = (isViewMode || rawView.selectionStart === 0) ? text.length : rawView.selectionStart;
-                rawView.value = text.substring(0, pos) + imgTag + text.substring(pos);
-            } else {
-                window.showAlert('이미지 생성에 실패했습니다.');
-            }
+            if (!b64) return window.showAlert('이미지 생성에 실패했습니다.'); // 그림을 못 만들었으면 완료라고 하지 않는다
+            const imgId = 'img_' + Date.now() + Math.floor(Math.random() * 1000);
+            const safeCmd = String(command).replace(/'/g, "\\'").replace(/"/g, '&quot;').slice(0, 80);
+            const imgTag = `\n<div class="image-wrapper"><img src="local:${imgId}" alt="${escapeHtml(command)}" class="rounded-lg border-2 border-accent/30 shadow-md max-w-full"><span class="absolute bottom-3 left-3 bg-black/80 text-white text-[0.6875rem] px-2 py-1 rounded border border-white/20 flex items-center gap-1 pointer-events-none"><i class="ph-fill ph-sparkle text-accent"></i> AI 생성 이미지</span><button class="image-regenerate-btn px-3 py-1.5 text-xs text-white font-bold rounded flex items-center gap-1 border border-accent/50 hover:bg-accent transition-colors" data-lesson-action="regenerate-image" data-keyword="${escapeHtml(command)}" data-img-id="${imgId}"><i class="ph-bold ph-arrows-clockwise"></i> 다시 생성</button><div class="image-caption" style="margin-top:8px;text-align:center;font-size:0.85rem;color:#6b7280;font-style:italic;font-weight:500;letter-spacing:-0.01em;line-height:1.4;max-width:100%;">${safeCmd}</div></div>\n`;
+            result = { kind: 'image', target, baseText, pos, imgId, b64, imgTag };
         }
 
-        // 저장 후 보기 모드로 복귀하여 렌더링 결과 표시
-        saveRawContent();
-        toggleEditorMode('view');
-        input.value = '';
-        window.showAlert(aiCommandMode === 'edit' ? '✅ 텍스트 수정 완료!' : '✅ 이미지 삽입 완료!');
+        // 시작한 자리에 넣는다. 넣었을 때만 명령을 지운다(넣지 않았으면 다시 실행할 수 있게 둔다)
+        if (result && await deliverAiCommandResult(result)) input.value = '';
 
     } catch (err) {
         window.showAlert(err.message || '명령 실행 중 오류 발생');
     } finally {
+        aiCommandResultPending = false;
         input.disabled = false;
         btn.innerHTML = '✨ 실행';
         input.focus();
     }
+}
+
+/* ---------- 아래 AI 명령줄: 시작한 자리에만 넣는다(응답을 기다리는 동안 다른 교과·차시·탭으로 옮길 수 있다) ---------- */
+const AI_RESULT_GONE = '넣을 교과나 차시를 찾지 못해 AI 결과를 넣지 못했습니다. 지웠다면 휴지통에서 되살린 뒤 다시 실행해 주세요.';
+const AI_RESULT_MOVED = '고칠 글이 그사이 바뀌어 반영하지 못했습니다. 그 부분을 다시 골라 고쳐 주세요.';
+
+// 지금 열린 교과·차시·탭. 편집기 화면이 아니거나 탭 대신 교수안 같은 항목을 보고 있으면 탭은 null
+function aiEditTargetNow() {
+    const onEditor = /^#editor/.test(window.location?.hash || '');
+    return { subjectId: currentSubjectId, moduleId: currentEditingModuleId, tabId: onEditor && !_lessonPanel ? currentLessonTab : null };
+}
+
+// 교과 id까지 맞춰 차시를 찾는다(차시 id는 교과 안에서만 겹치지 않는다). 지금 연 교과는 화면의 차시 목록이 최신이다
+function lessonInSubject(subjectId, moduleId) {
+    if (String(subjectId) === String(currentSubjectId)) return getEditingModule(moduleId) || null;
+    const subject = (globalState.subjects || []).find(item => String(item.id) === String(subjectId));
+    if (!subject) return null;
+    if (String(moduleId) === 'mainQuest') return subject.mainQuest || null;
+    return (subject.lessons || []).find(lesson => String(lesson.id) === String(moduleId)) || null;
+}
+
+// 확인 창에 보일 자리: 교과 › 차시 › 탭 (최종 평가는 탭 없이). 이름은 한 줄로
+function aiResultPlace(target, mod) {
+    const subject = (globalState.subjects || []).find(item => String(item.id) === String(target.subjectId));
+    const quest = String(mod.id) === 'mainQuest';
+    const oneLine = text => String(text || '').replace(/\s+/g, ' ').trim();
+    const tab = quest ? '' : (LESSON_TABS.find(item => item.id === target.tabId)?.label || '');
+    return [oneLine(subject?.title), quest ? '최종 평가' : (oneLine(mod.title) || '차시'), tab].filter(Boolean).join(' › ');
+}
+
+// 시작한 교과·차시·탭을 다시 연다. 같은 교과면 바로, 아니면 주소를 바꿔 편집기를 연다(handleRoute)
+function openAiEditTarget(target, mod) {
+    window.flushVisibleRawView?.(); // 지금 화면에서 고치던 원문은 그 차시에 먼저 넣는다(손대지 않은 칸은 넣지 않는다)
+    currentLessonTab = target.tabId;
+    window.clearLessonPanel?.();
+    const onEditor = /^#editor/.test(window.location?.hash || '');
+    if (onEditor && String(currentSubjectId) === String(target.subjectId)) return window.viewModule(mod.id);
+    const route = `#editor/${target.subjectId}/${mod.id}`;
+    if (window.location.hash === route && typeof handleRoute === 'function') return handleRoute(); // 주소가 같으면 hashchange가 오지 않는다
+    window.location.hash = route;
+}
+
+// 시작한 차시·탭의 저장된 글에 넣고 저장한다. 넣었으면 true
+async function applyAiCommandResult(result) {
+    const { target } = result;
+    const mod = lessonInSubject(target.subjectId, target.moduleId);
+    if (!mod) {
+        window.showAlert(AI_RESULT_GONE);
+        return false;
+    }
+    saveOpenEditsFor(mod, target.tabId); // 그 탭을 원문으로 고치던 중이면 그 글을 먼저 넣는다(tabs.js)
+    if (result.kind === 'edit') {
+        if (placeAiEdit(storedTabMarkdown(mod, target.tabId), result) === null) {
+            window.showAlert(AI_RESULT_MOVED);
+            return false;
+        }
+        if (!(await confirmAiEdit(result.selectedText, result.newText))) return false;
+    }
+    // 미리 보는 동안 다른 작업이 글을 바꿨을 수 있어 넣기 직전의 글로 다시 만든다
+    const source = storedTabMarkdown(mod, target.tabId);
+    const next = result.kind === 'edit' ? placeAiEdit(source, result) : insertAiImage(source, result);
+    if (next === null) {
+        window.showAlert(AI_RESULT_MOVED);
+        return false;
+    }
+    if (result.kind === 'image') {
+        if (!mod.images || typeof mod.images !== 'object') mod.images = {};
+        mod.images[result.imgId] = result.b64;
+    }
+    setTabMarkdown(mod, target.tabId, next);
+    window.clearAISelection?.();
+    const saved = await saveState();
+    const raw = document.getElementById('raw-view');
+    if (sameAiEditTarget(target, aiEditTargetNow()) && raw && String(raw.dataset.moduleId) === String(mod.id)) {
+        raw.value = raw.lastSaved = getActiveTabSource(mod); // 숨은 원문 칸도 맞춰 옛 글을 다시 넣지 않게
+        toggleEditorMode('view');
+        window.syncReviewBadge?.(mod);
+    }
+    if (saved !== false) window.showAlert(result.kind === 'edit' ? '✅ 텍스트 수정 완료!' : '✅ 이미지 삽입 완료!'); // 저장하지 못했으면 saveState가 알렸다
+    return true;
+}
+
+// 응답을 시작한 자리에 넣는다. 그사이 다른 교과·차시·탭으로 옮겼으면 넣지 않고 묻는다: 돌아가서 반영하거나 버린다
+async function deliverAiCommandResult(result) {
+    if (!sameAiEditTarget(result.target, aiEditTargetNow())) {
+        const mod = lessonInSubject(result.target.subjectId, result.target.moduleId);
+        if (!mod) {
+            window.showAlert(AI_RESULT_GONE);
+            return false;
+        }
+        const { message, opts } = aiResultAwayDialog(result.kind, aiResultPlace(result.target, mod));
+        if (!(await confirmAsync(message, opts))) {
+            window.showToast?.('이번 AI 결과를 버렸습니다.', 'info');
+            return false;
+        }
+        openAiEditTarget(result.target, mod);
+    }
+    return applyAiCommandResult(result);
 }
 
 // 화면에는 이미지가 data URL로 풀려 있으므로 저장된 키를 되찾는다
@@ -3351,8 +3446,13 @@ function lessonImageTargets(mod, imgId) {
     return { key, refs: [key && `local:${key}`, source].filter(Boolean) };
 }
 
+// 마크다운 그림 ![설명](주소) 하나. 정해 둔 이 모양으로만 찾는다(그림 키나 data URL로 정규식을 만들지 않는다)
+const MD_IMAGE_TAG = /!\[[^\]]*\]\(([^)\s]*)\)/g;
+
+// 주소가 refs 가운데 하나와 꼭 같은 마크다운 그림만 지운다(local:img_1을 지울 때 local:img_10은 남는다)
 function withoutMdImages(md, refs) {
-    return refs.reduce((text, ref) => text.replace(new RegExp(`!\\[[^\\]]*\\]\\(${ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`, 'g'), ''), md);
+    const targets = new Set(refs);
+    return String(md ?? '').replace(MD_IMAGE_TAG, (whole, url) => (targets.has(url) ? '' : whole));
 }
 
 // v7.2: 이미지 삭제 — 보기모드에서 이미지 제거
@@ -3372,7 +3472,7 @@ window.deleteImage = function (imgId, btnEl) {
         mod.tabContents[tabId] = withoutMdImages(mod.tabContents[tabId], refs);
         // 숨겨진 편집기가 지운 참조를 다시 저장하지 않게 맞춘다
         const rawView = document.getElementById('raw-view');
-        if (rawView) rawView.value = mod.tabContents[tabId];
+        if (rawView) rawView.value = rawView.lastSaved = mod.tabContents[tabId];
     }
     if (mod.content) mod.content = withoutMdImages(mod.content, refs);
 

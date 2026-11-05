@@ -221,11 +221,19 @@ window.toggleGyosuanSample = function () {
 
 const gyosuanHasScreenEdits = gyosuan => !!gyosuan.deckHtml || Object.keys(gyosuan.sessionDecks || {}).length > 0;
 
-window.saveGyosuanRaw = async function () {
+// 교수안 원문 칸에 아직 넣지 않은 글 { mod, raw, field }. 없으면 null(칸은 mod.gyosuan[field] || ''로 채운다)
+function pendingGyosuanRaw() {
     const mod = getEditingModule();
     const raw = document.getElementById('gyosuan-raw');
     const field = mod && gyosuanEditField(mod);
-    if (!mod?.gyosuan || !raw || !field || raw.value === mod.gyosuan[field]) return;
+    if (!mod?.gyosuan || !raw || !field || raw.value === (mod.gyosuan[field] || '')) return null;
+    return { mod, raw, field };
+}
+
+window.saveGyosuanRaw = async function () {
+    const pending = pendingGyosuanRaw();
+    if (!pending) return;
+    const { mod, raw, field } = pending;
     if (!allowGyosuanOverwrite(mod)) return;
     // 슬라이드 화면 편집은 편성안을 고쳤다고 지우지 않는다. '슬라이드 다시 만들기'를 눌러야 바뀐다
     const deckDirty = field === 'deckMd' ? gyosuanHasScreenEdits(mod.gyosuan) : !!mod.gyosuan.deckDirty;
@@ -237,6 +245,9 @@ window.saveGyosuanRaw = async function () {
     const note = document.querySelector?.('#gyosuan-view .gyosuan-note');
     if (note) note.textContent = gyosuanNoteText(mod);
 };
+
+// 교수안 원문 칸에 넣지 않은 글이 있는가(Ctrl+S 결과·창을 닫기 전에 묻는다)
+window.hasPendingGyosuanRaw = () => !!pendingGyosuanRaw();
 
 window.rebuildGyosuanDeck = async function (moduleId) {
     await window.saveGyosuanRaw();

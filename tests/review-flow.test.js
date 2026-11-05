@@ -66,6 +66,18 @@ const call = (ctx, name) => vm.runInContext(name, ctx);
 const reply = (text, finishReason = 'STOP') => ({ candidates: [{ content: { parts: [{ text }] }, finishReason }] });
 const plain = value => JSON.parse(JSON.stringify(value));
 
+// 시각을 이 컴퓨터 시각으로 보이는지 보려고 잠시 시간대를 정한다(node는 TZ를 바꾸면 바로 따른다). 끝나면 되돌린다
+function withTimeZone(tz, fn) {
+    const before = process.env.TZ;
+    process.env.TZ = tz;
+    try {
+        return fn();
+    } finally {
+        if (before === undefined) delete process.env.TZ;
+        else process.env.TZ = before;
+    }
+}
+
 async function run(name, fn) {
     await fn();
     console.log('PASS', name);
@@ -818,8 +830,8 @@ function generationContext(callGemini, mod) {
         assert.strictEqual(state(undefined, '본문'), 'none');
         assert.deepStrictEqual(plain(call(ctx, 'manualChecksFor')('basicPrac')).map(check => check.key), ['strength', 'version'], '개요·대응 항목은 학습 탭만');
         assert.strictEqual(call(ctx, 'manualChecksFor')('basicLearn').length, 4);
-        const html = call(ctx, 'manualCheckRow')({ key: 'domain', text: '확인', hint: '힌트' }, next.basicLearn.domain, '본문');
-        assert.ok(html.includes('확인함 · 2026-11-02 10:00') && html.includes('checked'));
+        const html = withTimeZone('Asia/Seoul', () => call(ctx, 'manualCheckRow')({ key: 'domain', text: '확인', hint: '힌트' }, next.basicLearn.domain, '본문'));
+        assert.ok(html.includes('확인함 · 2026-11-02 19:00') && html.includes('checked'), '확인한 시각은 이 컴퓨터 시각(한국 시각)으로 보인다');
     });
 
     await run('수동 검수: 패널에서 저장하고 이력을 남긴다', async () => {
@@ -976,6 +988,351 @@ function generationContext(callGemini, mod) {
         await search('game loop');
         assert.strictEqual(urls.length, 2, '키를 바꾸면 다시 시도한다');
         assert.ok(!urls[1].includes('lang=ko'));
+    });
+
+    /* ---------- 묶음 8: 그림 정리, 원문 칸 넣기, AI 명령줄이 넣을 자리, 그림 지우기·미리 보기, 시각 ---------- */
+    await run('그림 정리: 교수안·편성안·슬라이드 편집·삽화·판서 영상·고정 섹션이 쓰는 그림은 남긴다', async () => {
+        const ctx = makeContext();
+        const unused = (mod, extra) => plain(call(ctx, 'unusedLessonImageIds')(mod, extra));
+        const mod = {
+            images: { img_1: 'a', img_doc: 'b', img_deck: 'c', img_h: 'd', img_ill: 'e', img_wb: 'f', img_lock: 'g', img_gone: 'h' },
+            tabContents: { basicLearn: '기본 local:img_1', basicPrac: { 이상한: 'local:img_gone' } },
+            gyosuan: { docMd: '![붙여넣은 이미지](local:img_doc)', deckMd: '![](local:img_deck)', deckHtml: '<img src="local:img_h">', sessionDecks: { 0: '<img src="data:image/png;base64,AA">' } },
+            illustrations: [{ id: 'a', imgId: 'img_ill' }, { id: 'b', imgId: null }],
+            whiteboardVideos: { img_wb: { id: 'v' } }
+        };
+        assert.deepStrictEqual(unused(mod), ['img_lock', 'img_gone'], '글이 아닌 탭 값은 건너뛴다');
+        assert.deepStrictEqual(unused(mod, ['## 고정\n\n<img src="local:img_lock">']), ['img_gone']);
+        assert.deepStrictEqual(unused(null), []);
+        assert.deepStrictEqual(unused({}), []);
+        assert.deepStrictEqual(unused({ images: { a: 1 }, illustrations: {}, whiteboardVideos: 'x', gyosuan: 'local:a', tabContents: 'local:a' }), ['a'], '모양이 틀린 칸은 던지지 않고 건너뛴다');
+        assert.deepStrictEqual(unused({ images: { img_1: 1, img_10: 1 }, content: 'local:img_10' }), [], '지우는 쪽보다 남기는 쪽');
+        assert.deepStrictEqual(unused({ images: { ref: 'teacher-image:0123456789abcdef1a', empty: '' }, content: 'local:ref local:empty' }), [], '찾지 못한 그림 자리·빈 값도 글이 가리키면 남긴다');
+        const regen = { images: { img_old: 'a', img_doc: 'b' }, tabContents: { basicLearn: null }, content: '', gyosuan: { docMd: '![](local:img_doc)' } };
+        call(ctx, 'dropUnusedLessonImages')(regen);
+        assert.deepStrictEqual(Object.keys(regen.images), ['img_doc'], '다시 만들 때도 교수안 그림은 남긴다');
+    });
+
+    await run('저장: 교수안·편성안·삽화·판서 영상이 쓰는 그림은 원문 저장에서 지우지 않는다', async () => {
+        const mod = {
+            id: 1, title: '차시', tabContents: { basicLearn: '기본 local:img_1' }, content: '기본 local:img_1',
+            images: { img_1: 'a', img_doc: 'b', img_deck: 'c', img_ill: 'd', img_wb: 'e', img_gone: 'f' },
+            gyosuan: { docMd: '![붙여넣은 이미지](local:img_doc)', deckMd: '![](local:img_deck)' },
+            illustrations: [{ id: 'a', imgId: 'img_ill' }], whiteboardVideos: { img_wb: { id: 'v' } }
+        };
+        const aiCtx = makeContext();
+        aiCtx.currentMod = mod;
+        const raw = fakeElement();
+        raw.value = '고친 기본 local:img_1';
+        raw.dataset = { moduleId: '1', tabId: 'basicLearn' };
+        aiCtx.elements['raw-view'] = raw;
+        call(aiCtx, 'saveRawContent')();
+        assert.strictEqual(mod.tabContents.basicLearn, '고친 기본 local:img_1');
+        assert.deepStrictEqual(Object.keys(mod.images).sort(), ['img_1', 'img_deck', 'img_doc', 'img_ill', 'img_wb']);
+        assert.strictEqual(aiCtx.saved, 1);
+    });
+
+    await run('원문 칸: 열어 둔 칸에서 고친 글만 넣고, 손대지 않은 칸은 넣지 않는다', async () => {
+        const aiCtx = makeContext();
+        const mod = { id: 1, title: '차시', tabContents: { basicLearn: '기본' } };
+        aiCtx.currentMod = mod;
+        const raw = fakeElement();
+        let hidden = false;
+        raw.classList = { add() {}, remove() {}, toggle() {}, contains: cls => cls === 'hidden' && hidden };
+        raw.dataset = { moduleId: '1', tabId: 'basicLearn' };
+        raw.value = '기본';
+        aiCtx.elements['raw-view'] = raw;
+        const pendingNow = () => call(aiCtx, 'hasPendingRawEdit')();
+        assert.strictEqual(pendingNow(), false);
+        raw.value = '기본 고침';
+        assert.strictEqual(pendingNow(), true);
+        call(aiCtx, 'flushVisibleRawView')();
+        assert.strictEqual(mod.tabContents.basicLearn, '기본 고침');
+        assert.strictEqual(pendingNow(), false);
+        mod.tabContents.basicLearn = '기본 고침 + 삽화'; // 칸을 그대로 둔 사이 다른 기능이 탭을 바꿨다
+        call(aiCtx, 'flushVisibleRawView')();
+        assert.strictEqual(mod.tabContents.basicLearn, '기본 고침 + 삽화', '손대지 않은 칸의 옛 글로 덮지 않는다');
+        raw.value = '숨은 칸 글';
+        hidden = true;
+        assert.strictEqual(pendingNow(), false);
+        call(aiCtx, 'flushVisibleRawView')();
+        assert.strictEqual(mod.tabContents.basicLearn, '기본 고침 + 삽화', '숨은 칸은 넣지 않는다');
+        // 브라우저의 칸은 그린 글을 defaultValue로 기억한다. 그 글 그대로면 저장된 탭이 그사이 바뀌었어도 넣지 않는다
+        const drawn = fakeElement();
+        drawn.dataset = { moduleId: '1', tabId: 'basicLearn' };
+        drawn.value = drawn.defaultValue = '그릴 때 글';
+        aiCtx.elements['raw-view'] = drawn;
+        call(aiCtx, 'flushVisibleRawView')();
+        assert.strictEqual(mod.tabContents.basicLearn, '기본 고침 + 삽화', '그린 뒤 손대지 않은 칸');
+        // 탭이 없는 최종 평가를 기본학습이 아닌 탭에서 원문으로 열면 칸이 빈다. 손대지 않았으면 본문을 지우지 않는다
+        const quest = { id: 'mainQuest', title: '최종 평가', content: '퀘스트 본문', images: {} };
+        aiCtx.currentMod = quest;
+        const questRaw = fakeElement();
+        questRaw.dataset = { moduleId: 'mainQuest', tabId: 'advLearn' };
+        questRaw.value = '';
+        aiCtx.elements['raw-view'] = questRaw;
+        assert.strictEqual(call(aiCtx, 'hasPendingRawEdit')(), false);
+        call(aiCtx, 'flushVisibleRawView')();
+        assert.strictEqual(quest.content, '퀘스트 본문');
+    });
+
+    await run('다시 생성: 옛 본문 그림만 비우고 교수안·고정 섹션이 쓰는 그림은 남긴다', async () => {
+        const api = fs.readFileSync(root + 'api.js', 'utf8').replace(/\r\n/g, '\n');
+        const at = api.indexOf("await archiveContents([mod], '다시 생성 전');");
+        const block = api.slice(at, api.indexOf('\n    }\n', at));
+        assert.ok(at > 0 && block.includes('dropUnusedLessonImages(mod, Object.values(lockedByTab)'), block);
+        assert.ok(!/^\s*mod\.images = \{\};$/m.test(block), '그림을 통째로 비우는 줄이 없다(형식이 틀린 값만 빈 목록으로 맞춘다)');
+        assert.ok(block.indexOf("mod.content = '';") < block.indexOf('dropUnusedLessonImages'), '탭과 본문을 비운 뒤에 정리한다');
+    });
+
+    await run('AI 명령줄: 시작한 자리 비교와 넣을 자리 찾기', async () => {
+        const ctx = makeContext();
+        const same = call(ctx, 'sameAiEditTarget');
+        const start = { subjectId: 's1', moduleId: 1, tabId: 'basicLearn' };
+        assert.strictEqual(same(start, { subjectId: 's1', moduleId: '1', tabId: 'basicLearn' }), true);
+        assert.strictEqual(same(start, { subjectId: 's2', moduleId: 1, tabId: 'basicLearn' }), false, '다른 교과의 같은 id 차시');
+        assert.strictEqual(same(start, { subjectId: 's1', moduleId: 2, tabId: 'basicLearn' }), false);
+        assert.strictEqual(same(start, { subjectId: 's1', moduleId: 1, tabId: 'basicPrac' }), false);
+        assert.strictEqual(same(start, { subjectId: 's1', moduleId: 1, tabId: null }), false, '교수안 같은 항목을 보는 중');
+        const place = call(ctx, 'placeAiEdit');
+        const edit = { selStart: 2, selEnd: 6, selectedText: '바꿀 글', newText: '고친 글' };
+        assert.strictEqual(place('앞 바꿀 글 뒤', edit), '앞 고친 글 뒤');
+        assert.strictEqual(place('새 줄\n앞 바꿀 글 뒤', edit), '새 줄\n앞 고친 글 뒤', '앞에 글이 늘면 한 번 나오는 자리');
+        assert.strictEqual(place('바꿀 글과 바꿀 글', { ...edit, selStart: 20, selEnd: 24 }), null, '두 번 나오면 고르지 않는다');
+        assert.strictEqual(place('없는 글', edit), null);
+        const image = call(ctx, 'insertAiImage');
+        assert.strictEqual(image('가나다', { baseText: '가나다', pos: 1, imgTag: '[그림]' }), '가[그림]나다');
+        assert.strictEqual(image('가나다라', { baseText: '가나다', pos: 1, imgTag: '[그림]' }), '가나다라[그림]', '바뀌었으면 끝에');
+        assert.strictEqual(image('가나', { baseText: '가나', pos: 99, imgTag: '[그림]' }), '가나[그림]');
+        const away = call(ctx, 'aiResultAwayDialog');
+        const ask = away('edit', '교과 › 차시 › 기본학습');
+        assert.ok(ask.message.includes('넣을 곳: 교과 › 차시 › 기본학습'));
+        assert.deepStrictEqual([ask.opts.okLabel, ask.opts.cancelLabel, ask.opts.dismissible], ['돌아가서 반영', '버리기', false]);
+        assert.strictEqual(away('image', 'x').opts.okLabel, '돌아가서 넣기');
+    });
+
+    // 아래 AI 명령줄: 보기 화면에서 '바꿀 글'을 고르고 '더 짧게'를 보낸다. onCall은 응답을 기다리는 동안 사용자가 한 일
+    const commandLessons = () => [
+        { id: 1, title: '첫 차시', tabContents: { basicLearn: '앞 바꿀 글 뒤' }, images: {} },
+        { id: 2, title: '둘째 차시', tabContents: { basicLearn: '다른 글' }, images: {} }
+    ];
+    function commandContext(lessons, { onCall = () => {}, mode = 'edit' } = {}) {
+        const ctx = makeContext(async () => { onCall(ctx); return reply('고친 글'); });
+        ['ai-command-input', 'ai-command-send', 'render-view'].forEach(id => { ctx.elements[id] = fakeElement(); });
+        ctx.elements['ai-command-input'].value = '더 짧게';
+        ctx.elements['ai-command-input'].focus = () => {}; // runAICommand의 finally가 부른다
+        const raw = fakeElement();
+        raw.dataset = { moduleId: '1', tabId: 'basicLearn' };
+        raw.value = lessons[0].tabContents.basicLearn;
+        ctx.elements['raw-view'] = raw;
+        ctx.location = { hash: '#editor/s1' };
+        ctx.lessons = lessons;
+        vm.runInContext(`globalState = { subjects: [{ id: 's1', title: '교과', lessons: window.lessons }] }; currentSubjectId = 's1'; courseData = window.lessons; aiCommandMode = '${mode}';
+            getEditingModule = (id = currentEditingModuleId) => courseData.find(m => String(m.id) === String(id));`, ctx);
+        ctx.currentEditingModuleId = 1;
+        ctx.currentCapturedSelection = '바꿀 글';
+        ctx.toggleEditorMode = () => {};
+        ctx.viewModule = id => { ctx.currentEditingModuleId = id; };
+        // 묻지 않을 미리 보기가 뜨면 기다리지 않고 취소한다(answerPreview로 답을 정한 경우는 그 답). 테스트가 멈추지 않고 틀리게
+        ctx.onOverlay = overlay => setImmediate(() => overlay.fire('click', { target: { dataset: { diffAction: 'cancel' } } }));
+        return ctx;
+    }
+
+    await run('AI 명령줄: 기다리는 동안 다른 차시로 옮기면 넣지 않고 묻고, 버리면 그대로 둔다', async () => {
+        const L = commandLessons();
+        const ctx = commandContext(L, { onCall: c => { c.currentEditingModuleId = 2; } });
+        let asked = null;
+        ctx.confirmAsync = async (m, o) => { asked = { m, o }; return false; };
+        await ctx.executeAICommand();
+        assert.deepStrictEqual(plain(L.map(lesson => lesson.tabContents.basicLearn)), ['앞 바꿀 글 뒤', '다른 글']);
+        assert.ok(asked.m.includes('넣을 곳: 교과 › 첫 차시 › 기본학습'), asked.m);
+        assert.deepStrictEqual([asked.o.okLabel, asked.o.cancelLabel, asked.o.dismissible], ['돌아가서 반영', '버리기', false]);
+        assert.ok(!ctx.alerts.some(text => String(text).includes('완료')), ctx.alerts.join('|'));
+        assert.ok(ctx.toasts.includes('이번 AI 결과를 버렸습니다.'));
+        assert.strictEqual(ctx.elements['ai-command-input'].value, '더 짧게', '넣지 않았으면 다시 실행할 수 있게 명령을 둔다');
+    });
+
+    await run('AI 명령줄: 돌아가서 반영을 고르면 시작한 차시에 넣는다', async () => {
+        const L = commandLessons();
+        const ctx = commandContext(L, { onCall: c => { c.currentEditingModuleId = 2; } });
+        ctx.confirmAsync = async () => true;
+        answerPreview(ctx, 'apply');
+        await ctx.executeAICommand();
+        assert.strictEqual(L[0].tabContents.basicLearn, '앞 고친 글 뒤');
+        assert.strictEqual(L[1].tabContents.basicLearn, '다른 글');
+        assert.strictEqual(ctx.currentEditingModuleId, 1, '시작한 차시로 돌아간다');
+        assert.ok(ctx.alerts.includes('✅ 텍스트 수정 완료!'), ctx.alerts.join('|'));
+        assert.strictEqual(ctx.elements['ai-command-input'].value, '');
+    });
+
+    await run('AI 명령줄: 같은 자리면 기다리는 동안 쓴 글을 지키고 고른 글을 바꾼다', async () => {
+        const L = commandLessons();
+        const ctx = commandContext(L, { onCall: c => { c.elements['raw-view'].value = '먼저 쓴 줄\n' + c.elements['raw-view'].value; } });
+        let asked = 0;
+        ctx.confirmAsync = async () => { asked += 1; return true; };
+        answerPreview(ctx, 'apply');
+        await ctx.executeAICommand();
+        assert.strictEqual(asked, 0, '같은 자리면 묻지 않는다');
+        assert.strictEqual(L[0].tabContents.basicLearn, '먼저 쓴 줄\n앞 고친 글 뒤');
+    });
+
+    await run('AI 명령줄: 그림은 시작한 차시에 넣는다', async () => {
+        const L = commandLessons();
+        const ctx = commandContext(L, { mode: 'image' });
+        ctx.generateImageAPI = async () => { ctx.currentEditingModuleId = 2; return 'data:image/png;base64,QUJD'; };
+        ctx.confirmAsync = async () => true;
+        await ctx.executeAICommand();
+        assert.ok(/local:img_\d+/.test(L[0].tabContents.basicLearn), L[0].tabContents.basicLearn);
+        assert.strictEqual(Object.keys(L[0].images).length, 1);
+        assert.strictEqual(Object.keys(L[1].images).length, 0, '그사이 연 차시에는 넣지 않는다');
+        assert.ok(ctx.alerts.includes('✅ 이미지 삽입 완료!'), ctx.alerts.join('|'));
+    });
+
+    await run('AI 명령줄: 그림을 만들지 못하면 완료라고 하지 않는다', async () => {
+        const L = commandLessons();
+        const ctx = commandContext(L, { mode: 'image' });
+        ctx.generateImageAPI = async () => null;
+        await ctx.executeAICommand();
+        assert.deepStrictEqual(plain(ctx.alerts), ['이미지 생성에 실패했습니다.']);
+        assert.strictEqual(L[0].tabContents.basicLearn, '앞 바꿀 글 뒤');
+    });
+
+    await run('AI 명령줄: 그림 태그의 설명(alt)은 이스케이프한다', async () => {
+        const L = commandLessons();
+        const ctx = commandContext(L, { mode: 'image' });
+        ctx.elements['ai-command-input'].value = '고양이" onerror="alert(1)';
+        ctx.generateImageAPI = async () => 'data:image/png;base64,QUJD';
+        await ctx.executeAICommand();
+        const text = L[0].tabContents.basicLearn;
+        assert.ok(text.includes('alt="고양이&quot; onerror=&quot;alert(1)"'), text);
+        assert.ok(!text.includes('" onerror="'), '명령 글이 속성을 깨지 않는다');
+    });
+
+    await run('AI 명령줄: 시작한 차시가 지워졌으면 알린다', async () => {
+        const L = commandLessons();
+        const ctx = commandContext(L, { onCall: c => { vm.runInContext('courseData = courseData.filter(m => m.id !== 1)', c); c.currentEditingModuleId = 2; } });
+        let asked = 0;
+        ctx.confirmAsync = async () => { asked += 1; return true; };
+        await ctx.executeAICommand();
+        assert.deepStrictEqual(plain(ctx.alerts), [call(ctx, 'AI_RESULT_GONE')]);
+        assert.strictEqual(asked, 0);
+    });
+
+    await run('AI 명령줄: 다른 교과의 같은 id 차시를 열어도 시작한 교과에 넣는다', async () => {
+        const L = commandLessons();
+        const L2 = [{ id: 1, title: '남의 차시', tabContents: { basicLearn: '남의 글' }, images: {} }];
+        const ctx = commandContext(L, {
+            onCall: c => {
+                vm.runInContext("currentSubjectId = 's2'; courseData = window.L2;", c);
+                c.location.hash = '#editor/s2';
+                const r2 = fakeElement();
+                r2.dataset = { moduleId: '1', tabId: 'basicLearn' };
+                r2.value = '남의 글';
+                c.elements['raw-view'] = r2;
+            }
+        });
+        ctx.L2 = L2;
+        vm.runInContext("globalState.subjects.push({ id: 's2', title: '교과2', lessons: window.L2 })", ctx);
+        let message = '';
+        ctx.confirmAsync = async m => { message = m; return true; };
+        answerPreview(ctx, 'apply');
+        await ctx.executeAICommand();
+        assert.ok(message.includes('교과 › 첫 차시'), message);
+        assert.strictEqual(L[0].tabContents.basicLearn, '앞 고친 글 뒤');
+        assert.strictEqual(L2[0].tabContents.basicLearn, '남의 글');
+        assert.strictEqual(ctx.location.hash, '#editor/s1/1', '시작한 교과의 그 차시로 돌아간다');
+    });
+
+    await run('AI 명령줄: 탭을 보고 있지 않으면 실행하지 않는다(넣을 탭이 없다)', async () => {
+        const L = commandLessons();
+        let called = 0;
+        const ctx = commandContext(L, { onCall: () => { called += 1; } });
+        ctx.location.hash = '#overview';
+        await ctx.executeAICommand();
+        assert.deepStrictEqual([called, L[0].tabContents.basicLearn, plain(ctx.alerts)], [0, '앞 바꿀 글 뒤', []], '편집기 밖');
+        vm.runInContext("_lessonPanel = 'gyosuan'", ctx);
+        ctx.location.hash = '#editor/s1';
+        await ctx.executeAICommand();
+        assert.strictEqual(called, 0, '교수안 같은 항목을 보는 중');
+    });
+
+    await run('AI 명령줄: 저장하지 못하면 완료라고 하지 않는다', async () => {
+        const L = commandLessons();
+        const ctx = commandContext(L);
+        ctx.saveState = async () => false;
+        answerPreview(ctx, 'apply');
+        await ctx.executeAICommand();
+        assert.strictEqual(L[0].tabContents.basicLearn, '앞 고친 글 뒤', '글은 넣었다(브라우저 저장만 실패)');
+        assert.ok(!ctx.alerts.some(text => String(text).includes('완료')), ctx.alerts.join('|'));
+    });
+
+    await run('AI 명령줄: 보낸 뒤 결과를 넣거나 버릴 때까지는 창을 닫기 전에 묻는다(보내기 전에는 묻지 않는다)', async () => {
+        const seen = [];
+        const ctx = commandContext(commandLessons(), { onCall: c => { seen.push(['응답 전', c.isAiResultPending()]); c.currentEditingModuleId = 2; } });
+        assert.strictEqual(ctx.isAiResultPending(), false, '아직 보내지 않았다');
+        ctx.confirmAsync = async () => { seen.push(['옮겨서 묻는 창', ctx.isAiResultPending()]); return false; };
+        await ctx.executeAICommand();
+        seen.push(['버린 뒤', ctx.isAiResultPending()]);
+        assert.deepStrictEqual(seen, [['응답 전', true], ['옮겨서 묻는 창', true], ['버린 뒤', false]]);
+        const same = commandContext(commandLessons());
+        let previewing = null;
+        same.onOverlay = overlay => { previewing = same.isAiResultPending(); setImmediate(() => overlay.fire('click', { target: { dataset: { diffAction: 'cancel' } } })); };
+        await same.executeAICommand();
+        assert.deepStrictEqual([previewing, same.isAiResultPending()], [true, false], '바뀐 부분을 미리 보는 동안');
+        const failing = commandContext(commandLessons(), { onCall: () => { throw new Error('연결 끊김'); } });
+        await failing.executeAICommand();
+        assert.strictEqual(failing.isAiResultPending(), false, '오류로 끝나도 되돌린다');
+        // 고른 글이 없어 탭 전체를 고칠지 묻는 동안은 아직 아무것도 보내지 않았다
+        const whole = commandContext(commandLessons());
+        whole.currentCapturedSelection = '';
+        whole.getSelection = () => null;
+        let asking = null;
+        whole.confirmAsync = async () => { asking = whole.isAiResultPending(); return false; };
+        await whole.executeAICommand();
+        assert.strictEqual(asking, false);
+    });
+
+    await run('그림 지우기: 주소가 꼭 같은 마크다운 그림만 지우고, 그림 키·data URL로 정규식을 만들지 않는다', async () => {
+        const ctx = makeContext();
+        const without = call(ctx, 'withoutMdImages');
+        const png = 'data:image/png;base64,QUJD';
+        const md = `앞 ![a](local:img_1) ![b](local:img_10) ![c](${png}) ![d](local:img_1x) 뒤`;
+        assert.strictEqual(without(md, ['local:img_1', png]), '앞  ![b](local:img_10)  ![d](local:img_1x) 뒤', 'img_1을 지울 때 img_10은 남는다');
+        const plus = 'data:image/png;base64,iV+B/OR+w==';
+        assert.strictEqual(without(`![a](${plus}) ![b](data:image/png;base64,iVVB/OR+w==) 글`, [plus]), ' ![b](data:image/png;base64,iVVB/OR+w==) 글', '+ / = 가 든 그림 주소도 글자 그대로 견준다');
+        assert.ok(!/new RegExp/.test(without.toString()), '데이터로 정규식을 만들지 않는다');
+        const mod = { id: 1, title: '차시', tabContents: { basicLearn: '앞 ![그림](local:img_1) 가운데 ![다른](local:img_10) 뒤' }, images: { img_1: 'a', img_10: 'b' } };
+        mod.content = mod.tabContents.basicLearn;
+        ctx.currentMod = mod;
+        ctx.confirm = () => true;
+        call(ctx, 'deleteImage')('img_1', null);
+        assert.strictEqual(mod.tabContents.basicLearn, '앞  가운데 ![다른](local:img_10) 뒤');
+        assert.deepStrictEqual(Object.keys(mod.images), ['img_10']);
+    });
+
+    await run('원문 칸 미리 보기: 그림 키 모양 하나로 진짜 그림만 넣는다(img_1이 img_10 안에서 바뀌지 않는다)', async () => {
+        const ctx = makeContext();
+        vm.runInContext('renderLessonHTML = html => html; preprocessMarkdown = md => md;', ctx);
+        const preview = call(ctx, 'mdPreviewHtml');
+        const images = { img_1: 'data:image/png;base64,AAA', img_10: 'data:image/png;base64,BBB', ref: 'teacher-image:0123456789abcdef1a', empty: '' };
+        const html = preview({ images }, '<img src="local:img_10"> <img src="local:img_1"> <img src="local:ref"> ![빈](local:empty) ![없음](local:none)');
+        assert.ok(html.includes('<img src="data:image/png;base64,BBB">') && html.includes('<img src="data:image/png;base64,AAA">'), html);
+        assert.ok(!html.includes('AAA0') && !html.includes('teacher-image:'), html);
+        assert.ok(html.includes('src="" alt="[이미지 생성 누락]"') && html.includes('![빈]()') && html.includes('![없음]()'), html);
+        assert.ok(!html.includes('local:'), html);
+    });
+
+    await run('시각: 휴지통·변경 이력·수동 검수는 이 컴퓨터 시각으로 보인다(UTC 그대로가 아니다)', async () => {
+        const ctx = makeContext();
+        const local = call(ctx, 'localTimeText');
+        withTimeZone('Asia/Seoul', () => {
+            assert.strictEqual(local('2026-11-05T16:30:00.000Z'), '2026-11-06 01:30');
+            vm.runInContext("globalState = { subjects: [{ id: 's1', title: '교과' }], lessonTrash: [{ at: '2026-11-05T16:30:00.000Z', subjectId: 's1', lesson: { id: 1, title: '지운 차시' } }] }", ctx);
+            assert.ok(call(ctx, 'renderTrashRows')().includes('교과 · 2026-11-06 01:30'), '휴지통');
+            assert.ok(call(ctx, 'metaHistoryRows')({ history: [{ at: '2026-11-05T16:30:00.000Z', note: '제목 바꿈' }] }).includes('2026-11-06 01:30 · 제목 바꿈'), '변경 이력');
+        });
+        withTimeZone('UTC', () => assert.strictEqual(local('2026-11-05T16:30:00.000Z'), '2026-11-05 16:30'));
+        [5, '지운 날', undefined, null, {}].forEach(value => assert.strictEqual(local(value), '', String(value)));
     });
 
     console.log('ALL PASSED');

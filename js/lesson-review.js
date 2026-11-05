@@ -256,7 +256,7 @@ function reviewIssuesHtml(issues, tabId, md) {
 
 function manualCheckRow(check, record, md) {
     const state = manualCheckState(record, md);
-    const detail = { none: escapeHtml(check.hint), ok: `확인함 · ${escapeHtml(String(record?.at).slice(0, 16).replace('T', ' '))}`, stale: '확인한 뒤 내용이 바뀌었습니다. 다시 확인합니다.' }[state];
+    const detail = { none: escapeHtml(check.hint), ok: `확인함 · ${escapeHtml(localTimeText(record?.at))}`, stale: '확인한 뒤 내용이 바뀌었습니다. 다시 확인합니다.' }[state];
     return `
         <label class="flex items-start gap-2 text-xs text-textLight">
             <input type="checkbox" class="mt-0.5" data-manual-key="${escapeHtml(check.key)}" ${state === 'ok' ? 'checked' : ''}>

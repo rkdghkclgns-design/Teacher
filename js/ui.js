@@ -71,62 +71,64 @@ window.alert = window.showAlert;
 
 
 
-// opts: okLabel(확인 버튼 이름, 기본 '삭제'), tone('danger' 빨강 | 'primary' 보라), title, onCancel
+// 같은 확인 창(제목·글·확인 버튼 이름이 같음)이 떠 있으면 하나 더 띄우지 않는다. 키보드로 두 번 누르거나, 늦게 뜨는 창의 버튼을 다시 눌러도 창이 겹치지 않게
+const _openConfirms = new Map();
+// 창이 뜬 뒤 이 시간 안의 클릭은 받지 않는다(바깥·취소·확인 모두). 두 번 누른 클릭의 둘째가 막 뜬 창을 바로 닫거나 확인하지 않게
+const CONFIRM_CLICK_GRACE_MS = 500;
+
+// opts: okLabel(확인 버튼 이름, 기본 '삭제'), cancelLabel(취소 버튼 이름, 기본 '취소'), tone('danger' 빨강 | 'primary' 보라), title, onCancel,
+//       dismissible(false면 바깥을 눌러도 닫지 않는다. 버리면 다시 볼 수 없는 결과를 물을 때. Esc는 원래 이 창을 닫지 않는다)
+// 같은 확인 창이 이미 떠 있으면 새로 띄우지 않고 onCancel을 부른다(confirmAsync는 false)
 window.showConfirm = function (message, onConfirm, opts = {}) {
-
-    const { okLabel = '삭제', tone = 'danger', title = '확인', onCancel } = opts;
+    const { okLabel = '삭제', cancelLabel = '취소', tone = 'danger', title = '확인', onCancel, dismissible = true } = opts;
+    const key = JSON.stringify([title, message, okLabel]);
+    if (_openConfirms.get(key)?.isConnected) {
+        if (typeof onCancel === 'function') onCancel();
+        return;
+    }
     const okClass = tone === 'primary' ? 'bg-accent hover:bg-accentHover' : 'bg-red-500/80 hover:bg-red-500';
-
     const overlay = document.createElement('div');
-
     overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] animate-fade-in';
     overlay.dataset.appDialog = ''; // 저장본을 읽지 못한 창이 뒤 화면을 막을 때(inert)도 이 확인 창은 누를 수 있게(state.js)
-
-    const cancel = () => {
+    const openedAt = Date.now();
+    const tooSoon = () => Date.now() - openedAt < CONFIRM_CLICK_GRACE_MS;
+    const close = () => {
         overlay.remove();
+        if (_openConfirms.get(key) === overlay) _openConfirms.delete(key);
+    };
+    const cancel = () => {
+        close();
         if (typeof onCancel === 'function') onCancel();
     };
-
-    overlay.onclick = cancel;
-
-    overlay.innerHTML = `
-
-                <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[360px] max-w-[92vw] p-6 shadow-2xl flex flex-col" onclick="event.stopPropagation()">
-
-                    <div class="flex items-center gap-3 mb-4">
-
-                        <i class="ph-fill ph-warning-circle text-2xl text-yellow-400"></i>
-
-                        <h3 class="font-bold text-white text-sm">${escapeHtml(title)}</h3>
-
-                    </div>
-
-                    <p class="text-sm text-textMuted mb-6 leading-relaxed whitespace-pre-wrap max-h-[60vh] overflow-y-auto">${escapeHtml(message)}</p>
-
-                    <div class="flex justify-end gap-2">
-
-                        <button class="px-4 py-2 text-xs font-bold text-textLight bg-white/5 hover:bg-white/10 rounded-lg transition-colors" data-confirm-cancel>취소</button>
-
-                        <button class="px-4 py-2 text-xs font-bold text-white ${okClass} rounded-lg transition-colors" id="btn-confirm-ok">${escapeHtml(okLabel)}</button>
-
-                    </div>
-
-                </div>
-
-            `;
-
-    document.body.appendChild(overlay);
-
-    overlay.querySelector('[data-confirm-cancel]').onclick = cancel;
-
-    document.getElementById('btn-confirm-ok').onclick = () => {
-
-        overlay.remove();
-
-        if (typeof onConfirm === 'function') onConfirm();
-
+    overlay.onclick = () => {
+        if (!dismissible || tooSoon()) return;
+        cancel();
     };
-
+    overlay.innerHTML = `
+                <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[360px] max-w-[92vw] p-6 shadow-2xl flex flex-col" onclick="event.stopPropagation()">
+                    <div class="flex items-center gap-3 mb-4">
+                        <i class="ph-fill ph-warning-circle text-2xl text-yellow-400"></i>
+                        <h3 class="font-bold text-white text-sm">${escapeHtml(title)}</h3>
+                    </div>
+                    <p class="text-sm text-textMuted mb-6 leading-relaxed whitespace-pre-wrap max-h-[60vh] overflow-y-auto">${escapeHtml(message)}</p>
+                    <div class="flex justify-end gap-2">
+                        <button class="px-4 py-2 text-xs font-bold text-textLight bg-white/5 hover:bg-white/10 rounded-lg transition-colors" data-confirm-cancel>${escapeHtml(cancelLabel)}</button>
+                        <button class="px-4 py-2 text-xs font-bold text-white ${okClass} rounded-lg transition-colors" data-confirm-ok>${escapeHtml(okLabel)}</button>
+                    </div>
+                </div>
+            `;
+    _openConfirms.set(key, overlay);
+    document.body.appendChild(overlay);
+    // 버튼은 이 창 안에서 찾는다. 창이 겹쳐도 위 창의 버튼이 아래 창을 움직이지 않게
+    overlay.querySelector('[data-confirm-cancel]').onclick = () => {
+        if (tooSoon()) return; // 막 뜬 창의 취소(버리기)도 받지 않는다
+        cancel();
+    };
+    overlay.querySelector('[data-confirm-ok]').onclick = () => {
+        if (tooSoon()) return;
+        close();
+        if (typeof onConfirm === 'function') onConfirm();
+    };
 };
 
 
@@ -231,6 +233,47 @@ document.addEventListener('click', (event) => {
 });
 
 window.addEventListener('hashchange', handleRoute);
+
+// Ctrl+S(맥은 Cmd+S). 한글 입력 상태에서도 잡히게 글자(key)뿐 아니라 키 위치(code)로도 본다
+function isSaveShortcut(e) {
+    return !!(e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.code === 'KeyS' || String(e.key || '').toLowerCase() === 's');
+}
+
+// Ctrl+S: 열어 둔 원문 칸(교안·교수안)과 칸을 벗어날 때 저장하는 입력칸의 글을 먼저 넣고, 브라우저 저장이 끝난 뒤 실제 결과를 알린다
+async function saveNow() {
+    if (window.isStateLoadFailed?.()) return window.showStateLoadFailedDialog?.(); // 저장본을 읽지 못한 동안은 저장하지 않는다(거짓 '저장했습니다' 없이)
+    window.flushVisibleRawView?.();
+    // 단락 편집 상자·차시 카드 제목·교과 이름처럼 칸을 벗어날 때 저장하는 곳은 벗어나게 해서 저장한다. 원문 칸 둘은 여기서 넣으므로 커서를 그대로 둔다
+    const active = document.activeElement;
+    const leaveSaves = active && !['raw-view', 'gyosuan-raw'].includes(active.id)
+        && (active.closest?.('.para-edit') || active.isContentEditable || active.matches?.('[onblur], [onchange]'));
+    if (leaveSaves) active.blur();
+    await window.saveGyosuanRaw?.();
+    // 브라우저에 끝까지 저장했을 때만 저장했다고 알린다. 저장하지 못했으면 saveState가 까닭을 알린 뒤 이 알림을 더한다
+    const saved = await saveState();
+    if (saved !== true) return window.showToast?.('브라우저에 저장하지 못했습니다. 작업을 잃지 않게 내보내기·백업에서 과정 전체 백업 ZIP을 받아 두세요.', 'error');
+    if (window.hasPendingGyosuanRaw?.()) return window.showAlert('저장했습니다. 다만 교수안 원문 칸의 글은 넣지 않았습니다(다른 브라우저 탭에서 이 차시를 고쳤습니다).\n고친 글을 복사해 둔 뒤 새로고침해 최신 내용을 불러오세요.');
+    window.showToast?.('저장했습니다.', 'success');
+}
+
+// 창을 닫기 전에 물을 일: 열어 둔 원문 칸(교안·교수안)에 넣지 않은 글, 끝나지 않은 브라우저 저장, 아래 AI 명령줄에서 기다리거나 아직 넣지 않은 결과(api.js)
+function hasUnsavedWork() {
+    return !!(window.hasPendingRawEdit?.() || window.hasPendingGyosuanRaw?.() || window.isSavePending?.() || window.isAiResultPending?.());
+}
+
+// 고치던 원문은 먼저 넣고, 넣지 못한 글, 끝나지 않은 저장, 아직 넣지 않은 AI 명령줄 결과가 있으면 브라우저의 '사이트에서 나가시겠습니까?' 창을 띄운다(문구는 브라우저가 정한다)
+function warnBeforeUnload(event) {
+    if (window.isStateLoadFailed?.()) return; // 읽지 못한 동안은 아무것도 저장하지 않으므로 묻지 않는다
+    const waiting = !!window.isSavePending?.(); // 미뤄 둔 저장(참고자료 칸)은 아래에서 바로 시작하므로 먼저 본다
+    window.flushVisibleRawView?.();
+    window.flushSaveStateSoon?.(); // 입력이 멈추기를 기다리던 저장을 바로 한다
+    Promise.resolve(window.saveGyosuanRaw?.()).catch(err => console.warn('[저장] 교수안 원문을 넣지 못했습니다:', err));
+    if (!waiting && !hasUnsavedWork()) return;
+    event.preventDefault();
+    event.returnValue = true; // 옛 Chrome·Edge(119 미만)도 묻게 한다
+}
+
+window.addEventListener('beforeunload', warnBeforeUnload);
 
 
 
@@ -1005,7 +1048,7 @@ window.exportSelectedToZip = async function () {
             ? `${(globalState.subjects.find(s => String(s.id) === String(checkedIds[0]))?.title || '교과').replace(/[^\w가-힣\s]/g, '')}_교안`
             : `교안_${checkedIds.length}개교과`;
         saveAs(result.blob, backupFileName(baseName, result.mode));
-        finishBackupDownload(result, { successText: `📦 ${totalFiles}개 파일이 ZIP으로 다운로드되었습니다.` });
+        finishBackupDownload(result, { successText: `📦 ${totalFiles}개 파일이 ZIP으로 다운로드되었습니다.`, countsAsBackup: false }); // 교과 백업은 마지막 전체 백업 시각에 세지 않는다
     } catch (e) {
         console.error('[ZIP]', e);
         window.showAlert(isBackupTooBig(e) ? BACKUP_TOO_BIG_TEXT.subjects : 'ZIP 생성 오류: ' + e.message);
@@ -1027,8 +1070,10 @@ async function addLessonHtmlToZip(jobs) {
     return added;
 }
 
-// v7.5: 스마트 ZIP — 선택된 교과가 있으면 선택만, 없으면 전체
+// v7.5: 스마트 ZIP — 편집 중에는 지금 교과, 개요에서는 고른 교과(고르지 않으면 모든 교과)
 window.smartZipExport = function () {
+    // 개요의 체크 칸은 편집 화면에서 숨어 있을 뿐 남아 있으므로 편집 중에는 쓰지 않는다
+    if (/^#editor/.test(window.location?.hash || '')) return exportAllToZip();
     const checked = document.querySelectorAll('.subj-zip-cb:checked');
     if (checked.length > 0) {
         exportSelectedToZip();
@@ -1128,7 +1173,7 @@ window.exportAllToZip = async function () {
         // 내보내기·백업 → 백업 ZIP으로 되살리기로 이 교과를 되살린다. '함께'가 크기 한도에 걸리면 '따로·가볍게'로 다시 만든다(data-safety.js)
         const result = await buildBackupZip(zip, zip, subjectsBackupMeta([subj.id]), imageMode);
         saveAs(result.blob, backupFileName(`${subjectName}_전체교안`, result.mode));
-        finishBackupDownload(result, { successText: `📦 ${totalFiles}개 파일이 ZIP으로 다운로드되었습니다.` });
+        finishBackupDownload(result, { successText: `📦 ${totalFiles}개 파일이 ZIP으로 다운로드되었습니다.`, countsAsBackup: false }); // 교과 백업은 마지막 전체 백업 시각에 세지 않는다
     } catch (e) {
         console.error('[ZIP Export]', e);
         window.showAlert(isBackupTooBig(e) ? BACKUP_TOO_BIG_TEXT.subjects : 'ZIP 생성 중 오류: ' + e.message);
@@ -1440,12 +1485,13 @@ document.addEventListener('DOMContentLoaded', () => {
             const modal = document.getElementById('custom-modal');
             if (modal && !modal.classList.contains('hidden')) modal.classList.add('hidden');
         }
-        // Ctrl+S: 수동 저장
-        if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        // Ctrl+S(맥은 Cmd+S): 고치던 원문 칸까지 넣고 저장한 뒤 실제 결과를 알린다(누르고 있어도 한 번만). 읽지 못한 동안은 saveNow가 막는다
+        if (isSaveShortcut(e)) {
             e.preventDefault();
-            if (window.isStateLoadFailed?.()) return window.showStateLoadFailedDialog?.(); // 저장본을 읽지 못한 동안은 저장하지 않는다(거짓 '저장되었습니다' 없이)
-            // 브라우저에 저장했을 때만 저장했다고 알린다. 저장하지 못했으면 saveState가 까닭을 알린다(저장 공간이 모자랄 때 '저장되었습니다'가 같이 뜨지 않게)
-            saveState().then(saved => { if (saved) window.showAlert('저장되었습니다.'); });
+            if (!e.repeat) saveNow().catch(err => {
+                console.error('[저장] Ctrl+S 저장 중 오류:', err);
+                window.showToast?.('저장하지 못했습니다. 잠시 뒤 다시 Ctrl+S를 눌러 주세요.', 'error');
+            });
         }
         // F1: 도움말
         if (e.key === 'F1') {

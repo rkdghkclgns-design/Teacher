@@ -75,6 +75,44 @@ function confirmAiEdit(beforeText, afterText) {
     });
 }
 
+/* ---------- 아래 AI 명령줄: 응답이 온 뒤 넣을 자리 (api.js runAICommand) ---------- */
+// 시작한 교과·차시·탭이 지금도 열려 있는가. 지금 탭이 null이면(편집기가 아니거나 교수안 같은 항목을 보는 중) 다르다
+function sameAiEditTarget(start, now) {
+    return !!start && !!now && now.tabId != null
+        && String(start.subjectId) === String(now.subjectId)
+        && String(start.moduleId) === String(now.moduleId)
+        && start.tabId === now.tabId;
+}
+
+// 고른 글을 고친 글로 바꾼 전체 글. 요청한 때의 자리에 그 글이 그대로 있으면 그 자리, 아니면 그 글이 한 번만 나오는 자리. 못 찾으면 null
+function placeAiEdit(text, { selStart, selEnd, selectedText, newText }) {
+    const source = String(text ?? '');
+    if (!selectedText) return null;
+    const atStart = source.slice(selStart, selEnd) === selectedText;
+    const found = source.indexOf(selectedText);
+    const unique = found >= 0 && source.indexOf(selectedText, found + 1) < 0;
+    const start = atStart ? selStart : (unique ? found : -1);
+    return start < 0 ? null : source.slice(0, start) + newText + source.slice(start + selectedText.length);
+}
+
+// 그림 태그를 넣은 전체 글. 요청한 뒤 글이 그대로면 그때 커서 자리, 바뀌었으면 끝에 넣는다
+function insertAiImage(text, { baseText, pos, imgTag }) {
+    const source = String(text ?? '');
+    const at = source === baseText ? Math.min(Math.max(0, Number(pos) || 0), source.length) : source.length;
+    return source.slice(0, at) + imgTag + source.slice(at);
+}
+
+// 응답이 왔을 때 시작한 자리가 닫혀 있으면 묻는 창의 글과 버튼. 버리면 다시 볼 수 없으므로 바깥을 눌러도 닫히지 않는다(Esc도 이 창을 닫지 않는다)
+function aiResultAwayDialog(kind, place) {
+    const image = kind === 'image';
+    return {
+        message: image
+            ? `기다리는 동안 다른 곳으로 옮겨서, AI가 만든 그림을 아직 넣지 않았습니다.\n넣을 곳: ${place}\n\n그곳으로 돌아가 그림을 넣을까요? 버리면 이 그림은 다시 볼 수 없습니다.`
+            : `기다리는 동안 다른 곳으로 옮겨서, AI가 고친 글을 아직 넣지 않았습니다.\n넣을 곳: ${place}\n\n그곳으로 돌아가 바뀐 부분을 보고 반영할까요? 버리면 이 결과는 다시 볼 수 없습니다.`,
+        opts: { title: 'AI 결과를 아직 넣지 않았습니다', okLabel: image ? '돌아가서 넣기' : '돌아가서 반영', cancelLabel: '버리기', tone: 'primary', dismissible: false }
+    };
+}
+
 // 제목이 같은 섹션끼리 먼저 짝짓고, 남은 섹션은 본문이 비슷하면 제목만 바뀐 것으로 본다. 사라진 섹션은 원래 자리에 넣어 둔다.
 function alignMdSections(beforeMd, afterMd) {
     const pending = mdSections(beforeMd).map((section, index) => ({ ...section, index }));

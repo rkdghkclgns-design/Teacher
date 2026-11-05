@@ -1,8 +1,8 @@
-// data-safety.js - 작업을 잃지 않게: 확인 창(비동기), 복원되는 백업, 불러오기 전 자동 백업, 교과 휴지통, 히스토리 되돌리기, 마지막 백업 시각, PC 폴더 열기 문구
+// data-safety.js - 작업을 잃지 않게: 확인 창(비동기), 복원되는 백업, 불러오기 전 자동 백업, 교과 휴지통, 히스토리 되돌리기, 마지막 전체 백업 시각, PC 폴더 열기 문구
 // 계산만 하는 함수(교과 합치기 계획, 백업 나이, 되돌릴 곳)는 DOM 없이 돌고 tests/data-safety.test.js가 확인한다.
 
 const BACKUP_FORMAT = 'teacher-backup';
-const BACKUP_TIME_KEY = 'teacher:last-backup-at';
+const BACKUP_TIME_KEY = 'teacher:last-full-backup-at'; // 그림을 담은 과정 전체 백업만 센다. 교과 백업도 세던 예전 값(teacher:last-backup-at)은 읽지 않는다
 const BACKUP_STALE_DAYS = 7;
 const SUBJECT_TRASH_LIMIT = 30;
 
@@ -78,10 +78,13 @@ function cleanTrashLesson(lesson) {
 }
 
 function planSubjectImport(current, incoming) {
-    const ids = new Set((current || []).map(subject => String(subject.id)));
+    const mine = new Map((current || []).map(subject => [String(subject.id), subject]));
+    const replaced = (incoming || []).filter(subject => mine.has(String(subject.id)));
     return {
-        replaced: (incoming || []).filter(subject => ids.has(String(subject.id))),
-        added: (incoming || []).filter(subject => !ids.has(String(subject.id)))
+        replaced,
+        added: (incoming || []).filter(subject => !mine.has(String(subject.id))),
+        // 바뀌는 내 교과의 지금 이름(확인 창에 양쪽 이름을 보인다)
+        currentTitles: Object.fromEntries(replaced.map(subject => [String(subject.id), mine.get(String(subject.id)).title]))
     };
 }
 
@@ -95,25 +98,40 @@ function mergeSubjects(current, incoming) {
     ];
 }
 
-// opts.noImages: 그림을 뺀 파일('빼기'), opts.lostImages: 빈칸이 될 바뀌는 교과의 지금 그림 수
-function describeSubjectImport(plan, { noImages = false, lostImages = 0 } = {}) {
-    const lines = [
-        ...plan.replaced.map(subject => `· ${subject.title} — 지금 교과를 파일 내용으로 바꿉니다(지금 내용은 교과 휴지통으로)`),
-        ...plan.added.map(subject => `· ${subject.title} — 새로 추가합니다`)
-    ];
-    const imageNote = noImages ? noImagesImportNote('subjects', lostImages) : '';
-    return `교과 ${plan.replaced.length + plan.added.length}개를 불러옵니다.\n${lines.join('\n')}\n\n다른 교과는 그대로 둡니다. 불러오기 전에 지금 상태를 백업 파일로 내려받습니다.${imageNote}`;
+// 확인 창에 넣는 교과 이름: 한 줄로 모으고 너무 길면 줄인다(남이 준 파일의 이름이 줄을 바꿔 확인 창에 없는 줄을 꾸미지 못하게)
+const IMPORT_TITLE_MAX = 60;
+function importTitleText(title) {
+    const text = String(title ?? '').replace(/\s+/g, ' ').trim() || '제목 없음';
+    return text.length > IMPORT_TITLE_MAX ? `${text.slice(0, IMPORT_TITLE_MAX)}…` : text;
 }
 
+// opts.noImages: 그림을 뺀 파일('빼기'), opts.lostImages: 빈칸이 될 바뀌는 교과의 지금 그림 수.
+// 바뀌는 교과는 내 교과 이름과 파일의 이름을 함께 보인다(교과는 id로 같은지 가린다. 예시 교과 subject_1은 누구나 같다)
+function describeSubjectImport(plan, { noImages = false, lostImages = 0 } = {}) {
+    const currentTitles = plan.currentTitles || {};
+    const lines = [
+        ...plan.replaced.map(subject => {
+            const mine = currentTitles[String(subject.id)] ?? subject.title;
+            const renamed = mine !== subject.title ? '이름이 달라도 같은 교과로 보고 바꿉니다. ' : '';
+            return `· 바꿈: 내 '${importTitleText(mine)}' → 파일의 '${importTitleText(subject.title)}' (${renamed}내 교과는 휴지통으로 갑니다)`;
+        }),
+        ...plan.added.map(subject => `· 추가: 파일의 '${importTitleText(subject.title)}' (새 교과로 넣습니다)`)
+    ];
+    const trashNote = plan.replaced.length ? '\n휴지통으로 간 교과는 교과 목록 아래 휴지통에서 30일 동안 되살릴 수 있습니다.' : '';
+    const imageNote = noImages ? noImagesImportNote('subjects', lostImages) : '';
+    return `교과 ${plan.replaced.length + plan.added.length}개를 불러옵니다.\n${lines.join('\n')}\n\n다른 교과는 그대로 둡니다. 불러오기 전에 지금 상태를 백업 파일로 내려받습니다.${trashNote}${imageNote}`;
+}
+
+// 머리줄의 마지막 백업 시각. 그림을 담은 과정 전체 백업만 센다(BACKUP_TIME_KEY)
 function backupAgeLabel(iso, now = Date.now()) {
     const at = Date.parse(iso || '');
-    if (!Number.isFinite(at)) return { text: '백업 안 함', stale: true };
+    if (!Number.isFinite(at)) return { text: '전체 백업 안 함', stale: true };
     const minutes = Math.max(0, Math.floor((now - at) / 60000));
     const days = Math.floor(minutes / 1440);
-    const text = minutes < 1 ? '방금 백업'
-        : minutes < 60 ? `${minutes}분 전 백업`
-            : minutes < 1440 ? `${Math.floor(minutes / 60)}시간 전 백업`
-                : `${days}일 전 백업`;
+    const text = minutes < 1 ? '방금 전체 백업'
+        : minutes < 60 ? `${minutes}분 전 전체 백업`
+            : minutes < 1440 ? `${Math.floor(minutes / 60)}시간 전 전체 백업`
+                : `${days}일 전 전체 백업`;
     return { text, stale: days >= BACKUP_STALE_DAYS };
 }
 
@@ -174,8 +192,9 @@ const historyText = mod => [mod.content, ...Object.values(isObject(mod.tabConten
     .filter(text => typeof text === 'string').join('\n');
 
 // 되돌리거나 새 차시로 되살릴 때 차시에 넣는 그림(기록의 그림이 차시에 들어가는 길은 이것 하나다).
-// 기록은 남이 준 파일에서 왔을 수 있어 차시 그림과 같은 규칙으로 바른 키와 그림 값(data:image…;base64, 찾지 못한 그림 자리 teacher-image:…)만 받는다
+// 기록은 남이 준 파일에서 왔을 수 있어 차시 그림과 같은 규칙으로 바른 키와 그림 값(data:image…;base64, 찾지 못한 그림 자리 teacher-image:…)만 받는다(고칠 수 있는 그림 값은 고쳐서)
 const historyImages = entry => Object.fromEntries(Object.entries(isObject(entry.images) ? entry.images : {})
+    .map(([id, data]) => [id, repairImageValue(data)])
     .filter(([id, data]) => isSafeImageKey(id) && isSafeImageValue(data)));
 
 // 진짜 그림(data:image)인지. 아니면 찾지 못한 그림 자리(teacher-image 참조)나 빈 값이다(화면에는 빈 그림으로 보인다)
@@ -815,7 +834,7 @@ function renderBackupIndicator() {
     el.textContent = age.text;
     el.classList.toggle('text-amber-300', age.stale);
     el.classList.toggle('text-white/60', !age.stale);
-    el.title = `${age.stale ? '오래 백업하지 않았습니다. ' : ''}작업은 이 브라우저에만 저장됩니다. 눌러서 ZIP으로 백업하세요(내보내기·백업 → 백업 ZIP으로 되살리기로 되살립니다).`;
+    el.title = `${age.stale ? '과정 전체 백업을 오래 받지 않았습니다. ' : ''}그림까지 담은 과정 전체 백업을 마지막으로 받은 때입니다(교과 백업은 세지 않습니다). 작업은 이 브라우저에만 저장됩니다. 누르면 과정 전체 백업 ZIP을 받습니다.`;
 }
 
 /* ---------- PC 폴더 열기: 폴더의 그림 담기, 저장본 사본 이름, 확인 창·알림 글 (tests/data-safety.test.js) ---------- */
@@ -984,10 +1003,21 @@ const isSafeImageValue = value => typeof value === 'string' && (SAFE_IMAGE_DATA.
 // 두 객체의 칸이 모두 같은 값인가(고칠 것이 없으면 처음 객체를 그대로 돌려줄 때 쓴다)
 const sameFields = (a, b) => Object.keys(a).length === Object.keys(b).length && Object.keys(a).every(key => Object.is(a[key], b[key]));
 
-// 바른 키와 그림만 남긴다. 모두 바르면 같은 객체, 객체가 아니면 빈 목록
+// 그림 서비스가 알려 준 형식을 그대로 붙여 'data:image/PNG; charset=binary;base64,…'처럼 저장된 그림(형식에 대문자·빈칸·매개변수)은
+// 형식만 소문자로 남겨 'data:image/png;base64,…'로 고친다(진짜 그림을 다음에 열 때 지우지 않게). 이미 바른 값과 이 모양이 아닌 값은 그대로 돌려준다(뒤 검사가 가른다)
+const LOOSE_IMAGE_DATA = /^data:image\/([a-z0-9.+-]{1,40})(?:\s*;\s*[\w.+-]{1,40}\s*=\s*[\w.+-]{1,40}){0,8}\s*;\s*base64,([A-Za-z0-9+/=]+)$/i;
+function repairImageValue(value) {
+    if (typeof value !== 'string' || SAFE_IMAGE_DATA.test(value)) return value;
+    const match = LOOSE_IMAGE_DATA.exec(value);
+    return match ? `data:image/${match[1].toLowerCase()};base64,${match[2]}` : value;
+}
+
+// 바른 키와 그림만 남긴다(고칠 수 있는 그림 값은 고쳐서, repairImageValue). 모두 바르면 같은 객체, 객체가 아니면 빈 목록
 function safeImageMap(images) {
     if (!isObject(images)) return {};
-    const kept = Object.fromEntries(Object.entries(images).filter(([key, value]) => isSafeImageKey(key) && isSafeImageValue(value)));
+    const kept = Object.fromEntries(Object.entries(images)
+        .map(([key, value]) => [key, repairImageValue(value)])
+        .filter(([key, value]) => isSafeImageKey(key) && isSafeImageValue(value)));
     return sameFields(kept, images) ? images : kept;
 }
 
@@ -1093,7 +1123,7 @@ function relinkAttachedImages(content, attached, images = {}) {
     const keyOf = fileName => {
         const key = String(fileName).split('.')[0];
         if (!isSafeImageKey(key)) return null;
-        const data = attached?.get?.(fileName);
+        const data = repairImageValue(attached?.get?.(fileName));
         const current = Object.prototype.hasOwnProperty.call(images, key) ? images[key] : undefined;
         if (!isPictureData(current) && isSafeImageValue(data)) found.set(key, data);
         return key;
@@ -1404,7 +1434,8 @@ if (typeof window !== 'undefined') {
         folderOpenPrompt, folderOpenedMessage, folderSaveUnreadableText, backupImageFromKeyedFile,
         safeImageMap, safeTabContents, safeGyosuan, cleanLessonFields, cleanHistoryItem, isSafeImageKey, isSafeImageValue, validHistory, validTrash,
         trashTimeIso, withTrashTime, backupMarkdownBody, takeBackupMarkdown, relinkAttachedImages, applyBackupMarkdown,
-        relinkLocalImages, attachedImageFile, attachmentImages, UNREAD_PARTIAL_BACKUP_TEXT, jsonTextParts, staleUnreadCopies
+        relinkLocalImages, attachedImageFile, attachmentImages, UNREAD_PARTIAL_BACKUP_TEXT, jsonTextParts, staleUnreadCopies,
+        importTitleText, repairImageValue
     });
     if (typeof document !== 'undefined' && document.addEventListener) {
         // '빼기'는 메뉴를 연 채 바로 받는 백업 하나에만 쓴다. 메뉴 밖을 누르면 그 버튼이 일하기 전에(잡기 단계) 푼다(머리줄 백업 시각·교과 목록 ZIP 버튼)

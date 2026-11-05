@@ -111,6 +111,18 @@ async function run(name, fn) {
         assert.strictEqual(body.prompt.length, 2000, '모델 상한에 맞춰 자른다');
     });
 
+    await run('그림 형식: 서버가 형식 뒤에 매개변수·대문자를 붙여도 data URL에는 형식만 쓴다(다음에 열 때 그림을 지우지 않게)', async () => {
+        const body = Buffer.from('PNGDATA');
+        const ctx = makeContext(async () => new Response(body, { headers: { 'Content-Type': 'Image/PNG; charset=binary' } }), ready);
+        assert.strictEqual(await call(ctx, 'higgsfieldImageData')(IMAGE), `data:image/png;base64,${body.toString('base64')}`);
+        const asBlob = call(ctx, 'asImageBlob');
+        assert.strictEqual(asBlob(new Blob(['x'], { type: 'image/png; charset=binary' }), IMAGE).type, 'image/png');
+        const bare = new Blob(['x'], { type: 'image/webp' });
+        assert.strictEqual(asBlob(bare, IMAGE), bare, '형식만 있으면 그대로');
+        assert.strictEqual(asBlob(new Blob(['x'], { type: 'text/plain; charset=utf-8' }), 'https://cdn.test/a.webp?x=1').type, 'image/webp', '그림 형식이 아니면 주소의 확장자로');
+        assert.strictEqual(asBlob(new Blob(['x'], { type: '' }), 'https://cdn.test/a.txt'), null);
+    });
+
     await run('생성: 저장소가 브라우저 요청을 막으면 중계로 내려받는다', async () => {
         const { stub, calls } = fakeHiggsfield({ cdnBlocked: true });
         const ctx = makeContext(stub, ready);

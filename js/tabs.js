@@ -144,9 +144,14 @@ function getActiveTabContent(mod) {
 // 화면에 보이는 탭의 저장된 원문(첫머리 정리 전). getActiveTabContent는 화면에 그릴 정리본이다.
 // 고친 내용을 저장할 때는 이 원문을 바탕으로 해야 화면에서 숨긴 첫머리(앞 그림·시간표·특징 목록)가 지워지지 않는다
 function getActiveTabSource(mod) {
+    return tabSourceFor(mod, currentLessonTab);
+}
+
+// 정한 탭의 저장된 원문. 원문 칸(#raw-view)은 이 글로 채운다. 탭이 없는 최종 평가와 비운 기본학습은 기본학습 칸에만 본문(content)을 보인다
+function tabSourceFor(mod, tabId) {
     if (!mod) return '';
-    if (mod.tabContents && mod.tabContents[currentLessonTab]) return mod.tabContents[currentLessonTab];
-    if (currentLessonTab === 'basicLearn' && mod.content) return mod.content;
+    if (mod.tabContents && mod.tabContents[tabId]) return mod.tabContents[tabId];
+    if (tabId === 'basicLearn' && mod.content) return mod.content;
     return '';
 }
 
@@ -176,6 +181,32 @@ function setTabMarkdown(mod, tabId, md) {
     const isLegacy = mod.content && !LESSON_TABS.some(tab => mod.tabContents[tab.id]);
     mod.tabContents = { ...mod.tabContents, ...(isLegacy ? { basicLearn: mod.content } : {}), [tabId]: md };
     mod.content = LESSON_TABS.map(tab => mod.tabContents[tab.id] || '').filter(Boolean).join('\n\n---\n\n');
+}
+
+// 차시 안에서 그림(local:그림 id)을 가리킬 수 있는 글: 합친 본문, 탭 글, 교수안·편성안(원문 칸에 붙여 넣은 그림은 mod.images에 있다),
+// 슬라이드 화면 편집본, 부른 쪽이 더 주는 글(다시 만든 탭에 돌려 넣을 고정 섹션). 'local:'이 없는 글과 글이 아닌 값은 뺀다
+function lessonImageRefTexts(mod, extraTexts = []) {
+    const isMap = value => !!value && typeof value === 'object';
+    const gyosuan = isMap(mod?.gyosuan) ? mod.gyosuan : {};
+    return [mod?.content, ...(isMap(mod?.tabContents) ? Object.values(mod.tabContents) : []), gyosuan.docMd, gyosuan.deckMd, gyosuan.deckHtml,
+        ...(isMap(gyosuan.sessionDecks) ? Object.values(gyosuan.sessionDecks) : []), ...(Array.isArray(extraTexts) ? extraTexts : [])]
+        .filter(text => typeof text === 'string' && text.includes('local:'));
+}
+
+// 차시 어디에서도 쓰지 않는 그림 id. 글에 없어도 삽화(imgId)나 판서 영상(그림 id 자리)이 가리키면 쓰는 그림이다.
+// 값은 보지 않는다(찾지 못한 그림 자리 teacher-image:…나 빈 값도 글이 가리키는 동안은 남긴다). local:img_1은 local:img_10 안에도 있어 남기는 쪽으로 틀린다
+function unusedLessonImageIds(mod, extraTexts = []) {
+    const images = mod?.images && typeof mod.images === 'object' ? mod.images : {};
+    const texts = lessonImageRefTexts(mod, extraTexts);
+    const illustrations = Array.isArray(mod?.illustrations) ? mod.illustrations : [];
+    const videos = mod?.whiteboardVideos && typeof mod.whiteboardVideos === 'object' ? Object.keys(mod.whiteboardVideos) : [];
+    const pinned = new Set([...illustrations.map(item => item?.imgId), ...videos].filter(id => id != null && id !== '').map(String));
+    return Object.keys(images).filter(id => !pinned.has(id) && !texts.some(text => text.includes(`local:${id}`)));
+}
+
+// 쓰지 않는 그림만 지운다(용량 확보). 다른 곳이 가리키는 그림은 남긴다
+function dropUnusedLessonImages(mod, extraTexts = []) {
+    unusedLessonImageIds(mod, extraTexts).forEach(id => { delete mod.images[id]; });
 }
 
 function showTabGenStop(visible, labels = TAB_STOP_LABELS) {
