@@ -6,6 +6,7 @@ const LESSON_STATUSES = ['작성중', '검수중', '완료', '개선필요'];
 const LESSON_HISTORY_LIMIT = 20;
 const LESSON_TRASH_LIMIT = 100;
 const LESSON_TRASH_DAYS = 30;
+const LESSON_TRASH_REWRITE = 'rewrite'; // 다시 만들기 전 사본: 개수 상한에서 빼고 30일이 지나야 지운다
 const DAY_MS = 86400000;
 const FLOW_PHASES = ['도입', '전개', '정리'];
 const LESSON_STATUS_STYLES = { 작성중: 'bg-sky-500/20 text-sky-300', 검수중: 'bg-amber-500/20 text-amber-300', 완료: 'bg-emerald-500/20 text-emerald-300', 개선필요: 'bg-rose-500/20 text-rose-300' };
@@ -126,9 +127,41 @@ function liveLessonTrash(entries, now = Date.now()) {
     return (entries || []).filter(entry => !(trashAgeDays(entry, now) >= LESSON_TRASH_DAYS));
 }
 
-function moveLessonsToTrash(lessons, subjectId = currentSubjectId) {
-    const entries = lessons.map(lesson => ({ lesson, subjectId, at: new Date().toISOString() }));
-    globalState.lessonTrash = [...entries, ...liveLessonTrash(globalState.lessonTrash)].slice(0, LESSON_TRASH_LIMIT);
+// 지운 차시는 LESSON_TRASH_LIMIT개까지 두고 넘치면 목록 뒤쪽부터 뺀다(새 항목이 앞이다).
+// 한 번에 LESSON_TRASH_LIMIT개보다 많이 넣으면 새 항목도 뒤쪽은 빠진다(droppedNew: 그렇게 빠진 새 항목 수).
+// 다시 만들기 전 사본은 세지 않는다(큰 과정을 다시 만들어도 자기 사본을 밀어내지 않게). 날짜가 앞날인 사본은 세어 끝없이 남지 않게 한다
+function addToLessonTrash(trash, entries, now = Date.now(), limit = LESSON_TRASH_LIMIT) {
+    const all = [...entries, ...liveLessonTrash(trash, now)];
+    const exempt = entry => entry.kind === LESSON_TRASH_REWRITE && trashAgeDays(entry, now) >= 0;
+    let regular = 0;
+    const keep = all.map(entry => exempt(entry) || ++regular <= limit);
+    return {
+        trash: all.filter((_, i) => keep[i]),
+        dropped: keep.filter(ok => !ok).length,
+        droppedNew: keep.slice(0, entries.length).filter(ok => !ok).length
+    };
+}
+
+// 빠지는 차시가 꼭 오래된 것만은 아니다(한 번에 많이 지우면 방금 지운 차시도 빠진다). 그때는 그 수를 함께 말한다
+const lessonTrashCapText = (count, fresh = 0) => `휴지통에는 지운 차시를 ${LESSON_TRASH_LIMIT}개까지 둡니다. 넘친 ${count}개${fresh ? `(방금 지운 차시 ${fresh}개 포함)` : ''}를 완전히 지웠습니다.`;
+
+// reason: 휴지통 목록에 보일 까닭. kind: LESSON_TRASH_REWRITE면 개수 상한에서 뺀다
+function moveLessonsToTrash(lessons, subjectId = currentSubjectId, { reason = '', kind = '' } = {}) {
+    const at = new Date().toISOString();
+    const entries = lessons.map(lesson => ({ lesson, subjectId, at, ...(reason ? { reason } : {}), ...(kind ? { kind } : {}) }));
+    const { trash, dropped, droppedNew } = addToLessonTrash(globalState.lessonTrash, entries);
+    globalState.lessonTrash = trash;
+    if (dropped) window.showToast?.(lessonTrashCapText(dropped, droppedNew), 'warning');
+}
+
+// 글(문자열)은 바뀌지 않으므로 함께 쓰고 객체·배열만 새로 만든다. 그림이 많은 차시를 메모리에 두 벌 두지 않는다
+const copyLessonTree = value => (Array.isArray(value) ? value.map(copyLessonTree)
+    : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, copyLessonTree(item)]))
+        : value);
+
+// 다시 만들기 전 사본: 차시를 통째로(탭·옛 본문·교수안과 슬라이드 화면 편집·그림·삽화·판서 영상 연결·차시 정보) 복사해 휴지통에 넣는다
+function trashLessonCopy(mod, subjectId = currentSubjectId) {
+    moveLessonsToTrash([copyLessonTree(mod)], subjectId, { reason: '다시 만들기 전', kind: LESSON_TRASH_REWRITE });
 }
 
 // 목록을 그릴 때마다 지난 항목을 비운다. 다음 저장에 함께 반영된다.
@@ -148,8 +181,11 @@ function restoreLesson(index) {
     const clash = siblings.some(item => String(item.id) === String(cleaned.id));
     const unique = clash && typeof renumberLessons === 'function' ? renumberLessons([cleaned], siblings.map(item => item.id))[0] : cleaned;
     const lesson = lessonTitleTaken(unique.title, unique.id) ? { ...unique, title: `${unique.title} (복원)` } : unique;
-    if (subject.id === currentSubjectId) courseData = [...courseData, lesson];
-    subject.lessons = subject.id === currentSubjectId ? courseData : [...(subject.lessons || []), lesson];
+    // 다시 만들기 전 사본은 다시 만든 차시(같은 교과의 같은 id) 바로 아래에 둔다. 그 교과나 차시가 없으면 맨 아래
+    const after = entry.kind === LESSON_TRASH_REWRITE && subject.id === entry.subjectId ? siblings.findIndex(item => String(item.id) === String(cleaned.id)) : -1;
+    const placed = after >= 0 ? [...siblings.slice(0, after + 1), lesson, ...siblings.slice(after + 1)] : [...siblings, lesson];
+    if (subject.id === currentSubjectId) courseData = placed;
+    subject.lessons = placed;
     globalState.lessonTrash = globalState.lessonTrash.filter((_, i) => i !== index);
     return true;
 }
@@ -176,9 +212,10 @@ function renderTrashRows() {
     const subjectRows = renderSubjectTrashRows();
     const rows = (globalState.lessonTrash || []).map((entry, index) => {
         const subject = globalState.subjects.find(item => item.id === entry.subjectId);
+        // 까닭('다시 만들기 전')이 붙으면 부제가 길어지므로 잘라 내지 않고 줄을 바꿔 남은 기간까지 보인다
         return `
             <div class="flex items-center gap-2 p-2 rounded-lg bg-white/5 text-xs text-textLight">
-                <span class="flex-1 min-w-0 truncate">${escapeHtml(entry.lesson.title)}<span class="block text-[0.6875rem] text-textMuted">${escapeHtml(subject?.title || '삭제된 교과')} · ${escapeHtml(entry.at.slice(0, 16).replace('T', ' '))} · 남은 기간 ${trashDaysLeft(entry)}일</span></span>
+                <span class="flex-1 min-w-0 truncate">${escapeHtml(entry.lesson.title)}<span class="block text-[0.6875rem] text-textMuted whitespace-normal break-keep">${escapeHtml(subject?.title || '삭제된 교과')} · ${escapeHtml(entry.at.slice(0, 16).replace('T', ' '))}${entry.reason ? ` · ${escapeHtml(entry.reason)}` : ''} · 남은 기간 ${trashDaysLeft(entry)}일</span></span>
                 <button data-trash-action="restore" data-index="${index}" class="px-2 py-1 font-bold bg-accent text-white rounded">복원</button>
                 <button data-trash-action="purge" data-index="${index}" class="px-2 py-1 font-bold bg-white/10 text-rose-300 rounded">완전 삭제</button>
             </div>`;

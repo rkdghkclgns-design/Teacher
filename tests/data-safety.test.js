@@ -261,5 +261,155 @@ test('그림 빼기: 그림 항목을 빼고 글은 남긴다', () => {
     assert.strictEqual(W.backupImageMode(), 'inline', '저장소가 없으면 예전 방식');
 });
 
+/* ---------- 작업 기록 합치기와 상한 알림 ---------- */
+const plainJson = value => JSON.parse(JSON.stringify(value));
+
+test('작업 기록 합치기: 칸이 모자라면 이 브라우저의 기록을 먼저 남기고, 남는 칸에 파일의 새 기록부터 넣는다', () => {
+    const now = Date.parse('2026-11-05T12:00:00Z');
+    const mine = [
+        ...Array.from({ length: 195 }, (_, i) => ({ id: now - 1e9 + i, title: `내 기록 ${i}` })),
+        ...Array.from({ length: 5 }, (_, i) => ({ id: now - 40 + i, title: `불러오기 전 ${i}`, reason: '불러오기 전' }))
+    ];
+    const newer = Array.from({ length: 200 }, (_, i) => ({ id: now - 1e6 + i, title: `동료 ${i}` }));
+    const kept = ctx.mergeHistory(mine, newer, now);
+    assert.strictEqual(kept.list.length, 200);
+    assert.ok(kept.list.every(item => !item.title.startsWith('동료')), '동료의 새 기록이 내 기록을 밀어내지 않는다');
+    assert.deepStrictEqual([kept.droppedIncoming, kept.droppedCurrent], [200, 0]);
+    const room = ctx.mergeHistory(mine.slice(50), newer, now);
+    assert.deepStrictEqual(plainJson(room.list.filter(item => item.title.startsWith('동료')).map(item => item.title)), Array.from({ length: 50 }, (_, i) => `동료 ${150 + i}`), '남는 칸에는 파일의 새 기록부터');
+    assert.ok(room.list.every((item, i, list) => i === 0 || list[i - 1].id < item.id), '시각 순서로 둔다');
+    assert.strictEqual(room.droppedIncoming, 150);
+});
+
+test('작업 기록 합치기: 미래 시각 id는 이 브라우저의 가장 새 기록 아래로 바꾸고, 방금 남긴 기록을 밀어내지 않는다', () => {
+    const now = Date.parse('2026-11-05T12:00:00Z');
+    const justNow = Array.from({ length: 5 }, (_, i) => ({ id: now - 40 + i, title: `불러오기 전 ${i}` }));
+    const future = Array.from({ length: 200 }, (_, i) => ({ id: now + 1e10 + i, title: `미래 ${i}` }));
+    const merged = ctx.mergeHistory(justNow, future, now);
+    assert.strictEqual(merged.list.length, 200);
+    assert.ok(merged.list.every(item => item.id <= now));
+    assert.strictEqual(new Set(merged.list.map(item => item.id)).size, 200, 'id가 겹치지 않는다');
+    assert.deepStrictEqual(plainJson(merged.list.slice(-5).map(item => item.title)), justNow.map(item => item.title), '방금 남긴 기록이 가장 새 기록으로 남는다');
+    assert.deepStrictEqual(plainJson(merged.list.slice(0, -5).map(item => item.title)), Array.from({ length: 195 }, (_, i) => `미래 ${5 + i}`), '서로의 순서는 지킨다');
+    assert.strictEqual(merged.droppedIncoming, 5);
+    const mineAhead = ctx.mergeHistory([{ id: now + 5000, title: '내 기록' }], [], now);
+    assert.strictEqual(mineAhead.list[0].id, now + 5000, '이 브라우저의 기록 id는 바꾸지 않는다');
+});
+
+test('작업 기록 합치기: id는 숫자로 맞추고 이상한 id는 받지 않는다. 같은 기록은 한 번, id만 같은 다른 기록은 나눠서 모두 남긴다', () => {
+    const now = Date.parse('2026-11-05T12:00:00Z');
+    const odd = ctx.mergeHistory([], [{ id: '12', title: '글자 id' }, { id: '', title: '빈' }, { id: true, title: '참' }, { id: [7], title: '배열' }, { id: null }, { id: '1.5' }, { id: 1.5 }, { id: -3 }, { id: 1e20 }, null, 3], now);
+    assert.deepStrictEqual(plainJson(odd.list.map(item => [item.title, item.id])), [['글자 id', 12]]);
+    assert.strictEqual(ctx.mergeHistory([], [{ id: 20, title: { toString: null }, date: { toString: null } }], now).list.length, 1, '글이 아닌 제목·날짜에도 멈추지 않는다');
+    const mine = { id: 3, title: '지금', date: 'd1', content: '같은 글', lessonId: 7, images: { a: 'data:image/png;base64,MINE' } };
+    const same = ctx.mergeHistory([mine], [{ id: 3, title: '지금', date: 'd1', content: '같은 글', lessonId: 7, images: { a: 'data:image/png;base64,FILE' } }, { id: 3, title: '파일', date: 'd2' }, { id: 5, title: '첫째' }, { id: 5, title: '둘째' }], now);
+    assert.deepStrictEqual(plainJson(same.list.map(item => [item.id, item.title])), [[2, '파일'], [3, '지금'], [4, '둘째'], [5, '첫째']]);
+    assert.strictEqual(same.list[1].images.a, 'data:image/png;base64,MINE', '같은 기록은 이 브라우저의 것을 쓴다');
+    const burst = ctx.mergeHistory([{ id: 10, title: '가' }, { id: 10, title: '나' }, { id: 10, title: '다' }], [], now);
+    assert.deepStrictEqual(plainJson(burst.list.map(item => [item.id, item.title])), [[8, '다'], [9, '나'], [10, '가']], '같은 순간에 남긴 기록도 잃지 않는다');
+    const legacy = ctx.mergeHistory(Array.from({ length: 205 }, (_, i) => ({ id: i + 1 })), [], now);
+    assert.deepStrictEqual([legacy.list.length, legacy.list[0].id, legacy.droppedCurrent], [200, 6, 5]);
+});
+
+test('작업 기록 합치기: 한 번에 남긴 기록은 제목이 같아도 차시·교과·탭 글이 다르면 모두 넣는다(같은 기록만 한 번)', () => {
+    const now = Date.parse('2026-11-05T12:00:00Z');
+    // archiveContents 한 번은 날짜·까닭이 같다. 옛 본문(content) 없이 탭만 든 차시도 있다
+    const batch = (id, lessonId, subjectId, basicLearn) => ({ id, title: '1차시', date: '2026. 11. 5. 오후 3:00:00', reason: '불러오기 전', lessonId, subjectId, tabContents: { basicLearn } });
+    const file = [batch(now - 30, 1, 's1', '가'), batch(now - 29, 2, 's1', '가'), batch(now - 28, 1, 's2', '가'), batch(now - 27, 1, 's1', '가나')];
+    const merged = ctx.mergeHistory([], file, now);
+    assert.deepStrictEqual([merged.list.length, merged.droppedIncoming], [4, 0], '차시·교과·탭 글 길이가 다르면 다른 기록');
+    const local = ctx.mergeHistory([batch(now - 100, 1, 's1', '가')], [batch(now - 30, 1, 's1', '가'), batch(now - 29, 1, 's1', '가나다')], now);
+    assert.deepStrictEqual(plainJson(local.list.map(item => item.tabContents.basicLearn)), ['가', '가나다'], '같은 기록은 한 번만, 탭 글이 다른 기록은 넣는다');
+});
+
+test('작업 기록 합치기: 이 브라우저의 기록은 id가 이상해도 지우지 않고 쓸 수 있는 id를 준다. 나눈 id는 0 아래로 내려가지 않는다', () => {
+    const now = Date.parse('2026-11-05T12:00:00Z');
+    // 예전 코드가 받아 둔 소수·지수 글자·빈 id·음수 id(옛 합치기가 0 아래로 나눈 것)
+    const mine = [{ id: 1700000000000.5, title: '소수' }, { id: '1.7e12', title: '지수' }, { id: null, title: '없음' }, { id: -1, title: '음수' }, { id: 1700000000001, title: '보통' }, null];
+    const kept = ctx.mergeHistory(mine, [{ id: 5, title: '파일' }], now);
+    assert.deepStrictEqual(plainJson(kept.list.map(item => item.title)).sort(), ['보통', '소수', '없음', '음수', '지수', '파일'].sort());
+    assert.ok(kept.list.every(item => Number.isSafeInteger(item.id) && item.id >= 0), '모두 화면에서 찾을 수 있는 id');
+    assert.strictEqual(new Set(kept.list.map(item => item.id)).size, 6);
+    assert.deepStrictEqual([kept.droppedIncoming, kept.droppedCurrent], [0, 0]);
+    assert.strictEqual(kept.list.find(item => item.title === '보통').id, 1700000000001, '바른 id는 그대로');
+    const low = ctx.mergeHistory([{ id: 0, title: '가', date: '1' }], [{ id: 0, title: '나', date: '2' }, { id: now + 9, title: '미래', date: '3' }], now);
+    assert.ok(low.list.every(item => Number.isSafeInteger(item.id) && item.id >= 0 && item.id <= now), `0 아래로 나누지 않는다: ${JSON.stringify(low.list.map(item => item.id))}`);
+    assert.strictEqual(new Set(low.list.map(item => item.id)).size, 3);
+    const again = ctx.mergeHistory(low.list, [], now);
+    assert.deepStrictEqual([again.list.length, again.droppedCurrent], [3, 0], '다음 합치기에서도 모두 남는다');
+    assert.strictEqual(ctx.mergeHistory([], low.list, now).list.length, 3, '나눈 id는 다른 브라우저로 옮겨도 받는다');
+});
+
+test('작업 기록 합치기: 같은 파일을 다시 불러와도 늘지 않고, 아주 긴 목록은 새것부터 일부만 살핀다', () => {
+    const now = Date.parse('2026-11-05T12:00:00Z');
+    const file = [{ id: 50, title: 'A', date: 'y' }, { id: 50, title: 'B', date: 'y' }, { id: now + 1e10, title: '미래', date: 'x' }];
+    const once = ctx.mergeHistory([{ id: 100, title: '내 것', date: 'z' }], file, now);
+    assert.deepStrictEqual(plainJson(once.list.map(item => [item.id, item.title])), [[49, 'B'], [50, 'A'], [99, '미래'], [100, '내 것']]);
+    const twice = ctx.mergeHistory(once.list, file, now);
+    assert.deepStrictEqual(plainJson(twice.list), plainJson(once.list), '나눈 id·바꾼 미래 id의 기록도 같은 기록으로 알아본다');
+    const long = ctx.mergeHistory([], Array.from({ length: 1500 }, (_, i) => ({ id: 1000 + i, title: `t${i}` })), now);
+    assert.strictEqual(long.list.length, 200);
+    assert.strictEqual(long.list[0].title, 't1300');
+    assert.strictEqual(long.droppedIncoming, 1300);
+    const sameId = ctx.mergeHistory([], Array.from({ length: 1500 }, (_, i) => ({ id: 5000, title: `s${i}` })), now);
+    assert.deepStrictEqual([sameId.list.at(-1).title, sameId.list.at(-1).id, sameId.droppedIncoming], ['s500', 5000, 1300], '같은 id가 아주 많아도 목록 끝 1,000칸만 살핀다(멈추지 않게)');
+});
+
+test('작업 기록 합치기 알림: 남기지 못한 기록이 있을 때만 몇 개인지, 그 기록이 어디에 남는지 사실대로 말한다', () => {
+    assert.strictEqual(ctx.historyMergeNote({ droppedIncoming: 0, droppedCurrent: 0 }), '');
+    assert.strictEqual(ctx.historyMergeNote(), '');
+    const folder = ctx.historyMergeNote({ droppedIncoming: 3, droppedCurrent: 0 }, '폴더');
+    assert.ok(folder.includes('200개까지만') && folder.includes('이 브라우저의 기록을 먼저 남겼습니다'));
+    assert.ok(folder.includes('폴더에 있던 기록 3개는 넣지 않았고, 폴더의 저장본(save_data.yaml)에서도 빠집니다.'), '이어지는 폴더 저장이 저장본을 다시 쓰므로 폴더에 남는다고 하지 않는다');
+    const file = ctx.historyMergeNote({ droppedIncoming: 4 }, '파일');
+    assert.ok(file.includes('파일에 있던 기록 4개는 넣지 않았습니다. 그 파일에는 그대로 남아 있습니다.'));
+    assert.ok(!/에 있던 오래된 기록/.test(folder + file), '넣지 못한 기록이 더 새 기록일 수 있으므로 오래된 기록이라 하지 않는다');
+    assert.ok(ctx.historyMergeNote({ droppedCurrent: 2 }).includes('이 브라우저의 오래된 기록 2개를 지웠습니다.'));
+    // 이 브라우저의 기록이 200칸을 채우면 파일의 더 새 기록도 넣지 못한다
+    const now = Date.parse('2026-11-05T12:00:00Z');
+    const merged = ctx.mergeBackupExtras({ history: [{ id: now - 5, title: '더 새 기록' }] }, { history: Array.from({ length: 200 }, (_, i) => ({ id: 10 + i, title: `기록 ${i}` })) }, now);
+    assert.deepStrictEqual(plainJson(merged.historyDropped), { droppedIncoming: 1, droppedCurrent: 0 });
+});
+
+test('작업 기록 상한: 넘쳐서 지우면 몇 개를 지웠는지 화면에 알리고, 불러오기는 같은 합치기를 쓴다', () => {
+    const stateSource = fs.readFileSync(path.join(__dirname, '..', 'js', 'state.js'), 'utf8').replace(/\r\n/g, '\n');
+    const start = stateSource.indexOf('async function archiveContents(');
+    const end = stateSource.indexOf('\n}\n', start);
+    assert.ok(start >= 0 && end > start, 'archiveContents를 찾지 못함');
+    vm.runInContext(stateSource.slice(start, end + 2), ctx);
+    const toasts = [];
+    Object.assign(ctx, { contentHistory: Array.from({ length: 199 }, (_, i) => ({ id: i + 1, title: `기록 ${i}` })), currentSubjectId: 's1', projectFolderHandle: null, saveState: async () => {} });
+    ctx.window.showToast = (message, type) => toasts.push([message, type]);
+    ctx.archiveContents([{ title: '하나', content: '글' }]);
+    assert.strictEqual(toasts.length, 0, '200개까지는 알리지 않는다');
+    ctx.archiveContents([{ title: '둘', content: '글' }, { title: '셋', tabContents: { basicLearn: '글' } }, { title: '빈 글' }]);
+    assert.strictEqual(ctx.contentHistory.length, 200);
+    assert.deepStrictEqual(toasts, [['작업 기록은 200개까지 둡니다. 가장 오래된 기록 2개를 지웠습니다.', 'warning']]);
+    // 백업 되살리기·폴더 열기가 같은 합치기(mergeBackupExtras)를 쓰고 마침 알림에 남기지 못한 기록을 말하는지(다른 묶음이 이 흐름을 다시 짜도 지킨다)
+    assert.ok(stateSource.includes("historyMergeNote(extras.historyDropped, '파일')"), '백업 되살리기 알림');
+    assert.ok(stateSource.includes("historyMergeNote(extras.historyDropped, '폴더')"), '폴더 열기 알림');
+    assert.ok(!/new Map\(\[\.\.\.parsed\.history/.test(stateSource), '폴더 열기가 옛 합치기(같은 id 버림)를 쓰지 않는다');
+});
+
+test('알림은 먼저 뜬 알림 위에 쌓는다(상한 알림이 다른 알림에 가리지 않게)', () => {
+    const uiSource = fs.readFileSync(path.join(__dirname, '..', 'js', 'ui.js'), 'utf8').replace(/\r\n/g, '\n');
+    const start = uiSource.indexOf('window.showToast = function');
+    const end = uiSource.indexOf('\n};\n', start);
+    assert.ok(start >= 0 && end > start, 'showToast를 찾지 못함');
+    const shown = [];
+    const element = () => ({ dataset: {}, style: {}, classList: { replace() {} }, offsetHeight: 40, remove() {} });
+    const local = {
+        window: {}, setTimeout: () => 0, escapeHtml: text => String(text),
+        document: { createElement: element, querySelectorAll: selector => (selector === '[data-app-toast]' ? shown.filter(el => 'appToast' in el.dataset) : []), body: { appendChild: el => shown.push(el) } }
+    };
+    vm.createContext(local);
+    vm.runInContext(uiSource.slice(start, end + 3), local);
+    local.window.showToast('하나', 'warning');
+    local.window.showToast('둘');
+    assert.strictEqual(shown.length, 2);
+    assert.strictEqual(shown[0].style.bottom, undefined, '첫 알림은 원래 자리');
+    assert.strictEqual(shown[1].style.bottom, 'calc(1.5rem + 48px)', '둘째 알림은 첫 알림 위');
+});
+
 console.log(`\n${count - failed}/${count} passed`);
 if (failed) process.exit(1);

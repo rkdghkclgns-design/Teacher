@@ -439,9 +439,8 @@ async function archiveContents(mods, reason = '') {
     if (!entries.length) return;
     const merged = [...contentHistory, ...entries];
     contentHistory = capHistory(merged);
-    if (merged.length > contentHistory.length) {
-        console.info(`[작업 기록] ${HISTORY_LIMIT}개를 넘어 오래된 기록 ${merged.length - contentHistory.length}개를 지웠습니다.`);
-    }
+    // 상한으로 지운 기록은 화면에 알린다(조용히 사라지지 않게)
+    if (merged.length > contentHistory.length) window.showToast?.(historyCapText(merged.length - contentHistory.length), 'warning');
 
     await saveState();
 
@@ -1466,7 +1465,7 @@ window.importProjectZip = async function (event) {
             // SPA 라우터를 통해 개요 화면으로 안전하게 전환
             location.hash = '#overview';
 
-            window.showAlert('백업 파일로 과정 전체를 되살렸습니다.');
+            window.showAlert(`백업 파일로 과정 전체를 되살렸습니다.${historyMergeNote(extras.historyDropped, '파일')}`);
         }
 
     } catch (e) {
@@ -1713,11 +1712,9 @@ window.loadFromProjectFolder = async function () {
             closeLessonEditor();
         }
 
-        // 히스토리는 합친다(방금 남긴 기록까지 지우지 않게)
-        if (Array.isArray(parsed.history)) {
-            const merged = new Map([...parsed.history, ...contentHistory].map(item => [item.id, item]));
-            contentHistory = capHistory([...merged.values()].sort((a, b) => a.id - b.id));
-        }
+        // 작업 기록은 백업 ZIP과 같은 규칙으로 합친다. 칸이 모자라면 이 브라우저의 기록(방금 남긴 '불러오기 전' 포함)을 먼저 남긴다
+        const extras = mergeBackupExtras({ history: parsed.history }, { history: contentHistory });
+        if (Array.isArray(parsed.history)) contentHistory = extras.history;
 
         // 교과 데이터 복원
         if (globalState.subjects.length > 0) {
@@ -1747,7 +1744,7 @@ window.loadFromProjectFolder = async function () {
         if (typeof renderSidebar === 'function') renderSidebar();
         location.hash = '#overview';
 
-        window.showAlert(`✅ 프로젝트 폴더에서 성공적으로 불러왔습니다!\n📁 ${dirHandle.name}\n\n폴더가 자동으로 연결되어 이후 변경사항도 동기화됩니다.`);
+        window.showAlert(`✅ 프로젝트 폴더에서 성공적으로 불러왔습니다!\n📁 ${dirHandle.name}\n\n폴더가 자동으로 연결되어 이후 변경사항도 동기화됩니다.${historyMergeNote(extras.historyDropped, '폴더')}`);
 
     } catch (e) {
         if (e.name === 'AbortError') return;

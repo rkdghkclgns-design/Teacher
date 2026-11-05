@@ -554,6 +554,83 @@ async function run(name, fn) {
         vm.runInContext('courseData = []', ctx);
     });
 
+    await run('휴지통 상한: 지운 차시는 100개까지, 다시 만들기 전 사본은 세지 않고 30일 동안 둔다', async () => {
+        const now = Date.parse('2026-11-02T00:00:00Z');
+        const at = ms => new Date(now - ms).toISOString();
+        const deleted = n => Array.from({ length: n }, (_, i) => ({ lesson: { id: i, title: `지운 ${i}` }, subjectId: 's1', at: at((i + 1) * 1000) }));
+        const add = call('addToLessonTrash');
+        const full = add(deleted(100), [{ lesson: { id: 'new' }, subjectId: 's1', at: at(0) }], now);
+        assert.deepStrictEqual([full.trash.length, full.dropped, full.droppedNew, full.trash[0].lesson.id, full.trash.at(-1).lesson.id], [100, 1, 0, 'new', 98], '넘치면 목록 뒤쪽(오래된 것)부터');
+        const fresh = Array.from({ length: 150 }, (_, i) => ({ lesson: { id: `n${i}` }, subjectId: 's1', at: at(0) }));
+        const burst = add(deleted(30), fresh, now);
+        assert.deepStrictEqual([burst.dropped, burst.droppedNew, burst.trash.length, burst.trash.every(entry => String(entry.lesson.id).startsWith('n'))], [80, 50, 100, true], '한 번에 100개 넘게 넣으면 방금 넣은 것도 빠지고 그 수를 센다');
+        const copies = Array.from({ length: 150 }, (_, i) => ({ lesson: { id: 1000 + i }, subjectId: 's1', at: at(0), kind: 'rewrite' }));
+        const big = add(deleted(100), copies, now);
+        assert.deepStrictEqual([big.trash.length, big.dropped], [250, 0], '사본은 지운 차시를 밀어내지 않는다');
+        const more = add(big.trash, [{ lesson: { id: 'x' }, subjectId: 's1', at: at(0) }], now);
+        assert.deepStrictEqual([more.dropped, more.trash.filter(entry => entry.kind === 'rewrite').length], [1, 150], '지운 차시가 늘어도 사본은 남는다');
+        assert.strictEqual(add([{ lesson: { id: 'old' }, at: at(31 * 86400000), kind: 'rewrite' }], [], now).trash.length, 0, '30일이 지나면 사본도 지운다');
+        const ahead = add(deleted(100), [{ lesson: { id: 'f' }, subjectId: 's1', at: new Date(now + 5 * 86400000).toISOString(), kind: 'rewrite' }], now);
+        assert.deepStrictEqual([ahead.dropped, ahead.trash[0].lesson.id], [1, 'f'], '날짜가 앞날인 사본은 지운 차시처럼 센다(끝없이 남지 않게)');
+    });
+
+    await run('휴지통: 넘쳐서 지우면 알리고, 다시 만들기 전 사본은 지금 차시와 이어지지 않게 넣는다', async () => {
+        const toasts = [];
+        const previousToast = ctx.showToast;
+        ctx.showToast = (message, type) => toasts.push([message, type]);
+        ctx.globalState.lessonTrash = Array.from({ length: 100 }, (_, i) => ({ lesson: { id: i, title: `지운 ${i}` }, subjectId: 's1', at: new Date(Date.now() - (i + 1) * 1000).toISOString() }));
+        call('moveLessonsToTrash')([{ id: 500, title: '지운 차시' }]);
+        assert.strictEqual(ctx.globalState.lessonTrash.length, 100);
+        assert.deepStrictEqual(toasts, [['휴지통에는 지운 차시를 100개까지 둡니다. 넘친 1개를 완전히 지웠습니다.', 'warning']]);
+        const mod = { id: 7, title: '차시', tabContents: { basicLearn: '글' }, images: { a: 'data:image/png;base64,AAAA' }, gyosuan: { docMd: '교수안', deckHtml: '<section></section>', sessionDecks: { 1: '<section></section>' }, images: {} }, illustrations: [{ id: 'i1', svg: '<svg></svg>' }], whiteboardVideos: { a: { id: 'wb_1' } } };
+        call('trashLessonCopy')(mod, 's1');
+        const entry = ctx.globalState.lessonTrash[0];
+        assert.strictEqual(toasts.length, 1, '사본은 휴지통을 넘치게 하지 않는다');
+        assert.strictEqual(ctx.globalState.lessonTrash.length, 101);
+        assert.deepStrictEqual([entry.subjectId, entry.reason, entry.kind], ['s1', '다시 만들기 전', 'rewrite']);
+        assert.deepStrictEqual(plain(entry.lesson), plain(mod));
+        mod.images.a = 'data:image/png;base64,BBBB';
+        mod.gyosuan.sessionDecks[1] = '바뀜';
+        mod.illustrations.push({ id: 'i2' });
+        assert.deepStrictEqual([entry.lesson.images.a, entry.lesson.gyosuan.sessionDecks[1], entry.lesson.illustrations.length], ['data:image/png;base64,AAAA', '<section></section>', 1], '사본은 지금 차시와 이어지지 않는다');
+        assert.ok(call('renderTrashRows')().includes(' · 다시 만들기 전 · 남은 기간 30일'));
+        ctx.globalState.lessonTrash = [{ lesson: { id: 1, title: '차시' }, subjectId: 's1', at: new Date().toISOString(), reason: '<img src=x onerror=alert(1)>' }];
+        assert.ok(!call('renderTrashRows')().includes('<img'), '파일에서 온 까닭은 이스케이프한다');
+        // 차시 150개를 한 번에 지우면(일괄 삭제 등) 방금 지운 차시도 빠진다. 오래된 것부터라고 하지 않고 그 수를 말한다
+        ctx.globalState.lessonTrash = Array.from({ length: 30 }, (_, i) => ({ lesson: { id: i, title: `지운 ${i}` }, subjectId: 's1', at: new Date(Date.now() - 86400000).toISOString() }));
+        toasts.length = 0;
+        call('moveLessonsToTrash')(Array.from({ length: 150 }, (_, i) => ({ id: 1000 + i, title: `차시 ${i}` })));
+        assert.strictEqual(ctx.globalState.lessonTrash.length, 100);
+        assert.deepStrictEqual(toasts, [['휴지통에는 지운 차시를 100개까지 둡니다. 넘친 80개(방금 지운 차시 50개 포함)를 완전히 지웠습니다.', 'warning']]);
+        assert.ok(!toasts[0][0].includes('오래된'));
+        ctx.globalState.lessonTrash = [];
+        ctx.showToast = previousToast;
+    });
+
+    await run('휴지통 되살리기: 다시 만들기 전 사본은 다시 만든 차시를 건드리지 않고 바로 아래에 새 id로 생긴다', async () => {
+        const local = makeContext(noAi);
+        vm.runInContext(fs.readFileSync(root + 'data-safety.js', 'utf8'), local); // 되살릴 때 쓰는 검사와 새 id(cleanTrashLesson, renumberLessons)
+        const rebuilt = { id: 2, title: '2차시', tabContents: { basicLearn: '새 글' }, images: {} };
+        local.globalState.subjects = [{ id: 's1', title: '교과', lessons: [{ id: 1, title: '1차시' }, rebuilt, { id: 3, title: '3차시' }] }];
+        vm.runInContext('courseData = globalState.subjects[0].lessons', local);
+        const old = { id: 2, title: '2차시', tabContents: { basicLearn: '옛 글' }, images: { a: 'data:image/png;base64,AAAA' }, gyosuan: { docMd: '교수안', deckHtml: '<section>고친 화면</section>', sessionDecks: { 1: '<section>1</section>' } }, illustrations: [{ id: 'i1', svg: '<svg></svg>' }], whiteboardVideos: { a: { id: 'wb_1' } } };
+        local.globalState.lessonTrash = [{ lesson: old, subjectId: 's1', at: new Date().toISOString(), reason: '다시 만들기 전', kind: 'rewrite' }];
+        assert.strictEqual(vm.runInContext('restoreLesson', local)(0), true);
+        const list = vm.runInContext('courseData', local);
+        assert.deepStrictEqual(plain(list).map(item => item.title), ['1차시', '2차시', '2차시 (복원)', '3차시']);
+        assert.strictEqual(list[1], rebuilt, '다시 만든 차시는 그대로 둔다');
+        assert.strictEqual(rebuilt.tabContents.basicLearn, '새 글');
+        assert.strictEqual(new Set(list.map(item => item.id)).size, 4, '차시 id가 겹치지 않는다');
+        assert.ok(Number.isSafeInteger(list[2].id) && list[2].id !== 2);
+        assert.deepStrictEqual(plain([list[2].tabContents, list[2].images, list[2].gyosuan, list[2].illustrations, list[2].whiteboardVideos]), plain([old.tabContents, old.images, old.gyosuan, old.illustrations, old.whiteboardVideos]));
+        assert.strictEqual(local.globalState.subjects[0].lessons, list, '저장할 교과 목록도 같은 배열');
+        assert.strictEqual(local.globalState.lessonTrash.length, 0);
+        const orphan = { id: 1, title: '지운 교과의 차시', tabContents: { basicLearn: '글' }, images: {} };
+        local.globalState.lessonTrash = [{ lesson: orphan, subjectId: 'gone', at: new Date().toISOString(), reason: '다시 만들기 전', kind: 'rewrite' }];
+        assert.strictEqual(vm.runInContext('restoreLesson', local)(0), true);
+        assert.deepStrictEqual(plain(vm.runInContext('courseData', local)).map(item => item.title), ['1차시', '2차시', '2차시 (복원)', '3차시', '지운 교과의 차시'], '교과가 없어 지금 교과로 되살리면 다른 교과의 같은 id 차시 옆이 아니라 맨 아래');
+    });
+
     await run('선행 차시: 다른 교과 연결과 상태', async () => {
         const target = { id: 1, title: '선행 차시', reviewStatus: '완료' };
         const self = { id: 2, title: '이 차시', prereqs: [] };

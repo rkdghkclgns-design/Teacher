@@ -39,18 +39,25 @@ function mergeUnique(first, second, keyOf) {
     return [...seen.values()];
 }
 
-const historyKey = item => String(item.id);
 const trashKey = entry => `${entry.at}|${(entry.lesson || entry.subject || {}).id}`;
 
 // 백업 파일의 히스토리·휴지통을 지금 것과 합친다(불러와도 기록을 잃지 않게)
 // 휴지통 항목은 모양만 확인한다. 안의 교과·차시는 되살릴 때 sanitizeState를 거친다(restoreSubject, restoreLesson)
 const isObject = value => !!value && typeof value === 'object' && !Array.isArray(value);
 const validTrash = (list, key) => (Array.isArray(list) ? list : []).filter(entry => isObject(entry) && isObject(entry[key]));
-const validHistory = list => (Array.isArray(list) ? list : []).filter(item => isObject(item) && Number.isFinite(Number(item.id)));
+// 작업 기록 id는 남긴 시각(ms)이다. 0 이상의 안전한 정수이거나 숫자만 든 글자일 때만 받는다(화면은 Number(id)로 찾는다). 아니면 null
+const historyIdOf = item => {
+    const id = typeof item?.id === 'string' && /^\d{1,15}$/.test(item.id) ? Number(item.id) : item?.id;
+    return Number.isSafeInteger(id) && id >= 0 ? id : null;
+};
+const validHistory = list => (Array.isArray(list) ? list : []).filter(item => isObject(item) && historyIdOf(item) !== null);
 
-function mergeBackupExtras(meta, current) {
+// now: 미래 시각 id를 가르는 기준(테스트에서 고정한다). historyDropped: 칸이 모자라 남기지 못한 기록 수(마침 알림에 쓴다)
+function mergeBackupExtras(meta, current, now = Date.now()) {
+    const history = mergeHistory(current.history, meta.history, now);
     return {
-        history: capHistory(mergeUnique(current.history, validHistory(meta.history), historyKey).sort((a, b) => a.id - b.id)),
+        history: history.list,
+        historyDropped: { droppedIncoming: history.droppedIncoming, droppedCurrent: history.droppedCurrent },
         lessonTrash: mergeUnique(current.lessonTrash, validTrash(meta.trash?.lessonTrash, 'lesson'), trashKey),
         subjectTrash: mergeUnique(current.subjectTrash, validTrash(meta.trash?.subjectTrash, 'subject'), trashKey)
     };
@@ -444,6 +451,93 @@ function renumberLessons(lessons, takenIds, start = Date.now()) {
 // 기록 한 칸이 차시 그림까지 담으므로 개수를 넘으면 가장 오래된 기록부터 지운다(백업·저장이 커지지 않게)
 const HISTORY_LIMIT = 200;
 const capHistory = (list, limit = HISTORY_LIMIT) => (list.length > limit ? list.slice(list.length - limit) : list);
+const historyCapText = count => `작업 기록은 ${HISTORY_LIMIT}개까지 둡니다. 가장 오래된 기록 ${count}개를 지웠습니다.`;
+
+/* ---------- 작업 기록 합치기 (백업 ZIP·PC 폴더 불러오기) ---------- */
+// 불러올 때 살피는 들어온 기록 수(새것부터). 남이 준 아주 긴 목록에도 멈추지 않게 한다. 어차피 HISTORY_LIMIT개까지만 남는다
+const HISTORY_MERGE_MAX = HISTORY_LIMIT * 5;
+
+// 같은 기록인지 가르는 열쇠: 남긴 때·제목·까닭·차시와 교과·글 길이(옛 본문, 탭마다).
+// 한 번에 남긴 기록(같은 때·같은 까닭)은 제목이 같아도 차시나 탭 글이 다르면 다른 기록이다.
+// id는 넣지 않는다(합치며 id를 나누거나 미래 시각 id를 바꾼 기록도, 같은 파일을 다시 불러오면 같은 기록으로 알아보게. 합치기는 id만 바꾼다)
+const historyTabLengths = tabs => (isObject(tabs) ? Object.keys(tabs).sort().map(key => `${key}:${stateText(tabs[key]).length}`) : []);
+const historyRecordKey = item => JSON.stringify([stateText(item.date), stateText(item.title), stateText(item.reason),
+    stateText(item.lessonId), stateText(item.subjectId), stateText(item.content).length, historyTabLengths(item.tabContents)]);
+
+// start부터 아래로 빈 숫자를 찾아 taken에 더한다. 0 아래로는 내려가지 않고 그때는 start 위로 찾는다
+// (음수 id는 historyIdOf가 받지 않아, 백업으로 옮긴 곳에서 그 기록이 빠진다)
+function freeHistoryId(start, taken) {
+    const from = Math.max(0, start);
+    let next = from;
+    while (next >= 0 && taken.has(next)) next -= 1;
+    if (next < 0) {
+        next = from + 1;
+        while (taken.has(next)) next += 1;
+    }
+    taken.add(next);
+    return next;
+}
+
+// 지금보다 미래인 id(시계가 앞선 PC·조작된 파일)를 below 아래의 빈 숫자로 바꾼다(below는 지금 시각을 넘지 않는다). 서로의 순서는 지킨다.
+// taken: 이미 쓰는 id(여기서 새로 준 id도 더한다)
+function settleHistoryIds(items, now, below = now, taken = new Set()) {
+    const ahead = items.filter(item => item.id > now).sort((a, b) => b.id - a.id);
+    if (!ahead.length) return items;
+    const fixed = new Map();
+    let next = Math.min(below, now);
+    ahead.forEach(item => {
+        next = freeHistoryId(next, taken);
+        fixed.set(item, next);
+    });
+    return items.map(item => (fixed.has(item) ? { ...item, id: fixed.get(item) } : item));
+}
+
+// 다른 곳(백업 파일·PC 폴더)의 작업 기록을 지금 기록과 합친다. id는 0 이상의 정수로 맞춘다.
+// 이 브라우저의 기록은 모두 남기고(칸이 모자라면 새것부터), 남는 칸에 들어온 기록을 새것부터 넣는다.
+// 들어온 기록 가운데 이미 있는 기록(historyRecordKey가 같음)은 넣지 않는다. id만 같은 다른 기록(같은 순간에 남긴 기록 등)은 지우지 않고 아래쪽 빈 숫자로 나눈다.
+// 들어온 기록의 미래 시각 id는 지금 시각과 이 브라우저의 가장 새 기록보다 아래로 바꾼다(방금 남긴 '불러오기 전' 기록이 맨 위에 남게)
+function mergeHistory(current, incoming, now = Date.now(), limit = HISTORY_LIMIT) {
+    const taken = new Set();
+    // 쓸 수 없는 id(예전 코드가 받아 둔 소수·음수·지수 글자 등)는 0부터 빈 숫자를 준다(가장 오래된 쪽에 둔다)
+    const withFreeId = item => {
+        const id = freeHistoryId(historyIdOf(item) ?? 0, taken);
+        return id === item.id ? item : { ...item, id };
+    };
+    // 이 브라우저의 기록은 id 모양과 상관없이 모두 남긴다(validHistory로 거르지 않는다). 객체가 아닌 칸은 기록이 아니어서 목록을 그리지 못하므로 뺀다
+    const mine = (Array.isArray(current) ? current : []).filter(isObject).map(withFreeId);
+    const known = new Set(mine.map(historyRecordKey));
+    const arrived = validHistory(incoming).filter(item => historyIdOf(item) !== null);
+    const skipped = Math.max(0, arrived.length - HISTORY_MERGE_MAX);
+    const fresh = arrived.slice(skipped).filter(item => {
+        const key = historyRecordKey(item);
+        if (known.has(key)) return false;
+        known.add(key);
+        return true;
+    }).map(withFreeId);
+    const newest = mine.reduce((max, item) => Math.max(max, item.id), -1);
+    const theirs = settleHistoryIds(fresh, now, newest >= 0 ? newest - 1 : now, taken);
+    const keptOurs = mine.slice(Math.max(0, mine.length - limit));
+    const keptTheirs = [...theirs].sort((a, b) => b.id - a.id).slice(0, Math.max(0, limit - keptOurs.length));
+    return {
+        list: [...keptOurs, ...keptTheirs].sort((a, b) => a.id - b.id),
+        droppedIncoming: skipped + theirs.length - keptTheirs.length,
+        droppedCurrent: mine.length - keptOurs.length
+    };
+}
+
+// 불러오기를 마친 알림 끝에 붙이는 말. 칸이 모자라 남기지 못한 기록이 있을 때만. source: '파일' | '폴더'
+// 넣지 못한 기록은 오래된 것만이 아니다(이 브라우저의 기록이 칸을 채우면 더 새 기록도 넣지 못한다).
+// 백업 파일은 고치지 않으므로 그 파일에 남는다. 폴더는 곧 이어지는 폴더 저장이 저장본(save_data.yaml)을 지금 기록으로 다시 쓰므로 거기서도 빠진다
+function historyMergeNote({ droppedIncoming = 0, droppedCurrent = 0 } = {}, source = '파일') {
+    const notTaken = source === '폴더'
+        ? `폴더에 있던 기록 ${droppedIncoming}개는 넣지 않았고, 폴더의 저장본(save_data.yaml)에서도 빠집니다.`
+        : `파일에 있던 기록 ${droppedIncoming}개는 넣지 않았습니다. 그 파일에는 그대로 남아 있습니다.`;
+    const lost = [
+        droppedIncoming ? notTaken : '',
+        droppedCurrent ? `이 브라우저의 오래된 기록 ${droppedCurrent}개를 지웠습니다.` : ''
+    ].filter(Boolean);
+    return lost.length ? `\n\n작업 기록은 ${HISTORY_LIMIT}개까지만 둘 수 있어 이 브라우저의 기록을 먼저 남겼습니다. ${lost.join(' ')}` : '';
+}
 
 /* ---------- 작업 기록(히스토리) 되돌리기 ---------- */
 async function restoreHistoryItem(id) {
@@ -482,6 +576,7 @@ if (typeof window !== 'undefined') {
         downloadSafetyBackup, recordBackupTime, renderBackupIndicator, moveSubjectToTrash, restoreSubject,
         liveSubjectTrash, restoreHistoryItem, importSubjectsBackup, mergeBackupExtras, closeLessonEditor,
         isSafeStateId, stateText, safeReferenceUrls, normalizeLessonId, assignLessonIds, renumberLessons, capHistory,
+        mergeHistory, historyMergeNote, historyCapText,
         cleanTrashLesson, backupImageMode, setBackupImageMode, renderBackupImageMode, backupImageKey, detachBackupImages,
         attachBackupImages, backupImageFile, backupImageFromFile, writeBackupData, isBackupImageName, base64ByteLength
     });

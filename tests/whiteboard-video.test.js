@@ -154,6 +154,41 @@ test('원래 그림으로 되돌리면 영상 기록과 파일을 지운다', as
     assert.strictEqual(ctx.saves, 1);
 });
 
+// 일괄 다시 만들기의 '다시 만들기 전' 사본(휴지통)과 그 사본을 되살린 차시는 다시 만든 차시와 같은 영상 파일을 가리킨다
+test('되돌려도 휴지통의 사본이나 다른 차시가 같은 영상 파일을 쓰면 파일은 남긴다', async () => {
+    const video = { id: 'wb_vid0000001', title: 't', ext: 'mp4', at: 1 };
+    const mod = { ...storyLesson(), whiteboardVideos: { img_story: video } };
+    const ctx = makeContext({ mod, files: ['whiteboard-video.js'] });
+    ctx.db['wbvideo:wb_vid0000001'] = new Blob(['v']);
+    ctx.globalState.lessonTrash = [{ lesson: { ...storyLesson(), whiteboardVideos: { img_story: { ...video } } }, subjectId: 's1', at: new Date().toISOString(), reason: '다시 만들기 전', kind: 'rewrite' }];
+    await ctx.revertWhiteboardVideo('img_story');
+    assert.deepStrictEqual(Object.keys(mod.whiteboardVideos), [], '이 차시는 원래 그림으로 돌아간다');
+    assert.ok(ctx.db['wbvideo:wb_vid0000001'], '휴지통의 사본이 쓰는 영상 파일은 남긴다');
+    ctx.globalState.lessonTrash = [];
+    ctx.globalState.subjectTrash = [{ subject: { id: 's9', title: '지운 교과', lessons: [{ id: 3, whiteboardVideos: { img_story: { ...video } } }] }, at: new Date().toISOString() }];
+    mod.whiteboardVideos = { img_story: video };
+    await ctx.revertWhiteboardVideo('img_story');
+    assert.ok(ctx.db['wbvideo:wb_vid0000001'], '휴지통의 교과가 쓰는 영상 파일도 남긴다');
+    ctx.globalState.subjectTrash = [];
+    mod.whiteboardVideos = { img_story: video };
+    await ctx.revertWhiteboardVideo('img_story');
+    assert.strictEqual(ctx.db['wbvideo:wb_vid0000001'], undefined, '아무도 쓰지 않으면 지운다');
+});
+
+test('같은 그림에 새 영상이 와도 되살린 차시가 예전 영상을 쓰면 그 파일은 남긴다', async () => {
+    const old = { id: 'wb_old0000001', title: '예전', ext: 'mp4', at: 1 };
+    const mod = { ...storyLesson(), whiteboardVideos: { img_story: old } };
+    const now = Date.now();
+    const request = { subjectId: 's1', lessonId: 7, tabId: 'basicLearn', imgId: 'img_story', label: 'x', createdAt: now };
+    const ctx = makeContext({ mod, files: ['whiteboard-video.js'], stored: { [REQUESTS_KEY]: JSON.stringify({ wb_new0000001: request }) } });
+    ctx.globalState.subjects[0].lessons.push({ ...storyLesson(), id: 8, title: '1차시: 개념 이해 (복원)', whiteboardVideos: { img_story: { ...old } } });
+    ctx.db['wbvideo:wb_old0000001'] = new Blob(['old']);
+    ctx.inbox = [{ requestId: 'wb_new0000001', blob: new Blob(['new']), extension: 'webm', title: '새', createdAt: now }];
+    await ctx.collectWhiteboardVideos();
+    assert.strictEqual(mod.whiteboardVideos.img_story.id, 'wb_new0000001');
+    assert.ok(ctx.db['wbvideo:wb_old0000001'], '되살린 차시의 영상 파일은 남긴다');
+});
+
 test('교안 안 버튼(data-lesson-action)으로 바꾸기·되돌리기를 부를 수 있다', () => {
     const ctx = makeContext({ files: ['whiteboard-video.js'] });
     assert.strictEqual(typeof ctx.LESSON_ACTIONS['whiteboard-video'], 'function');

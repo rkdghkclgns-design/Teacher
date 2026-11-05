@@ -15,6 +15,10 @@ window.showToast = function (message, type = 'success') {
     const iconClass = type === 'error' ? 'ph-warning-octagon' : type === 'warning' ? 'ph-warning' : 'ph-check-circle';
 
     toast.className = `fixed bottom-6 right-6 z-[9999] ${bgClass} text-white px-5 py-3 rounded-lg shadow-xl flex items-center gap-3 text-sm font-bold animate-fade-in-up transition-opacity duration-300`;
+    // 먼저 뜬 알림이 있으면 그 위에 쌓는다(같은 자리에 겹치면 앞 알림을 읽을 수 없다. 작업 기록·휴지통 상한 알림 등)
+    const below = [...document.querySelectorAll('[data-app-toast]')].reduce((sum, el) => sum + el.offsetHeight + 8, 0);
+    toast.dataset.appToast = '';
+    if (below) toast.style.bottom = `calc(1.5rem + ${below}px)`;
     toast.innerHTML = `
         <i class="ph-fill ${iconClass} text-xl"></i>
         <span>${escapeHtml(message)}</span>

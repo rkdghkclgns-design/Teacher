@@ -483,40 +483,62 @@ const LESSON_MD = [
         delete ctx.globalState.ncsElements;
     });
 
-    await run('일괄 생성 덮어쓰기: 이전 내용을 남기고 비운 뒤 재시도에서는 다시 지우지 않는다', async () => {
-        const lesson = { id: 1, title: '재미', content: LESSON_MD, tabContents: Object.fromEntries(TAB_IDS.map(id => [id, LESSON_MD])), images: { a: 'data:a', b: 'data:b' }, gyosuan: { docMd: '# 교수안\n\n![도표](local:g)', deckMd: '# 편성안', images: { g: 'data:g' } }, questions: [] };
+    await run('일괄 생성 덮어쓰기: 비우기 전에 차시를 통째로 휴지통에 넣고(작업 기록은 쓰지 않음) 재시도에서는 다시 지우지 않는다', async () => {
+        const lesson = {
+            id: 1, title: '재미', content: LESSON_MD, tabContents: Object.fromEntries(TAB_IDS.map(id => [id, LESSON_MD])), images: { a: 'data:a', b: 'data:b' },
+            gyosuan: { docMd: '# 교수안\n\n![도표](local:g)', deckMd: '# 편성안', deckHtml: '<section>고친 화면</section>', sessionDecks: { 1: '<section>1차시</section>' }, images: { g: 'data:g' } },
+            illustrations: [{ id: 'ill_1', svg: '<svg></svg>' }], artAutoDone: true, whiteboardVideos: { a: { id: 'wb_1', title: '판서', ext: 'mp4', at: 1 } }, questions: []
+        };
         const subject = { id: 's1', title: '기획', lessons: [lesson] };
+        const kept = { design: ctx.globalState.courseDesign, trash: ctx.globalState.lessonTrash };
         ctx.globalState.subjects = [subject];
+        ctx.globalState.lessonTrash = [];
+        ctx.globalState.courseDesign = { autoArt: true };
         ctx.courseData = subject.lessons;
         assert.strictEqual(plain(call('runnableLessons')([subject])).length, 0, '모두 만들었으면 평소에는 대기열이 없다');
         assert.strictEqual(call('runnableLessons')([subject], true, true).length, 1, '덮어쓰기면 대기열에 넣는다');
         const archived = [];
-        const items = [];
         const original = { archive: ctx.archiveContents, fill: ctx.fillMissingTabs, locked: ctx.lockedSectionBlocks };
-        ctx.archiveContents = async list => { items.push(...list); archived.push(...list.map(item => item.title)); };
+        ctx.archiveContents = async list => { archived.push(...list); };
         ctx.lockedSectionBlocks = (mod, tabId) => (tabId === 'basicLearn' && mod.tabContents?.basicLearn ? ['고정 섹션'] : []);
         let fills = 0;
         let locked = null;
         ctx.fillMissingTabs = async (id, opts) => { fills += 1; locked = opts.lockedByTab; if (fills === 1) lesson.tabContents.basicLearn = '새 내용'; return { ok: false, error: '한도' }; };
-        const run = { stopped: false, withGyosuan: true, overwrite: true, cleared: new Map() };
+        const run = { stopped: false, withGyosuan: true, overwrite: true, cleared: new Map(), trashed: 0 };
         const item = { subject, lessonId: 1, title: '재미' };
+        const before = plain(lesson);
         await call('attemptLesson')(item, run);
+        const trash = ctx.globalState.lessonTrash;
+        assert.strictEqual(trash.length, 1);
+        assert.deepStrictEqual(plain(trash[0].lesson), before, '탭·교수안과 슬라이드 화면 편집·그림·삽화·판서 영상 연결까지 그대로');
+        assert.deepStrictEqual([trash[0].subjectId, trash[0].reason, trash[0].kind], ['s1', '다시 만들기 전', 'rewrite']);
+        assert.strictEqual(run.trashed, 1);
+        assert.deepStrictEqual(archived, [], '작업 기록 칸을 쓰지 않는다(200개 상한에 밀리지 않게)');
         assert.strictEqual(lesson.gyosuan, null);
-        assert.deepStrictEqual(archived.slice(-2), ['재미 · 교수안', '재미 · 슬라이드 편성안']);
-        assert.strictEqual(archived.length, TAB_IDS.length + 2, '탭마다 따로 남긴다');
-        assert.deepStrictEqual(plain(items.at(-2).images), { g: 'data:g' }, '교수안 이미지까지 남겨 복원한 글의 그림이 살아 있다');
-        assert.deepStrictEqual(plain(items[0].images), {}, '그 글이 쓰지 않는 이미지는 담지 않는다');
+        assert.deepStrictEqual(plain(lesson.images), {});
+        assert.deepStrictEqual(plain(lesson.illustrations), [], '삽화를 켰으면 다시 그린다');
+        assert.strictEqual(lesson.history[0].note, '일괄 생성으로 내용을 다시 만듦(이전 내용은 휴지통)');
+        lesson.tabContents.basicPrac = '바뀐 글';
+        assert.strictEqual(trash[0].lesson.tabContents.basicPrac, LESSON_MD, '사본은 지금 차시와 이어지지 않는다');
         assert.deepStrictEqual(plain(locked.basicLearn), ['고정 섹션'], '고정 섹션은 비우기 전에 챙긴다');
         await call('attemptLesson')(item, run);
         assert.strictEqual(lesson.tabContents.basicLearn, '새 내용', '재시도는 먼저 만든 탭을 지우지 않는다');
-        assert.strictEqual(archived.length, TAB_IDS.length + 2);
+        assert.deepStrictEqual([ctx.globalState.lessonTrash.length, run.trashed], [1, 1], '재시도는 사본을 또 넣지 않는다');
         assert.deepStrictEqual(plain(locked.basicLearn), ['고정 섹션'], '재시도에도 고정 섹션을 넘긴다');
-        const legacy = { id: 2, title: '옛 차시', content: '옛 본문입니다.', tabContents: null };
+        const legacy = { id: 2, title: '옛 차시', content: '옛 본문입니다.', tabContents: null, images: { x: 'data:x' } };
         subject.lessons.push(legacy);
-        archived.length = 0;
         await call('attemptLesson')({ subject, lessonId: 2, title: '옛 차시' }, { ...run, withGyosuan: false });
-        assert.deepStrictEqual(archived, ['옛 차시 · basicLearn'], '옛 단일 본문도 지우기 전에 남긴다');
-        assert.strictEqual(items.at(-1).content, '옛 본문입니다.');
+        const legacyCopy = ctx.globalState.lessonTrash[0].lesson;
+        assert.deepStrictEqual([legacyCopy.id, legacyCopy.content, legacyCopy.tabContents], [2, '옛 본문입니다.', null], '옛 단일 본문은 탭으로 옮기기 전 그대로 남긴다');
+        assert.deepStrictEqual(plain(legacy.images), { x: 'data:x' }, '교수안까지 만들지 않으면 그림은 차시에 그대로 둔다');
+        assert.strictEqual(legacy.content, null);
+        const blank = { id: 3, title: '빈 차시', content: null, tabContents: { basicLearn: null }, images: {} };
+        subject.lessons.push(blank);
+        await call('attemptLesson')({ subject, lessonId: 3, title: '빈 차시' }, run);
+        assert.strictEqual(ctx.globalState.lessonTrash.length, 2, '비울 것이 없는 차시는 휴지통에 넣지 않는다');
+        assert.strictEqual(blank.history[0].note, '일괄 생성으로 내용을 다시 만듦');
+        assert.deepStrictEqual(archived, []);
+        Object.assign(ctx.globalState, { courseDesign: kept.design, lessonTrash: kept.trash });
         Object.assign(ctx, { archiveContents: original.archive, fillMissingTabs: original.fill, lockedSectionBlocks: original.locked });
     });
 

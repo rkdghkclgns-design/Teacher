@@ -2370,12 +2370,8 @@ window.deleteAllModules = function () {
     };
 
     document.getElementById('delete-all-archive').onclick = () => {
-        // 보관함에 저장 후 삭제
-        courseData.forEach(mod => {
-            if (mod.id !== 'mainQuest' && (mod.content || mod.tabContents)) {
-                if (typeof archiveContent === 'function') archiveContent(mod);
-            }
-        });
+        // 보관함에 저장 후 삭제. 한 번에 남겨 기록 id가 겹치지 않고 상한 알림도 한 번만 뜬다
+        if (typeof archiveContents === 'function') archiveContents(courseData.filter(mod => mod.id !== 'mainQuest' && (mod.content || mod.tabContents)));
         moveLessonsToTrash(courseData.filter(m => m.id !== 'mainQuest'));
         courseData = courseData.filter(m => m.id === 'mainQuest');
         currentEditingModuleId = null;

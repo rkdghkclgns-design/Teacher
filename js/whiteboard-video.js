@@ -114,7 +114,19 @@ window.replaceImageWithWhiteboard = function (imgId) {
     });
 };
 
-// 그림 자리를 원래 그림으로 되돌리고 영상 파일을 지운다
+// 같은 영상 파일을 아직 쓰는 차시가 있는지. 휴지통의 '다시 만들기 전' 사본과 그 사본을 되살린 차시는 다시 만든 차시와
+// 같은 파일을 가리키므로, 한쪽에서 되돌리거나 새 영상으로 바꿔도 다른 쪽 영상이 사라지지 않게 지우기 전에 본다
+function whiteboardVideoInUse(videoId) {
+    const list = value => (Array.isArray(value) ? value : []);
+    const uses = lesson => Object.values(lesson?.whiteboardVideos || {}).some(video => video?.id === videoId);
+    const subjectUses = subject => list(subject?.lessons).some(uses) || uses(subject?.mainQuest);
+    return list(typeof courseData === 'undefined' ? [] : courseData).some(uses)
+        || list(globalState?.subjects).some(subjectUses)
+        || list(globalState?.lessonTrash).some(entry => uses(entry?.lesson))
+        || list(globalState?.subjectTrash).some(entry => subjectUses(entry?.subject));
+}
+
+// 그림 자리를 원래 그림으로 되돌리고 영상 파일을 지운다(다른 차시가 같은 파일을 쓰면 파일은 남긴다)
 window.revertWhiteboardVideo = async function (imgId) {
     const mod = getEditingModule();
     const video = mod?.whiteboardVideos?.[imgId];
@@ -123,7 +135,7 @@ window.revertWhiteboardVideo = async function (imgId) {
     delete rest[imgId];
     mod.whiteboardVideos = rest;
     try {
-        await DBManager.deleteItem(WB_VIDEO_KEY(video.id));
+        if (!whiteboardVideoInUse(video.id)) await DBManager.deleteItem(WB_VIDEO_KEY(video.id));
         await saveState();
     } catch (e) {
         console.warn('[판서 영상] 되돌리기 저장 실패:', e);
@@ -185,7 +197,8 @@ async function collectWhiteboardVideosOnce(now = Date.now()) {
             ...(mod.whiteboardVideos || {}),
             [req.imgId]: { id: record.requestId, title: record.title || req.label, ext: record.extension || 'mp4', at: now }
         };
-        if (previous && previous.id !== record.requestId) await DBManager.deleteItem(WB_VIDEO_KEY(previous.id));
+        // 예전 영상 파일은 다른 차시(휴지통의 사본 등)가 쓰지 않을 때만 지운다
+        if (previous && previous.id !== record.requestId && !whiteboardVideoInUse(previous.id)) await DBManager.deleteItem(WB_VIDEO_KEY(previous.id));
         await window.whiteboardInbox.remove(record.requestId);
         placed.push({ mod, label: req.label });
     }

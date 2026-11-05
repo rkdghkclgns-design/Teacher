@@ -36,6 +36,7 @@ function makeContext(callGemini = async () => reply('## 본문\n\n내용')) {
         viewModule: id => ctx.viewed.push(id),
         buildTaskContext: (scope, args) => ({ systemInstruction: '지시', userPrompt: `${scope}:${args.tabId}:${args.title}` }),
         archiveContent: async item => { ctx.archived.push(item.title); },
+        archiveContents: async items => { items.forEach(item => ctx.archived.push(item.title)); },
         saveState: async () => { ctx.saves += 1; },
         showLessonView() {}, renderSidebar() {}, renderEditor() {}, renderOverview() {}, renderOverviewLNB() {},
         confirm: () => true,
@@ -623,6 +624,77 @@ async function run(name, fn) {
         assert.strictEqual(parts('data:image/svg+xml;charset=utf-8,%3Csvg%3E').data, '', 'base64가 아니면 건너뛴다');
         assert.strictEqual(parts('https://example.com/a.png').data, '');
         assert.strictEqual(parts(null).data, '');
+    });
+
+    await run('덮어쓰기 시작: 앱의 확인 창으로 묻고, 취소하면 아무것도 지우지 않는다', async () => {
+        const local = makeContext();
+        const filled = lesson(1, Object.fromEntries(TAB_IDS.map(id => [id, `${id} 글`])), { status: 'done', images: { a: 'data:a' } });
+        const subject = { id: 's1', title: '교과', lessons: [filled] };
+        local.globalState.subjects = [subject];
+        local.currentSubjectId = 's1';
+        local.courseData = subject.lessons;
+        ['lesson-run-body', 'lesson-run-footer', 'lesson-run-status'].forEach(id => { local.elements[id] = { innerHTML: '', textContent: '' }; });
+        local.elements['lesson-run-overwrite'] = { checked: true };
+        local.confirm = () => { throw new Error('브라우저 기본 확인 창을 쓰면 안 된다'); };
+        const asked = [];
+        const button = { disabled: false };
+        local.confirmAsync = async (message, opts) => { asked.push({ message, opts, disabled: button.disabled }); return false; };
+        await vm.runInContext('startLessonRun', local)('subject', button);
+        assert.strictEqual(asked.length, 1);
+        assert.strictEqual(asked[0].disabled, true, '확인 창이 떠 있는 동안 시작 버튼을 막는다');
+        assert.strictEqual(button.disabled, false, '취소하면 다시 누를 수 있다');
+        assert.deepStrictEqual([asked[0].opts.okLabel, asked[0].opts.title], ['휴지통에 넣고 다시 만들기', '이미 만든 내용 다시 만들기']);
+        const lines = asked[0].message.split('\n');
+        assert.strictEqual(lines[0], '차시 1개의 교안 탭을 지우고 다시 만듭니다. 교수안·슬라이드는 그대로 둡니다.');
+        assert.ok(lines[1].includes('내용이 있는 차시 1개를 통째로') && lines[1].includes('휴지통'));
+        assert.ok(asked[0].message.includes('30일'));
+        assert.ok(!asked[0].message.includes('작업 기록'), '작업 기록에 남는다고 약속하지 않는다');
+        assert.strictEqual(filled.tabContents.basicLearn, 'basicLearn 글');
+        assert.strictEqual(local.globalState.lessonTrash, undefined);
+        assert.strictEqual(local.globalState.courseDesign, undefined, '취소하면 생성 옵션도 저장하지 않는다');
+        assert.strictEqual(vm.runInContext('_lessonRun', local), null);
+    });
+
+    await run('덮어쓰기 시작: 확인하면 내용이 있는 차시마다 휴지통에 넣고 다시 만든다. 교과가 달라 차시 id가 같아도 둘 다', async () => {
+        const local = makeContext();
+        const full = id => lesson(id, Object.fromEntries(TAB_IDS.map(tab => [tab, `${tab} 글`])), { status: 'done' });
+        const first = { id: 's1', title: '교과 1', lessons: [full(1), lesson(2)] };
+        const second = { id: 's2', title: '교과 2', lessons: [full(1)] };
+        local.globalState.subjects = [first, second];
+        local.currentSubjectId = 's1';
+        local.courseData = first.lessons;
+        ['lesson-run-body', 'lesson-run-footer', 'lesson-run-status'].forEach(id => { local.elements[id] = { innerHTML: '', textContent: '' }; });
+        local.elements['lesson-run-overwrite'] = { checked: true };
+        const asked = [];
+        local.confirmAsync = async message => { asked.push(message); return true; };
+        local.fillMissingTabs = async id => { local.courseData.find(mod => mod.id === id).tabContents = { basicLearn: '새 글' }; return { ok: true }; };
+        local.runLessonExtras = async () => {};
+        await vm.runInContext('startLessonRun', local)('course');
+        assert.ok(asked[0].startsWith('차시 3개의 교안 탭을 지우고 다시 만듭니다.'));
+        assert.ok(asked[0].includes('내용이 있는 차시 2개를 통째로'), '빈 차시는 사본으로 세지 않는다');
+        const trash = local.globalState.lessonTrash;
+        assert.deepStrictEqual(plain(trash.map(entry => [entry.subjectId, entry.lesson.id, entry.kind])).sort(), [['s1', 1, 'rewrite'], ['s2', 1, 'rewrite']]);
+        assert.ok(trash.every(entry => entry.lesson.tabContents.basicLearn === 'basicLearn 글'), '사본은 지우기 전 내용');
+        assert.deepStrictEqual([first.lessons[0].tabContents.basicLearn, second.lessons[0].tabContents.basicLearn], ['새 글', '새 글'], '둘째 교과의 같은 id 차시도 다시 만든다');
+        assert.strictEqual(first.lessons[1].tabContents.basicLearn, '새 글', '빈 차시도 만든다');
+        assert.deepStrictEqual(plain(local.archived), [], '작업 기록 칸을 쓰지 않는다');
+        assert.ok(local.elements['lesson-run-body'].innerHTML.includes('차시 2개의 이전 내용은 휴지통에 있습니다'));
+    });
+
+    await run('덮어쓰기 확인 글: 교수안까지면 슬라이드 화면 편집이 휴지통 사본에만 남는다고 알리고, 브라우저 기본 확인 창을 쓰지 않는다', async () => {
+        const local = makeContext();
+        local.gyosuanHasScreenEdits = gyosuan => !!gyosuan.deckHtml;
+        const tabs = () => Object.fromEntries(TAB_IDS.map(id => [id, '글']));
+        local.globalState.subjects = [{ id: 's1', title: '교과', lessons: [lesson(1, tabs(), { gyosuan: { docMd: '교수안', deckHtml: '<section></section>' } }), lesson(2, tabs())] }];
+        local.currentSubjectId = 's1';
+        const confirmText = vm.runInContext('rewriteConfirmText', local);
+        const text = confirmText('subject', true, true);
+        assert.ok(text.startsWith('차시 2개의 교안 탭과 교수안·슬라이드를 지우고 다시 만듭니다. 삽화도 다시 그립니다.'));
+        assert.ok(text.includes('슬라이드 화면을 직접 고친 차시 1개는 새 슬라이드에 그 편집이 들어가지 않습니다. 휴지통의 사본에는 남습니다.'));
+        assert.ok(text.includes('브라우저 저장 공간'));
+        local.globalState.subjects = [{ id: 's1', title: '교과', lessons: [lesson(1)] }];
+        assert.ok(!confirmText('subject', false).includes('휴지통'), '빈 차시뿐이면 휴지통 이야기를 하지 않는다');
+        assert.ok(!/(^|[^.\w])confirm\(/m.test(fs.readFileSync(root + 'course-flow.js', 'utf8')), '브라우저 기본 확인 창을 쓰지 않는다');
     });
 
     console.log('ALL PASSED');
