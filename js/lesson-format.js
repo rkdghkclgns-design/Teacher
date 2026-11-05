@@ -23,6 +23,9 @@ const LF_HTML_TAGS = ['strong', 'b', 'em', 'i', 'del', 's', 'strike', 'u'];
 const LF_SPAN_TOKENS = new Set(['strong', 'em', 'del', 'link']);
 const LF_HEADING_LEVELS = { h2: 2, h3: 3, h4: 4 };
 const LF_SAFE_LINK = /^(?:https?:\/\/|mailto:)/i;
+const LF_MEDIA = /<img|!\[|<table|<svg|<video|<iframe|mermaid/i;
+const LF_LINE_LEAD = /^[ \t]*(?:>[ \t]?)*(?:(?:[-*+]|\d+[.)])[ \t]+)?/; // 다음 줄 앞머리(들여쓰기, 인용, 목록 기호)
+const LF_MIN_BLOCK_RATIO = 0.3; // 화면 블록과 원문 블록 글자 수가 이보다 차이 나면 다른 블록으로 본다
 
 const lfFail = reason => ({ ok: false, reason });
 const lfReplace = (raw, start, end, text) => raw.slice(0, start) + text + raw.slice(end);
@@ -143,31 +146,42 @@ function findInlineRange(raw, before, selected, proj = lfProject(raw)) {
     return { start, end: end + (colon ? colon[0].length : 0) };
 }
 
-// 화면 블록 글자(text)와 원문 블록이 같은 블록인지. 앞 몇 글자가 겹치면 같다고 본다
-function lfSameBlock(proj, text) {
+// 화면 블록 글자(text)와 원문 블록이 같은 블록인 정도(0~1). 앞 몇 글자가 겹치고 길이가 비슷할수록 높다.
+// 클릭한 문단 안에 '네.' 같은 짧은 이웃 문단이 들어 있어도 그쪽을 고르지 않게 길이 비율을 함께 본다
+function lfBlockScore(proj, text) {
     const shown = lfNorm(text);
     const source = lfNorm(proj.chars.map(ch => ch.c).join(''));
-    if (!shown || !source) return false;
+    if (!shown || !source) return 0;
     const size = Math.min(12, shown.length, source.length);
-    return source.includes(shown.slice(0, size)) || shown.includes(source.slice(0, size));
+    const overlap = source.includes(shown.slice(0, size)) || shown.includes(source.slice(0, size));
+    const ratio = Math.min(shown.length, source.length) / Math.max(shown.length, source.length);
+    return overlap && ratio >= LF_MIN_BLOCK_RATIO ? ratio : 0;
 }
 
-// 화면 순서(index)에서 가까운 원문 블록부터 글자가 맞는 블록을 찾는다. 화면 후처리가 블록을 나누거나 지워도 따라간다
-function lfCandidates(blocks, index) {
-    return blocks.filter(block => block.index >= 0).sort((a, b) => Math.abs(a.index - index) - Math.abs(b.index - index));
+// 점수가 높은 블록부터, 같으면 화면 순서(index)에서 가까운 블록부터. 화면 후처리가 블록을 나누거나 지워도 따라간다
+function lfBest(blocks, index, attempt) {
+    return blocks.filter(block => block.index >= 0)
+        .map(block => attempt(block))
+        .filter(Boolean)
+        .map(hit => ({ ...hit, rank: Math.round(hit.score * 10), gap: Math.abs(hit.block.index - index) }))
+        .sort((a, b) => b.rank - a.rank || a.gap - b.gap)[0] || null;
 }
 
 function lfLocateBlock(blocks, part) {
-    return lfCandidates(blocks, part.index).find(block => lfSameBlock(lfProject(block.raw), part.text)) || null;
+    const hit = lfBest(blocks, part.index, block => {
+        const score = lfBlockScore(lfProject(block.raw), part.text);
+        return score ? { block, score } : null;
+    });
+    return hit ? hit.block : null;
 }
 
 function lfLocateInline(blocks, part) {
-    for (const block of lfCandidates(blocks, part.index)) {
+    return lfBest(blocks, part.index, block => {
         const proj = lfProject(block.raw);
-        const range = lfSameBlock(proj, part.text) ? findInlineRange(block.raw, part.before, part.selected, proj) : null;
-        if (range) return { block, range, proj };
-    }
-    return null;
+        const score = lfBlockScore(proj, part.text);
+        const range = score ? findInlineRange(block.raw, part.before, part.selected, proj) : null;
+        return range ? { block, range, proj, score } : null;
+    });
 }
 
 /* ---------- 글자 서식 ---------- */
@@ -221,25 +235,32 @@ function lfStripSpans(raw, range, spans) {
     return text + raw.slice(at, range.end);
 }
 
-function lfWrapKeepSpace(text, open, close) {
+// 한글 바로 옆에서 문장부호로 끝나는 '**경험(PX)**을'은 마크다운 강조가 되지 않는다. 그럴 자리인지
+function lfRisky(prev, mid, next, marker) {
+    const tight = ch => ch !== undefined && !/\s/.test(ch) && !LF_PUNCT.test(ch);
+    return (LF_PUNCT.test(mid[0]) && tight(prev))
+        || (LF_PUNCT.test(mid[mid.length - 1]) && tight(next))
+        || prev === marker[0] || next === marker[0];
+}
+
+const lfTagPair = style => [`<${LF_TAGS[style]}>`, `</${LF_TAGS[style]}>`];
+
+// 강조가 깨질 자리면 HTML 태그를 쓴다
+function lfMarkers(style, raw, range, mid) {
+    const marker = LF_MARKERS[style];
+    return !marker || lfRisky(raw[range.start - 1], mid, raw[range.end], marker) ? lfTagPair(style) : [marker, marker];
+}
+
+// 서식을 일부만 풀고 남는 앞뒤 조각을 다시 감싼다. 빈칸은 기호 밖에 두고, 깨질 자리면 HTML 태그로 바꾼다
+function lfWrapPiece(text, style, marks, outerPrev, outerNext) {
     if (!text.trim()) return text;
     const lead = text.match(/^\s*/)[0];
     const trail = text.match(/\s*$/)[0];
-    return lead + open + text.trim() + close + trail;
-}
-
-// 한글 바로 옆에서 문장부호로 끝나는 '**경험(PX)**을'은 마크다운 강조가 되지 않는다. 그럴 때는 HTML 태그를 쓴다
-function lfMarkers(style, raw, range, mid) {
-    const marker = LF_MARKERS[style];
-    const tag = LF_TAGS[style];
-    const prev = raw[range.start - 1];
-    const next = raw[range.end];
-    const tight = ch => ch !== undefined && !/\s/.test(ch) && !LF_PUNCT.test(ch);
-    const risky = !marker
-        || (LF_PUNCT.test(mid[0]) && tight(prev))
-        || (LF_PUNCT.test(mid[mid.length - 1]) && tight(next))
-        || prev === marker[0] || next === marker[0];
-    return risky ? [`<${tag}>`, `</${tag}>`] : [marker, marker];
+    const core = text.trim();
+    const prev = lead ? lead[lead.length - 1] : outerPrev;
+    const next = trail ? trail[0] : outerNext;
+    const [open, close] = marks[0].startsWith('<') || !lfRisky(prev, core, next, marks[0]) ? marks : lfTagPair(style);
+    return lead + open + core + close + trail;
 }
 
 function lfCodeSpan(text) {
@@ -261,18 +282,37 @@ function lfRemoveStyle(target, style) {
     if (style === 'link') return lfReplace(raw, span.start, span.end, inner);
     if (style === 'code') return lfReplace(raw, span.start, span.end, lfEscapeMarkdown(inner));
     const cut = lfExpandRange(proj.spans.filter(other => other !== span), range, span);
-    const open = raw.slice(span.start, span.innerStart);
-    const close = raw.slice(span.innerEnd, span.end);
-    const piece = lfWrapKeepSpace(raw.slice(span.innerStart, cut.start), open, close)
+    const marks = [raw.slice(span.start, span.innerStart), raw.slice(span.innerEnd, span.end)];
+    const piece = lfWrapPiece(raw.slice(span.innerStart, cut.start), style, marks, raw[span.start - 1], raw[cut.start])
         + raw.slice(cut.start, cut.end)
-        + lfWrapKeepSpace(raw.slice(cut.end, span.innerEnd), open, close);
+        + lfWrapPiece(raw.slice(cut.end, span.innerEnd), style, marks, raw[cut.end - 1], raw[span.end]);
     return lfReplace(raw, span.start, span.end, piece);
 }
 
+// 여러 줄에 걸친 범위를 줄마다 나눈다. 다음 줄의 목록 기호·인용 기호·들여쓰기는 빼서, 기호가 목록 항목 사이를 걸쳐 목록이 깨지지 않게 한다
+function lfLineSegments(raw, range) {
+    const segments = [];
+    let start = range.start;
+    while (start < range.end) {
+        const newline = raw.indexOf('\n', start);
+        const end = newline === -1 || newline >= range.end ? range.end : newline;
+        segments.push({ start, end });
+        if (end === range.end) break;
+        start = Math.min(end + 1 + raw.slice(end + 1).match(LF_LINE_LEAD)[0].length, range.end);
+    }
+    return segments.map(segment => lfTrimRange(raw, segment)).filter(segment => segment.start < segment.end);
+}
+
+// 뒤 줄부터 고쳐 앞 줄의 위치가 바뀌지 않게 한다. 링크는 한 줄 안에서만 건다(null)
 function lfAddStyle(target, style, opts) {
-    const { block, proj } = target;
-    const raw = block.raw;
-    const range = lfExpandRange(proj.spans, lfTrimRange(raw, target.range), null);
+    const segments = lfLineSegments(target.block.raw, lfTrimRange(target.block.raw, target.range));
+    if (style === 'link' && segments.length > 1) return null;
+    return segments.reduceRight((raw, segment) => lfAddSegment(raw, target.proj, segment, style, opts), target.block.raw);
+}
+
+function lfAddSegment(raw, proj, segment, style, opts) {
+    const grown = lfExpandRange(proj.spans, segment, null);
+    const range = raw.slice(grown.start, grown.end).includes('\n') ? segment : grown; // 줄을 넘는 서식까지 넓히지는 않는다
     if (range.start >= range.end) return raw;
     if (style === 'code') {
         const shown = proj.chars.filter(ch => range.start <= ch.pos && ch.pos < range.end).map(ch => ch.c).join('');
@@ -318,6 +358,7 @@ function applyInlineFormat(source, parts, style, opts = {}) {
         target.block,
         active ? lfRemoveStyle(target, style) : lfAddStyle(target, style, opts)
     ]));
+    if ([...edits.values()].some(raw => raw == null)) return lfFail('링크는 한 줄 안에서만 걸 수 있습니다.');
     return { ok: true, source: lfRebuild(found.blocks, edits), active: !active };
 }
 
@@ -330,14 +371,18 @@ function normalizeLinkUrl(input) {
 }
 
 /* ---------- 블록 서식: 목록·인용·제목·코드 블록·구분선 ---------- */
+// 그림·표·HTML·다이어그램 블록. 목록이나 코드 블록으로 바꾸면 내용을 잃는다
+const lfHasMedia = block => ['html', 'table'].includes(block.token.type) || LF_MEDIA.test(block.raw);
+
 function lfLines(block) {
     const token = block.token;
+    if (lfHasMedia(block)) return null;
     if (['paragraph', 'heading', 'text', 'blockquote', 'code'].includes(token.type)) return lfSplit(token.text);
     if (token.type === 'list') return token.items.flatMap(item => lfSplit(item.text));
     return null; // 표, HTML, 그림 블록은 목록이나 제목으로 바꾸지 않는다
 }
 
-const lfTextBlock = block => ['paragraph', 'heading'].includes(block.token.type);
+const lfTextBlock = block => ['paragraph', 'heading'].includes(block.token.type) && !lfHasMedia(block);
 
 function lfHeading(shown, level) {
     return shown.map(block => (lfTextBlock(block)
@@ -363,6 +408,7 @@ function lfToggleQuote(shown) {
 
 function lfToggleCodeBlock(shown, opts) {
     if (shown.length === 1 && shown[0].token.type === 'code') return lfSplit(shown[0].token.text).map(lfEscapeMarkdown).join('\n\n');
+    if (shown.some(lfHasMedia)) return null; // 사이에 낀 그림·표가 코드 블록에 묻혀 사라지지 않게
     const texts = opts.texts && opts.texts.length ? opts.texts : shown.map(block => (lfLines(block) || []).join('\n'));
     const body = texts.join('\n').replace(/\n{3,}/g, '\n\n').trim();
     const longest = Math.max(0, ...(body.match(/`+/g) || []).map(run => run.length));
@@ -401,22 +447,24 @@ function applyBlockFormat(source, parts, op, opts = {}) {
     const from = lfRegionStart(blocks, Math.min(...positions));
     const region = blocks.slice(from, last + 1);
     const body = LF_BLOCK_OPS[op](region.filter(block => block.index >= 0), opts, region);
-    if (body == null) return lfFail('표나 그림이 섞인 범위는 목록으로 바꿀 수 없습니다.');
+    if (body == null) return lfFail('표나 그림이 섞인 범위는 이 서식으로 바꿀 수 없습니다. 글 문단만 골라 주세요.');
     const tail = blocks[last].raw.slice(blocks[last].raw.trimEnd().length);
     const join = list => list.map(block => block.raw).join('');
     return { ok: true, source: join(blocks.slice(0, from)) + body + tail + join(blocks.slice(last + 1)) };
 }
 
 /* ---------- 두 번 눌러 단락 고치기 ---------- */
-// 화면 블록(part: { index, text })에 맞는 원문 블록. 글자가 맞는 가까운 블록을 먼저 찾고,
-// 글자가 없는 블록(그림·HTML 표)만 화면 순서로 짝짓는다. 못 찾으면 null
+// 화면 블록(part: { index, text, media?, mediaKey? })에 맞는 원문 블록. 그림 id(mediaKey)가 있으면 그 id가 든 블록,
+// 아니면 글자가 맞는 블록, 그래도 없으면 그림끼리(media)만 화면 순서로 짝짓는다. 못 찾으면 null
 function locateLessonBlock(source, part) {
     const blocks = lessonBlocks(source);
     if (!blocks) return null;
-    const byText = lfLocateBlock(blocks, part);
-    const byIndex = blocks.find(block => block.index === part.index);
-    const fallback = byIndex && !lfProject(byIndex.raw).chars.some(ch => !LF_SKIP.test(ch.c)) ? byIndex : null;
-    const block = byText || fallback;
+    const byKey = part.mediaKey
+        ? lfBest(blocks, part.index, block => (block.raw.includes(part.mediaKey) ? { block, score: 1 } : null))?.block
+        : null;
+    const byText = byKey || lfLocateBlock(blocks, part);
+    const byIndex = !byText && part.media ? blocks.find(block => block.index === part.index && lfHasMedia(block)) : null;
+    const block = byText || byIndex;
     return block ? { start: block.start, raw: block.raw } : null;
 }
 

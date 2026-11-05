@@ -225,12 +225,41 @@ test('두 번 누른 단락은 화면 순서가 어긋나도 글자로 원문 �
     assert.strictEqual(replaceLessonBlock(md, found, '고친 문단'), '# 제목\n\n💡 핵심 개념: 첫 문단\n\n고친 문단\n');
 });
 
-test('글자가 없는 그림 블록은 화면 순서로 찾고, 원문이 바뀌었으면 바꾸지 않는다', () => {
-    const md = '앞 문단\n\n<div class="image-wrapper"><img src="local:a"></div>\n\n뒤 문단\n';
-    const found = locateLessonBlock(md, { index: 1, text: '다시 생성' });
-    assert.ok(found.raw.startsWith('<div class="image-wrapper">'));
+test('그림 블록은 그림 id로 찾고, 그림끼리일 때만 화면 순서로 짝짓는다. 원문이 바뀌었으면 바꾸지 않는다', () => {
+    const md = '앞 문단\n\n<div class="image-wrapper"><img src="local:a"><button data-img-id="img_a">다시 생성</button></div>\n\n<div class="image-wrapper"><img src="local:b"><button data-img-id="img_b">다시 생성</button></div>\n\n뒤 문단\n';
+    assert.ok(locateLessonBlock(md, { index: 0, text: '다시 생성', mediaKey: 'img_b' }).raw.includes('img_b'), '순서가 어긋나도 그림 id로');
+    const found = locateLessonBlock(md, { index: 1, text: '다시 생성', media: true });
+    assert.ok(found.raw.includes('img_a'));
     assert.strictEqual(replaceLessonBlock(md.replace('앞 문단', '앞 문단 고침'), found, 'x'), null);
+    assert.strictEqual(locateLessonBlock(md, { index: 1, text: '다시 생성' }), null, '그림이 아닌 화면 블록은 순서만으로 그림과 짝짓지 않는다');
     assert.strictEqual(locateLessonBlock(md, { index: 0, text: '원문에 없는 글' }), null, '글자가 있는 단락은 순서만으로 짝짓지 않는다');
+});
+
+/* ---------- 검토에서 나온 경우 ---------- */
+test('그림이 낀 범위는 코드 블록·목록으로 바꾸지 않아 그림을 잃지 않는다', () => {
+    const md = '가나\n\n![그림](http://x/a.png)\n\n다라\n';
+    const parts = [block(0, '가나'), block(2, '다라')];
+    assert.strictEqual(applyBlockFormat(md, parts, 'codeblock', { texts: ['가나', '다라'] }).ok, false);
+    assert.strictEqual(applyBlockFormat(md, parts, 'bullet').ok, false);
+    assert.strictEqual(blockOp(md, parts, 'h3'), '### 가나\n\n![그림](http://x/a.png)\n\n### 다라\n', '제목은 그림 블록을 그대로 둔다');
+});
+
+test('목록 항목 둘에 걸쳐 굵게 하면 항목마다 따로 감싼다', () => {
+    const md = '- 가나다\n- 라마바\n';
+    const part = pick(0, '가나다라마바', '다라마', '가나');
+    assert.strictEqual(inline(md, part, 'bold'), '- 가나**다**\n- **라마**바\n');
+    assert.strictEqual(applyInlineFormat(md, [part], 'link', { url: 'https://a.b' }).ok, false, '링크는 한 줄 안에서만');
+});
+
+test('굵게 일부를 풀고 남은 조각이 한글 옆 문장부호면 HTML 태그로 남긴다', () => {
+    const out = inline('**가나(다라)** 끝\n', pick(0, '가나(다라) 끝', '가나'), 'bold');
+    assert.strictEqual(out, '가나<strong>(다라)</strong> 끝\n');
+});
+
+test('짧은 이웃 문단이 고른 문단 글자 안에 있어도 길이가 비슷한 문단을 고른다', () => {
+    const md = '네.\n\n네. 그렇게 설계하면 됩니다.\n';
+    const out = inline(md, pick(0, '네. 그렇게 설계하면 됩니다.', '설계'), 'bold');
+    assert.strictEqual(out, '네.\n\n네. 그렇게 **설계**하면 됩니다.\n');
 });
 
 /* ---------- 번호 목록 표시 ---------- */

@@ -140,15 +140,25 @@ function formatContext() {
 }
 
 /* ---------- 적용·저장·되돌리기 ---------- */
-function formatWrite(mod, tabId, md, part) {
+// 저장이 실패해도 화면은 다시 그린다(편집 상자나 막대가 남아 다음 편집을 막지 않게). 실패는 알린다
+window.writeLessonTab = function (mod, tabId, md, afterRender) {
     const area = document.getElementById('editor-content-area');
     const scrollTop = area ? area.scrollTop : 0;
     setTabMarkdown(mod, tabId, md);
-    return saveState().then(() => {
-        renderEditor(mod);
-        if (area) area.scrollTop = scrollTop;
-        if (part) formatReselect(part);
-    });
+    return saveState()
+        .catch(err => {
+            console.error('[교안 저장] 실패:', err);
+            window.showToast?.('바꾼 내용을 저장하지 못했습니다. 잠시 뒤 Ctrl+S로 다시 저장해 주세요.', 'error');
+        })
+        .then(() => {
+            renderEditor(mod);
+            if (area) area.scrollTop = scrollTop;
+            afterRender?.();
+        });
+};
+
+function formatWrite(mod, tabId, md, part) {
+    return window.writeLessonTab(mod, tabId, md, part ? () => formatReselect(part) : null);
 }
 
 // 서식 막대와 두 번 눌러 고치기(paragraph-edit.js)의 저장을 Ctrl+Z로 되돌릴 수 있게 기억한다
@@ -161,20 +171,26 @@ function commitFormatChange(mod, before, after, part) {
     const tabId = currentLessonTab;
     if (before === after) return;
     window.recordLessonEdit(mod, tabId, before, after);
-    formatWrite(mod, tabId, after, part).catch(err => {
-        console.error('[서식 막대] 저장 실패:', err);
-        window.showToast?.('서식을 저장하지 못했습니다. 다시 시도해 주세요.', 'error');
-    });
+    formatWrite(mod, tabId, after, part);
     if (!formatHintShown) {
         formatHintShown = true;
         window.showToast?.('서식을 바꿨습니다. Ctrl+Z로 되돌릴 수 있습니다.', 'success');
     }
 }
 
+const formatIsHere = (entry, mod) => entry.modId === mod.id && entry.tabId === currentLessonTab;
+
 function formatUndo(event) {
     const mod = typeof getEditingModule === 'function' ? getEditingModule() : null;
+    if (!mod) return;
+    // AI 수정·다시 생성처럼 다른 경로로 탭이 바뀌면 맨 위 기록은 더 맞지 않는다. 이 탭의 낡은 기록은 버린다
+    while (formatUndoStack.length) {
+        const top = formatUndoStack[formatUndoStack.length - 1];
+        if (!formatIsHere(top, mod) || formatTabRaw(mod, top.tabId) === top.after) break;
+        formatUndoStack = formatUndoStack.slice(0, -1);
+    }
     const last = formatUndoStack[formatUndoStack.length - 1];
-    if (!mod || !last || last.modId !== mod.id || last.tabId !== currentLessonTab || formatTabRaw(mod, last.tabId) !== last.after) return;
+    if (!last || !formatIsHere(last, mod)) return;
     event.preventDefault();
     formatUndoStack = formatUndoStack.slice(0, -1);
     formatWrite(mod, last.tabId, last.before, null).then(() => window.showToast?.('되돌렸습니다.', 'success'));

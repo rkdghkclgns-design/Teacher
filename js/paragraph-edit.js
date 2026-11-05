@@ -33,17 +33,8 @@ function commitParagraph(ctx, text) {
         renderEditor(mod);
         return;
     }
-    const area = document.getElementById('editor-content-area');
-    const scrollTop = area ? area.scrollTop : 0;
     window.recordLessonEdit?.(mod, tabId, source, next);
-    setTabMarkdown(mod, tabId, next);
-    saveState().then(() => {
-        renderEditor(mod);
-        if (area) area.scrollTop = scrollTop;
-    }).catch(err => {
-        console.error('[단락 수정] 저장 실패:', err);
-        window.showToast?.('고친 단락을 저장하지 못했습니다. 다시 시도해 주세요.', 'error');
-    });
+    window.writeLessonTab(mod, tabId, next); // 저장이 실패해도 다시 그려 편집 상자가 남지 않는다(format-toolbar.js)
 }
 
 function mountParagraphEditor(target, ctx) {
@@ -101,7 +92,12 @@ window.openParagraphEditor = function (event) {
     if (!view || !source || typeof marked === 'undefined' || event.target.closest(PARA_EDIT_SKIP)) return;
     const target = event.target.closest('#render-view > *');
     if (!target || target.isEditing || view.querySelector('.para-edit')) return;
-    const block = locateLessonBlock(source, { index: [...view.children].indexOf(target), text: target.textContent || '' });
+    const block = locateLessonBlock(source, {
+        index: [...view.children].indexOf(target),
+        text: target.textContent || '',
+        media: target.matches('img, video, table, svg') || !!target.querySelector('img, video, table, svg'),
+        mediaKey: target.querySelector('[data-img-id]')?.dataset.imgId || '' // 그림은 그림 id로 찾는다
+    });
     if (!block) {
         window.showToast?.('이 단락을 원문에서 찾지 못했습니다. 도구 → 원문 전체 수정에서 고쳐 주세요.', 'warning');
         return;
