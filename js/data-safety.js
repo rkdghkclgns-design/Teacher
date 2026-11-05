@@ -114,48 +114,279 @@ function backupAgeLabel(iso, now = Date.now()) {
     return { text, stale: days >= BACKUP_STALE_DAYS };
 }
 
-// 히스토리 한 칸. 차시 id·탭 내용·이유를 함께 남겨 그 차시로 되돌릴 수 있게 한다
+/* ---------- 작업 기록 한 칸: 담을 그림, 탭 하나 기록, 크기, 저장해 둔 기록 정리 ---------- */
+// 탭 하나만 남긴 기록은 tabId에 그 탭 id를 적는다. 남이 준 파일의 값('constructor' 같은)으로 객체 속성을 읽지 않게 탭 id 목록과 비교만 한다
+const HISTORY_TAB_IDS = ['basicLearn', 'basicPrac', 'advLearn', 'advPrac', 'assessment'];
+const historyTabIds = () => (typeof LESSON_TABS !== 'undefined' && Array.isArray(LESSON_TABS) ? LESSON_TABS.map(tab => tab.id) : HISTORY_TAB_IDS);
+const historyPart = item => (isObject(item) && typeof item.tabId === 'string' && historyTabIds().includes(item.tabId) ? item.tabId : null);
+const historyPartName = part => (typeof LESSON_TABS !== 'undefined' && Array.isArray(LESSON_TABS) ? LESSON_TABS.find(tab => tab.id === part)?.label : '') || part;
+
+// 그 글이 쓰는 그림(local:그림id)만 고른다. 기록 한 칸이 차시 그림을 통째로 복사하지 않게 한다.
+// 값은 글자이기만 하면 그대로 담는다(data:image가 아닌 그림 참조 teacher-image:…도). 그림 키로 정규식을 만들지 않는다(이상한 그림 키로 멈추지 않게).
+// 글은 한 번만 훑는다. 키마다 글 전체를 찾으면 남이 준 백업의 아주 많은 키와 긴 글로 앱 열기(tidyStoredHistory)가 멈춘다.
+// local: 바로 뒤의 id 글자(영문·숫자·_·-) 줄을 모아, 그 키로 시작하는 줄이 있으면 남긴다. 글에 'local:키'가 있는지 본 것과 같다
+// (img_1은 local:img_10만 있어도 남는다. 넉넉하게 남기는 쪽). 앱이 만드는 키(img_…)는 모두 id 글자다. 다른 글자가 든 키는 이렇게 가를 수 없어 늘 남긴다
+const LOCAL_IMAGE_REF = 'local:';
+const isImageIdCode = code => (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 95 || code === 45;
+
+function isImageIdKey(id) {
+    if (!id) return false;
+    for (let i = 0; i < id.length; i++) if (!isImageIdCode(id.charCodeAt(i))) return false;
+    return true;
+}
+
+// 글의 local: 뒤 id 글자 줄을 한 번씩, 정렬해서 돌려준다. ':'는 id 글자가 아니어서 줄끼리 겹치지 않는다(글을 한 번만 훑는다)
+function localImageRuns(text) {
+    const runs = new Set();
+    const from = LOCAL_IMAGE_REF.length;
+    for (let at = text.indexOf(LOCAL_IMAGE_REF); at !== -1; at = text.indexOf(LOCAL_IMAGE_REF, at + from)) {
+        let end = at + from;
+        while (end < text.length && isImageIdCode(text.charCodeAt(end))) end += 1;
+        if (end > at + from) runs.add(text.slice(at + from, end));
+    }
+    return [...runs].sort();
+}
+
+// 정렬한 줄 가운데 id로 시작하는 줄이 있는지. id 이상인 첫 줄이 id로 시작하는지만 보면 된다(이진 탐색)
+function anyRunStartsWith(sortedRuns, id) {
+    let lo = 0;
+    let hi = sortedRuns.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (sortedRuns[mid] < id) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo < sortedRuns.length && sortedRuns[lo].startsWith(id);
+}
+
+const referencedImages = (text, images) => {
+    const entries = Object.entries(isObject(images) ? images : {}).filter(([, data]) => typeof data === 'string');
+    if (!entries.length) return {};
+    const runs = localImageRuns(typeof text === 'string' ? text : '');
+    return Object.fromEntries(entries.filter(([id]) => !isImageIdKey(id) || anyRunStartsWith(runs, id)));
+};
+
+// 차시(또는 남기려는 글)에서 그림을 쓸 수 있는 글: 합친 글, 5개 탭, 교수안·편성안(교수안 원문에 붙여 넣은 그림과 교안에서 가져다 쓴 그림은 차시 그림에 들어 있다)
+const historyText = mod => [mod.content, ...Object.values(isObject(mod.tabContents) ? mod.tabContents : {}), mod.gyosuan?.docMd, mod.gyosuan?.deckMd]
+    .filter(text => typeof text === 'string').join('\n');
+
+// 되돌리거나 새 차시로 되살릴 때 차시에 넣는 그림. 기록은 남이 준 파일에서 왔을 수 있어 글자 값만 받는다
+const historyImages = entry => Object.fromEntries(Object.entries(isObject(entry.images) ? entry.images : {}).filter(([, data]) => typeof data === 'string'));
+
+// 진짜 그림(data:image)인지. 아니면 찾지 못한 그림 자리(teacher-image 참조)나 빈 값이다(화면에는 빈 그림으로 보인다)
+const isPictureData = data => typeof data === 'string' && data.startsWith('data:image/');
+
+// 그 차시에 돌려놓을 기록의 그림. 기록 쪽 값이 찾지 못한 그림 자리·빈 값이면 차시의 진짜 그림을 덮지 않는다
+// (다른 탭이 그 그림을 쓰고 있을 수 있고, 탭 하나 기록의 '되돌리기 전' 기록에는 그 탭 글이 쓰는 그림만 남는다). 차시 쪽이 그림 자리면 기록의 그림으로 채운다
+function historyImagesFor(lesson, entry) {
+    const current = isObject(lesson.images) ? lesson.images : {};
+    return Object.fromEntries(Object.entries(historyImages(entry)).filter(([id, data]) => isPictureData(data) || !isPictureData(current[id])));
+}
+
+// 그 차시(또는 최종 평가) 객체가 든 교과 id. 지금 연 교과는 openLessons(courseData)가 최신이다. 못 찾으면 null
+function lessonOwnerId(lesson, subjects, openSubjectId, openLessons) {
+    if (!isObject(lesson)) return null;
+    const owner = (Array.isArray(subjects) ? subjects : []).find(subject => {
+        if (!isObject(subject)) return false;
+        const lessons = String(subject.id) === String(openSubjectId) && Array.isArray(openLessons) ? openLessons : subject.lessons;
+        return subject.mainQuest === lesson || (Array.isArray(lessons) && lessons.includes(lesson));
+    });
+    return owner ? owner.id : null;
+}
+
+// 기록 id는 남긴 시각(ms)이다. 같은 순간에 여러 번 남겨도(차시 일괄 삭제 등) 겹치지 않게 지금 기록에 없는 다음 수를 쓴다
+function freshHistoryIds(count, history, now = Date.now()) {
+    const taken = new Set((Array.isArray(history) ? history : []).map(historyIdOf));
+    const ids = [];
+    for (let next = now; ids.length < count; next += 1) if (!taken.has(next)) ids.push(next);
+    return ids;
+}
+
+// 기록 크기를 글자 수로 어림한다(그림 글자 하나가 1바이트). 기록 전체를 글 하나로 만들지 않아 큰 기록에서도 창이 바로 열린다
+const HISTORY_SIZE_DEPTH = 6;
+function historyTextSize(value, depth = 0) {
+    if (typeof value === 'string') return value.length;
+    if (!value || typeof value !== 'object' || depth > HISTORY_SIZE_DEPTH) return 0;
+    let sum = 0;
+    for (const key of Object.keys(value)) sum += key.length + historyTextSize(value[key], depth + 1);
+    return sum;
+}
+const historySizeBytes = list => (Array.isArray(list) ? list : []).reduce((sum, item) => sum + historyTextSize(item), 0);
+
+// 예전 기록 줄이기: 탭 내용이 없는 기록(탭 하나 기록·옛 단일 본문)은 그 글이 쓰는 그림만 남긴다.
+// 차시 전체 기록(tabContents)은 교수안에 붙여 넣은 그림이 섞여 있을 수 있어 그대로 둔다. 바뀐 것이 없으면 같은 객체를 돌려준다
+function slimHistoryEntry(entry) {
+    if (isObject(entry.tabContents) || !isObject(entry.images)) return entry;
+    const images = referencedImages(stateText(entry.content), entry.images);
+    return Object.keys(images).length === Object.keys(entry.images).length ? entry : { ...entry, images };
+}
+
+// 저장해 둔 기록을 열 때 한 번. 객체가 아닌 칸은 뺀다(목록을 그리지 못한다). 이 브라우저의 기록이라 id 모양 때문에 지우지는 않는다(mergeHistory와 같다).
+// id는 0 이상의 정수로 맞춘다(숫자만 든 글자는 숫자로). 같은 id가 또 나오면(같은 순간에 남긴 기록) 아래쪽 빈 수로, 쓸 수 없는 id(소수·객체 등)는 0부터 빈 수로 나눈다
+// (freeHistoryId. 목록에서 줄마다 따로 고르고 지우고 되돌릴 수 있게). 바른 id는 바꾸지 않고, 바꿀 것이 없는 기록은 같은 객체를 돌려준다
+function tidyStoredHistory(list) {
+    const items = (Array.isArray(list) ? list : []).filter(isObject);
+    const ids = items.map(historyIdOf);
+    const taken = new Set(ids.filter(id => id !== null));
+    const seen = new Set();
+    return items.map((item, index) => {
+        const valid = ids[index];
+        const id = valid !== null && !seen.has(valid) ? valid : freeHistoryId(valid ?? 0, taken);
+        seen.add(id);
+        const slim = slimHistoryEntry(item);
+        return id === slim.id ? slim : { ...slim, id };
+    });
+}
+
+// 작업 기록 한 칸. 차시 id·교과 id·5개 탭(탭 하나 기록이면 그 탭 id)·이유를 함께 남겨 그 차시로 되돌릴 수 있게 한다.
+// mod: 차시(또는 최종 평가) 객체, 또는 탭 하나만 남길 때 { title, content, images, tabId, lesson }. lesson은 그 차시 객체이고 기록에는 id만 남는다.
+// 그림은 그 글이 쓰는 것만 담는다(값이 글자라 원본 차시와 이어지지 않는다). 탭 하나 기록은 교과 id를 알 때만 차시 id를 남긴다(엉뚱한 차시를 고치지 않게)
 function historyEntry(mod, { id, date, reason, subjectId } = {}) {
+    const part = isObject(mod.lesson) ? historyPart(mod) : null;
+    const lessonId = part ? (subjectId != null ? mod.lesson.id : null) : mod.id;
     return {
         id,
         title: mod.title,
         content: mod.content,
-        images: mod.images ? JSON.parse(JSON.stringify(mod.images)) : {},
+        images: referencedImages(historyText(mod), mod.images),
         date,
-        ...(mod.id != null ? { lessonId: mod.id } : {}),
+        ...(lessonId != null ? { lessonId } : {}),
         ...(subjectId != null ? { subjectId } : {}),
-        ...(mod.tabContents ? { tabContents: { ...mod.tabContents } } : {}),
+        ...(part ? { tabId: part } : {}),
+        ...(!part && mod.tabContents ? { tabContents: { ...mod.tabContents } } : {}),
         ...(reason ? { reason } : {})
     };
 }
 
-// 되돌릴 곳: 탭 내용이 남은 기록이고 그 차시가 아직 있으면 그 차시, 아니면 새 차시로 되살린다
+// 되돌릴 곳
+// - 탭 하나 기록: 그 기록을 남긴 교과에서만 그 차시(최종 평가는 교과의 mainQuest)를 찾는다. 교과가 다르면 같은 id여도 다른 차시다
+// - 5개 탭이 남은 차시 기록: 그 차시가 아직 있으면 그 차시(남긴 교과를 먼저 본다. 예전 기록은 교과 id가 틀렸을 수 있어 다른 교과도 찾는다)
+// - 그 밖에는 새 차시. 남이 준 파일의 기록일 수 있어 id는 stateText로 바꿔 비교한다(객체 값으로 멈추지 않게)
 function historyRestoreTarget(entry, subjects) {
-    if (entry.tabContents && entry.lessonId != null) {
+    const part = historyPart(entry);
+    const lessonKey = stateText(entry.lessonId);
+    const subjectKey = stateText(entry.subjectId);
+    const list = Array.isArray(subjects) ? subjects : [];
+    if (part) {
+        const subject = lessonKey && subjectKey ? list.find(item => String(item.id) === subjectKey) : null;
+        const lesson = !subject ? null : lessonKey === 'mainQuest' ? subject.mainQuest : (subject.lessons || []).find(item => String(item?.id) === lessonKey);
+        return isObject(lesson) ? { mode: 'replace', subject, lesson, part } : { mode: 'new', part };
+    }
+    if (isObject(entry.tabContents) && lessonKey) {
         // 기록을 남긴 교과를 먼저 본다(복원한 교과 사본에 같은 차시 id가 있어도 엉뚱한 쪽을 고치지 않게)
-        const ordered = [...(subjects || [])].sort((a, b) => Number(String(b.id) === String(entry.subjectId)) - Number(String(a.id) === String(entry.subjectId)));
+        const ordered = [...list].sort((a, b) => Number(String(b.id) === subjectKey) - Number(String(a.id) === subjectKey));
         for (const subject of ordered) {
-            const lesson = (subject.lessons || []).find(item => String(item.id) === String(entry.lessonId));
-            if (lesson) return { mode: 'replace', subject, lesson };
+            const lesson = (subject.lessons || []).find(item => String(item?.id) === lessonKey);
+            if (lesson) return { mode: 'replace', subject, lesson, part: null };
         }
     }
-    return { mode: 'new' };
+    return { mode: 'new', part: null };
 }
 
-// 예전 기록(탭 구분 없이 합친 글)은 기본학습 칸에 넣어 새 차시로 되살린다
+// 새 차시로 되살린다. 탭 하나 기록은 그 탭에, 5개 탭 기록은 탭 그대로, 탭 구분이 없는 기록(예전 기록 등)은 기본학습 칸에 넣는다
 function lessonFromHistory(entry, newId) {
-    const tabs = entry.tabContents || { basicLearn: entry.content || '' };
+    const part = historyPart(entry);
+    const content = stateText(entry.content);
+    const tabs = part ? { [part]: content } : isObject(entry.tabContents) ? entry.tabContents : { basicLearn: content };
     return {
         id: newId,
-        title: `${entry.title || '되살린 교안'} (되살림)`,
+        title: `${stateText(entry.title) || '되살린 교안'} (되살림)`,
         description: '',
         status: 'done',
-        content: entry.content || '',
-        images: { ...(entry.images || {}) },
+        content,
+        images: historyImages(entry),
         tabContents: { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null, ...tabs },
         uploadedMdName: null,
         uploadedMdContent: null
     };
+}
+
+// 그 탭의 지금 글. 탭이 없는 최종 평가·옛 차시는 본문이 곧 그 탭이고, 옛 단일 본문은 기본학습이다(setTabMarkdown과 같은 규칙)
+function historyPartText(lesson, part) {
+    if (!lesson.tabContents) return stateText(lesson.content);
+    const tabs = lesson.tabContents;
+    if (tabs[part]) return stateText(tabs[part]);
+    return part === 'basicLearn' && !historyTabIds().some(id => tabs[id]) ? stateText(lesson.content) : '';
+}
+
+// 되돌리기 전에 남길 지금 내용. 탭 하나 기록이면 그 탭 글만, 차시 기록이면 차시 전체.
+// 탭이 없는 최종 평가(·옛 차시)는 그 글이 본문 전체라 제목에 탭 이름을 붙이지 않는다
+function historyCurrentItem(lesson, part) {
+    if (!part) return lesson;
+    const title = lesson.tabContents ? `${lesson.title} · ${historyPartName(part)}` : lesson.title;
+    return { title, content: historyPartText(lesson, part), images: lesson.images, tabId: part, lesson };
+}
+
+// 이 기록을 그 탭에 돌려놓아도 바뀌는 것이 없는지: 탭 글이 같고, 넣을 그림도 차시에 이미 같은 값으로 있다
+// (글은 같아도 차시가 잃은 그림·찾지 못한 그림 자리를 기록이 갖고 있으면 되돌려야 그림이 돌아온다)
+function historyMatchesNow(lesson, entry, part) {
+    if (historyPartText(lesson, part) !== stateText(entry.content)) return false;
+    const current = isObject(lesson.images) ? lesson.images : {};
+    return Object.entries(historyImagesFor(lesson, entry)).every(([id, data]) => current[id] === data);
+}
+
+// 기록 한 칸을 그 차시에 돌려놓는다(화면이 같은 차시 객체를 쓰므로 그 자리에서 바꾼다). 탭 하나 기록은 그 탭만 고칠 때와 같은 setTabMarkdown으로,
+// 차시 기록은 5개 탭을 모두 바꾼다. 그림은 더하거나 바꾸기만 하고 지우지 않는다. 찾지 못한 그림 자리가 차시의 진짜 그림을 덮지 않는다(historyImagesFor)
+function applyHistoryEntry(lesson, entry) {
+    const part = historyPart(entry);
+    lesson.images = { ...(lesson.images || {}), ...historyImagesFor(lesson, entry) };
+    if (part) {
+        setTabMarkdown(lesson, part, stateText(entry.content));
+    } else {
+        lesson.tabContents = { ...entry.tabContents };
+        lesson.content = stateText(entry.content);
+    }
+    lesson.status = 'done';
+    return lesson;
+}
+
+// 되돌리기 확인 창의 글·버튼 이름·끝난 뒤 알림. target은 historyRestoreTarget 결과, openSubject는 지금 연 교과(없으면 null)
+function historyRestoreMessage(entry, target, openSubject) {
+    const date = stateText(entry.date);
+    const part = target.part || null;
+    const phrase = part ? `${historyPartName(part)} 탭` : '';
+    if (target.mode !== 'replace') {
+        const where = `'${openSubject?.title || '지금 교과'}'`;
+        // 남긴 교과에서만 찾는다(교과 간 이동·휴지통 되살리기로 그 차시가 다른 교과에 있거나 id가 바뀌었을 수 있어 '없다'고 하지 않는다)
+        const text = part
+            ? `이 기록(${date})을 남긴 교과에서 그 차시를 찾지 못했습니다.\n${where}에 새 차시로 되살려 ${phrase}에 넣습니다.`
+            : `이 기록(${date})을 ${where}에 새 차시로 되살립니다.${isObject(entry.tabContents) ? '' : '\n이 기록에는 탭 구분이 없어 기본학습 칸에 들어갑니다.'}`;
+        return { text, okLabel: '새 차시로 되살리기', done: `'${stateText(entry.title) || '되살린 교안'} (되살림)' 차시로 되살렸습니다.` };
+    }
+    const lesson = target.lesson;
+    const other = target.subject && String(target.subject.id) !== String(openSubject?.id ?? '') ? `(${target.subject.title} 교과)` : '';
+    const name = `${lesson.id === 'mainQuest' ? `'${lesson.title}'` : `'${lesson.title}' 차시`}${other}`;
+    if (!part) {
+        return { text: `${name}를 이 기록(${date})으로 되돌립니다.\n지금 내용은 작업 기록에 먼저 남겨 다시 되돌릴 수 있습니다.`, okLabel: '되돌리기', done: `'${lesson.title}'을(를) 되돌렸습니다.` };
+    }
+    const keep = historyPartText(lesson, part) !== '';
+    if (!lesson.tabContents) {
+        // 탭이 없는 최종 평가(·옛 차시)는 본문을 통째로 바꾼다(setTabMarkdown). 기록의 탭 id는 그때 열려 있던 탭일 뿐이라 탭 이름을 말하지 않는다
+        const text = `${name}의 내용을 이 기록(${date})으로 되돌립니다.${keep ? '\n지금 내용은 작업 기록에 먼저 남겨 다시 되돌릴 수 있습니다.' : ''}`;
+        return { text, okLabel: '되돌리기', done: `${name}의 내용을 되돌렸습니다.` };
+    }
+    const lines = [
+        `${name}의 ${phrase}을 이 기록(${date})으로 되돌립니다.`,
+        '다른 탭은 그대로 둡니다.',
+        keep ? `지금 ${phrase}은 작업 기록에 먼저 남겨 다시 되돌릴 수 있습니다.` : ''
+    ];
+    return { text: lines.filter(Boolean).join('\n'), okLabel: '되돌리기', done: `${name}의 ${phrase}을 되돌렸습니다.` };
+}
+
+// 목록 한 줄의 꼬리말(어떤 기록인지)·버튼 이름·풍선 도움말.
+// 탭 하나 기록이어도 되돌릴 곳이 탭이 없는 최종 평가(·옛 차시)면 본문을 통째로 바꾸므로 탭 이름을 말하지 않는다
+function historyRowLabels(entry, target) {
+    const part = historyPart(entry);
+    const phrase = part ? `${historyPartName(part)} 탭` : '';
+    const button = target.mode === 'replace' ? '되돌리기' : '새 차시로 되살리기';
+    const lesson = target.mode === 'replace' && isObject(target.lesson) ? target.lesson : null;
+    if (part && lesson && !lesson.tabContents) {
+        const quest = lesson.id === 'mainQuest';
+        return { kind: quest ? '최종 평가' : '', button, tip: quest ? '최종 평가를 이 기록으로 되돌립니다' : '그 차시를 이 기록으로 되돌립니다' };
+    }
+    const tip = target.mode !== 'replace' ? '이 기록을 지금 연 교과에 새 차시로 되살립니다'
+        : part ? `그 차시의 ${phrase}만 이 기록으로 되돌립니다` : '그 차시를 이 기록으로 되돌립니다';
+    return { kind: part ? phrase : isObject(entry.tabContents) ? '5개 탭' : '', button, tip };
 }
 
 /* ---------- 확인 창 ---------- */
@@ -748,7 +979,7 @@ function renumberLessons(lessons, takenIds, start = Date.now()) {
 }
 
 /* ---------- 작업 기록 상한 ---------- */
-// 기록 한 칸이 차시 그림까지 담으므로 개수를 넘으면 가장 오래된 기록부터 지운다(백업·저장이 커지지 않게)
+// 기록 한 칸이 그 글이 쓰는 그림까지 담으므로 개수를 넘으면 가장 오래된 기록부터 지운다(백업·저장이 커지지 않게)
 const HISTORY_LIMIT = 200;
 const capHistory = (list, limit = HISTORY_LIMIT) => (list.length > limit ? list.slice(list.length - limit) : list);
 const historyCapText = count => `작업 기록은 ${HISTORY_LIMIT}개까지 둡니다. 가장 오래된 기록 ${count}개를 지웠습니다.`;
@@ -840,34 +1071,41 @@ function historyMergeNote({ droppedIncoming = 0, droppedCurrent = 0, keptIn = ''
     return lost.length ? `\n\n작업 기록은 ${HISTORY_LIMIT}개까지만 둘 수 있어 이 브라우저의 기록을 먼저 남겼습니다. ${lost.join(' ')}` : '';
 }
 
-/* ---------- 작업 기록(히스토리) 되돌리기 ---------- */
+/* ---------- 작업 기록 되돌리기 ---------- */
+// 탭 하나 기록은 그 차시의 그 탭만, 차시 기록은 5개 탭을 바꾼다. 그 차시가 없으면 지금 연 교과에 새 차시로 되살린다
 async function restoreHistoryItem(id) {
     const entry = contentHistory.find(item => item.id === id);
     if (!entry) return window.showAlert('해당 작업 기록을 찾을 수 없습니다.');
     const target = historyRestoreTarget(entry, currentSnapshot().subjects);
-    const openSubject = globalState.subjects.find(subject => String(subject.id) === String(currentSubjectId));
-    const message = target.mode === 'replace'
-        ? `'${target.lesson.title}' 차시를 이 기록(${entry.date})으로 되돌립니다.\n지금 내용은 작업 기록에 먼저 남겨 다시 되돌릴 수 있습니다.`
-        : `이 기록(${entry.date})을 '${openSubject?.title || '지금 교과'}'에 새 차시로 되살립니다.${entry.tabContents ? '' : '\n예전 기록이라 탭 구분 없이 기본학습 칸에 들어갑니다.'}`;
-    const ok = await confirmAsync(message, { okLabel: target.mode === 'replace' ? '되돌리기' : '새 차시로 되살리기', tone: 'primary', title: '작업 기록 되돌리기' });
+    const openSubject = globalState.subjects.find(subject => String(subject.id) === String(currentSubjectId)) || null;
+    if (target.mode !== 'replace' && !openSubject) return window.showAlert('되살릴 교과를 먼저 여세요(교과 편집기에서 다시 누르세요).');
+    if (target.mode === 'replace' && target.part && historyMatchesNow(target.lesson, entry, target.part)) {
+        return window.showToast?.('지금 내용이 이 기록과 같습니다.', 'info'); // 쓸데없는 '되돌리기 전' 기록을 만들지 않는다(글이 같아도 그림이 다르면 되돌린다)
+    }
+    const { text, okLabel, done } = historyRestoreMessage(entry, target, openSubject);
+    const ok = await confirmAsync(text, { okLabel, tone: 'primary', title: '작업 기록 되돌리기' });
     if (!ok) return;
+    let mod;
     if (target.mode === 'replace') {
-        await archiveContents([target.lesson], '되돌리기 전');
-        target.lesson.tabContents = { ...entry.tabContents };
-        target.lesson.content = entry.content || '';
-        target.lesson.images = { ...(target.lesson.images || {}), ...(entry.images || {}) };
-        target.lesson.status = 'done';
+        await archiveContents([historyCurrentItem(target.lesson, target.part)], '되돌리기 전');
+        mod = applyHistoryEntry(target.lesson, entry);
     } else {
-        if (!currentSubjectId) return window.showAlert('되살릴 교과를 먼저 여세요(교과 편집기에서 다시 누르세요).');
-        courseData = [...courseData, lessonFromHistory(entry, Date.now())];
+        mod = lessonFromHistory(entry, renumberLessons([{}], courseData.map(lesson => lesson.id))[0].id); // 그 교과 차시와 겹치지 않는 숫자 id
+        courseData = [...courseData, mod];
     }
     await saveState();
     if (typeof renderSidebar === 'function') renderSidebar();
-    const mod = target.mode === 'replace' ? target.lesson : courseData[courseData.length - 1];
-    if (String(currentEditingModuleId) === String(mod.id)) renderEditor(mod);
+    showRestoredHistory(mod, target.mode === 'replace' ? target.part : null);
     document.querySelector('.fixed .ph-book-open-text')?.closest('.fixed')?.remove(); // 내용 보기 창이 열려 있으면 닫는다
     if (typeof refreshHistoryPanel === 'function' && !document.getElementById('history-panel')?.classList.contains('hidden')) refreshHistoryPanel();
-    window.showToast?.(target.mode === 'replace' ? `'${mod.title}'을(를) 되돌렸습니다.` : `'${mod.title}' 차시로 되살렸습니다.`, 'success');
+    window.showToast?.(done, 'success');
+}
+
+// 되돌린 차시가 지금 연 차시(같은 객체)면 바뀐 곳을 보여 준다. 탭 하나 기록은 그 탭으로 옮겨 보여 준다
+function showRestoredHistory(mod, part) {
+    if (typeof getEditingModule !== 'function' || getEditingModule() !== mod) return;
+    if (part && mod.tabContents && typeof switchLessonTab === 'function') switchLessonTab(part);
+    else if (typeof renderEditor === 'function') renderEditor(mod);
 }
 
 if (typeof window !== 'undefined') {
@@ -878,6 +1116,9 @@ if (typeof window !== 'undefined') {
         liveSubjectTrash, restoreHistoryItem, importSubjectsBackup, mergeBackupExtras, closeLessonEditor,
         isSafeStateId, stateText, safeReferenceUrls, normalizeLessonId, assignLessonIds, renumberLessons, capHistory,
         mergeHistory, historyMergeNote, historyCapText,
+        historyPart, historyPartName, referencedImages, historyImages, lessonOwnerId, freshHistoryIds, historySizeBytes, slimHistoryEntry, tidyStoredHistory,
+        historyPartText, historyCurrentItem, applyHistoryEntry, historyRestoreMessage, historyRowLabels, showRestoredHistory,
+        historyImagesFor, historyMatchesNow, isPictureData,
         cleanTrashLesson, backupImageMode, setBackupImageMode, renderBackupImageMode, backupImageKey, detachBackupImages,
         attachBackupImages, backupImageFile, backupImageFromFile, writeBackupData, isBackupImageName, base64ByteLength,
         storedBackupImageMode, takeBackupImageMode, folderImageMode, clearBackupImagesDrop, switchBackupImagesToSeparate,

@@ -537,7 +537,7 @@ function onQbankChange(event) {
 async function commitQbankMarkdown(mod, md) {
     const { moduleId } = _qbank;
     _qbank = { ..._qbank, busy: true };
-    await archiveContent({ title: `${mod.title} · 학습이해도`, content: qbankMarkdown(mod), images: mod.images });
+    await archiveContent({ title: `${mod.title} · 학습이해도`, content: qbankMarkdown(mod), images: mod.images, tabId: 'assessment', lesson: mod }, '문제은행 수정 전');
     mod.tabContents = { ...mod.tabContents, assessment: md };
     Object.assign(mod, withHistoryNote(mod, `문제은행 수정 (문항 ${lessonLintQuestions(md).length}개)`));
     await saveState();

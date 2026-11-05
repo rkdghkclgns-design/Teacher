@@ -34,7 +34,7 @@ function makeContext(callGemini = async () => { throw new Error('호출되면 �
         showLessonView() {},
         lessonDesignBrief: () => '',
         lessonGenBrief: () => '',
-        archiveContent: async item => { ctx.archived.push(item); },
+        archiveContent: async (item, reason) => { ctx.archived.push({ ...item, reason }); },
         archived: [],
         alerts: [],
         toasts: [],
@@ -351,6 +351,9 @@ function generationContext(callGemini, mod) {
         answerPreview(stopping, 'apply', [[0, true]]);
         await call(stopping, 'generateTabContent')(1, 'basicLearn');
         assert.ok(stopping.archived[0].content.includes('이전에 완성한 글입니다.'), '완성본을 덮기 전에 히스토리에 남긴다');
+        assert.strictEqual(stopping.archived[0].tabId, 'basicLearn', '그 탭과 그 차시를 함께 남긴다');
+        assert.strictEqual(stopping.archived[0].lesson, previous);
+        assert.strictEqual(stopping.archived[0].reason, '다시 생성 전');
         assert.ok(stopping.alerts.at(-1).includes('작업 기록에 남겼'));
         const labels = [];
         const counting = generationContext(async () => reply(calls++ === 1 ? '## 본문\n\n가나다\n<!-- CONTINUE -->' : '## 뒤\n\n끝입니다.'), { id: 1, title: '차시', tabContents: {} });
@@ -374,6 +377,7 @@ function generationContext(callGemini, mod) {
         await call(applying, 'generateTabContent')(1, 'basicPrac');
         assert.ok(changed.tabContents.basicPrac.includes('새로 쓴 글입니다.'));
         assert.ok(applying.archived[0].content.includes('이전 글입니다.'));
+        assert.strictEqual(applying.archived[0].tabId, 'basicPrac');
         assert.ok(changed.history[0].note.includes('재생성'), '변경 이력');
         const fresh = { id: 1, title: '차시', tabContents: {} };
         await call(generationContext(answer, fresh), 'generateTabContent')(1, 'basicPrac');
@@ -710,6 +714,10 @@ function generationContext(callGemini, mod) {
         assert.strictEqual(aiCtx.elements['ai-command-input'].value, '', '반영하면 요청 칸을 비운다');
         assert.ok(mod.tabContents.basicLearn.includes('보강한 글입니다.'));
         assert.strictEqual(aiCtx.archived[0].content, original, '바꾸기 전 내용을 히스토리에 남긴다');
+        assert.strictEqual(aiCtx.archived[0].tabId, 'basicLearn');
+        assert.strictEqual(aiCtx.archived[0].lesson, mod);
+        assert.strictEqual(aiCtx.archived[0].reason, '고치기 전');
+        assert.strictEqual(aiCtx.archived[0].title, '차시 · 기본학습', '탭이 있는 차시는 제목에 그 탭 이름');
         assert.ok(mod.history[0].note.includes('예시 추가'));
         assert.notStrictEqual(aiCtx.elements['editor-loading'].style.display, 'flex', '화면을 막지 않는다');
         assert.ok(aiCtx.elements['lesson-pipeline-bar']?.removed, '진행 막대를 띄웠다가 닫는다');
@@ -738,6 +746,9 @@ function generationContext(callGemini, mod) {
         assert.ok(!aiCtx.alerts.some(message => message.includes('먼저 이 탭의 교안을 생성')), '내용이 있으면 생성하라고 하지 않는다');
         assert.strictEqual(mod.content, fixed, '탭이 없으면 본문에 반영한다');
         assert.strictEqual(mod.tabContents, undefined, '탭을 새로 만들지 않는다');
+        assert.strictEqual(aiCtx.archived[0].content, original, '고치기 전 본문을 남긴다');
+        assert.strictEqual(aiCtx.archived[0].lesson, mod);
+        assert.strictEqual(aiCtx.archived[0].title, '최종 평가', '탭이 없는 최종 평가는 본문 전체라 기록 제목에 탭 이름을 붙이지 않는다');
     });
 
     await run('패널: AI 수정 제안은 수락해야 반영한다', async () => {
@@ -754,6 +765,8 @@ function generationContext(callGemini, mod) {
         await call(aiCtx, 'proposeLessonFix')();
         assert.ok(mod.tabContents.basicLearn.includes('도메인을 다룹니다.'));
         assert.strictEqual(aiCtx.archived.length, 1);
+        assert.strictEqual(aiCtx.archived[0].tabId, 'basicLearn');
+        assert.strictEqual(aiCtx.archived[0].reason, '고치기 전');
     });
 
     await run('패널: 기다리는 동안 탭이 바뀌면 덮어쓰지 않는다', async () => {

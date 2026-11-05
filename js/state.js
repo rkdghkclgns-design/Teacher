@@ -490,7 +490,13 @@ async function restoreState() {
             } else {
                 await loadMockData();
             }
-            contentHistory = Array.isArray(data.history) ? data.history : [];
+            // 저장해 둔 작업 기록을 정리해서 연다(data-safety.js tidyStoredHistory). 정리하다 실패해도 예전처럼 저장된 그대로 연다(예시로 덮어쓰지 않게)
+            try {
+                contentHistory = tidyStoredHistory(data.history);
+            } catch (err) {
+                console.warn('[작업 기록] 정리하지 못해 저장된 그대로 엽니다:', err);
+                contentHistory = Array.isArray(data.history) ? data.history : [];
+            }
         } else {
             await loadMockData();
         }
@@ -508,13 +514,20 @@ async function loadMockData() {
 
 
 // 여러 글을 한 번에 남긴다. 글마다 저장하면 이미지가 많은 과정에서 느려진다
-// reason: '다시 생성 전'·'되돌리기 전'·'불러오기 전'처럼 남긴 까닭(히스토리 목록에 보인다)
+// mods: 차시(또는 최종 평가) 객체, 또는 탭 하나만 남길 때 { title, content, images, tabId, lesson }(data-safety.js historyEntry)
+// reason: '다시 생성 전'·'되돌리기 전'·'불러오기 전'처럼 남긴 까닭(작업 기록 목록에 보인다)
+// id와 기록 칸은 첫 await 전에 만든다. 기다리지 않고 여러 번 불러도 앞 호출의 칸을 보고 겹치지 않는 id를 받는다
 async function archiveContents(mods, reason = '') {
-    const now = Date.now();
     const date = new Date().toLocaleString();
-    const entries = mods
-        .filter(mod => mod && (mod.content || Object.values(mod.tabContents || {}).some(Boolean)))
-        .map((mod, index) => historyEntry(mod, { id: now + index, date, reason, subjectId: currentSubjectId })); // 차시 id·교과 id·5개 탭도 남겨 되돌리기에 쓴다
+    const kept = mods.filter(mod => mod && (mod.content || Object.values(mod.tabContents || {}).some(Boolean)));
+    const ids = freshHistoryIds(kept.length, contentHistory); // 같은 순간에 여러 번 남겨도 id가 겹치지 않게
+    // 교과 id는 그 차시가 든 교과다(만드는 동안 다른 교과를 열었거나 열지 않은 교과의 차시를 남겨도 맞게).
+    // 탭 하나 기록인데 그 차시를 어느 교과에서도 못 찾으면 비워 둔다(되돌리면 새 차시로)
+    const entries = kept.map((mod, index) => {
+        const lesson = isObject(mod.lesson) ? mod.lesson : mod;
+        const owner = lessonOwnerId(lesson, globalState.subjects, currentSubjectId, courseData);
+        return historyEntry(mod, { id: ids[index], date, reason, subjectId: owner ?? (lesson === mod ? currentSubjectId : null) });
+    });
     if (!entries.length) return;
     const merged = [...contentHistory, ...entries];
     contentHistory = capHistory(merged);
@@ -551,21 +564,27 @@ function toggleHistoryPanel() {
     refreshHistoryPanel();
 }
 
+// 창을 그리다 실패하면(기록이 망가졌거나 너무 큼) 열린 창에 안내를 보인다. 빈칸이나 예전 목록이 남지 않게
 function refreshHistoryPanel() {
-    renderHistoryUI(document.getElementById('history-list'));
+    const area = document.getElementById('history-list');
+    renderHistoryUI(area).catch(err => {
+        console.error('[작업 기록] 창을 그리지 못했습니다:', err);
+        if (area) area.innerHTML = '<div class="p-4 text-sm text-rose-300">작업 기록을 보여 주지 못했습니다. 페이지를 새로고침한 뒤 다시 열어 주세요.</div>';
+    });
 }
 
 function updateHistoryBadges() {
     const count = document.getElementById('history-count-badge');
     const size = document.getElementById('history-storage-badge');
     if (count) count.textContent = contentHistory.length;
-    if (size) size.textContent = `${(new Blob([JSON.stringify(contentHistory)]).size / (1024 * 1024)).toFixed(1)} MB`;
+    // 기록 전체를 글 하나로 만들지 않고 글자 수를 더해 어림한다(큰 기록에서 창이 멈추거나 열리지 않던 문제)
+    if (size) size.textContent = `약 ${(historySizeBytes(contentHistory) / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 async function renderHistoryUI(area) {
     updateHistoryBadges();
     if (!Array.isArray(contentHistory) || contentHistory.length === 0) {
-        area.innerHTML = `<div class="h-full flex items-center justify-center text-textMuted bg-[#12121e]">작업 기록이 없습니다. (차시를 지우거나 다시 만들기 전에 자동으로 남습니다)</div>`;
+        area.innerHTML = `<div class="h-full flex items-center justify-center text-textMuted bg-[#12121e]">작업 기록이 없습니다. 차시를 지우거나 다시 만들기 전, 탭 전체를 AI로 고치기 전에 자동으로 남습니다.</div>`;
         return;
     }
 
@@ -577,7 +596,7 @@ async function renderHistoryUI(area) {
             <div class="flex flex-wrap justify-between items-center gap-2 mb-3">
                 <h2 class="text-sm font-bold text-white/90 flex items-center gap-2"><i class="ph-bold ph-clock-counter-clockwise text-accent"></i> 작업 기록</h2>
                 <div class="text-xs text-textMuted bg-black/30 px-3 py-1.5 rounded-lg border border-white/10 flex items-center gap-2" id="history-capacity-info">
-                    <i class="ph ph-spinner animate-spin"></i> DB 용량 계산중...
+                    <i class="ph ph-spinner animate-spin"></i> 저장 공간 확인 중...
                 </div>
             </div>
             
@@ -609,12 +628,12 @@ async function renderHistoryUI(area) {
             const estimation = await navigator.storage.estimate();
             const usageMB = (estimation.usage / (1024 * 1024)).toFixed(1);
             const quotaMB = (estimation.quota / (1024 * 1024)).toFixed(1);
-            capInfo.innerHTML = `DB 사용량: <span class="text-accent font-bold">${usageMB} MB</span> <span class="opacity-50">/ ${quotaMB} MB</span>`;
+            capInfo.innerHTML = `브라우저 저장 공간: <span class="text-accent font-bold">${usageMB} MB</span> <span class="opacity-50">/ ${quotaMB} MB</span>`;
         } else {
-            capInfo.innerHTML = `<span class="text-textMuted">용량 측정 API 미지원</span>`;
+            capInfo.innerHTML = `<span class="text-textMuted">이 브라우저는 저장 공간을 알려 주지 않습니다</span>`;
         }
     } catch (e) {
-        capInfo.innerHTML = `<span class="text-textMuted text-orange-400">용량 계산 실패</span>`;
+        capInfo.innerHTML = `<span class="text-textMuted text-orange-400">저장 공간을 확인하지 못했습니다</span>`;
     }
 }
 
@@ -627,9 +646,11 @@ window.renderHistoryList = function () {
     const checkAll = document.getElementById('history-select-all');
     if (checkAll) checkAll.checked = contentHistory.length > 0 && selectedHistoryIds.size === contentHistory.length;
 
+    const subjects = currentSnapshot().subjects; // 줄마다 그 차시가 아직 있는지 보고 버튼 이름을 고른다
     const reversedHistory = [...contentHistory].reverse();
     container.innerHTML = reversedHistory.map((h, displayIdx) => {
         const isSelected = selectedHistoryIds.has(h.id);
+        const labels = historyRowLabels(h, historyRestoreTarget(h, subjects));
         return `
             <div class="p-3 rounded-lg border ${isSelected ? 'bg-accent/20 border-accent/50' : 'bg-white/[0.04] border-transparent hover:bg-white/[0.08]'} cursor-pointer flex justify-between items-center transition-colors"
                  onclick="handleHistoryClick(event, ${Number(h.id)}, ${displayIdx})">
@@ -637,12 +658,12 @@ window.renderHistoryList = function () {
                     <input type="checkbox" class="w-4 h-4 rounded border-white/20 bg-black/50 accent-accent pointer-events-none" ${isSelected ? 'checked' : ''}>
                     <div>
                         <h4 class="font-bold ${isSelected ? 'text-white' : 'text-white/80'} text-sm">${escapeHtml(h.title)}</h4>
-                        <span class="text-xs text-white/60">${escapeHtml(h.date)}${h.reason ? ` · ${escapeHtml(h.reason)}` : ''}${h.tabContents ? ' · 5개 탭' : ''}</span>
+                        <span class="text-xs text-white/60">${escapeHtml(h.date)}${h.reason ? ` · ${escapeHtml(h.reason)}` : ''}${labels.kind ? ` · ${escapeHtml(labels.kind)}` : ''}</span>
                     </div>
                 </div>
                 <div class="flex items-center gap-1.5 shrink-0">
                     <button onclick="event.stopPropagation(); viewHistoryItem(${Number(h.id)})" class="text-accent hover:text-white hover:bg-accent text-xs font-bold px-3 py-1.5 bg-accent/10 rounded transition-colors border border-accent/20">내용 보기</button>
-                    <button onclick="event.stopPropagation(); restoreHistoryItem(${Number(h.id)})" class="text-white text-xs font-bold px-3 py-1.5 bg-accent hover:bg-accentHover rounded transition-colors" title="${h.tabContents ? '그 차시를 이 기록으로 되돌립니다' : '이 기록을 새 차시로 되살립니다'}">되돌리기</button>
+                    <button onclick="event.stopPropagation(); restoreHistoryItem(${Number(h.id)})" class="text-white text-xs font-bold px-3 py-1.5 bg-accent hover:bg-accentHover rounded transition-colors" title="${escapeHtml(labels.tip)}">${escapeHtml(labels.button)}</button>
                 </div>
             </div>
         `;
@@ -943,7 +964,9 @@ window.viewHistoryItem = function (id) {
             htmlContent = `<pre style="white-space:pre-wrap;word-break:break-word;">${resolved.replace(/</g, '&lt;')}</pre>`;
         }
 
-        const restoreBar = `<div class="not-prose mb-4 flex items-center gap-2 p-3 rounded-lg bg-accent/10 border border-accent/30 text-xs text-gray-700"><span class="flex-1">${escapeHtml(item.date || '')}${item.reason ? ` · ${escapeHtml(item.reason)}` : ''} 기록입니다.</span><button onclick="restoreHistoryItem(${Number(item.id)})" class="px-3 py-1.5 font-bold text-white bg-accent rounded hover:bg-accentHover">이 버전으로 되돌리기</button></div>`;
+        const target = historyRestoreTarget(item, currentSnapshot().subjects); // 그 차시가 없으면 버튼이 '새 차시로 되살리기'
+        const kind = historyRowLabels(item, target).kind;
+        const restoreBar = `<div class="not-prose mb-4 flex items-center gap-2 p-3 rounded-lg bg-accent/10 border border-accent/30 text-xs text-gray-700"><span class="flex-1">${escapeHtml(item.date || '')}${item.reason ? ` · ${escapeHtml(item.reason)}` : ''}${kind ? ` · ${escapeHtml(kind)}` : ''} 기록입니다.</span><button onclick="restoreHistoryItem(${Number(item.id)})" class="px-3 py-1.5 font-bold text-white bg-accent rounded hover:bg-accentHover">${target.mode === 'replace' ? '이 버전으로 되돌리기' : '새 차시로 되살리기'}</button></div>`;
         showModal(`작업 기록: ${escapeHtml(item.title || '제목 없음')}`, restoreBar + htmlContent);
 
     } catch (e) {

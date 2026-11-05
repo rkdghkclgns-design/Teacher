@@ -199,7 +199,8 @@ async function commitTabChange(mod, tabId, before, next, note) {
         window.showAlert('수정안을 만드는 동안 탭 내용이 바뀌어 반영하지 않았습니다. 다시 실행해 주세요.');
         return false;
     }
-    await archiveContent({ title: `${mod.title} · ${reviewTabLabel(tabId)}`, content: before, images: mod.images });
+    // 탭이 없는 최종 평가(·옛 차시)는 본문 전체를 고치므로 제목에 탭 이름을 붙이지 않는다
+    await archiveContent({ title: mod.tabContents ? `${mod.title} · ${reviewTabLabel(tabId)}` : mod.title, content: before, images: mod.images, tabId, lesson: mod }, '고치기 전');
     setTabMarkdown(mod, tabId, next);
     mod.history = reviewHistory(mod, note);
     await saveState();

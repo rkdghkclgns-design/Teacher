@@ -153,7 +153,7 @@ async function runObjectiveRemove(mod, tabId, index) {
     const assessment = qbankMarkdown(mod);
     const remapped = remappedAssessment(assessment, objectivesBefore, qbankObjectives(mod), deleteLinked);
     if (remapped !== assessment) {
-        await archiveContent({ title: `${mod.title} · 학습이해도`, content: assessment, images: mod.images });
+        await archiveContent({ title: `${mod.title} · 학습이해도`, content: assessment, images: mod.images, tabId: 'assessment', lesson: mod }, '학습 목표 삭제 전');
         setTabMarkdown(mod, 'assessment', remapped);
     }
     _objectiveDialog = { ..._objectiveDialog, pick: null };

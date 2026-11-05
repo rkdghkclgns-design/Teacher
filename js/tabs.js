@@ -407,7 +407,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         }
         // 끝까지 받지 못한 글, 미리보기로 고른 글, 전체 탭 재생성이 기존 탭을 덮으므로 기존 내용을 히스토리에 남긴다
         const archivePartial = !!previous && (stoppedEarly || partialDueToError || previewed || _suppressTabAlert);
-        if (archivePartial) await archiveContent({ title: `${mod.title} · ${tabMeta.label}`, content: previous, images: mod.images });
+        if (archivePartial) await archiveContent({ title: `${mod.title} · ${tabMeta.label}`, content: previous, images: mod.images, tabId, lesson: mod }, '다시 생성 전');
         mod.tabContents[tabId] = resultText;
         if (tabId === 'assessment') warnUncoveredObjectives(mod, resultText);
         mod.status = 'done';

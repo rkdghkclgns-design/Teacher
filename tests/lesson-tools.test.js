@@ -573,5 +573,21 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
         assert.ok(!call('wordDiffHtml')('같은 문장', '같은 문장').includes('<del'));
     });
 
+    await run('문제은행: 고치기 전 학습이해도는 그 차시·탭과 함께 작업 기록에 남는다', async () => {
+        const local = makeContext();
+        const items = [];
+        local.archiveContent = async (item, reason) => { items.push({ ...item, reason }); };
+        vm.runInContext('renderQbank = () => {}; _qbank = { moduleId: 1, busy: false };', local);
+        const mod = { id: 1, title: '차시', tabContents: { assessment: QB }, images: { a: 'data:a' } };
+        const next = '### 문제 1. 새 문항\n\n내용';
+        await vm.runInContext('commitQbankMarkdown', local)(mod, next);
+        assert.strictEqual(items.length, 1);
+        assert.strictEqual(items[0].tabId, 'assessment');
+        assert.strictEqual(items[0].lesson, mod);
+        assert.strictEqual(items[0].reason, '문제은행 수정 전');
+        assert.strictEqual(items[0].content, QB);
+        assert.strictEqual(mod.tabContents.assessment, next);
+    });
+
     console.log('ALL PASSED');
 })().catch(e => { console.error('FAIL', e.message); process.exit(1); });

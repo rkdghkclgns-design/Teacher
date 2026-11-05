@@ -63,16 +63,17 @@ test('마지막 백업 표시: 안 함·분·시간·일, 7일이 지나면 경�
     assert.strictEqual(backupAgeLabel('2026-10-28T12:00:00Z', now).stale, true);
 });
 
-test('히스토리 기록: 차시 id·5개 탭·이유를 남기고, 원본 그림과 이어지지 않는다', () => {
-    const mod = { id: 7, title: '1차시', content: '합친 글', images: { a: 'data:1' }, tabContents: { basicLearn: '기본', basicPrac: null } };
+test('히스토리 기록: 차시 id·5개 탭·이유를 남기고, 그 차시가 쓰는 그림만 원본과 이어지지 않게 담는다', () => {
+    const mod = { id: 7, title: '1차시', content: '합친 글 ![](local:a)', images: { a: 'data:1', unused: 'data:2' }, tabContents: { basicLearn: '기본 ![](local:a)', basicPrac: null } };
     const entry = historyEntry(mod, { id: 100, date: 'd', reason: '다시 생성 전' });
     assert.strictEqual(entry.lessonId, 7);
-    assert.deepStrictEqual({ ...entry.tabContents }, { basicLearn: '기본', basicPrac: null });
+    assert.deepStrictEqual({ ...entry.tabContents }, { basicLearn: '기본 ![](local:a)', basicPrac: null });
     assert.strictEqual(entry.reason, '다시 생성 전');
+    assert.deepStrictEqual(Object.keys(entry.images), ['a'], '쓰지 않는 그림은 담지 않는다');
     mod.images.a = 'changed';
     assert.strictEqual(entry.images.a, 'data:1');
     const legacy = historyEntry({ title: '옛 글', content: '글' }, { id: 1, date: 'd' });
-    assert.ok(!('lessonId' in legacy) && !('tabContents' in legacy) && !('reason' in legacy));
+    assert.ok(!('lessonId' in legacy) && !('tabContents' in legacy) && !('reason' in legacy) && !('tabId' in legacy));
 });
 
 test('되돌릴 곳: 탭 기록이고 차시가 있으면 그 차시, 아니면 새 차시', () => {
@@ -378,7 +379,7 @@ test('작업 기록 상한: 넘쳐서 지우면 몇 개를 지웠는지 화면�
     assert.ok(start >= 0 && end > start, 'archiveContents를 찾지 못함');
     vm.runInContext(stateSource.slice(start, end + 2), ctx);
     const toasts = [];
-    Object.assign(ctx, { contentHistory: Array.from({ length: 199 }, (_, i) => ({ id: i + 1, title: `기록 ${i}` })), currentSubjectId: 's1', projectFolderHandle: null, saveState: async () => {} });
+    Object.assign(ctx, { contentHistory: Array.from({ length: 199 }, (_, i) => ({ id: i + 1, title: `기록 ${i}` })), currentSubjectId: 's1', projectFolderHandle: null, saveState: async () => {}, globalState: { subjects: [] }, courseData: [] });
     ctx.window.showToast = (message, type) => toasts.push([message, type]);
     ctx.archiveContents([{ title: '하나', content: '글' }]);
     assert.strictEqual(toasts.length, 0, '200개까지는 알리지 않는다');
@@ -1150,6 +1151,446 @@ test('PC 폴더: 폴더 저장은 모두 줄을 서고, 폴더 열기는 앞 묶
     assert.ok(!open.includes('downloadSafetyBackup('), '폴더 열기 전 백업은 safetyBackupOrAsk로');
     const [forget, save, remember] = ['forgetFolderHandle(', 'await saveState()', 'rememberFolderHandle('].map(marker => open.indexOf(marker));
     assert.ok(forget > 0 && forget < save && save < remember, '앞 폴더를 잊고 → 브라우저에 저장한 뒤에야 이 폴더를 기억한다');
+});
+
+/* ---------- 작업 기록 창과 기록 크기 (묶음 5): 그 글이 쓰는 그림만, 탭 하나 기록은 그 차시의 그 탭으로 ---------- */
+const hist = ctx.window; // 화살표 함수(const)는 window로만 읽힌다
+// 실제 탭 이름표(data.js LESSON_TABS)와 탭 하나 바꾸기(tabs.js setTabMarkdown)를 이 문맥에 올린다
+const DATA_SRC = fs.readFileSync(path.join(__dirname, '..', 'js', 'data.js'), 'utf8').replace(/\r\n/g, '\n');
+const TABS_SRC = fs.readFileSync(path.join(__dirname, '..', 'js', 'tabs.js'), 'utf8').replace(/\r\n/g, '\n');
+vm.runInContext(`${fnFrom(DATA_SRC, 'data.js')('const LESSON_TABS = [', '\n];\n')}\n${fnFrom(TABS_SRC, 'tabs.js')('function setTabMarkdown(')}`, ctx);
+
+test('작업 기록: 차시 기록은 그 차시의 글(교수안 포함)이 쓰는 그림만 담는다', () => {
+    const mod = { id: 3, title: '차시', content: '본문 ![](local:a)', tabContents: { basicLearn: '본문 ![](local:a)' }, gyosuan: { docMd: '![붙여 넣은 그림](local:b)' }, images: { a: 'data:a', b: 'data:b', unused: 'data:u', odd: 7 } };
+    const entry = historyEntry(mod, { id: 1, date: 'd', subjectId: 's1' });
+    assert.deepStrictEqual(Object.keys(entry.images).sort(), ['a', 'b']);
+    assert.strictEqual(entry.lessonId, 3);
+    assert.ok(!('tabId' in entry));
+});
+
+test('작업 기록: 탭 하나 기록은 차시 id·교과 id·탭 id를 남기고, 차시 객체는 넣지 않는다', () => {
+    const lesson = { id: 9, title: '차시' };
+    const entry = historyEntry({ title: '차시 · 학습이해도', content: '평가 ![](local:q)', images: { q: 'data:q', z: 'data:z' }, tabId: 'assessment', lesson }, { id: 2, date: 'd', subjectId: 's1', reason: '문제은행 수정 전' });
+    assert.deepStrictEqual(plainJson(entry), { id: 2, title: '차시 · 학습이해도', content: '평가 ![](local:q)', images: { q: 'data:q' }, date: 'd', lessonId: 9, subjectId: 's1', tabId: 'assessment', reason: '문제은행 수정 전' });
+    const lost = historyEntry({ title: 'T', content: '글', tabId: 'assessment', lesson }, { id: 3 });
+    assert.ok(lost.tabId === 'assessment' && !('lessonId' in lost), '교과를 모르면 차시 id를 남기지 않는다(되돌리면 새 차시)');
+    ['constructor', '__proto__', 'gyosuanDoc', 5].forEach(tabId => {
+        const odd = historyEntry({ title: 'T', content: '글', tabId, lesson }, { id: 4, subjectId: 's1' });
+        assert.ok(!('tabId' in odd) && !('lessonId' in odd), String(tabId));
+    });
+    const stray = historyEntry({ id: 5, title: '차시', content: '글', tabId: 'basicLearn', tabContents: { basicLearn: '글' } }, { id: 5, subjectId: 's1' });
+    assert.ok(!('tabId' in stray) && stray.lessonId === 5 && stray.tabContents, '차시 객체에 tabId가 섞여 있어도 차시 기록이다');
+});
+
+test('그 글이 쓰는 그림 고르기: 글자 값만(찾지 못한 그림의 참조도 담는다), 객체가 아닌 그림 목록은 빈 것으로', () => {
+    const ref = 'teacher-image:' + 'a'.repeat(18); // PC 폴더에서 찾지 못한 그림 자리(data:image가 아니어도 그 글이 쓰면 담는다)
+    assert.deepStrictEqual(plainJson(hist.referencedImages('![](local:img_10) ![](local:gone)', { img_1: 'a', img_10: 'b', n: 1, gone: ref })), { img_1: 'a', img_10: 'b', gone: ref });
+    assert.deepStrictEqual(plainJson(hist.referencedImages('local:a', null)), {});
+    assert.deepStrictEqual(plainJson(hist.referencedImages('local:a', ['x'])), {});
+});
+
+test("그 글이 쓰는 그림 고르기: 글을 한 번만 훑어도 글에 'local:키'가 있는지 본 것과 같다(id 글자가 아닌 키는 늘 남긴다)", () => {
+    // 여러 모양의 글에서 예전 방식(키마다 글 전체에서 local:키 찾기)과 같은 키를 고르는지 견준다. 조각을 이어 붙여 local:이 붙거나 겹치는 글도 만든다
+    let seed = 7;
+    const rand = n => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return (seed >>> 8) % n; };
+    const pieces = ['local:', 'img_1', 'img_10', 'img_', 'a', '-', '_', ')', '"', ' ', ':', 'loc', 'al:', 'x9', '\n'];
+    const keys = ['img_1', 'img_10', 'img_', 'img_100', 'a', 'a-', '-', '_', 'x9', 'loc', 'local', 'img_1a', 'b'];
+    const images = Object.fromEntries(keys.map(key => [key, `data:${key}`]));
+    for (let round = 0; round < 400; round++) {
+        const text = Array.from({ length: rand(14) }, () => pieces[rand(pieces.length)]).join('');
+        const expected = keys.filter(key => text.includes(`local:${key}`)).sort();
+        assert.deepStrictEqual(Object.keys(hist.referencedImages(text, images)).sort(), expected, JSON.stringify(text));
+    }
+    assert.deepStrictEqual(plainJson(hist.referencedImages('local:xlocal:img_1', { img_1: 'a', xloc: 'b', local: 'c' })), { img_1: 'a', xloc: 'b' }, '붙어 있는 local:도 빠짐없이 본다');
+    assert.deepStrictEqual(Object.keys(hist.referencedImages('글', { '그림 1': 'a', 'a.b': 'b', '': 'c', img_2: 'd' })).sort(), ['', 'a.b', '그림 1'], 'id 글자가 아닌 키는 가를 수 없어 늘 남긴다(넉넉하게)');
+    assert.deepStrictEqual(plainJson(hist.referencedImages(null, { a: 'x' })), {}, '글이 아니면 빈 글로 본다');
+});
+
+test('저장해 둔 기록 정리: 그림 키가 아주 많고 글이 길어도 곧 끝난다(남이 준 백업의 기록으로 앱 열기가 멈추지 않게)', () => {
+    // 백업 불러오기(mergeHistory)로 들어와 저장된 기록 하나: 그림 키 5만 개, 글 4백만 자(ZIP에서는 거의 0으로 줄어든다). 키마다 글 전체를 찾으면 몇 초가 걸린다
+    const images = Object.fromEntries(Array.from({ length: 50000 }, (_, i) => [`img_${i}`, 'x']));
+    const stored = ctx.mergeHistory([], [{ id: 1, title: '큰 기록', date: 'd', content: `${'a'.repeat(4e6)} ![](local:img_7)`, images }], Date.now()).list;
+    const started = process.hrtime.bigint();
+    const tidy = hist.tidyStoredHistory(stored);
+    const ms = Number(process.hrtime.bigint() - started) / 1e6;
+    assert.deepStrictEqual(Object.keys(tidy[0].images), ['img_7'], '그 글이 쓰는 그림만 남긴다');
+    assert.ok(ms < 1500, `정리에 ${Math.round(ms)}ms 걸렸다`);
+});
+
+test('되돌릴 곳: 탭 하나 기록은 남긴 교과에서만 그 차시(최종 평가 포함)를 찾는다', () => {
+    const inA = { id: 7, title: 'A의 7' };
+    const inB = { id: 7, title: 'B의 7' };
+    const subjects = [{ id: 's1', title: 'A', lessons: [inA], mainQuest: { id: 'mainQuest', title: '최종' } }, { id: 's2', title: 'B', lessons: [inB], mainQuest: { id: 'mainQuest' } }];
+    const tab = extra => historyRestoreTarget({ tabId: 'basicPrac', lessonId: 7, subjectId: 's1', ...extra }, subjects);
+    assert.strictEqual(tab().lesson, inA);
+    assert.strictEqual(tab().part, 'basicPrac');
+    assert.strictEqual(tab({ subjectId: 's2' }).lesson, inB);
+    assert.deepStrictEqual(plainJson(tab({ subjectId: 'gone' })), { mode: 'new', part: 'basicPrac' });
+    assert.strictEqual(tab({ subjectId: undefined }).mode, 'new', '교과 id가 없으면 새 차시');
+    assert.strictEqual(tab({ lessonId: undefined }).mode, 'new');
+    assert.strictEqual(tab({ lessonId: 'mainQuest' }).lesson, subjects[0].mainQuest);
+    assert.strictEqual(historyRestoreTarget({ lessonId: 7, tabContents: {} }, subjects).part, null);
+});
+
+test('되돌릴 곳·확인 창: 남이 준 기록의 이상한 값으로 멈추지 않는다', () => {
+    const odd = { tabId: 'basicLearn', lessonId: { toString: null }, subjectId: { toString: null }, tabContents: 'x', date: { toString: null }, title: { toString: null }, content: { toString: null } };
+    const subjects = [{ id: 's1', title: 'A', lessons: [{ id: 1 }], mainQuest: {} }];
+    assert.strictEqual(historyRestoreTarget(odd, subjects).mode, 'new');
+    assert.strictEqual(historyRestoreTarget({ ...odd, tabId: undefined }, subjects).mode, 'new');
+    const message = ctx.historyRestoreMessage(odd, { mode: 'new', part: 'basicLearn' }, null);
+    assert.ok(message.text.includes('남긴 교과에서 그 차시를 찾지 못했습니다') && message.done.includes('되살린 교안'));
+    assert.strictEqual(ctx.historyRowLabels(odd, { mode: 'new' }).kind, '기본학습 탭');
+    assert.strictEqual(lessonFromHistory(odd, 1).tabContents.basicLearn, '', '글이 아닌 내용은 빈 글로 넣는다');
+});
+
+test('탭 하나 되돌리기: 그 탭만 바꾸고(옛 단일 본문·탭 없는 최종 평가 포함) 그림은 더하기만 한다', () => {
+    const lesson = { id: 1, content: 'a\n\n---\n\nb', images: { x: 'X' }, tabContents: { basicLearn: 'a', basicPrac: 'b', advLearn: null, advPrac: null, assessment: null }, status: 'waiting' };
+    ctx.applyHistoryEntry(lesson, { tabId: 'basicPrac', content: '옛 b ![](local:y)', images: { y: 'Y', odd: 7 } });
+    assert.deepStrictEqual(plainJson(lesson.tabContents), { basicLearn: 'a', basicPrac: '옛 b ![](local:y)', advLearn: null, advPrac: null, assessment: null });
+    assert.strictEqual(lesson.content, 'a\n\n---\n\n옛 b ![](local:y)', '합친 글도 맞춘다');
+    assert.deepStrictEqual(plainJson(lesson.images), { x: 'X', y: 'Y' });
+    assert.strictEqual(lesson.status, 'done');
+    const legacy = { id: 2, content: '옛 본문', tabContents: { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null } };
+    ctx.applyHistoryEntry(legacy, { tabId: 'basicPrac', content: '실습' });
+    assert.strictEqual(legacy.tabContents.basicLearn, '옛 본문', '옛 단일 본문은 기본학습으로 옮긴 뒤 그 탭을 바꾼다');
+    assert.strictEqual(legacy.tabContents.basicPrac, '실습');
+    const quest = { id: 'mainQuest', content: '지금 과제' };
+    ctx.applyHistoryEntry(quest, { tabId: 'basicLearn', content: '예전 과제' });
+    assert.strictEqual(quest.content, '예전 과제');
+    assert.strictEqual(quest.tabContents, undefined, '탭이 없는 최종 평가에 탭을 새로 만들지 않는다');
+    const whole = { id: 3, content: '지금', images: { k: 'K' }, tabContents: { basicLearn: '지금' } };
+    ctx.applyHistoryEntry(whole, { content: '예전', tabContents: { basicLearn: '예전', basicPrac: '실습' }, images: { j: 'J' } });
+    assert.deepStrictEqual(plainJson(whole.tabContents), { basicLearn: '예전', basicPrac: '실습' }, '차시 기록은 5개 탭을 모두 바꾼다');
+    assert.deepStrictEqual(plainJson(whole.images), { k: 'K', j: 'J' });
+});
+
+test('되돌리기의 그림: 찾지 못한 그림 자리·빈 값은 차시의 진짜 그림을 덮지 않고, 차시 쪽이 그림 자리면 기록의 그림으로 채운다', () => {
+    const REAL = `data:image/png;base64,${'A'.repeat(80)}`;
+    const NEWER = `data:image/png;base64,${'B'.repeat(80)}`;
+    const ref = `teacher-image:${'c'.repeat(18)}`; // 백업·폴더에서 그림 파일을 찾지 못한 자리
+    // 기본실습이 img_1을 쓴다. 기본학습 기록의 img_1은 그림 파일을 찾지 못한 자리다(지금 기본학습 글은 img_1을 쓰지 않아 '되돌리기 전' 기록에도 남지 않는다)
+    const lesson = { id: 1, images: { img_1: REAL, img_2: ref, img_3: REAL }, tabContents: { basicLearn: '지금 글', basicPrac: '그림 ![](local:img_1)', advLearn: null, advPrac: null, assessment: null } };
+    const entry = { tabId: 'basicLearn', content: '예전 글 ![](local:img_1) ![](local:img_2) ![](local:img_3) ![](local:img_4)', images: { img_1: ref, img_2: NEWER, img_3: '', img_4: ref } };
+    assert.deepStrictEqual(plainJson(ctx.historyImagesFor(lesson, entry)), { img_2: NEWER, img_4: ref });
+    ctx.applyHistoryEntry(lesson, entry);
+    assert.strictEqual(lesson.images.img_1, REAL, '다른 탭이 쓰는 진짜 그림이 그림 자리로 바뀌지 않는다');
+    assert.strictEqual(lesson.images.img_2, NEWER, '차시 쪽이 그림 자리면 기록의 그림으로 채운다');
+    assert.strictEqual(lesson.images.img_3, REAL, '빈 값도 진짜 그림을 덮지 않는다');
+    assert.strictEqual(lesson.images.img_4, ref, '차시에 없는 그림은 그림 자리라도 넣는다(그림 파일을 채우면 돌아온다)');
+    assert.strictEqual(lesson.tabContents.basicLearn, entry.content);
+    const regenerated = { id: 2, images: { img_1: NEWER }, tabContents: { basicLearn: '글 ![](local:img_1)' } };
+    ctx.applyHistoryEntry(regenerated, { tabId: 'basicLearn', content: '예전 글 ![](local:img_1)', images: { img_1: REAL } });
+    assert.strictEqual(regenerated.images.img_1, REAL, '둘 다 진짜 그림이면 예전처럼 기록의 그림(그때 그림)으로 되돌린다');
+});
+
+test('탭의 지금 글과 되돌리기 전에 남길 내용', () => {
+    const tabs = (extra = {}) => ({ basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null, ...extra });
+    assert.strictEqual(ctx.historyPartText({ content: '옛 본문', tabContents: tabs() }, 'basicLearn'), '옛 본문');
+    assert.strictEqual(ctx.historyPartText({ content: '실습', tabContents: tabs({ basicPrac: '실습' }) }, 'basicLearn'), '', '다른 탭이 있으면 합친 글을 기본학습으로 보지 않는다');
+    assert.strictEqual(ctx.historyPartText({ content: '과제' }, 'assessment'), '과제', '탭이 없으면 본문이 곧 그 탭');
+    const lesson = { id: 4, title: '차시', images: { a: 'A' }, tabContents: tabs({ assessment: '평가' }) };
+    const item = ctx.historyCurrentItem(lesson, 'assessment');
+    assert.strictEqual(item.lesson, lesson);
+    assert.deepStrictEqual(plainJson({ ...item, lesson: null }), { title: '차시 · 학습이해도', content: '평가', images: { a: 'A' }, tabId: 'assessment', lesson: null });
+    assert.strictEqual(ctx.historyCurrentItem(lesson, null), lesson);
+    const quest = ctx.historyCurrentItem({ id: 'mainQuest', title: '👑 최종 평가', content: '과제', images: {} }, 'assessment');
+    assert.strictEqual(quest.title, '👑 최종 평가', '탭이 없는 최종 평가는 본문 전체라 제목에 탭 이름을 붙이지 않는다');
+    assert.strictEqual(quest.content, '과제');
+});
+
+test('새 차시로 되살리기: 탭 하나 기록은 그 탭에 넣고 그림은 글자 값만', () => {
+    const lesson = lessonFromHistory({ title: '차시 · 기본실습', content: '실습 ![](local:a)', tabId: 'basicPrac', images: { a: 'A', odd: 1 } }, 5);
+    assert.strictEqual(lesson.title, '차시 · 기본실습 (되살림)');
+    assert.strictEqual(lesson.tabContents.basicPrac, '실습 ![](local:a)');
+    assert.strictEqual(lesson.tabContents.basicLearn, null);
+    assert.strictEqual(lesson.content, '실습 ![](local:a)');
+    assert.deepStrictEqual(plainJson(lesson.images), { a: 'A' });
+});
+
+test('되돌리기 확인 창: 무엇을 어디로 되돌리는지 말한다', () => {
+    const A = { id: 's1', title: '게임 기획' };
+    const B = { id: 's2', title: '레벨 디자인' };
+    const tabs = (extra = {}) => ({ basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null, ...extra });
+    const lesson = { id: 7, title: '1차시', tabContents: tabs({ assessment: '지금' }) };
+    const entry = { date: '어제', tabId: 'assessment', content: '예전', title: '1차시 · 학습이해도' };
+    const same = ctx.historyRestoreMessage(entry, { mode: 'replace', subject: A, lesson, part: 'assessment' }, A);
+    assert.strictEqual(same.text, "'1차시' 차시의 학습이해도 탭을 이 기록(어제)으로 되돌립니다.\n다른 탭은 그대로 둡니다.\n지금 학습이해도 탭은 작업 기록에 먼저 남겨 다시 되돌릴 수 있습니다.");
+    assert.strictEqual(same.okLabel, '되돌리기');
+    assert.strictEqual(same.done, "'1차시' 차시의 학습이해도 탭을 되돌렸습니다.");
+    const other = ctx.historyRestoreMessage(entry, { mode: 'replace', subject: A, lesson: { ...lesson, tabContents: tabs() }, part: 'assessment' }, B);
+    assert.ok(other.text.startsWith("'1차시' 차시(게임 기획 교과)의 학습이해도 탭을"), other.text);
+    assert.ok(!other.text.includes('먼저 남겨'), '지금 글이 비었으면 먼저 남긴다고 하지 않는다');
+    // 최종 평가는 탭이 없어 본문 전체가 바뀐다. 기록의 탭 id는 그때 열려 있던 탭(currentLessonTab)일 뿐이라 어느 탭이든 탭 이름을 말하지 않는다
+    const questLesson = { id: 'mainQuest', title: '👑 최종 평가', content: '과제' };
+    ['basicLearn', 'assessment'].forEach(tabId => {
+        const quest = ctx.historyRestoreMessage({ ...entry, tabId }, { mode: 'replace', subject: A, lesson: questLesson, part: tabId }, A);
+        assert.strictEqual(quest.text, "'👑 최종 평가'의 내용을 이 기록(어제)으로 되돌립니다.\n지금 내용은 작업 기록에 먼저 남겨 다시 되돌릴 수 있습니다.", tabId);
+        assert.strictEqual(quest.done, "'👑 최종 평가'의 내용을 되돌렸습니다.", tabId);
+        assert.strictEqual(quest.okLabel, '되돌리기');
+    });
+    const otherQuest = ctx.historyRestoreMessage(entry, { mode: 'replace', subject: A, lesson: { ...questLesson, content: '' }, part: 'assessment' }, B);
+    assert.strictEqual(otherQuest.text, "'👑 최종 평가'(게임 기획 교과)의 내용을 이 기록(어제)으로 되돌립니다.", '본문이 비었으면 먼저 남긴다고 하지 않는다');
+    const gone = ctx.historyRestoreMessage(entry, { mode: 'new', part: 'assessment' }, B);
+    // 남긴 교과에서만 찾으므로(교과 간 이동·휴지통 되살리기로 다른 교과에 있거나 id가 바뀌었을 수 있다) 차시가 '없다'고 하지 않는다
+    assert.strictEqual(gone.text, "이 기록(어제)을 남긴 교과에서 그 차시를 찾지 못했습니다.\n'레벨 디자인'에 새 차시로 되살려 학습이해도 탭에 넣습니다.");
+    assert.ok(!gone.text.includes('없습니다'), gone.text);
+    assert.strictEqual(gone.okLabel, '새 차시로 되살리기');
+    assert.strictEqual(gone.done, "'1차시 · 학습이해도 (되살림)' 차시로 되살렸습니다.");
+    const old = ctx.historyRestoreMessage({ date: '작년', content: '글' }, { mode: 'new', part: null }, B);
+    assert.ok(old.text.endsWith('이 기록에는 탭 구분이 없어 기본학습 칸에 들어갑니다.'), old.text);
+    assert.ok(!old.text.includes('예전 기록이라'), '방금 남긴 기록에도 맞는 말로');
+    const whole = ctx.historyRestoreMessage({ date: '어제', tabContents: {} }, { mode: 'replace', subject: A, lesson, part: null }, A);
+    assert.strictEqual(whole.text, "'1차시' 차시를 이 기록(어제)으로 되돌립니다.\n지금 내용은 작업 기록에 먼저 남겨 다시 되돌릴 수 있습니다.");
+});
+
+test('작업 기록 목록 한 줄: 어떤 기록인지와 버튼 이름', () => {
+    const tab = { tabId: 'basicPrac' };
+    assert.deepStrictEqual(plainJson(ctx.historyRowLabels(tab, { mode: 'replace' })), { kind: '기본실습 탭', button: '되돌리기', tip: '그 차시의 기본실습 탭만 이 기록으로 되돌립니다' });
+    assert.deepStrictEqual(plainJson(ctx.historyRowLabels(tab, { mode: 'new' })), { kind: '기본실습 탭', button: '새 차시로 되살리기', tip: '이 기록을 지금 연 교과에 새 차시로 되살립니다' });
+    assert.strictEqual(ctx.historyRowLabels({ tabContents: {} }, { mode: 'replace' }).kind, '5개 탭');
+    assert.strictEqual(ctx.historyRowLabels({ tabContents: {} }, { mode: 'replace' }).tip, '그 차시를 이 기록으로 되돌립니다');
+    assert.strictEqual(ctx.historyRowLabels({}, { mode: 'new' }).kind, '');
+    // 최종 평가(탭 없음)를 고친 기록: 기록의 탭 id가 무엇이든 본문 전체를 되돌린다고 말한다
+    const quest = { id: 'mainQuest', title: '👑 최종 평가', content: '과제' };
+    ['basicLearn', 'assessment'].forEach(tabId => {
+        assert.deepStrictEqual(plainJson(ctx.historyRowLabels({ tabId, lessonId: 'mainQuest' }, { mode: 'replace', lesson: quest, part: tabId })), { kind: '최종 평가', button: '되돌리기', tip: '최종 평가를 이 기록으로 되돌립니다' }, tabId);
+    });
+    const bodyOnly = ctx.historyRowLabels({ tabId: 'basicLearn' }, { mode: 'replace', lesson: { id: 3, content: '옛 본문' }, part: 'basicLearn' });
+    assert.deepStrictEqual(plainJson(bodyOnly), { kind: '', button: '되돌리기', tip: '그 차시를 이 기록으로 되돌립니다' }, '탭이 없는 옛 차시도 탭 이름을 말하지 않는다');
+    const withTabs = ctx.historyRowLabels({ tabId: 'assessment' }, { mode: 'replace', lesson: { id: 3, tabContents: { assessment: '평가' } }, part: 'assessment' });
+    assert.strictEqual(withTabs.kind, '학습이해도 탭', '탭이 있는 차시는 그 탭');
+});
+
+test('기록 크기: 글자 수를 더하고 이상한 값과 깊은 값도 견딘다', () => {
+    assert.strictEqual(hist.historySizeBytes([{ id: 1, t: 'abc', images: { k: 'xy' } }, null, 'zz']), 'id'.length + 't'.length + 3 + 'images'.length + 'k'.length + 2 + 2);
+    let deep = { s: 'x' };
+    for (let i = 0; i < 50; i++) deep = { a: deep };
+    assert.ok(Number.isFinite(hist.historySizeBytes([deep])));
+    assert.strictEqual(hist.historySizeBytes(null), 0);
+});
+
+test('저장해 둔 기록 정리: 객체가 아닌 칸만 빼고, 겹치거나 쓸 수 없는 id는 빈 수로 나누며(바른 id는 그대로), 예전 탭 기록은 쓰는 그림만', () => {
+    const tidy = hist.tidyStoredHistory([{ id: 5, title: '가' }, { id: 5, title: '나' }, { id: 6 }, null, { id: 'x' }, { id: '7' }, { id: { toString: null } }, { id: true }, { id: '' }, { id: [7] }, { id: 5, title: '다' }, 3]);
+    assert.deepStrictEqual(plainJson(tidy.map(item => item.id)), [5, 4, 6, 0, 7, 1, 2, 3, 8, 9], '같은 id는 아래쪽 빈 수로, 쓸 수 없는 id는 0부터(작업 기록 합치기 mergeHistory와 같은 freeHistoryId)');
+    assert.deepStrictEqual(plainJson(tidy.map(item => item.title ?? null)), ['가', '나', null, null, null, null, null, null, null, '다'], '이 브라우저의 기록은 id 모양 때문에 지우지 않는다(객체가 아닌 칸만 뺀다)');
+    const odd = hist.tidyStoredHistory([{ id: Number.MAX_SAFE_INTEGER }, { id: Number.MAX_SAFE_INTEGER }, { id: 2 ** 53 }, { id: 1.5 }, { id: 1.5 }, { id: 1e300 }, { id: 1e300 }, { id: NaN }, { id: -1 }]);
+    assert.strictEqual(odd.length, 9);
+    assert.ok(odd.every(item => Number.isSafeInteger(item.id) && item.id >= 0), '모두 화면에서 찾을 수 있는 id');
+    assert.strictEqual(new Set(odd.map(item => item.id)).size, 9, '더 나눌 수 없는 큰 id에서도 끝없이 돌지 않고 겹치지 않는다');
+    assert.strictEqual(odd[0].id, Number.MAX_SAFE_INTEGER, '바른 id는 그대로');
+    const slim = hist.tidyStoredHistory([{ id: 1, content: '![](local:a)', images: { a: 'A', b: 'B' } }, { id: 2, content: '글', tabContents: {}, images: { a: 'A' } }]);
+    assert.deepStrictEqual(plainJson(slim.map(item => Object.keys(item.images))), [['a'], ['a']], '차시 기록(5개 탭)은 그대로 둔다');
+    const kept = { id: 3, content: '![](local:a)', images: { a: 'A' } };
+    assert.strictEqual(hist.tidyStoredHistory([kept])[0], kept, '바꿀 것이 없으면 같은 객체');
+    assert.deepStrictEqual(plainJson(hist.tidyStoredHistory(undefined)), []);
+    const again = hist.tidyStoredHistory(tidy);
+    assert.deepStrictEqual(plainJson(again.map(item => item.id)), plainJson(tidy.map(item => item.id)), '다시 열어도 같은 id');
+    assert.deepStrictEqual(plainJson(ctx.mergeHistory(tidy, [], Date.now()).list.map(item => item.id)).sort((a, b) => a - b), plainJson(tidy.map(item => item.id)).sort((a, b) => a - b), '정리한 기록은 합치기에서 id가 다시 바뀌지 않는다');
+});
+
+test('새 기록 id: 지금 기록과 겹치지 않는 다음 수', () => {
+    assert.deepStrictEqual(plainJson(hist.freshHistoryIds(3, [{ id: 100 }, { id: 102 }], 100)), [101, 103, 104]);
+    assert.deepStrictEqual(plainJson(hist.freshHistoryIds(1, [{ id: { toString: null } }, null], 5)), [5]);
+});
+
+test('차시가 든 교과 찾기: 연 교과는 화면의 차시 목록으로, 최종 평가도', () => {
+    const open = { id: 1 };
+    const other = { id: 1 };
+    const quest = { id: 'mainQuest' };
+    const subjects = [null, { id: 's1', lessons: [], mainQuest: quest }, { id: 's2', lessons: [other] }];
+    assert.strictEqual(hist.lessonOwnerId(open, subjects, 's1', [open]), 's1', '교과의 차시 목록이 낡아도 연 교과는 화면 목록에서 찾는다');
+    assert.strictEqual(hist.lessonOwnerId(other, subjects, 's1', [open]), 's2');
+    assert.strictEqual(hist.lessonOwnerId(quest, subjects, 's2', []), 's1');
+    assert.strictEqual(hist.lessonOwnerId({ id: 1 }, subjects, 's1', [open]), null);
+    assert.strictEqual(hist.lessonOwnerId(null, subjects, 's1', [open]), null);
+});
+
+test('작업 기록 창: 기록 전체를 글 하나로 만들지 않고 크기를 보인다', () => {
+    vm.runInContext(stateFn('function updateHistoryBadges('), ctx);
+    const badges = { 'history-count-badge': { textContent: '' }, 'history-storage-badge': { textContent: '' } };
+    const before = { document: ctx.document, JSON: ctx.JSON, contentHistory: ctx.contentHistory };
+    Object.assign(ctx, {
+        document: { getElementById: id => badges[id] || null },
+        JSON: { parse: JSON.parse, stringify() { throw new Error('기록 전체를 글로 만들면 안 된다'); } },
+        contentHistory: [{ id: 1, content: 'x'.repeat(2 * 1024 * 1024), images: {} }]
+    });
+    try {
+        ctx.updateHistoryBadges();
+    } finally {
+        Object.assign(ctx, before);
+    }
+    assert.strictEqual(String(badges['history-count-badge'].textContent), '1');
+    assert.strictEqual(badges['history-storage-badge'].textContent, '약 2.0 MB');
+});
+
+test('작업 기록: 탭 하나만 남기는 네 곳은 모두 그 탭 id와 그 차시를 함께 넘긴다', () => {
+    const calls = ['tabs.js', 'course-qbank.js', 'lesson-objectives.js', 'lesson-review.js']
+        .flatMap(file => fs.readFileSync(path.join(__dirname, '..', 'js', file), 'utf8').match(/archiveContent\(\{.*$/gm) || []);
+    assert.ok(calls.length >= 4, calls.join('\n')); // 네 곳(다른 묶음이 더해도 모두 탭 id와 차시를 넘겨야 한다)
+    calls.forEach(line => assert.ok(/\btabId\b/.test(line) && /\blesson: mod\b/.test(line), line));
+});
+
+test('작업 기록 창(state.js): 저장해 둔 기록은 따로 감싼 정리를 거쳐 열고, 창 그리기 실패를 잡고, DB라는 말을 쓰지 않는다', () => {
+    assert.ok(!/JSON\.stringify\(contentHistory\)/.test(STATE_SRC), '기록 전체를 글 하나로 만들지 않는다');
+    assert.ok(/try \{\n\s*contentHistory = tidyStoredHistory\([^\n]*\n\s*\} catch/.test(STATE_SRC), '정리만 따로 try로 감싼다(정리가 실패해도 예시로 덮어쓰지 않고 저장된 그대로 연다)');
+    assert.ok(/renderHistoryUI\(area\)\.catch\(/.test(STATE_SRC));
+    assert.ok(!/DB 사용량|DB 용량|용량 측정 API/.test(STATE_SRC));
+});
+
+test('모든 js 파일의 맨 위 const·let·class 이름은 서로, 그리고 다른 파일의 맨 위 function 이름과 겹치지 않는다(겹치면 브라우저가 뒤 파일을 통째로 싣지 않는다)', () => {
+    const dir = path.join(__dirname, '..', 'js');
+    const sources = fs.readdirSync(dir).filter(name => name.endsWith('.js')).map(file => [file, fs.readFileSync(path.join(dir, file), 'utf8')]);
+    const owners = new Map();
+    const clashes = [];
+    sources.forEach(([file, source]) => {
+        for (const match of source.matchAll(/^(?:const|let|class)\s+([A-Za-z_$][\w$]*)/gm)) {
+            const name = match[1];
+            if (owners.has(name) && owners.get(name) !== file) clashes.push(`${name}: ${owners.get(name)}, ${file}`);
+            if (!owners.has(name)) owners.set(name, file);
+        }
+    });
+    sources.forEach(([file, source]) => {
+        for (const match of source.matchAll(/^(?:async\s+)?(?:function\s*\*?|var)\s*([A-Za-z_$][\w$]*)/gm)) {
+            if (owners.has(match[1]) && owners.get(match[1]) !== file) clashes.push(`${match[1]}: ${owners.get(match[1])}, ${file}(function)`);
+        }
+    });
+    assert.deepStrictEqual(clashes, []);
+    assert.strictEqual(owners.get('referencedImages'), 'data-safety.js', '그 글이 쓰는 그림 고르기는 data-safety.js 한 곳에만 둔다');
+});
+
+testAsync('작업 기록 남기기: 같은 순간에 남겨도 id가 다르고, 교과 id는 그 차시가 든 교과다', async () => {
+    vm.runInContext(stateFn('async function archiveContents('), ctx);
+    const open = { id: 1, title: '열린 차시', content: '열린 글', tabContents: { basicLearn: '열린 글' } };
+    const other = { id: 1, title: '다른 교과 차시', content: '다른 글', tabContents: { basicLearn: '다른 글' } };
+    Object.assign(ctx, {
+        contentHistory: [], saveState: async () => {}, projectFolderHandle: null, currentSubjectId: 's1', courseData: [open],
+        globalState: { subjects: [{ id: 's1', title: 'A', lessons: [], mainQuest: {} }, { id: 's2', title: 'B', lessons: [other], mainQuest: {} }] }
+    });
+    const realDate = ctx.Date;
+    ctx.Date = class extends Date { static now() { return 1000; } }; // 모두 같은 순간(같은 ms)에 남긴다
+    try {
+        await Promise.all([
+            ctx.archiveContents([open]),
+            ctx.archiveContents([other], '다시 생성 전'),
+            ctx.archiveContents([{ title: '다른 교과 차시 · 기본학습', content: '다른 글', images: {}, tabId: 'basicLearn', lesson: other }]),
+            ctx.archiveContents([{ title: '지운 차시 · 기본학습', content: '글', images: {}, tabId: 'basicLearn', lesson: { id: 3 } }])
+        ]);
+    } finally {
+        ctx.Date = realDate;
+    }
+    const history = ctx.contentHistory;
+    assert.deepStrictEqual(plainJson(history.map(item => item.id)), [1000, 1001, 1002, 1003], '같은 순간이어도 id가 겹치지 않는다');
+    assert.deepStrictEqual(plainJson(history.map(item => [item.subjectId ?? null, item.lessonId ?? null, item.tabId ?? null])),
+        [['s1', 1, null], ['s2', 1, null], ['s2', 1, 'basicLearn'], [null, null, 'basicLearn']]);
+    assert.ok(history.every(item => !('lesson' in item)), '차시 객체는 기록에 넣지 않는다');
+    assert.strictEqual(history[1].reason, '다시 생성 전');
+});
+
+// 되돌리기 시험용 상태: s1 교과의 7차시(학습이해도 '지금 평가'). 연 교과는 s2이고 거기에도 7차시가 있다
+function historyRestoreSetup() {
+    const asked = [];
+    const archived = [];
+    const notes = [];
+    const inA = { id: 7, title: '7차시', content: '지금 평가', images: {}, tabContents: { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: '지금 평가' } };
+    const inB = { id: 7, title: 'B의 7차시', content: 'B 글', images: {}, tabContents: { basicLearn: 'B 글' } };
+    Object.assign(ctx, {
+        globalState: { subjects: [{ id: 's1', title: 'A', lessons: [inA], mainQuest: {} }, { id: 's2', title: 'B', lessons: [inB], mainQuest: {} }] },
+        currentSubjectId: 's2', courseData: [inB], saveState: async () => {},
+        archiveContents: async (items, reason) => { archived.push({ items, reason }); },
+        document: { querySelector: () => null, getElementById: () => null }
+    });
+    Object.assign(ctx.window, {
+        showConfirm: (message, onOk, opts) => { asked.push({ message, opts }); onOk(); },
+        showToast: (message, type) => notes.push([message, type]),
+        showAlert: message => notes.push([message, 'alert'])
+    });
+    return { asked, archived, notes, inA, inB };
+}
+
+testAsync('탭 하나 되돌리기: 남긴 교과의 그 차시의 그 탭만 바꾸고, 지금 글을 먼저 남긴다', async () => {
+    const { asked, archived, notes, inA, inB } = historyRestoreSetup();
+    ctx.contentHistory = [{ id: 5, title: '7차시 · 학습이해도', date: '어제', lessonId: 7, subjectId: 's1', tabId: 'assessment', content: '예전 평가 ![](local:b)', images: { b: 'data:b' } }];
+    await ctx.restoreHistoryItem(5);
+    assert.strictEqual(inA.tabContents.assessment, '예전 평가 ![](local:b)');
+    assert.strictEqual(inA.images.b, 'data:b');
+    assert.strictEqual(inB.tabContents.basicLearn, 'B 글', '연 교과의 같은 id 차시는 그대로');
+    assert.strictEqual(archived.length, 1);
+    assert.strictEqual(archived[0].reason, '되돌리기 전');
+    assert.strictEqual(archived[0].items[0].lesson, inA);
+    assert.strictEqual(archived[0].items[0].content, '지금 평가');
+    assert.strictEqual(archived[0].items[0].tabId, 'assessment');
+    assert.ok(asked[0].message.startsWith("'7차시' 차시(A 교과)의 학습이해도 탭을 이 기록(어제)으로 되돌립니다."), asked[0].message);
+    assert.strictEqual(asked[0].opts.okLabel, '되돌리기');
+    assert.deepStrictEqual(notes.at(-1), ["'7차시' 차시(A 교과)의 학습이해도 탭을 되돌렸습니다.", 'success']);
+    await ctx.restoreHistoryItem(5);
+    assert.strictEqual(asked.length, 1, '같은 내용이면 확인 창을 띄우지 않는다');
+    assert.strictEqual(archived.length, 1, '쓸데없는 되돌리기 전 기록을 만들지 않는다');
+    assert.deepStrictEqual(notes.at(-1), ['지금 내용이 이 기록과 같습니다.', 'info']);
+});
+
+testAsync('탭 하나 되돌리기: 글이 같아도 차시가 잃은 그림을 기록이 갖고 있으면 되돌려 그림을 돌려놓고, 기록 쪽이 그림 자리뿐이면 같다고 알린다', async () => {
+    const { asked, archived, notes, inA } = historyRestoreSetup();
+    const REAL = `data:image/png;base64,${'A'.repeat(80)}`;
+    const ref = `teacher-image:${'c'.repeat(18)}`;
+    inA.tabContents = { ...inA.tabContents, assessment: '지금 평가 ![](local:img_1)' };
+    inA.content = inA.tabContents.assessment;
+    inA.images = { img_1: ref }; // 폴더를 열 때 이 그림 파일을 찾지 못했다
+    ctx.contentHistory = [
+        { id: 5, title: '7차시 · 학습이해도', date: '어제', lessonId: 7, subjectId: 's1', tabId: 'assessment', content: '지금 평가 ![](local:img_1)', images: { img_1: REAL } },
+        { id: 6, title: '7차시 · 학습이해도', date: '그제', lessonId: 7, subjectId: 's1', tabId: 'assessment', content: '지금 평가 ![](local:img_1)', images: { img_1: ref } }
+    ];
+    await ctx.restoreHistoryItem(5);
+    assert.strictEqual(asked.length, 1, '글이 같아도 그림이 다르면 확인 창을 띄운다');
+    assert.strictEqual(inA.images.img_1, REAL, '기록의 그림이 돌아온다');
+    assert.strictEqual(archived.length, 1, '지금 내용을 먼저 남긴다');
+    assert.deepStrictEqual(notes.at(-1), ["'7차시' 차시(A 교과)의 학습이해도 탭을 되돌렸습니다.", 'success']);
+    await ctx.restoreHistoryItem(6);
+    assert.strictEqual(asked.length, 1, '기록 쪽이 그림 자리뿐이면 되돌려도 바뀌는 것이 없어 묻지 않는다');
+    assert.deepStrictEqual(notes.at(-1), ['지금 내용이 이 기록과 같습니다.', 'info']);
+    assert.strictEqual(inA.images.img_1, REAL, '진짜 그림이 그대로 남는다');
+});
+
+testAsync('최종 평가 기록 되돌리기: 그때 열려 있던 탭과 상관없이 본문을 되돌리고, 탭 이름을 말하지 않는다', async () => {
+    const { asked, archived, notes } = historyRestoreSetup();
+    const quest = { id: 'mainQuest', title: '👑 최종 평가', content: '지금 과제', images: {} };
+    ctx.globalState.subjects[0].mainQuest = quest;
+    ctx.contentHistory = [{ id: 9, title: '👑 최종 평가', date: '어제', lessonId: 'mainQuest', subjectId: 's1', tabId: 'assessment', content: '예전 과제', images: {} }];
+    await ctx.restoreHistoryItem(9);
+    assert.strictEqual(quest.content, '예전 과제');
+    assert.strictEqual(quest.tabContents, undefined, '탭을 새로 만들지 않는다');
+    assert.strictEqual(asked[0].message, "'👑 최종 평가'(A 교과)의 내용을 이 기록(어제)으로 되돌립니다.\n지금 내용은 작업 기록에 먼저 남겨 다시 되돌릴 수 있습니다.");
+    assert.strictEqual(archived[0].items[0].title, '👑 최종 평가', "'되돌리기 전' 기록 제목에도 탭 이름을 붙이지 않는다");
+    assert.strictEqual(archived[0].items[0].content, '지금 과제');
+    assert.deepStrictEqual(notes.at(-1), ["'👑 최종 평가'(A 교과)의 내용을 되돌렸습니다.", 'success']);
+});
+
+testAsync('차시 기록(5개 탭) 되돌리기는 예전처럼 그 차시를 통째로 바꾸고, 차시 전체를 먼저 남긴다', async () => {
+    const { asked, archived, inA } = historyRestoreSetup();
+    ctx.contentHistory = [{ id: 8, title: '7차시', date: '그제', lessonId: 7, subjectId: 's1', content: '옛 기본', images: {}, tabContents: { basicLearn: '옛 기본', basicPrac: null, advLearn: null, advPrac: null, assessment: null } }];
+    await ctx.restoreHistoryItem(8);
+    assert.strictEqual(archived[0].items[0], inA, '되돌리기 전에 차시 전체를 남긴다');
+    assert.strictEqual(archived[0].reason, '되돌리기 전');
+    assert.deepStrictEqual(plainJson(inA.tabContents), { basicLearn: '옛 기본', basicPrac: null, advLearn: null, advPrac: null, assessment: null });
+    assert.strictEqual(inA.content, '옛 기본');
+    assert.strictEqual(asked[0].message, "'7차시' 차시(A 교과)를 이 기록(그제)으로 되돌립니다.\n지금 내용은 작업 기록에 먼저 남겨 다시 되돌릴 수 있습니다.");
+});
+
+testAsync('차시가 없으면 연 교과에 새 차시로 그 탭에 넣고, 연 교과가 없으면 먼저 알린다', async () => {
+    const { asked, notes } = historyRestoreSetup();
+    ctx.contentHistory = [{ id: 6, title: '지운 차시 · 기본실습', date: '어제', lessonId: 99, subjectId: 's2', tabId: 'basicPrac', content: '실습 글' }];
+    await ctx.restoreHistoryItem(6);
+    const added = ctx.courseData.at(-1);
+    assert.strictEqual(added.title, '지운 차시 · 기본실습 (되살림)');
+    assert.strictEqual(added.tabContents.basicPrac, '실습 글');
+    assert.strictEqual(added.tabContents.basicLearn, null);
+    assert.ok(Number.isSafeInteger(added.id) && added.id !== 7, String(added.id));
+    assert.strictEqual(asked[0].message, "이 기록(어제)을 남긴 교과에서 그 차시를 찾지 못했습니다.\n'B'에 새 차시로 되살려 기본실습 탭에 넣습니다.");
+    assert.strictEqual(asked[0].opts.okLabel, '새 차시로 되살리기');
+    assert.deepStrictEqual(notes.at(-1), ["'지운 차시 · 기본실습 (되살림)' 차시로 되살렸습니다.", 'success']);
+    ctx.currentSubjectId = null;
+    await ctx.restoreHistoryItem(6);
+    assert.strictEqual(asked.length, 1, '연 교과가 없으면 확인 창을 띄우지 않는다');
+    assert.deepStrictEqual(notes.at(-1), ['되살릴 교과를 먼저 여세요(교과 편집기에서 다시 누르세요).', 'alert']);
 });
 
 (async () => {
