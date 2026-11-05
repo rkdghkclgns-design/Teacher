@@ -2742,7 +2742,7 @@ function renderEditor(mod) {
     const _tabEmpty = !renderText || !String(renderText).trim();
 
     // 렌더 시 local:그림 id를 저장된 그림으로 바꾸고, 없는 그림 자리(AI가 규칙을 무시하고 낸 local: 링크 포함)는 비운다(내보내기와 같은 규칙, lesson-export.js inlineLessonImages).
-    // 그림 id는 이스케이프해 찾으므로 이상한 id로 차시가 열리지 않거나 멈추지 않고, img_1이 img_10을 건드리지 않는다
+    // 그림 키 모양 하나로 찾아 그림 목록에서 꺼내므로(그림 id로 정규식을 만들지 않는다) 이상한 id로 차시가 열리지 않거나 멈추지 않고, img_1이 img_10을 건드리지 않는다
     renderText = inlineLessonImages(renderText, mod.images);
 
     // v7.6: 공통 마크다운 전처리 적용

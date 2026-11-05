@@ -5,6 +5,8 @@
 const EXPORT_PRINT_WAIT = 800; // 인쇄 전에 글꼴·그림이 자리 잡을 시간
 const EXPORT_FRAME_LIFETIME = 30 * 60 * 1000; // 인쇄가 끝났다는 신호(afterprint)가 오지 않는 브라우저에서 인쇄용 iframe을 지우는 시한
 const EXPORT_CONTROLS = '[data-lesson-action], .image-regenerate-btn, .image-wrapper > span, .para-edit, button, textarea';
+const EXPORT_IMAGE_KEY_RE = /^[\w-]{1,80}$/; // 다시 불러오기 표시를 달 그림 키(output-import.js OUTPUT_IMAGE_KEY_RE, data-safety.js SAFE_IMAGE_KEY와 같은 규칙)
+const EXPORT_PICTURE_RE = /^data:image\//; // 넣을 그림인지(진짜 그림). 찾지 못한 그림 자리(teacher-image:…)·빈 값은 없는 그림으로 그린다
 
 const LESSON_EXPORT_CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;600;800&display=swap');
@@ -51,7 +53,6 @@ hr { border: 0; border-top: 1px solid #e5e5ee; margin: 2rem 0; }
 }`;
 
 const exportEscape = text => String(text ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
-const exportRegExp = text => String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /* ---------- 내보낼 글 고르기 (DOM 없이) ---------- */
 // 탭 순서대로 내용이 있는 탭만. tabIds를 주면 그 탭만. 탭이 모두 비고 옛 단일 본문(content)만 있으면 기본학습으로 본다
@@ -66,17 +67,38 @@ function lessonTabSources(mod, tabIds) {
         .map(tab => ({ ...tab, md: clean(tab.md) }));
 }
 
-// local:그림id를 저장된 그림으로 바꾸고, 없는 그림 자리는 비운다(화면 보기와 같은 규칙). img_1이 img_10을 건드리지 않게 id 끝을 확인한다
+// local:그림 키를 저장된 그림으로 바꾸고, 없는 그림 자리는 비운다(화면 보기와 같은 규칙. 차시 화면도 이 함수로 그린다, api.js)
+// 그림 키는 [\w-]만 쓰므로(data-safety.js SAFE_IMAGE_KEY) 정해 둔 모양 하나로 찾아 키를 목록에서 꺼낸다(그림 키로 정규식을 만들지 않는다).
+// 키 끝까지 읽으므로 img_1이 img_10을 건드리지 않는다. 진짜 그림만 넣고, 찾지 못한 그림 자리(teacher-image:…)·빈 값·목록에 없는 키는 없는 그림 자리로 둔다
 function inlineLessonImages(md, images) {
-    const filled = Object.entries(images || {}).reduce(
-        (text, [id, data]) => text.replace(new RegExp(`local:${exportRegExp(id)}(?![\\w-])`, 'g'), () => data),
-        String(md || '')
-    );
+    const pictures = new Map(Object.entries(images || {}).filter(([, data]) => typeof data === 'string' && EXPORT_PICTURE_RE.test(data)));
+    const filled = String(md || '').replace(/local:([\w-]{1,80})(?![\w-])/g, (whole, id) => (pictures.has(id) ? pictures.get(id) : whole));
     return filled.replace(/src="local:[^"]+"/g, 'src="" alt="[이미지 생성 누락]"').replace(/\(local:[^)]+\)/g, '()');
 }
 
+// 다시 불러오기 표시: 화면에 보인 그림 <img>에 그림 키와 차시 번호를 단다. 원본(JSON)에는 그 그림을 다시 넣지 않는다(output-import.js)
+// images: 이 화면을 그릴 때 쓴 그림(키 → data URL). 같은 그림이 여러 키에 있으면 앞 키 하나만 단다(나머지 키는 원본에 그림을 담는다)
+// shown(Map 키 → 그림)에 단 것을 모은다. 글에 미리 들어 있던 표시는 지운다(남이 만든 글이 다른 그림을 가리키지 않게)
+function markShownImages(box, images, lessonIndex, shown) {
+    const keyOf = new Map();
+    Object.entries(images || {}).forEach(([key, data]) => {
+        if (typeof data === 'string' && EXPORT_PICTURE_RE.test(data) && EXPORT_IMAGE_KEY_RE.test(key) && !keyOf.has(data)) keyOf.set(data, key);
+    });
+    box.querySelectorAll('img').forEach(img => {
+        img.removeAttribute('data-teacher-image');
+        img.removeAttribute('data-teacher-lesson');
+        const src = img.getAttribute('src');
+        const key = keyOf.get(src);
+        if (!key) return;
+        img.setAttribute('data-teacher-image', key);
+        img.setAttribute('data-teacher-lesson', String(lessonIndex));
+        shown.set(key, src);
+    });
+    return box;
+}
+
 // 완성된 HTML 문서. 서식은 문서 안에 넣어 파일 하나로 열린다.
-// source: 다시 불러오기용 원본 태그(output-import.js lessonSourceScript). HTML로 내려받을 때만 넣는다
+// source: 다시 불러오기용 원본 태그(output-import.js lessonSourceScript). HTML로 내려받을 때와 ZIP의 교안.html에 넣는다(PDF 인쇄본에는 넣지 않는다)
 function lessonHtmlDocument(title, body, extraCss = '', source = '') {
     return `<!DOCTYPE html>
 <html lang="ko">
@@ -121,17 +143,19 @@ async function renderExportMermaid(box) {
 }
 
 // 지금 화면에 보이는 탭이면 화면을 그대로 쓴다(그린 다이어그램, 판서 영상). 아니면 같은 순서로 새로 그린다
+// opts.mark = { index, shown }: HTML 파일과 ZIP의 교안.html은 보이는 그림에 다시 불러오기 표시를 단다(PDF에는 달지 않는다)
 async function lessonTabHtml(mod, tab, opts) {
     const view = document.getElementById('render-view');
     const onScreen = opts.useView && view && view.children.length
         && tab.id === currentLessonTab && String(getEditingModule?.()?.id) === String(mod.id);
+    const mark = box => (opts.mark ? markShownImages(box, mod.images, opts.mark.index, opts.mark.shown) : box);
     if (onScreen) {
         const exported = opts.videos && window.whiteboardHtmlForExport ? await window.whiteboardHtmlForExport(view) : { html: view.innerHTML, videos: 0 };
-        return { html: exportStrip(exported.html).innerHTML, videos: exported.videos };
+        return { html: mark(exportStrip(exported.html)).innerHTML, videos: exported.videos };
     }
     const box = exportStrip(renderLessonHTML(preprocessMarkdown(inlineLessonImages(tab.md, mod.images))));
     await renderExportMermaid(box);
-    return { html: box.innerHTML, videos: 0 };
+    return { html: mark(box).innerHTML, videos: 0 };
 }
 
 // 차시 하나의 문서 본문. 탭이 여럿이면 탭 이름 띠를 붙이고, PDF에서는 탭마다 새 쪽으로 넘긴다
@@ -149,8 +173,10 @@ async function lessonExportBody(mod, tabIds, opts = {}) {
 }
 
 /* ---------- 내려받기·인쇄 ---------- */
+// 내려받은 파일 크기(바이트)를 돌려준다(다시 불러오기 상한 안내, output-import.js noteReimportSize)
 function downloadTextFile(text, fileName, type) {
-    const url = URL.createObjectURL(new Blob([text], { type }));
+    const blob = new Blob([text], { type });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
     link.download = fileName;
@@ -158,6 +184,7 @@ function downloadTextFile(text, fileName, type) {
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return blob.size;
 }
 
 // 숨긴 iframe에 문서를 넣고 인쇄 창을 연다. 새 창을 띄우지 않으므로 팝업 차단에 걸리지 않는다
@@ -189,13 +216,16 @@ window.exportLessonDocument = async function (mod, format, tabIds) {
     if (!mod) return window.showAlert('차시를 먼저 선택해주세요. (좌측 목록에서 차시 클릭)');
     try {
         window.showToast?.(format === 'pdf' ? '인쇄 창을 준비하는 중입니다. "PDF로 저장"을 고르세요.' : 'HTML 파일을 만드는 중입니다.', 'info');
-        const body = await lessonExportBody(mod, tabIds, { useView: true, videos: format === 'html' });
+        const asHtml = format === 'html';
+        const shown = new Map();
+        const body = await lessonExportBody(mod, tabIds, { useView: true, videos: asHtml, mark: asHtml ? { index: 0, shown } : null });
         if (!body.tabs) return window.showAlert('내보낼 교안 내용이 없습니다.');
         if (format === 'pdf') return await printHtmlDocument(lessonHtmlDocument(mod.title || '교안', body.html));
-        // HTML에는 원본(탭 글·그림·교수안)을 담아 '내보낸 교안 다시 불러오기'로 고칠 수 있게 한다
-        const source = lessonSourceScript(lessonSourcePayload([mod], { tabIds, withGyosuan: !tabIds }));
-        downloadTextFile(lessonHtmlDocument(mod.title || '교안', body.html, '', source), lessonFileName(mod, 'html'), 'text/html;charset=utf-8');
+        // 읽기용 HTML: 원본에는 탭 글과 화면에 없는 그림만 담는다(교수안은 넣지 않는다). '내보낸 교안 다시 불러오기'로 고칠 수 있다
+        const source = lessonSourceScript(lessonSourcePayload([mod], { tabIds, shown: [shown] }));
+        const size = downloadTextFile(lessonHtmlDocument(mod.title || '교안', body.html, '', source), lessonFileName(mod, 'html'), 'text/html;charset=utf-8');
         if (body.videos) window.showToast?.(`판서 영상 ${body.videos}개를 HTML 파일 안에 넣었습니다(파일이 커질 수 있습니다).`, 'info');
+        window.noteReimportSize?.(size);
     } catch (err) {
         console.error('[내보내기] 차시 문서 실패:', err);
         window.showAlert(`내보내기 중 오류가 났습니다: ${err.message}`);
@@ -209,21 +239,32 @@ window.exportSubjectDocument = async function (subj, format) {
     if (!lessons.length) return window.showAlert('내보낼 교안이 없습니다. 교안을 먼저 생성해주세요.');
     try {
         window.showToast?.(`${lessons.length}개 차시를 문서로 만드는 중입니다.`, 'info');
+        const asHtml = format === 'html';
+        const shown = lessons.map(() => new Map());
         const articles = [];
-        for (const mod of lessons) articles.push(`<article class="lesson-break">${(await lessonExportBody(mod, null)).html}</article>`);
+        for (const [index, mod] of lessons.entries()) {
+            const body = await lessonExportBody(mod, null, asHtml ? { mark: { index, shown: shown[index] } } : {});
+            articles.push(`<article class="lesson-break">${body.html}</article>`);
+        }
         if (format === 'pdf') return await printHtmlDocument(lessonHtmlDocument(subj.title || '교과', articles.join('\n')));
-        const source = lessonSourceScript(lessonSourcePayload(lessons));
-        downloadTextFile(lessonHtmlDocument(subj.title || '교과', articles.join('\n'), '', source), `${safeFileName(subj.title || '교과')}_교안.html`, 'text/html;charset=utf-8');
+        // 읽기용: 교수안은 원본에 넣지 않는다. 보이는 그림은 차시 번호와 함께 표시해 원본에 다시 담지 않는다
+        const source = lessonSourceScript(lessonSourcePayload(lessons, { shown }));
+        const size = downloadTextFile(lessonHtmlDocument(subj.title || '교과', articles.join('\n'), '', source), `${safeFileName(subj.title || '교과')}_교안.html`, 'text/html;charset=utf-8');
+        window.noteReimportSize?.(size);
     } catch (err) {
         console.error('[내보내기] 교과 문서 실패:', err);
         window.showAlert(`내보내기 중 오류가 났습니다: ${err.message}`);
     }
 };
 
-// ZIP에 넣을 차시 교안 HTML(5개 탭). 내용이 없으면 null
+// ZIP에 넣을 차시 교안 HTML(5개 탭, 그림 포함). 내용이 없으면 null
+// 원본도 담아 이 파일 하나로 '내보낸 교안 다시 불러오기'가 된다. 교수안은 넣지 않는다(ZIP의 06_교수안.md·07_슬라이드편성안.md에 있다)
+// 원본은 그린 바로 그 차시(mod)로 만든다(그림 담기 '빼기'는 백업 정보에만 쓰고 읽기용 교안.html의 그림은 그대로 둔다)
 window.lessonHtmlForZip = async function (mod) {
-    const body = await lessonExportBody(mod, null);
-    return body.tabs ? lessonHtmlDocument(mod.title || '교안', body.html) : null;
+    const shown = new Map();
+    const body = await lessonExportBody(mod, null, { mark: { index: 0, shown } });
+    if (!body.tabs) return null;
+    return lessonHtmlDocument(mod.title || '교안', body.html, '', lessonSourceScript(lessonSourcePayload([mod], { shown: [shown] })));
 };
 
-Object.assign(window, { lessonTabSources, inlineLessonImages, lessonHtmlDocument, printHtmlDocument, downloadTextFile });
+Object.assign(window, { lessonTabSources, inlineLessonImages, lessonHtmlDocument, printHtmlDocument, downloadTextFile, markShownImages });

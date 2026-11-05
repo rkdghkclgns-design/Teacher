@@ -786,7 +786,7 @@
                     </div>
                     <div class="px-3 py-1.5 text-[0.6875rem] font-bold text-white/60 uppercase tracking-wider">형식 선택</div>
 
-                    <button onclick="executeDropdownExport('md')"
+                    <button onclick="executeDropdownExport('md')" title="글만 담는 MD 파일입니다. 그림은 담기지 않습니다"
                         class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
                         <i class="ph-fill ph-file-text text-sky-400 text-sm"></i> 마크다운 (.md)
                     </button>
@@ -802,7 +802,7 @@
                         class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
                         <i class="ph-fill ph-book-open-text text-amber-400 text-sm"></i> 교육 자료 양식 (.md)
                     </button>
-                    <button onclick="executeDropdownExport('html')"
+                    <button onclick="executeDropdownExport('html')" title="화면과 같은 모양의 HTML 파일입니다. '내보낸 교안 다시 불러오기'로 다시 고칠 수 있습니다. 교수안은 넣지 않습니다(교수안 화면의 HTML 버튼으로 받습니다)"
                         class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
                         <i class="ph-fill ph-code text-emerald-400 text-sm"></i> HTML (.html)
                     </button>
@@ -834,7 +834,7 @@
                     <i class="ph-bold ph-arrow-counter-clockwise text-amber-300 text-sm"></i> 백업 ZIP으로 되살리기
                 </button>
                 <input type="file" id="import-output-input" accept=".html,.htm,.md,.markdown,.txt" multiple class="hidden" onchange="importOutputFiles(event)">
-                <button onclick="document.getElementById('import-output-input').click(); toggleExportDropdown();" title="이 앱에서 내보낸 교안 HTML·MD(교수안 HTML 포함)를 고칠 수 있는 차시로 되살립니다. 편집 중이면 그 교과에, 아니면 새 교과에 넣습니다"
+                <button onclick="document.getElementById('import-output-input').click(); toggleExportDropdown();" title="이 앱에서 내보낸 교안 HTML·MD와 교수안 HTML을 고칠 수 있는 차시로 되살립니다. 교수안까지 되살리려면 교수안 화면에서 받은 HTML을 고르세요. 편집 중이면 그 교과에, 아니면 새 교과에 넣습니다"
                     class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
                     <i class="ph-bold ph-file-arrow-up text-sky-300 text-sm"></i> 내보낸 교안 다시 불러오기
                 </button>

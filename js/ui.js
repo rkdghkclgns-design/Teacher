@@ -101,7 +101,7 @@ window.showConfirm = function (message, onConfirm, opts = {}) {
 
                     </div>
 
-                    <p class="text-sm text-textMuted mb-6 leading-relaxed whitespace-pre-wrap">${escapeHtml(message)}</p>
+                    <p class="text-sm text-textMuted mb-6 leading-relaxed whitespace-pre-wrap max-h-[60vh] overflow-y-auto">${escapeHtml(message)}</p>
 
                     <div class="flex justify-end gap-2">
 

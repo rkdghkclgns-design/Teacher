@@ -31,11 +31,13 @@ function allowGyosuanOverwrite(mod) {
 }
 
 /* ---------- 강사뷰 ---------- */
-function gyosuanDocHtml(mod) {
+// mark(mount): 그린 문서를 글로 바꾸기 전에 고친다(HTML 내려받기의 다시 불러오기 표시, gyosuanExportDocument)
+function gyosuanDocHtml(mod, mark = null) {
     if (!mod?.gyosuan?.docMd) return null;
     const mount = document.createElement('div');
     const parsed = window.KBuilder.parseDoc(resolveGyosuanImages(mod.gyosuan.docMd, mod));
     window.KBuilder.buildDoc(parsed, mount, { refs: mod.refImages || [] });
+    if (mark) mark(mount);
     return mount.innerHTML;
 }
 
@@ -259,8 +261,10 @@ window.downloadGyosuanMd = function (moduleId, field = 'docMd') {
 };
 
 // 교수안 문서(HTML 한 파일). 교수안 서식(css/gyosuan-doc.css)을 문서 안에 넣어 따로 열어도 같은 모양이다
-async function gyosuanExportDocument(mod) {
-    const html = gyosuanDocHtml(mod);
+// shown(Map)을 주면 보이는 그림에 다시 불러오기 표시를 달고 그 그림을 모은다(HTML 내려받기). 인쇄에는 주지 않는다
+async function gyosuanExportDocument(mod, shown = null) {
+    const images = { ...(mod.images || {}), ...(mod.gyosuan?.images || {}) }; // 그릴 때와 같은 순서(교수안 그림이 이긴다, gyosuan.js resolveGyosuanImages)
+    const html = gyosuanDocHtml(mod, shown ? mount => markShownImages(mount, images, 0, shown) : null);
     if (!html) return null;
     const cssUrl = new URL('css/gyosuan-doc.css', location.href).href;
     const css = await fetch(cssUrl).then(res => (res.ok ? res.text() : '')).catch(() => '');
@@ -272,13 +276,15 @@ async function gyosuanExportDocument(mod) {
 
 window.downloadGyosuanHtml = async function (moduleId) {
     const mod = getEditingModule(moduleId);
-    const doc = mod && await gyosuanExportDocument(mod);
+    const shown = new Map();
+    const doc = mod && await gyosuanExportDocument(mod, shown);
     if (!doc) return window.showAlert('내보낼 교수안이 없습니다.');
-    // 다시 불러오면 이 차시(교안 탭과 교수안)가 고칠 수 있게 되살아난다(output-import.js)
+    // 다시 불러오면 이 차시(교안 탭, 교수안·편성안, 교수안 그림)가 고칠 수 있게 되살아난다(output-import.js)
+    // 교수안을 원본에 담는 내보내기는 이것뿐이다. 메뉴의 차시·교과 HTML과 ZIP의 교안.html(읽기용)에는 넣지 않는다
     // 바꿀 글을 함수로 넘긴다. 글자로 넘기면 교안 속 $$·$'·$& 가 치환 패턴으로 읽혀 원본이 깨진다
-    const source = lessonSourceScript(lessonSourcePayload([mod]));
+    const source = lessonSourceScript(lessonSourcePayload([mod], { withGyosuan: true, shown: [shown] }));
     const withSource = doc.replace('</body>', () => `${source}</body>`);
-    downloadTextFile(withSource, `${lessonFileBase(mod)}_교수안.html`, 'text/html;charset=utf-8');
+    window.noteReimportSize?.(downloadTextFile(withSource, `${lessonFileBase(mod)}_교수안.html`, 'text/html;charset=utf-8'));
 };
 
 // 새 창 없이 인쇄 창을 연다(lesson-export.js). 인쇄 창에서 'PDF로 저장'을 고른다

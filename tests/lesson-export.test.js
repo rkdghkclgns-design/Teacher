@@ -12,7 +12,7 @@ const LESSON_TABS = [
 const ctx = { console, window: {}, document: {}, LESSON_TABS };
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'lesson-export.js'), 'utf8'), ctx);
-const { lessonTabSources, inlineLessonImages, lessonHtmlDocument } = ctx;
+const { lessonTabSources, inlineLessonImages, lessonHtmlDocument, markShownImages } = ctx;
 
 let failed = 0;
 let count = 0;
@@ -43,7 +43,7 @@ test('local: 그림을 저장된 그림으로 바꾸고, img_1이 img_10을 건�
 });
 
 test('그림 데이터에 $가 있어도 그대로 넣는다', () => {
-    assert.strictEqual(inlineLessonImages('(local:x)', { x: 'data:a$&b' }), '(data:a$&b)');
+    assert.strictEqual(inlineLessonImages('(local:x)', { x: 'data:image/png;base64,a$&b' }), '(data:image/png;base64,a$&b)');
 });
 
 test('문서 틀: 제목을 이스케이프하고, 화면과 같은 서식과 인쇄 규칙을 넣는다', () => {
@@ -61,11 +61,37 @@ test('화면 그림 넣기: 이상한 그림 id로 멈추거나 깨지지 않는
     const started = Date.now();
     const view = inlineLessonImages('local:' + 'a'.repeat(40) + '! <img src="local:(">', { '(a+)+$': png, '(': png });
     assert.ok(Date.now() - started < 200, '멈추지 않는다');
-    assert.ok(view.includes(`src="${png}"`), '괄호가 든 id도 글자 그대로 찾는다');
+    // 그림 키 규칙([\w-] 80자까지, data-safety.js SAFE_IMAGE_KEY) 밖의 키는 앱이 만들지 않고 불러올 때 sanitizeState가 버린다. 그런 키는 쓰지 않고 그 자리는 없는 그림으로 둔다
+    assert.ok(view.includes('src="" alt="[이미지 생성 누락]"') && !view.includes(png), '괄호가 든 id는 그림 키로 보지 않는다');
     // 차시 화면(렌더·보기 전환)도 그림 id로 정규식을 만들지 않고 이 함수로 그린다(묶음 6)
     const api = fs.readFileSync(path.join(__dirname, '..', 'js', 'api.js'), 'utf8');
     assert.strictEqual((api.match(/inlineLessonImages\(renderText, mod\.images\)/g) || []).length, 2, 'renderEditor·toggleEditorMode');
     assert.ok(!/new RegExp\(`local:\$\{imgId\}`/.test(api));
+});
+
+test('그림 넣기는 그림 키 모양 하나로 찾아 목록에서 꺼낸다: img_1·img_10, 뒤에 . ) 가 붙은 키, 목록에 없는 키, 진짜 그림이 아닌 값', () => {
+    const A = 'data:image/png;base64,QUFB';
+    const B = 'data:image/png;base64,QkJC';
+    const md = '![a](local:img_1) ![b](local:img_10) 끝 local:img_1. 괄호 (local:img_10) <img src="local:img_2"> ![c](local:ref_1) ![d](local:empty_1)';
+    const out = inlineLessonImages(md, { img_1: A, img_10: B, ref_1: 'teacher-image:0123456789abcdef01', empty_1: '' });
+    assert.ok(out.includes(`![a](${A})`) && out.includes(`![b](${B})`), 'img_1과 img_10이 함께 있어도 제 그림');
+    assert.ok(out.includes(`끝 ${A}.`) && out.includes(`괄호 (${B})`), "키 뒤에 '.'·')'가 붙어도 그 키");
+    assert.ok(out.includes('<img src="" alt="[이미지 생성 누락]">'), '목록에 없는 키는 없는 그림 자리로');
+    assert.ok(out.includes('![c]()') && out.includes('![d]()') && !out.includes('teacher-image:'), '찾지 못한 그림 자리(teacher-image:…)·빈 값은 넣지 않고 없는 그림으로');
+    const source = fs.readFileSync(path.join(__dirname, '..', 'js', 'lesson-export.js'), 'utf8');
+    assert.ok(!/new RegExp\(/.test(source), '내보내기는 그림 키 같은 데이터로 정규식을 만들지 않는다');
+});
+
+test('보이는 그림에 키와 차시 번호를 달고, 같은 그림은 앞 키 하나만, 글에 미리 있던 표시는 지운다', () => {
+    const A = 'data:image/png;base64,QUFB';
+    const B = 'data:image/png;base64,QkJC';
+    const Z = 'data:image/png;base64,WlpaWg==';
+    const fake = attrs => ({ attrs, getAttribute: n => (n in attrs ? attrs[n] : null), setAttribute: (n, v) => { attrs[n] = String(v); }, removeAttribute: n => { delete attrs[n]; } });
+    const imgs = [fake({ src: A }), fake({ src: A }), fake({ src: B, 'data-teacher-image': 'evil', 'data-teacher-lesson': '9' }), fake({ src: Z, 'data-teacher-image': 'x' }), fake({ src: '' })];
+    const shown = new Map();
+    markShownImages({ querySelectorAll: () => imgs }, { a1: A, a2: A, b: B, 'bad"key': Z, gone: '', ref: 'teacher-image:0123456789abcdef01' }, 3, shown);
+    assert.deepStrictEqual(imgs.map(img => [img.attrs['data-teacher-image'], img.attrs['data-teacher-lesson']]), [['a1', '3'], ['a1', '3'], ['b', '3'], [undefined, undefined], [undefined, undefined]]);
+    assert.deepStrictEqual([...shown.keys()], ['a1', 'b'], '빈 그림(찾지 못한 그림 자리·빈 값)에는 달지 않는다');
 });
 
 console.log(`\n${count - failed}/${count} passed`);
