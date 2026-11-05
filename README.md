@@ -166,7 +166,7 @@ AI 기반 게임 기획 교안 자동 생성 도구
 - **섹션 고정**: 고른 섹션은 탭을 다시 생성해도 그대로 유지
 - **작업별 추론 강도**: 켜면 NCS·문항·판독 같은 보조 작업만 낮춰 시간과 비용을 줄임 (교안 본문은 설정값 유지)
 - **교차 검증**: Gemini·Claude 키가 모두 있으면 NCS 추천은 두 모델 합의, 문항은 다른 모델이 검수
-- **참고 자료**: PDF·PPTX(노트 포함)·DOCX·MD·이미지, 스캔 PDF 판독, 쪽 범위 선택
+- **참고 자료**: PDF·PPTX(노트 포함)·DOCX·MD·이미지, 스캔 PDF 판독, 쪽 범위 선택. PDF는 pdf.js를 isEvalSupported: false로 열어 조작된 글꼴로 코드가 실행되는 취약점(CVE-2024-4367)을 막음
 - **참고 자료 확인**: CP949 텍스트 파일 읽기, AI에 보내는 분량 표시, 파일별 추출 글자 보기
 - **교안 컨벤션**: 파일명 규칙, 마크다운 컨벤션 설정
 
@@ -175,10 +175,10 @@ AI 기반 게임 기획 교안 자동 생성 도구
 | 분류 | 기술 |
 |------|------|
 | AI | Google Gemini API, Claude API |
-| 마크다운 | marked.js |
-| 다이어그램 | Mermaid.js |
+| 마크다운 | marked.js 15.0.12 (버전 고정: 서식 막대가 토큰 위치에 기대므로 올릴 때 tests/lesson-format.test.js를 같은 버전으로 확인) |
+| 다이어그램 | Mermaid.js 10.9.1 (securityLevel strict: 노드 click 지시문·HTML 차단) |
 | PDF | 브라우저 인쇄(교안·교수안), html2pdf.js(히스토리) |
 | PPTX | PptxGenJS (슬라이드 스튜디오) |
 | 압축 | JSZip + FileSaver |
-| UI | Tailwind CSS + Phosphor Icons |
+| UI | Tailwind CSS 3.4.17 + Phosphor Icons 2.1.2 (버전 고정) |
 | 저장 | IndexedDB |

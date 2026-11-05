@@ -20,12 +20,13 @@
 
     <!-- Tailwind CSS -->
 
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
 
 
 
-    <!-- Marked.js CDN for Markdown rendering -->
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" crossorigin="anonymous"></script>
+    <!-- Marked.js CDN for Markdown rendering (버전 고정: 서식 막대·단락 수정이 토큰 raw 위치에 기대므로
+         올릴 때는 tests/lesson-format.test.js를 같은 버전으로 돌려 본다) -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js" crossorigin="anonymous"></script>
 
     <!-- Mermaid.js CDN for diagram rendering (버전 고정) -->
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
@@ -36,7 +37,8 @@
                 window.mermaid.initialize({
                     startOnLoad: false,
                     theme: 'default',
-                    securityLevel: 'loose',
+                    // strict: 노드 click 지시문·HTML을 막고 그린 SVG를 살균한다(AI 응답·외부 교안의 다이어그램을 믿지 않는다)
+                    securityLevel: 'strict',
                     flowchart: { useMaxWidth: true, htmlLabels: true },
                     sequence: { useMaxWidth: true },
                     gantt: { useMaxWidth: true }
@@ -65,8 +67,8 @@
         }
     </script>
 
-    <!-- Phosphor Icons -->
-    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <!-- Phosphor Icons (버전 고정) -->
+    <script src="https://unpkg.com/@phosphor-icons/web@2.1.2"></script>
 
     <script>
         // 브라우저 확장 프로그램(비밀번호 관리자·광고 차단기 등)이 발생시키는

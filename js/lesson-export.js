@@ -3,7 +3,7 @@
 // 위쪽 내보내기 메뉴(현재 차시·현재 교과), ZIP(차시별 교안.html), 교수안 내려받기가 함께 쓴다. PDF는 브라우저 인쇄 창의 'PDF로 저장'으로 만든다.
 
 const EXPORT_PRINT_WAIT = 800; // 인쇄 전에 글꼴·그림이 자리 잡을 시간
-const EXPORT_FRAME_LIFETIME = 60000; // 인쇄 창이 떠 있는 동안 인쇄용 iframe을 남겨 둔다
+const EXPORT_FRAME_LIFETIME = 30 * 60 * 1000; // 인쇄가 끝났다는 신호(afterprint)가 오지 않는 브라우저에서 인쇄용 iframe을 지우는 시한
 const EXPORT_CONTROLS = '[data-lesson-action], .image-regenerate-btn, .image-wrapper > span, .para-edit, button, textarea';
 
 const LESSON_EXPORT_CSS = `
@@ -173,9 +173,12 @@ async function printHtmlDocument(doc) {
     await Promise.all([...win.document.images].map(img => (img.complete ? null : new Promise(done => { img.onload = done; img.onerror = done; }))));
     await win.document.fonts?.ready?.catch(() => null);
     await new Promise(done => setTimeout(done, EXPORT_PRINT_WAIT));
+    // 인쇄 창이 닫힌 뒤에 지운다. 인쇄 창에 오래 머물러도 문서가 사라지지 않게
+    const cleanup = () => frame.remove();
+    win.addEventListener('afterprint', () => setTimeout(cleanup, 500), { once: true });
+    setTimeout(cleanup, EXPORT_FRAME_LIFETIME);
     win.focus();
     win.print();
-    setTimeout(() => frame.remove(), EXPORT_FRAME_LIFETIME);
 }
 
 /* ---------- 내보내기 메뉴에서 부른다 ---------- */

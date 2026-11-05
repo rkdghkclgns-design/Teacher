@@ -2582,7 +2582,7 @@ function renderEditor(mod) {
 
                     <div id="render-view" class="markdown-body animate-fade-in">${htmlContent}</div>
 
-                    <textarea id="raw-view" data-module-id="${escapeHtml(String(mod.id))}" data-tab-id="${currentLessonTab}" class="hidden w-full h-[600px] p-6 font-mono text-sm bg-gray-900 text-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-accent resize-y" spellcheck="false" onchange="saveRawContent()">${escapeHtml(typeof getActiveTabContent === 'function' ? getActiveTabContent(mod) : (mod.content || ''))}</textarea>
+                    <textarea id="raw-view" data-module-id="${escapeHtml(String(mod.id))}" data-tab-id="${currentLessonTab}" class="hidden w-full h-[600px] p-6 font-mono text-sm bg-gray-900 text-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-accent resize-y" spellcheck="false" onchange="saveRawContent()">${escapeHtml(typeof getActiveTabSource === 'function' ? getActiveTabSource(mod) : (mod.content || ''))}</textarea>
 
                 </div>
 
@@ -2699,7 +2699,8 @@ window.toggleEditorMode = function (mode) {
 
         if (mod && (rawView.value.trim() || getActiveTabContent(mod))) { // 빈 탭은 renderEditor가 그린 안내를 둔다
 
-            let renderText = rawView.value;
+            // 칸에는 저장된 원문이 있다. 화면에는 첫머리를 정리해 그린다(renderEditor와 같은 모양)
+            let renderText = typeof cleanLessonOpening === 'function' ? cleanLessonOpening(rawView.value) : rawView.value;
 
             // [최적화 & 버그픽스] 보기 모드 전환 시 Base64 글로벌 교체
             if (mod.images) {

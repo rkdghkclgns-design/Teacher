@@ -138,6 +138,15 @@ function getActiveTabContent(mod) {
     return '';
 }
 
+// 화면에 보이는 탭의 저장된 원문(첫머리 정리 전). getActiveTabContent는 화면에 그릴 정리본이다.
+// 고친 내용을 저장할 때는 이 원문을 바탕으로 해야 화면에서 숨긴 첫머리(앞 그림·시간표·특징 목록)가 지워지지 않는다
+function getActiveTabSource(mod) {
+    if (!mod) return '';
+    if (mod.tabContents && mod.tabContents[currentLessonTab]) return mod.tabContents[currentLessonTab];
+    if (currentLessonTab === 'basicLearn' && mod.content) return mod.content;
+    return '';
+}
+
 // mod.content는 탭을 합친 글이기도 하다. 탭이 하나라도 있으면 옛 단일 본문이 아니므로 기본 학습으로 옮기지 않는다.
 function migrateMonolithicContent(mod) {
     if (mod && mod.content && !LESSON_TABS.some(tab => mod.tabContents?.[tab.id])) {

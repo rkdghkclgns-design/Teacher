@@ -26,7 +26,7 @@ function paraEditHtml() {
 // 저장: 원문에서 그 블록만 바꾸고 다시 그린다. 고치는 사이 탭이나 원문이 바뀌었으면 덮어쓰지 않는다
 function commitParagraph(ctx, text) {
     const { mod, tabId, source, block } = ctx;
-    const stale = currentLessonTab !== tabId || getActiveTabContent(mod) !== source;
+    const stale = currentLessonTab !== tabId || getActiveTabSource(mod) !== source;
     const next = stale ? null : replaceLessonBlock(source, block, text);
     if (next == null) {
         window.showToast?.('탭 내용이 바뀌어 고친 내용을 반영하지 않았습니다.', 'warning');
@@ -88,7 +88,7 @@ function mountParagraphEditor(target, ctx) {
 window.openParagraphEditor = function (event) {
     const view = document.getElementById('render-view');
     const mod = typeof getEditingModule === 'function' ? getEditingModule() : null;
-    const source = mod ? getActiveTabContent(mod) : '';
+    const source = mod ? getActiveTabSource(mod) : '';
     if (!view || !source || typeof marked === 'undefined' || event.target.closest(PARA_EDIT_SKIP)) return;
     const target = event.target.closest('#render-view > *');
     if (!target || target.isEditing || view.querySelector('.para-edit')) return;

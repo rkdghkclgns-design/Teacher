@@ -1437,7 +1437,8 @@ async function extractTextFromFile(file) {
 
         const buf = await file.arrayBuffer();
 
-        const pdf = await window.pdfjsLib.getDocument({ data: buf }).promise;
+        // isEvalSupported: false — 조작된 PDF 글꼴로 이 페이지에서 코드가 실행되는 취약점(CVE-2024-4367)을 막는다. 키가 이 페이지 저장소에 있다
+        const pdf = await window.pdfjsLib.getDocument({ data: buf, isEvalSupported: false }).promise;
 
         const pageTexts = [];
 

@@ -198,7 +198,7 @@ function formatUndo(event) {
 
 function runFormat(id, ctx, opts) {
     const mod = getEditingModule();
-    const source = mod ? getActiveTabContent(mod) : '';
+    const source = mod ? getActiveTabSource(mod) : '';
     if (!mod || !source) return;
     const result = FORMAT_INLINE.has(id)
         ? applyInlineFormat(source, ctx.parts, id, opts)
@@ -228,7 +228,7 @@ window.onFormatTool = function (id) {
 /* ---------- 링크 주소 입력 ---------- */
 function formatLinkActive(ctx) {
     const mod = getEditingModule();
-    return !!mod && inlineFormatState(getActiveTabContent(mod), ctx.parts).link;
+    return !!mod && inlineFormatState(getActiveTabSource(mod), ctx.parts).link;
 }
 
 function showFormatLinkInput(ctx) {
@@ -277,7 +277,7 @@ window.refreshFormatToolbar = function () {
     formatStateTimer = setTimeout(() => {
         const ctx = formatContext();
         const mod = ctx && typeof getEditingModule === 'function' ? getEditingModule() : null;
-        const state = mod ? inlineFormatState(getActiveTabContent(mod), ctx.parts) : {};
+        const state = mod ? inlineFormatState(getActiveTabSource(mod), ctx.parts) : {};
         formatRow()?.querySelectorAll('[data-format]').forEach(button => {
             button.setAttribute('aria-pressed', state[button.dataset.format] ? 'true' : 'false');
         });

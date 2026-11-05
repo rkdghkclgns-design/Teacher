@@ -122,7 +122,8 @@ function runMdTool(ta, id) {
 }
 
 function mdPreviewHtml(mod, text) {
-    const withImages = Object.entries(mod?.images || {}).reduce((md, [id, src]) => md.split(`local:${id}`).join(src), text);
+    const shown = typeof cleanLessonOpening === 'function' ? cleanLessonOpening(text) : text; // 보기 화면과 같게 첫머리를 정리해 그린다
+    const withImages = Object.entries(mod?.images || {}).reduce((md, [id, src]) => md.split(`local:${id}`).join(src), shown);
     const clean = withImages.replace(/src="local:[^"]+"/g, 'src="" alt="[이미지 생성 누락]"').replace(/\(local:[^)]+\)/g, '()');
     return renderLessonHTML(preprocessMarkdown(clean));
 }
