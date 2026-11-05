@@ -16,6 +16,10 @@ function friendlyAiError(status, body = '', provider = 'AI') {
     const text = String(body || '');
     const key = `${provider === 'AI' ? 'AI' : provider} 키`;
     if (status === 0) return '인터넷에 연결되지 않았습니다. 연결을 확인한 뒤 다시 해 주세요.';
+    // 잔액·결제 문제. 429 원문에도 'billing'이 들어 있어(무료 한도 안내) 429는 한도 문구로 둔다
+    if (status === 402 || (status !== 429 && /credit balance|billing|insufficient.?(funds|balance)|payment required/i.test(text))) {
+        return `${provider === 'Claude' ? 'Claude 콘솔' : provider === 'Gemini' ? 'Google AI Studio' : 'AI 서비스'}의 잔액(크레딧)이 부족하거나 결제가 필요합니다(${status}). 충전한 뒤 다시 하거나 ${AI_SETTINGS_HINT}에서 다른 키를 넣어 주세요.`;
+    }
     if (status === 401 || (status === 400 && /API[_ ]KEY[_ ]INVALID|API key not valid|invalid.*api.?key/i.test(text))) {
         return `${key}가 맞지 않습니다(${status}). ${AI_SETTINGS_HINT}에서 키를 다시 넣고 '연결 확인'을 눌러 주세요.`;
     }

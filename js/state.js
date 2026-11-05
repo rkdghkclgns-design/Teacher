@@ -96,7 +96,7 @@ let globalState = {
 
     courseId: "course_" + Date.now(),
 
-    courseTitle: "게임 기획 전문가 양성 과정",
+    courseTitle: "새 과정",
 
     subjects: []
 
@@ -160,7 +160,7 @@ function sanitizeState(state) {
     if (!state) return null;
     delete state.apiKey; // 이전 버전 저장 파일에 남은 API 키는 불러오지 않음
     state.courseId = state.courseId || "course_" + Date.now();
-    state.courseTitle = state.courseTitle || "게임 기획 전문가 양성 과정";
+    state.courseTitle = state.courseTitle || "새 과정";
     state.subjects = Array.isArray(state.subjects) ? state.subjects : [];
 
     state.subjects.forEach(s => {

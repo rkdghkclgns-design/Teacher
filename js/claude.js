@@ -98,6 +98,7 @@ async function callClaude(modelName, payload) {
         console.error('[Claude] 호출 실패:', e);
         const err = new Error(describeClaudeError(Anthropic, e));
         err.status = e.status;
+        err.detail = String(e.message || '').slice(0, 300); // 원문은 콘솔·detail에만
         throw err;
     }
 }

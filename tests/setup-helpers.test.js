@@ -36,6 +36,15 @@ test('한도·권한·모델 없음·서버·인터넷 끊김은 각각 다음�
     assert.ok(friendlyAiError(400, 'something else').includes('(400)'));
 });
 
+test('잔액 부족은 충전하라고 알리고, 원문에 billing이 있는 429는 한도로 본다', () => {
+    const credit = friendlyAiError(400, 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing', 'Claude');
+    assert.ok(credit.startsWith('Claude 콘솔의 잔액(크레딧)이 부족'), credit);
+    assert.ok(!credit.includes('내용을 조금 줄이거나'), '내용을 줄이라는 엉뚱한 안내를 하지 않는다');
+    assert.ok(friendlyAiError(402, '', 'Gemini').includes('Google AI Studio'));
+    const quota = friendlyAiError(429, 'You exceeded your current quota, please check your plan and billing details.', 'Gemini');
+    assert.ok(quota.startsWith('AI 사용 한도를 넘었습니다(429)'), quota);
+});
+
 test('오류 객체: 화면 문장, 상태 코드, 원문은 detail로, 키·모델 문제는 다시 시도하지 않는다', () => {
     const err = aiError(401, 'x'.repeat(500), 'Gemini');
     assert.strictEqual(err.status, 401);
@@ -85,6 +94,10 @@ test('분야를 넣기 전 과정은 과정명에서 분야를 읽는다', () =>
     assert.strictEqual(fieldFromCourseTitle('간호 실무 과정'), '간호 실무');
     assert.strictEqual(fieldFromCourseTitle('웹 개발 부트캠프'), '웹 개발 부트캠프');
     assert.strictEqual(fieldFromCourseTitle('새 과정'), '', '이름 없는 과정은 분야를 읽지 않는다');
+    assert.strictEqual(fieldFromCourseTitle('새로운 과정'), '');
+    assert.strictEqual(fieldFromCourseTitle('제목 없음'), '');
+    assert.strictEqual(fieldFromCourseTitle('새싹 코딩 과정'), '새싹 코딩', "'새'로 시작하는 진짜 과정명은 읽는다");
+    assert.strictEqual(fieldFromCourseTitle('새내기 간호 교육'), '새내기 간호');
     assert.strictEqual(fieldFromCourseTitle(''), '');
 });
 
@@ -96,5 +109,47 @@ test('예시 과정 판정: 표시가 있거나, 표시 전에 저장한 예시 
     assert.strictEqual(isExampleCourse(null), false);
 });
 
-console.log(`\n${count - failed}/${count} passed`);
-if (failed) process.exit(1);
+/* ---------- 키 연결 확인(가짜 fetch, 실제 호출 없음) ---------- */
+const asyncTests = [];
+const testAsync = (name, fn) => asyncTests.push([name, fn]);
+
+// 키 칸 아래 상태 글자를 흉내 낸다
+const labels = {};
+ctx.document = {
+    getElementById: id => (labels[id] = labels[id] || { className: '', textContent: '', classList: { toggle() {} } })
+};
+ctx.GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+
+testAsync('키에 공백·한글이 섞이면 호출하지 않고 그 이유를 알린다(인터넷 문제로 보이지 않게)', async () => {
+    let called = 0;
+    ctx.fetch = async () => { called++; return { status: 200 }; };
+    const result = await ctx.checkAiKey('gemini', 'AIza-FAKE 한글');
+    assert.strictEqual(result.ok, false);
+    assert.ok(result.text.includes('쓸 수 없는 글자'), result.text);
+    assert.ok(!result.text.includes('인터넷'));
+    assert.strictEqual(called, 0);
+    assert.strictEqual((await ctx.checkAiKey('gemini', 'AIza-FAKE-TEST-KEY')).text, '연결됨');
+    assert.strictEqual(called, 1);
+});
+
+testAsync('연결 확인을 빠르게 두 번 누르면 늦게 온 예전 결과가 새 결과를 덮지 않는다', async () => {
+    ctx.apiKey = 'AIza-FAKE-TEST-KEY';
+    const pending = [];
+    ctx.fetch = () => new Promise(resolve => pending.push(resolve));
+    const first = ctx.verifyAiKey('gemini');
+    const second = ctx.verifyAiKey('gemini');
+    pending[1]({ status: 200 }); // 새 확인이 먼저 끝나고
+    await second;
+    pending[0]({ status: 401 }); // 예전 확인이 늦게 온다
+    await first;
+    assert.strictEqual(labels['api-key-status-text'].textContent, '연결됨');
+});
+
+(async () => {
+    for (const [name, fn] of asyncTests) {
+        count++;
+        try { await fn(); console.log(`ok - ${name}`); } catch (e) { failed++; console.log(`FAIL - ${name}\n  ${e.message}`); }
+    }
+    console.log(`\n${count - failed}/${count} passed`);
+    if (failed) process.exit(1);
+})();

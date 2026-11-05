@@ -39,7 +39,7 @@ function autoTextModel(model, hasGemini, hasClaude, isClaude) {
 // 분야를 넣기 전에 만든 과정은 과정명에서 분야를 읽는다: '게임 기획 전문가 양성 과정' → '게임 기획'
 function fieldFromCourseTitle(title) {
     const field = String(title || '').replace(/\s*(전문가)?\s*(양성)?\s*(과정|교육|훈련|코스)\s*$/u, '').trim();
-    return field.length >= 2 && !/^(새|이름 없는|제목 없음)/.test(field) ? field : '';
+    return field.length >= 2 && !/^(새로운|이름 없는|제목 없음)$/.test(field) ? field : '';
 }
 
 // 예시 과정인지: 표시를 단 상태이거나, 표시가 생기기 전에 저장한 예시 과정(같은 과정 id)
@@ -93,6 +93,7 @@ function setKeyStatus(provider, state, text) {
 // 모델 목록만 조회한다(생성 호출이 아니라 비용이 들지 않는다)
 async function checkAiKey(provider, key) {
     if (!key) return { ok: false, text: '키를 넣어 주세요' };
+    if (/[^\x21-\x7e]/.test(key)) return { ok: false, text: '키에 쓸 수 없는 글자(공백·한글 등)가 있습니다' }; // 헤더에 못 실어 fetch가 실패한다
     try {
         const res = provider === 'claude'
             ? await fetch(CLAUDE_MODELS_URL, { headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' } })
@@ -104,12 +105,15 @@ async function checkAiKey(provider, key) {
     }
 }
 
+const keyCheckRuns = { gemini: 0, claude: 0 };
+
 async function verifyAiKey(provider) {
     const key = provider === 'claude' ? claudeApiKey : apiKey;
     if (!key) return setKeyStatus(provider, 'none', '키 없음');
+    const run = ++keyCheckRuns[provider];
     setKeyStatus(provider, 'checking', '연결 확인 중...');
     const result = await checkAiKey(provider, key);
-    setKeyStatus(provider, result.ok ? 'ok' : 'bad', result.text);
+    if (run === keyCheckRuns[provider]) setKeyStatus(provider, result.ok ? 'ok' : 'bad', result.text); // 늦게 온 예전 확인 결과는 버린다
     return result;
 }
 
