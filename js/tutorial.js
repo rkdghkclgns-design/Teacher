@@ -16,6 +16,7 @@ const TUTORIAL_STEPS = [
             { title: '위쪽 버튼', text: '<strong>내보내기·백업</strong>(파일로 내보내기, 백업 ZIP, PC 폴더 자동 저장)과 <strong>작업 기록</strong>이 있습니다. 검색 그림 저장소와 작성 규칙은 설정의 <strong>고급</strong>에 있습니다.' },
             { title: '과정 목차(교과 리스트)', text: '과정에 들어갈 교과를 만들고 고르는 곳입니다. 교과를 누르면 오른쪽에 교과 상세 정보가 열립니다.' },
             { title: '커리큘럼 다이어그램', text: '과정 → 교과 → 차시 구조를 지도로 보여 줍니다. 끌어서 옮기고, 휠로 확대·축소하고, 차시를 누르면 그 차시 편집으로 갑니다.' },
+            { title: '사용 가이드', text: '이 가이드를 언제든 다시 엽니다. 왼쪽 작업별 바로가기에서 필요한 단계로 바로 갈 수 있습니다.' },
             { title: '설정', text: 'API 키와 AI 모델을 정합니다. 처음 한 번은 꼭 열어 키를 넣어야 교안을 만들 수 있습니다.' }
         ],
         tips: [
@@ -369,7 +370,7 @@ function skipTutorial() {
     endTutorial();
 }
 
-// 다 봤거나(완료) 닫으면 다음부터 저절로 열지 않는다. 설정 → 사용 가이드 보기로 다시 연다
+// 다 봤거나(완료) 닫으면 다음부터 저절로 열지 않는다. 오른쪽 위 사용 가이드 버튼(#btn-guide)이나 설정 → 사용 가이드 보기로 다시 연다
 function endTutorial() {
     try { localStorage.setItem(TUTORIAL_KEY, 'true'); } catch (e) { console.warn('[사용 가이드] 본 것을 기억하지 못했습니다:', e); }
     closeTutorialDialog();

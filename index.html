@@ -833,8 +833,12 @@
                     class="ph ph-clock-counter-clockwise text-sm"></i> 작업 기록</button>
         </div>
 
-        <!-- 우측 고정: 폴더 상태 + 설정 -->
+        <!-- 우측 고정: 사용 가이드 + 폴더 상태 + 설정 (폴더 메뉴는 right-12로 폴더 상태 아래에 열리므로 가이드는 맨 앞에 둔다) -->
         <div class="flex items-center gap-3 shrink-0 relative">
+            <button id="btn-guide" type="button" onclick="restartTutorial()" aria-label="사용 가이드 보기" title="사용 가이드를 언제든 다시 봅니다"
+                class="flex items-center gap-1.5 h-9 px-3 rounded-full bg-white/5 border border-white/10 text-[0.7rem] font-semibold text-textLight hover:bg-accent/20 hover:border-accent/50 hover:text-white transition-all whitespace-nowrap">
+                <i class="ph-bold ph-question text-base text-accent" aria-hidden="true"></i><span class="hidden md:inline">사용 가이드</span>
+            </button>
             <div id="folder-connection-indicator"
                 class="flex items-center gap-1.5 px-2 py-1 text-[0.6875rem] cursor-pointer rounded-lg hover:bg-white/5 transition-colors"
                 title="PC 폴더 자동 저장이 꺼져 있습니다. 눌러서 빈 폴더를 고르면 켜집니다" onclick="connectProjectFolder()">

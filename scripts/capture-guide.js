@@ -104,7 +104,7 @@ const SHOTS = [
     {
         id: 'overview',
         prepare: async page => { await page.evaluate(() => typeof closeDetailPanel === 'function' && closeDetailPanel()); await page.waitForTimeout(500); },
-        markers: ['#toolbar-scroll', '#overview-lnb-list', '#diagram-viewport', '#btn-settings']
+        markers: ['#toolbar-scroll', '#overview-lnb-list', '#diagram-viewport', '#btn-guide', '#btn-settings']
     },
     {
         id: 'settings',
