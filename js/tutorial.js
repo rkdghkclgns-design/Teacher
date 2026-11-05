@@ -142,7 +142,7 @@ const TUTORIAL_STEPS = [
         ],
         tips: [
             '영상 위의 <strong>원래 그림으로</strong>로 언제든 되돌립니다.',
-            'PDF·슬라이드·MD 내보내기에는 원래 그림이 나가고, 현재 차시 <strong>HTML 내보내기</strong>에는 영상이 파일 안에 들어갑니다.',
+            'PDF·슬라이드·MD 내보내기에는 원래 그림이 나가고, 현재 차시 <strong>HTML 내보내기</strong>에는 지금 보고 있는 탭의 영상이 파일 안에 들어갑니다.',
             '영상은 이 브라우저에만 저장되어 다른 PC에서는 원래 그림으로 보입니다.'
         ]
     },
@@ -175,8 +175,8 @@ const TUTORIAL_STEPS = [
         title: '내보내기와 백업',
         lead: '만든 교안을 파일로 내보내고, 과정 전체를 따로 보관합니다.',
         points: [
-            { title: '내보내기 범위', text: '<strong>현재 차시</strong> 또는 <strong>현재 교과(전체 차시)</strong>를 고른 뒤 MD·PDF·HTML·슬라이드 형식을 고릅니다.' },
-            { title: 'ZIP', text: '고른 교과나 전체를 이미지와 함께 압축 파일로 받습니다. 백업용으로 좋습니다.' },
+            { title: '내보내기 범위', text: '<strong>현재 차시</strong> 또는 <strong>현재 교과(전체 차시)</strong>를 고른 뒤 MD·PDF·HTML·슬라이드 형식을 고릅니다. 현재 차시는 <strong>전체 탭</strong>(5개 탭을 한 문서로)과 <strong>지금 탭</strong> 중에서 고릅니다. PDF·HTML은 화면과 같은 모양(그림·인용 막대·번호 목록)으로 나가고, PDF는 인쇄 창에서 <strong>PDF로 저장</strong>을 고릅니다.' },
+            { title: 'ZIP', text: '고른 교과나 전체를 이미지와 함께 압축 파일로 받습니다. 차시 폴더마다 화면과 같은 모양의 <strong>교안.html</strong>도 들어 있습니다. 백업용으로 좋습니다.' },
             { title: '히스토리', text: '이전에 만든 교안 기록을 보고 되살립니다.' },
             { title: '데이터 연동', text: 'PC의 프로젝트 폴더를 연결해 작업을 그 폴더에 자동으로 저장합니다.' }
         ],

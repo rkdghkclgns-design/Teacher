@@ -798,6 +798,15 @@
 
                 <div class="h-px bg-white/10 my-1 mx-3"></div>
                 <div id="export-format-section" class="hidden">
+                    <div id="export-tab-range" class="hidden px-3 pb-2">
+                        <div class="py-1.5 text-[0.6875rem] font-bold text-white/60 tracking-wider">탭 범위</div>
+                        <div class="flex gap-1" role="group" aria-label="내보낼 탭 범위">
+                            <button type="button" data-export-tabs="all" onclick="setExportTabs('all')" aria-pressed="true" title="기본학습~학습이해도 5개 탭을 한 문서로"
+                                class="flex-1 px-2 py-1 text-[0.6875rem] font-bold rounded border border-white/15 bg-accent text-white whitespace-nowrap">전체 탭</button>
+                            <button type="button" data-export-tabs="current" onclick="setExportTabs('current')" aria-pressed="false" title="지금 보고 있는 탭만"
+                                class="flex-1 px-2 py-1 text-[0.6875rem] font-bold rounded border border-white/15 text-white/70 whitespace-nowrap">지금 탭</button>
+                        </div>
+                    </div>
                     <div class="px-3 py-1.5 text-[0.6875rem] font-bold text-white/60 uppercase tracking-wider">형식 선택</div>
 
                     <button onclick="executeDropdownExport('md')"
@@ -806,7 +815,7 @@
                     </button>
                     <button onclick="executeDropdownExport('pdf')"
                         class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
-                        <i class="ph-fill ph-file-pdf text-red-400 text-sm"></i> PDF (.pdf)
+                        <i class="ph-fill ph-file-pdf text-red-400 text-sm"></i> PDF (인쇄 창에서 PDF로 저장)
                     </button>
                     <button onclick="executeDropdownExport('slide')"
                         class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
@@ -1931,6 +1940,7 @@
     <script src="./js/lesson-attachments.js?v=125"></script>
     <script src="./js/lesson-sanitize.js?v=125"></script>
     <script src="./js/lesson-format.js?v=125"></script>
+    <script src="./js/lesson-export.js?v=125"></script>
     <script src="./js/state.js?v=125"></script>
     <script src="./js/api.js?v=125"></script>
     <script src="./js/diagram.js?v=125"></script>

@@ -755,6 +755,7 @@ function closeAllDropdowns(exceptId) {
 
 // v7.2: 내보내기 드롭다운 (PDF → 통합 내보내기)
 let _exportScope = 'current'; // 'current' | 'subject'
+let _exportTabs = 'all'; // 현재 차시를 내보낼 탭 범위: 'all'(5개 탭 전체) | 'current'(지금 탭)
 
 function toggleExportDropdown(event) {
     if (event) event.stopPropagation();
@@ -786,6 +787,34 @@ function setExportScope(scope) { _exportScope = scope; }
 function showExportFormatMenu() {
     const section = document.getElementById('export-format-section');
     if (section) section.classList.remove('hidden');
+    document.getElementById('export-tab-range')?.classList.toggle('hidden', _exportScope !== 'current');
+    syncExportTabs();
+}
+
+// 현재 차시를 내보낼 탭 범위(MD·PDF·HTML에 쓴다)
+window.setExportTabs = function (range) {
+    _exportTabs = range === 'current' ? 'current' : 'all';
+    syncExportTabs();
+};
+
+function syncExportTabs() {
+    document.querySelectorAll('[data-export-tabs]').forEach(button => {
+        const on = button.dataset.exportTabs === _exportTabs;
+        button.setAttribute('aria-pressed', on ? 'true' : 'false');
+        button.classList.toggle('bg-accent', on);
+        button.classList.toggle('text-white', on);
+        button.classList.toggle('text-white/70', !on);
+    });
+}
+
+const exportTabIds = () => (_exportTabs === 'current' ? [currentLessonTab] : null);
+const currentExportSubject = () => globalState.subjects.find(s => s.id === currentSubjectId);
+
+// 현재 차시는 고른 탭 범위로, 현재 교과(또는 차시를 고르지 않았을 때)는 교과 전체를 문서 하나로 (lesson-export.js)
+function exportLessonOrSubject(format) {
+    const mod = _exportScope === 'subject' ? null : (typeof getEditingModule === 'function' ? getEditingModule() : null);
+    if (mod) return window.exportLessonDocument(mod, format, exportTabIds());
+    return window.exportSubjectDocument(currentExportSubject(), format);
 }
 
 // v7.5: 드롭다운 내보내기
@@ -797,8 +826,7 @@ window.executeDropdownExport = function (format) {
             else exportCurrentToMD();
             break;
         case 'pdf':
-            if (_exportScope === 'subject') exportSubjectToPDF();
-            else exportToPDF();
+            exportLessonOrSubject('pdf');
             break;
         case 'slide':
             if (_exportScope === 'subject') window.downloadSubjectBundle();
@@ -808,8 +836,7 @@ window.executeDropdownExport = function (format) {
             window.downloadLessonMaterial(_exportScope);
             break;
         case 'html':
-            if (_exportScope === 'subject') exportSubjectToHTML();
-            else exportCurrentToHTML();
+            exportLessonOrSubject('html');
             break;
     }
 }
@@ -822,8 +849,9 @@ function exportCurrentToMD() {
         if (typeof exportSubjectToMD === 'function') return exportSubjectToMD();
         return window.showAlert('차시를 먼저 선택해주세요. (좌측 목록에서 차시 클릭)');
     }
-    const tabContent = typeof getActiveTabContent === 'function' ? getActiveTabContent(mod) : mod.content;
-    if (!tabContent) return window.showAlert('현재 탭에 내용이 없습니다.');
+    const tabs = lessonTabSources(mod, exportTabIds());
+    if (!tabs.length) return window.showAlert(_exportTabs === 'current' ? '현재 탭에 내용이 없습니다.' : '내보낼 교안 내용이 없습니다.');
+    const tabContent = tabs.length === 1 ? tabs[0].md : tabs.map(tab => `# [${tab.label}]\n\n${tab.md}`).join('\n\n---\n\n');
     const blob = new Blob([tabContent], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -850,52 +878,6 @@ function exportSubjectToMD() {
         URL.revokeObjectURL(url);
     });
     window.showToast(`📁 ${lessonList.length}개 차시 MD 파일 다운로드`, 'success');
-}
-
-// HTML 내보내기
-async function exportCurrentToHTML() {
-    const mod = typeof getEditingModule === 'function' ? getEditingModule() : null;
-    if (!mod) {
-        if (typeof exportSubjectToHTML === 'function') return exportSubjectToHTML();
-        return window.showAlert('차시를 먼저 선택해주세요.');
-    }
-    const renderView = document.getElementById('render-view');
-    if (!renderView) return;
-    // 판서 영상으로 바꾼 그림은 영상을 파일 안에 넣는다
-    const exported = window.whiteboardHtmlForExport ? await window.whiteboardHtmlForExport(renderView) : { html: renderView.innerHTML, videos: 0 };
-    if (exported.videos) window.showToast?.(`판서 영상 ${exported.videos}개를 HTML 파일 안에 넣었습니다(파일이 커질 수 있습니다).`, 'info');
-    const htmlDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(mod.title || '교안')}</title><style>body{font-family:'Noto Sans KR',sans-serif;max-width:900px;margin:0 auto;padding:40px;line-height:1.8;color:#1a1a2e;}h1,h2,h3{margin-top:1.5em;}table{border-collapse:collapse;width:100%;}th,td{border:1px solid #ddd;padding:8px 12px;text-align:left;}th{background:#f0f0f0;}img,video{max-width:100%;border-radius:8px;}p.lesson-term{margin:0 0 0 1.25rem;padding:.35rem 0 .35rem 1rem;border-left:4px solid #d4d4de;}p.lesson-term+:not(.lesson-term){margin-top:1rem;}</style></head><body>${exported.html}</body></html>`;
-    const blob = new Blob([htmlDoc], { type: 'text/html;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = lessonFileName(mod, 'html');
-    a.click();
-    URL.revokeObjectURL(url);
-}
-
-function exportSubjectToHTML() {
-    const subj = globalState.subjects.find(s => s.id === currentSubjectId);
-    if (!subj) return window.showAlert('교과를 먼저 선택해주세요.');
-    const lessonList = subj.lessons || [];
-    if (!lessonList.length) return window.showAlert('내보낼 차시가 없습니다.');
-    lessonList.forEach(mod => {
-        const allContent = Object.entries(mod.tabContents || {}).map(([k, v]) => {
-            if (!v) return '';
-            const parsed = sanitizeLessonHtml(typeof marked !== 'undefined' ? marked.parse(v) : v);
-            return `<h1>${k}</h1>${parsed}`;
-        }).filter(Boolean).join('<hr>');
-        if (!allContent) return;
-        const htmlDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(mod.title || '교안')}</title><style>body{font-family:'Noto Sans KR',sans-serif;max-width:900px;margin:0 auto;padding:40px;line-height:1.8;color:#1a1a2e;}h1,h2,h3{margin-top:1.5em;}table{border-collapse:collapse;width:100%;}th,td{border:1px solid #ddd;padding:8px 12px;}th{background:#f0f0f0;}img{max-width:100%;}</style></head><body>${allContent}</body></html>`;
-        const blob = new Blob([htmlDoc], { type: 'text/html;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = lessonFileName(mod, 'html');
-        a.click();
-        URL.revokeObjectURL(url);
-    });
-    window.showToast(`📁 ${lessonList.length}개 차시 HTML 파일 다운로드`, 'success');
 }
 
 // 외부 클릭 시 드롭다운 닫기
@@ -943,6 +925,7 @@ window.exportSelectedToZip = async function () {
 
     const zip = new JSZip();
     let totalFiles = 0;
+    const htmlJobs = []; // 차시마다 교안.html을 넣을 자리
 
     checkedIds.forEach(subjId => {
         const subj = globalState.subjects.find(s => String(s.id) === String(subjId));
@@ -974,6 +957,7 @@ window.exportSelectedToZip = async function () {
             }
 
             lessonGyosuanFiles(mod).forEach(file => { modFolder.file(file.name, file.content); totalFiles++; });
+            htmlJobs.push({ folder: modFolder, mod });
 
             if (mod.images && Object.keys(mod.images).length > 0) {
                 const imgFolder = modFolder.folder('images');
@@ -990,6 +974,8 @@ window.exportSelectedToZip = async function () {
         if (mq && mq.content) { subjFolder.file('레벨테스트.md', mq.content); totalFiles++; }
     });
 
+    window.showToast?.('차시별 교안 HTML을 만드는 중입니다.', 'info');
+    totalFiles += await addLessonHtmlToZip(htmlJobs);
     if (totalFiles === 0) return window.showAlert('내보낼 내용이 없습니다.');
 
     try {
@@ -1004,6 +990,21 @@ window.exportSelectedToZip = async function () {
         window.showAlert('ZIP 생성 오류: ' + e.message);
     }
 };
+
+// 차시마다 화면과 같은 모양의 교안.html(5개 탭, 그림 포함)을 ZIP에 넣는다. PDF는 인쇄로 만들므로 ZIP에는 HTML로 넣는다
+async function addLessonHtmlToZip(jobs) {
+    let added = 0;
+    for (const { folder, mod } of jobs) {
+        const doc = await window.lessonHtmlForZip(mod).catch(err => {
+            console.warn('[ZIP] 교안 HTML을 만들지 못했습니다:', mod.title, err);
+            return null;
+        });
+        if (!doc) continue;
+        folder.file('교안.html', doc);
+        added++;
+    }
+    return added;
+}
 
 // v7.5: 스마트 ZIP — 선택된 교과가 있으면 선택만, 없으면 전체
 window.smartZipExport = function () {
@@ -1039,6 +1040,7 @@ window.exportAllToZip = async function () {
     const rootFolder = zip.folder(subjectName);
     let totalFiles = 0;
     const usedNames = new Set();
+    const htmlJobs = []; // 차시마다 교안.html을 넣을 자리
 
     lessonList.forEach(mod => {
         if (mod.id === 'mainQuest') return;
@@ -1075,6 +1077,7 @@ window.exportAllToZip = async function () {
         }
 
         lessonGyosuanFiles(mod).forEach(file => { modFolder.file(file.name, file.content); totalFiles++; });
+            htmlJobs.push({ folder: modFolder, mod });
 
         // 이미지 폴더
         if (mod.images && Object.keys(mod.images).length > 0) {
@@ -1095,6 +1098,8 @@ window.exportAllToZip = async function () {
         totalFiles++;
     }
 
+    window.showToast?.('차시별 교안 HTML을 만드는 중입니다.', 'info');
+    totalFiles += await addLessonHtmlToZip(htmlJobs);
     if (totalFiles === 0) return window.showAlert('내보낼 내용이 없습니다.');
 
     try {

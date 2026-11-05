@@ -129,7 +129,8 @@ function gyosuanToolbarHtml(mod) {
             ${hasDoc ? button(`downloadGyosuanSessions('${mod.id}')`, 'ph-clock', '차시별 MD') : ''}
             ${hasDoc ? button(`downloadGyosuanSessionDecks('${mod.id}')`, 'ph-presentation', '차시별 편성안') : ''}
             ${hasDoc ? gyosuanSessionPickHtml(mod) : ''}
-            ${hasDoc ? button(`printGyosuan('${mod.id}')`, 'ph-printer', 'PDF') : ''}
+            ${hasDoc ? button(`downloadGyosuanHtml('${mod.id}')`, 'ph-file-html', 'HTML') : ''}
+            ${hasDoc ? button(`printGyosuan('${mod.id}')`, 'ph-file-pdf', 'PDF') : ''}
             ${button(`regenerateGyosuan('${mod.id}')`, 'ph-arrow-clockwise', '재생성')}
         </div>
         <div class="gyosuan-toolbar sub">${gyosuanOptionsHtml()}${gyosuanSourceToolsHtml(mod)}</div>
@@ -257,14 +258,32 @@ window.downloadGyosuanMd = function (moduleId, field = 'docMd') {
     downloadMd(resolveGyosuanImages(md, mod), `${lessonFileBase(mod)}_${field === 'deckMd' ? '슬라이드편성안' : '교수안'}`);
 };
 
-window.printGyosuan = function (moduleId) {
-    const html = gyosuanDocHtml(getEditingModule(moduleId));
-    const win = html && window.open('', '_blank');
-    if (!win) return window.showAlert('팝업이 차단되어 인쇄 창을 열 수 없습니다.');
-    const cssHref = new URL('css/gyosuan-doc.css', location.href).href;
-    win.document.write(`<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>교수안</title><link rel="stylesheet" href="${cssHref}"></head><body class="gyosuan-view">${html}</body></html>`);
-    win.document.close();
-    win.onload = () => win.print();
+// 교수안 문서(HTML 한 파일). 교수안 서식(css/gyosuan-doc.css)을 문서 안에 넣어 따로 열어도 같은 모양이다
+async function gyosuanExportDocument(mod) {
+    const html = gyosuanDocHtml(mod);
+    if (!html) return null;
+    const cssUrl = new URL('css/gyosuan-doc.css', location.href).href;
+    const css = await fetch(cssUrl).then(res => (res.ok ? res.text() : '')).catch(() => '');
+    const style = css ? `<style>${css}</style>` : `<link rel="stylesheet" href="${cssUrl}">`;
+    const print = '<style>@media print { @page { size: A4; margin: 1.5cm; } body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }</style>';
+    const title = `${mod.title || '차시'} 교수안`;
+    return `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title>${style}${print}</head><body class="gyosuan-view">${html}</body></html>`;
+}
+
+window.downloadGyosuanHtml = async function (moduleId) {
+    const mod = getEditingModule(moduleId);
+    const doc = mod && await gyosuanExportDocument(mod);
+    if (!doc) return window.showAlert('내보낼 교수안이 없습니다.');
+    downloadTextFile(doc, `${lessonFileBase(mod)}_교수안.html`, 'text/html;charset=utf-8');
+};
+
+// 새 창 없이 인쇄 창을 연다(lesson-export.js). 인쇄 창에서 'PDF로 저장'을 고른다
+window.printGyosuan = async function (moduleId) {
+    const mod = getEditingModule(moduleId);
+    const doc = mod && await gyosuanExportDocument(mod);
+    if (!doc) return window.showAlert('내보낼 교수안이 없습니다.');
+    window.showToast?.('인쇄 창에서 "PDF로 저장"을 고르세요.', 'info');
+    await printHtmlDocument(doc);
 };
 
 // 문서 안 '목차' 링크는 같은 제목의 헤딩으로 이동한다
