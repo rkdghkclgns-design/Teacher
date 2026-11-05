@@ -462,6 +462,7 @@ async function handleGenerate() {
     if (!topic) return window.showAlert('교육 주제를 입력해주세요.');
 
     // 차시가 있으면 확인을 받고, 기존 차시는 휴지통으로 보낸다(덮어써서 잃지 않게)
+    const startSubjectId = currentSubjectId;
     const replacedLessons = (courseData || []).filter(mod => mod && mod.id !== 'mainQuest');
     if (replacedLessons.length && !(await confirmAsync(`이 교과의 차시 ${replacedLessons.length}개를 휴지통으로 옮기고 새 목차를 만듭니다.\n휴지통(차시 목록 위)에서 30일 동안 되살릴 수 있습니다.`, { okLabel: '새 목차 만들기', tone: 'primary', title: '차시 목차 다시 만들기' }))) return;
 
@@ -503,7 +504,7 @@ async function handleGenerate() {
 
         if (!Array.isArray(parsed)) throw new Error("Invalid format received");
 
-        if (replacedLessons.length) moveLessonsToTrash(replacedLessons);
+        if (replacedLessons.length) moveLessonsToTrash(replacedLessons, startSubjectId);
 
         courseData = parsed.map((item, idx) => ({
 

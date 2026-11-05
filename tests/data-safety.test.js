@@ -86,6 +86,28 @@ test('되돌릴 곳: 탭 기록이고 차시가 있으면 그 차시, 아니면 
     assert.strictEqual(historyRestoreTarget({ lessonId: 7 }, subjects).mode, 'new', '탭 없는 예전 기록');
 });
 
+test('되돌릴 곳: 같은 차시 id가 두 교과에 있으면 기록을 남긴 교과를 고른다', () => {
+    const inCopy = { id: 7, title: '사본' };
+    const inOrigin = { id: 7, title: '원래' };
+    const subjects = [subj('copy', '사본 교과', [inCopy]), subj('origin', '원래 교과', [inOrigin])];
+    assert.strictEqual(historyRestoreTarget({ lessonId: 7, subjectId: 'origin', tabContents: {} }, subjects).lesson, inOrigin);
+    assert.strictEqual(historyRestoreTarget({ lessonId: 7, tabContents: {} }, subjects).lesson, inCopy, '교과 id가 없는 예전 기록은 처음 찾은 곳');
+});
+
+test('백업 파일을 불러와도 지금 히스토리·휴지통과 파일의 것을 합쳐 잃지 않는다', () => {
+    const meta = {
+        history: [{ id: 1, title: '파일' }, { id: 3, title: '겹침' }],
+        trash: { lessonTrash: [{ at: 't1', lesson: { id: 'a' } }], subjectTrash: [{ at: 't2', subject: { id: 's' } }] }
+    };
+    const current = { history: [{ id: 3, title: '겹침' }, { id: 2, title: '지금' }], lessonTrash: [{ at: 't1', lesson: { id: 'a' } }, { at: 't9', lesson: { id: 'b' } }], subjectTrash: [] };
+    const merged = ctx.mergeBackupExtras(meta, current);
+    assert.strictEqual(JSON.stringify(merged.history.map(h => h.id)), '[1,2,3]');
+    assert.strictEqual(merged.lessonTrash.length, 2, '같은 항목은 한 번만');
+    assert.strictEqual(merged.subjectTrash.length, 1);
+    const none = ctx.mergeBackupExtras({}, { history: [], lessonTrash: undefined, subjectTrash: undefined });
+    assert.strictEqual(none.history.length + none.lessonTrash.length + none.subjectTrash.length, 0, '예전 백업(기록 없음)도 견딘다');
+});
+
 test('새 차시로 되살리기: 예전 기록은 기본학습 칸에, 탭 기록은 탭 그대로', () => {
     const old = lessonFromHistory({ title: '옛 교안', content: '합친 글', images: { a: 1 } }, 5);
     assert.strictEqual(old.title, '옛 교안 (되살림)');

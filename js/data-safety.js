@@ -15,15 +15,39 @@ function stateSnapshot(state, openSubjectId, openLessons) {
     return { ...state, subjects, apiKey: undefined, lessonTrash: undefined, subjectTrash: undefined };
 }
 
-// save_data.yaml 내용. scope 'full'은 지금 작업 전체를 바꾸고, 'subjects'는 고른 교과만 합친다
-function backupMeta(scope, context, now = new Date()) {
+// save_data.yaml 내용. scope 'full'은 지금 작업 전체를 바꾸고, 'subjects'는 고른 교과만 합친다.
+// extra: 자동 백업에 함께 넣는 히스토리·휴지통 { history, trash }
+function backupMeta(scope, context, now = new Date(), extra = {}) {
     return {
         format: BACKUP_FORMAT,
         scope,
         project: context.courseTitle || '',
         timestamp: now.toISOString(),
         subject_count: (context.subjects || []).length,
-        context
+        context,
+        ...extra
+    };
+}
+
+// 두 목록을 합친다. 같은 항목(키가 같음)은 한 번만
+function mergeUnique(first, second, keyOf) {
+    const seen = new Map();
+    [...(first || []), ...(second || [])].forEach(item => {
+        const key = keyOf(item);
+        if (!seen.has(key)) seen.set(key, item);
+    });
+    return [...seen.values()];
+}
+
+const historyKey = item => String(item.id);
+const trashKey = entry => `${entry.at}|${(entry.lesson || entry.subject || {}).id}`;
+
+// 백업 파일의 히스토리·휴지통을 지금 것과 합친다(불러와도 기록을 잃지 않게)
+function mergeBackupExtras(meta, current) {
+    return {
+        history: mergeUnique(current.history, meta.history, historyKey).sort((a, b) => a.id - b.id),
+        lessonTrash: mergeUnique(current.lessonTrash, meta.trash?.lessonTrash, trashKey),
+        subjectTrash: mergeUnique(current.subjectTrash, meta.trash?.subjectTrash, trashKey)
     };
 }
 
@@ -66,7 +90,7 @@ function backupAgeLabel(iso, now = Date.now()) {
 }
 
 // 히스토리 한 칸. 차시 id·탭 내용·이유를 함께 남겨 그 차시로 되돌릴 수 있게 한다
-function historyEntry(mod, { id, date, reason } = {}) {
+function historyEntry(mod, { id, date, reason, subjectId } = {}) {
     return {
         id,
         title: mod.title,
@@ -74,6 +98,7 @@ function historyEntry(mod, { id, date, reason } = {}) {
         images: mod.images ? JSON.parse(JSON.stringify(mod.images)) : {},
         date,
         ...(mod.id != null ? { lessonId: mod.id } : {}),
+        ...(subjectId != null ? { subjectId } : {}),
         ...(mod.tabContents ? { tabContents: { ...mod.tabContents } } : {}),
         ...(reason ? { reason } : {})
     };
@@ -82,7 +107,9 @@ function historyEntry(mod, { id, date, reason } = {}) {
 // 되돌릴 곳: 탭 내용이 남은 기록이고 그 차시가 아직 있으면 그 차시, 아니면 새 차시로 되살린다
 function historyRestoreTarget(entry, subjects) {
     if (entry.tabContents && entry.lessonId != null) {
-        for (const subject of subjects || []) {
+        // 기록을 남긴 교과를 먼저 본다(복원한 교과 사본에 같은 차시 id가 있어도 엉뚱한 쪽을 고치지 않게)
+        const ordered = [...(subjects || [])].sort((a, b) => Number(String(b.id) === String(entry.subjectId)) - Number(String(a.id) === String(entry.subjectId)));
+        for (const subject of ordered) {
             const lesson = (subject.lessons || []).find(item => String(item.id) === String(entry.lessonId));
             if (lesson) return { mode: 'replace', subject, lesson };
         }
@@ -130,7 +157,8 @@ function subjectsBackupMeta(subjectIds) {
 // 지금 작업 전체를 되살릴 수 있는 백업 파일을 내려받는다(불러오기·폴더 연결 직전)
 async function downloadSafetyBackup(label) {
     const zip = new JSZip();
-    zip.file('save_data.yaml', JSON.stringify(backupMeta('full', currentSnapshot()), null, 2));
+    const extra = { history: contentHistory, trash: { lessonTrash: globalState.lessonTrash || [], subjectTrash: globalState.subjectTrash || [] } };
+    zip.file('save_data.yaml', JSON.stringify(backupMeta('full', currentSnapshot(), new Date(), extra), null, 2));
     const blob = await zip.generateAsync({ type: 'blob' });
     saveAs(blob, `교안백업_${backupStamp()}_${label}.zip`);
     recordBackupTime();
@@ -162,10 +190,12 @@ function liveSubjectTrash() {
     return live;
 }
 
+const deepCopy = value => (typeof structuredClone === 'function' ? structuredClone(value) : JSON.parse(JSON.stringify(value)));
+
 function moveSubjectToTrash(subject, reason = '') {
     if (!subject) return;
     const lessons = String(subject.id) === String(currentSubjectId) && Array.isArray(courseData) ? courseData : subject.lessons;
-    const entry = { subject: { ...subject, lessons }, at: new Date().toISOString(), ...(reason ? { reason } : {}) };
+    const entry = { subject: deepCopy({ ...subject, lessons: lessons || [] }), at: new Date().toISOString(), ...(reason ? { reason } : {}) };
     globalState.subjectTrash = [entry, ...liveSubjectTrash()].slice(0, SUBJECT_TRASH_LIMIT);
 }
 
@@ -174,7 +204,10 @@ function restoreSubject(index) {
     const entry = liveSubjectTrash()[index];
     if (!entry) return null;
     const clash = globalState.subjects.some(subject => String(subject.id) === String(entry.subject.id) || subject.title === entry.subject.title);
-    const subject = clash ? { ...entry.subject, id: `subject_${Date.now()}`, title: `${entry.subject.title} (복원)` } : entry.subject;
+    const freshId = prefix => (typeof generateUniqueId === 'function' ? generateUniqueId(prefix) : `${prefix}${Date.now()}_${Math.random().toString(36).slice(2, 7)}`);
+    const subject = clash
+        ? { ...entry.subject, id: freshId('subject_'), title: `${entry.subject.title} (복원)`, lessons: (entry.subject.lessons || []).map(lesson => ({ ...lesson, id: freshId('lesson_') })) }
+        : entry.subject;
     globalState.subjects = [...globalState.subjects, subject];
     globalState.subjectTrash = globalState.subjectTrash.filter((_, i) => i !== index);
     return subject;
@@ -188,17 +221,28 @@ async function importSubjectsBackup(meta) {
     const plan = planSubjectImport(globalState.subjects, incoming);
     const ok = await confirmAsync(describeSubjectImport(plan), { okLabel: '백업 받고 불러오기', tone: 'primary', title: '교과 불러오기' });
     if (!ok) return;
+    const openReplaced = plan.replaced.some(subject => String(subject.id) === String(currentSubjectId));
+    if (openReplaced) window.saveRawContent?.(); // 고치던 원문은 바뀌기 전 교과(휴지통으로 갈 쪽)에 먼저 넣는다
     await downloadSafetyBackup('불러오기전');
     plan.replaced.forEach(subject => moveSubjectToTrash(globalState.subjects.find(item => String(item.id) === String(subject.id)), '불러오기 전'));
     globalState.subjects = mergeSubjects(globalState.subjects, incoming);
     const open = globalState.subjects.find(subject => String(subject.id) === String(currentSubjectId));
     if (open) courseData = open.lessons || [];
+    if (openReplaced) closeLessonEditor();
     await saveState();
     if (typeof renderOverviewLNB === 'function') renderOverviewLNB();
     if (typeof renderDiagram === 'function') renderDiagram();
     if (typeof renderSidebar === 'function') renderSidebar();
     location.hash = '#overview';
     window.showToast?.(`교과 ${incoming.length}개를 불러왔습니다.`, 'success');
+}
+
+// 지금 연 차시 편집기를 닫는다. 내용이 바뀐 뒤 남은 편집기(원문 칸 등)가 옛 글을 새 내용 위에 저장하지 않게
+function closeLessonEditor() {
+    currentEditingModuleId = null;
+    document.getElementById('raw-view')?.remove();
+    const area = document.getElementById('editor-content-area');
+    if (area) area.innerHTML = '<div class="h-full flex items-center justify-center text-textMuted text-sm">왼쪽 목록에서 차시를 고르세요.</div>';
 }
 
 /* ---------- 히스토리 되돌리기 ---------- */
@@ -236,7 +280,7 @@ if (typeof window !== 'undefined') {
         stateSnapshot, backupMeta, planSubjectImport, mergeSubjects, describeSubjectImport, backupAgeLabel,
         historyEntry, historyRestoreTarget, lessonFromHistory, confirmAsync, subjectsBackupMeta,
         downloadSafetyBackup, recordBackupTime, renderBackupIndicator, moveSubjectToTrash, restoreSubject,
-        liveSubjectTrash, restoreHistoryItem, importSubjectsBackup
+        liveSubjectTrash, restoreHistoryItem, importSubjectsBackup, mergeBackupExtras, closeLessonEditor
     });
     if (typeof document !== 'undefined' && document.addEventListener) {
         document.addEventListener('DOMContentLoaded', () => {

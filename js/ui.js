@@ -503,6 +503,11 @@ function deleteSubject(id) {
 
         moveSubjectToTrash(subject, '삭제');
         globalState.subjects = globalState.subjects.filter(s => String(s.id) !== String(id));
+        if (String(id) === String(currentSubjectId)) {
+            currentSubjectId = null;
+            courseData = [];
+            closeLessonEditor();
+        }
 
         saveState().then(() => {
             renderOverviewLNB();
@@ -1805,8 +1810,15 @@ window.startBatchGeneration = async function () {
 
     if (isNaN(count) || count < 1 || count > 15) return window.showAlert('생성할 차시 수를 1~15 사이로 입력해주세요.');
 
+    const startSubjectId = currentSubjectId;
     const replacedLessons = (courseData || []).filter(mod => mod && mod.id !== 'mainQuest');
-    if (replacedLessons.length && !(await confirmAsync(`이 교과의 차시 ${replacedLessons.length}개를 휴지통으로 옮기고 새로 만듭니다.\n휴지통(차시 목록 위)에서 30일 동안 되살릴 수 있습니다.`, { okLabel: '새로 만들기', tone: 'primary', title: '차시 다시 만들기' }))) return;
+    const startSubject = globalState.subjects.find(s => s.id === startSubjectId);
+    const replacedQuest = goal && startSubject?.mainQuest?.content ? startSubject.mainQuest : null;
+    const replaceNotes = [
+        replacedLessons.length ? `차시 ${replacedLessons.length}개를 휴지통으로 옮기고(차시 목록 위 휴지통에서 30일 동안 되살림)` : '',
+        replacedQuest ? '메인 퀘스트를 새 목표로 바꿉니다(지금 내용은 히스토리에 남깁니다)' : ''
+    ].filter(Boolean);
+    if (replaceNotes.length && !(await confirmAsync(`이 교과를 새로 만듭니다.\n· ${replaceNotes.join('\n· ')}`, { okLabel: '새로 만들기', tone: 'primary', title: '교과 다시 만들기' }))) return;
 
 
 
@@ -2020,7 +2032,8 @@ window.startBatchGeneration = async function () {
 
             updatedSubj.title = title;
 
-            if (replacedLessons.length) moveLessonsToTrash(replacedLessons, updatedSubj.id);
+            if (replacedLessons.length) moveLessonsToTrash(replacedLessons, startSubjectId);
+            if (replacedQuest) await archiveContents([{ ...replacedQuest, title: replacedQuest.title || '메인 퀘스트' }], '새로 만들기 전');
             updatedSubj.lessons = generatedLessons;
 
 

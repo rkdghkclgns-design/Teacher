@@ -422,7 +422,7 @@ async function archiveContents(mods, reason = '') {
     const date = new Date().toLocaleString();
     const entries = mods
         .filter(mod => mod && (mod.content || Object.values(mod.tabContents || {}).some(Boolean)))
-        .map((mod, index) => historyEntry(mod, { id: now + index, date, reason })); // 차시 id와 5개 탭도 남겨 되돌리기에 쓴다
+        .map((mod, index) => historyEntry(mod, { id: now + index, date, reason, subjectId: currentSubjectId })); // 차시 id·교과 id·5개 탭도 남겨 되돌리기에 쓴다
     if (!entries.length) return;
     contentHistory.push(...entries);
 
@@ -1383,12 +1383,15 @@ window.importProjectZip = async function (event) {
             const incomingCount = (metaObj.context.subjects || []).length;
             const ok = await confirmAsync(`지금 브라우저의 모든 작업(교과 ${globalState.subjects.length}개)을 이 파일의 내용(교과 ${incomingCount}개)으로 바꿉니다.\n바꾸기 전에 지금 상태를 백업 파일로 내려받습니다. 마음이 바뀌면 그 파일을 다시 불러오면 됩니다.`, { okLabel: '백업 받고 바꾸기', title: '전체 불러오기' });
             if (!ok) return;
+            window.saveRawContent?.(); // 고치던 원문을 먼저 저장해 백업에 들어가게 한다
             await downloadSafetyBackup('불러오기전');
             await archiveContents((courseData || []).filter(Boolean), '불러오기 전');
-            const keptTrash = { lessonTrash: globalState.lessonTrash, subjectTrash: globalState.subjectTrash };
+            const extras = mergeBackupExtras(metaObj, { history: contentHistory, lessonTrash: globalState.lessonTrash, subjectTrash: globalState.subjectTrash });
 
-            // 2순회: globalState 통째 복원 (전체 코스 모드)
-            globalState = Object.assign(sanitizeState(metaObj.context) || sanitizeState({}), keptTrash);
+            // 2순회: globalState 통째 복원 (전체 코스 모드). 휴지통과 히스토리는 지금 것과 파일 것을 합친다
+            globalState = Object.assign(sanitizeState(metaObj.context) || sanitizeState({}), { lessonTrash: extras.lessonTrash, subjectTrash: extras.subjectTrash });
+            contentHistory = extras.history;
+            closeLessonEditor();
 
             // 3순회: courseData 재구성 및 이미지 역치환 (Map에서 로컬 에디전트 메모리로 전송)
             const restoredSubj = globalState.subjects.find(s => s.id === currentSubjectId) || globalState.subjects[0];
@@ -1679,6 +1682,7 @@ window.loadFromProjectFolder = async function () {
         // 바꾸기 전에 묻고, 지금 상태를 백업 파일로 내려받는다
         const ok = await confirmAsync(`'${dirHandle.name}' 폴더의 작업으로 지금 브라우저의 모든 작업(교과 ${globalState.subjects.length}개)을 바꿉니다.\n바꾸기 전에 지금 상태를 백업 파일로 내려받습니다.`, { okLabel: '백업 받고 바꾸기', title: '작업 폴더에서 불러오기' });
         if (!ok) return;
+        window.saveRawContent?.(); // 고치던 원문을 먼저 저장해 백업에 들어가게 한다
         await downloadSafetyBackup('폴더연결전');
         await archiveContents((courseData || []).filter(Boolean), '불러오기 전');
         const keptTrash = { lessonTrash: globalState.lessonTrash, subjectTrash: globalState.subjectTrash };
@@ -1687,6 +1691,7 @@ window.loadFromProjectFolder = async function () {
         const sanitized = sanitizeState(parsed.state);
         if (sanitized) {
             globalState = Object.assign(sanitized, keptTrash);
+            closeLessonEditor();
         }
 
         // 히스토리는 합친다(방금 남긴 기록까지 지우지 않게)
