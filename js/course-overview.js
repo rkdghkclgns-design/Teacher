@@ -75,7 +75,7 @@ async function applySubjectHours() {
 // 차시 시간을 비율대로 늘이거나 줄인다. 진행 단계 시간도 함께 맞춘다
 window.fitSubjectHours = function () {
     if (generationBusy()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.'); // 생성 중인 차시 객체를 바꾸면 결과가 사라진다
-    window.showConfirm(`교과 시간을 비율대로 조정해 합계를 ${fmtMinutes(courseTargetMinutes())}으로 맞출까요? 차시와 진행 단계 시간이 바뀝니다.`, applySubjectHours);
+    window.showConfirm(`교과 시간을 비율대로 조정해 합계를 ${fmtMinutes(courseTargetMinutes())}으로 맞출까요? 차시와 진행 단계 시간이 바뀝니다.`, applySubjectHours, { okLabel: '시간 맞추기', tone: 'primary' });
 };
 
 /* ---------- 차시 구성 화면 ---------- */

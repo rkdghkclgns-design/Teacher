@@ -776,9 +776,12 @@
                 </button>
                 <button onclick="smartZipExport()"
                     class="flex items-center gap-1 px-2.5 py-1.5 text-[0.7rem] font-semibold text-white bg-gradient-to-br from-emerald-500/40 to-teal-500/40 border border-emerald-500/50 rounded-lg hover:from-emerald-500/60 hover:to-teal-500/60 transition-all whitespace-nowrap ml-1"
-                    title="선택한 교과 또는 전체를 ZIP 다운로드">
+                    title="선택한 교과 또는 전체를 ZIP으로 백업(데이터 연동 → zip 파일 불러오기로 되살립니다)">
                     <i class="ph ph-file-zip text-sm"></i> ZIP
                 </button>
+                <button id="last-backup-indicator" onclick="smartZipExport()"
+                    class="ml-1 px-1.5 py-1 text-[0.6875rem] font-semibold text-white/60 rounded hover:bg-white/10 whitespace-nowrap"
+                    title="작업은 이 브라우저에만 저장됩니다. 눌러서 ZIP으로 백업하세요">백업 안 함</button>
             </div>
 
             <!-- 내보내기 드롭다운 (fixed) -->
@@ -1943,6 +1946,7 @@
     <script src="./js/lesson-sanitize.js?v=125"></script>
     <script src="./js/lesson-format.js?v=125"></script>
     <script src="./js/lesson-export.js?v=125"></script>
+    <script src="./js/data-safety.js?v=125"></script>
     <script src="./js/state.js?v=125"></script>
     <script src="./js/api.js?v=125"></script>
     <script src="./js/diagram.js?v=125"></script>

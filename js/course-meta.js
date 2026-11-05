@@ -149,7 +149,26 @@ function restoreLesson(index) {
     return true;
 }
 
+// 교과 목록 아래 휴지통 버튼. 교과와 차시를 함께 센다
+function renderTrashFooter() {
+    const subjects = typeof liveSubjectTrash === 'function' ? liveSubjectTrash().length : 0;
+    const lessons = liveLessonTrash(globalState.lessonTrash).length;
+    if (!subjects && !lessons) return '';
+    return `<button onclick="openLessonTrash()" class="w-full mt-1 h-8 flex items-center justify-center gap-1 rounded border border-dashed border-white/15 text-[0.6875rem] font-bold text-textMuted hover:bg-white/5 hover:text-textLight" title="지운 교과와 차시를 되살립니다"><i class="ph-bold ph-trash"></i> 휴지통 · 교과 ${subjects} · 차시 ${lessons}</button>`;
+}
+
+function renderSubjectTrashRows() {
+    const entries = typeof liveSubjectTrash === 'function' ? liveSubjectTrash() : [];
+    return entries.map((entry, index) => `
+            <div class="flex items-center gap-2 p-2 rounded-lg bg-amber-500/10 text-xs text-textLight">
+                <span class="flex-1 min-w-0 truncate"><i class="ph-bold ph-books"></i> 교과 · ${escapeHtml(entry.subject.title)}<span class="block text-[0.6875rem] text-textMuted">차시 ${(entry.subject.lessons || []).length}개 · ${escapeHtml(entry.at.slice(0, 16).replace('T', ' '))}${entry.reason ? ` · ${escapeHtml(entry.reason)}` : ''} · 남은 기간 ${trashDaysLeft(entry)}일</span></span>
+                <button data-trash-action="restore-subject" data-index="${index}" class="px-2 py-1 font-bold bg-accent text-white rounded">복원</button>
+                <button data-trash-action="purge-subject" data-index="${index}" class="px-2 py-1 font-bold bg-white/10 text-rose-300 rounded">완전 삭제</button>
+            </div>`).join('');
+}
+
 function renderTrashRows() {
+    const subjectRows = renderSubjectTrashRows();
     const rows = (globalState.lessonTrash || []).map((entry, index) => {
         const subject = globalState.subjects.find(item => item.id === entry.subjectId);
         return `
@@ -159,7 +178,7 @@ function renderTrashRows() {
                 <button data-trash-action="purge" data-index="${index}" class="px-2 py-1 font-bold bg-white/10 text-rose-300 rounded">완전 삭제</button>
             </div>`;
     });
-    return rows.join('') || '<p class="text-xs text-textMuted">휴지통이 비었습니다.</p>';
+    return (subjectRows + rows.join('')) || '<p class="text-xs text-textMuted">휴지통이 비었습니다.</p>';
 }
 
 window.openLessonTrash = function () {
@@ -172,11 +191,11 @@ window.openLessonTrash = function () {
         <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[480px] max-h-[80vh] flex flex-col shadow-2xl">
             <div class="p-4 border-b border-white/10">
                 <div class="flex items-center gap-2">
-                    <h2 class="text-sm font-bold text-textLight">차시 휴지통</h2>
+                    <h2 class="text-sm font-bold text-textLight">휴지통</h2>
                     <button data-trash-action="empty" class="ml-auto px-3 py-1 text-xs font-bold text-rose-300 bg-white/10 rounded">휴지통 비우기</button>
                     <button data-trash-action="close" class="px-3 py-1 text-xs font-bold text-textLight bg-white/10 rounded">닫기</button>
                 </div>
-                <p class="text-xs text-textMuted mt-1">삭제한 차시는 ${LESSON_TRASH_DAYS}일 동안 보관한 뒤 자동으로 지웁니다.</p>
+                <p class="text-xs text-textMuted mt-1">지운 교과와 차시는 ${LESSON_TRASH_DAYS}일 동안 보관한 뒤 자동으로 지웁니다.</p>
             </div>
             <div id="lesson-trash-rows" class="flex-1 overflow-y-auto p-4 space-y-2">${renderTrashRows()}</div>
         </div>`;
@@ -186,8 +205,10 @@ window.openLessonTrash = function () {
 
 async function refreshTrash() {
     await saveState();
-    renderSidebar();
-    applyLessonFilter();
+    if (typeof renderSidebar === 'function') renderSidebar();
+    if (typeof applyLessonFilter === 'function') applyLessonFilter();
+    if (typeof renderOverviewLNB === 'function') renderOverviewLNB();
+    if (typeof renderDiagram === 'function') renderDiagram();
     const rows = document.getElementById('lesson-trash-rows');
     if (rows) rows.innerHTML = renderTrashRows();
 }
@@ -197,10 +218,22 @@ async function onTrashClick(event) {
     if (!action) return;
     if (action === 'close') return document.getElementById('lesson-trash-dialog')?.remove();
     if (action === 'empty') {
-        return window.showConfirm('휴지통의 차시를 모두 영구 삭제할까요? 되돌릴 수 없습니다.', () => {
+        return window.showConfirm('휴지통의 교과와 차시를 모두 영구 삭제할까요? 되돌릴 수 없습니다.', () => {
             globalState.lessonTrash = [];
+            globalState.subjectTrash = [];
             return refreshTrash();
-        });
+        }, { okLabel: '영구 삭제', title: '휴지통 비우기' });
+    }
+    if (action === 'restore-subject') {
+        const subject = restoreSubject(Number(event.target.dataset.index));
+        if (!subject) return window.showAlert('복원할 교과를 찾지 못했습니다.');
+        window.showToast?.(`'${subject.title}' 교과를 복원했습니다.`, 'success');
+        return refreshTrash();
+    }
+    if (action === 'purge-subject') {
+        const index = Number(event.target.dataset.index);
+        globalState.subjectTrash = liveSubjectTrash().filter((_, i) => i !== index);
+        return refreshTrash();
     }
     const index = Number(event.target.dataset.index);
     if (action === 'restore') {

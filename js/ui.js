@@ -66,23 +66,32 @@ window.alert = window.showAlert;
 
 
 
-window.showConfirm = function (message, onConfirm) {
+// opts: okLabel(확인 버튼 이름, 기본 '삭제'), tone('danger' 빨강 | 'primary' 보라), title, onCancel
+window.showConfirm = function (message, onConfirm, opts = {}) {
+
+    const { okLabel = '삭제', tone = 'danger', title = '확인', onCancel } = opts;
+    const okClass = tone === 'primary' ? 'bg-accent hover:bg-accentHover' : 'bg-red-500/80 hover:bg-red-500';
 
     const overlay = document.createElement('div');
 
     overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] animate-fade-in';
 
-    overlay.onclick = () => overlay.remove();
+    const cancel = () => {
+        overlay.remove();
+        if (typeof onCancel === 'function') onCancel();
+    };
+
+    overlay.onclick = cancel;
 
     overlay.innerHTML = `
 
-                <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[320px] p-6 shadow-2xl flex flex-col" onclick="event.stopPropagation()">
+                <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[360px] max-w-[92vw] p-6 shadow-2xl flex flex-col" onclick="event.stopPropagation()">
 
                     <div class="flex items-center gap-3 mb-4">
 
                         <i class="ph-fill ph-warning-circle text-2xl text-yellow-400"></i>
 
-                        <h3 class="font-bold text-white text-sm">확인</h3>
+                        <h3 class="font-bold text-white text-sm">${escapeHtml(title)}</h3>
 
                     </div>
 
@@ -90,9 +99,9 @@ window.showConfirm = function (message, onConfirm) {
 
                     <div class="flex justify-end gap-2">
 
-                        <button class="px-4 py-2 text-xs font-bold text-textLight bg-white/5 hover:bg-white/10 rounded-lg transition-colors" onclick="this.closest('.fixed').remove()">취소</button>
+                        <button class="px-4 py-2 text-xs font-bold text-textLight bg-white/5 hover:bg-white/10 rounded-lg transition-colors" data-confirm-cancel>취소</button>
 
-                        <button class="px-4 py-2 text-xs font-bold text-white bg-red-500/80 hover:bg-red-500 rounded-lg transition-colors" id="btn-confirm-ok">삭제</button>
+                        <button class="px-4 py-2 text-xs font-bold text-white ${okClass} rounded-lg transition-colors" id="btn-confirm-ok">${escapeHtml(okLabel)}</button>
 
                     </div>
 
@@ -102,7 +111,7 @@ window.showConfirm = function (message, onConfirm) {
 
     document.body.appendChild(overlay);
 
-
+    overlay.querySelector('[data-confirm-cancel]').onclick = cancel;
 
     document.getElementById('btn-confirm-ok').onclick = () => {
 
@@ -155,7 +164,8 @@ window.showModal = function (title, contentHTML) {
 };
 
 // ── F1-2: 핵심개념 입력 팝업 ──
-window.showKeyConceptsPrompt = function (title, defaultConcepts, onConfirm) {
+// opts.warning: 버튼 위에 보일 경고(다시 만들기 등), opts.okLabel: 확인 버튼 이름
+window.showKeyConceptsPrompt = function (title, defaultConcepts, onConfirm, opts = {}) {
     const defaults = Array.isArray(defaultConcepts) ? defaultConcepts.filter(Boolean) : [];
     const overlay = document.createElement('div');
     overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] animate-fade-in';
@@ -167,14 +177,15 @@ window.showKeyConceptsPrompt = function (title, defaultConcepts, onConfirm) {
                 <h3 class="font-bold text-white text-sm">${title}</h3>
             </div>
             <p class="text-xs text-textMuted mb-3 leading-relaxed">이 차시에서 반드시 다뤄야 할 핵심 개념을 입력하세요.<br>쉼표(,)로 구분하며, 비워두면 AI가 자동 구성합니다.</p>
-            <input type="text" id="kc-prompt-input" value="${defaults.join(', ')}"
+            ${opts.warning ? `<p class="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 mb-3 leading-relaxed"><i class="ph-bold ph-warning"></i> ${escapeHtml(opts.warning)}</p>` : ''}
+            <input type="text" id="kc-prompt-input" value="${escapeHtml(defaults.join(', '))}"
                 placeholder="예: 게임 루프, 프레임 레이트, 델타 타임"
                 class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent transition-colors mb-4"
                 onkeydown="if(event.key==='Enter'){document.getElementById('kc-prompt-ok').click();}">
             <div class="flex justify-end gap-2">
                 <button class="px-4 py-2 text-xs font-bold text-textLight bg-white/5 hover:bg-white/10 rounded-lg transition-colors" onclick="this.closest('.fixed').remove()">취소</button>
                 <button id="kc-prompt-ok" class="px-4 py-2 text-xs font-bold text-white bg-accent hover:bg-accentHover rounded-lg transition-colors flex items-center gap-1">
-                    <i class="ph-bold ph-sparkle"></i> 생성
+                    <i class="ph-bold ph-sparkle"></i> ${escapeHtml(opts.okLabel || '생성')}
                 </button>
             </div>
         </div>
@@ -331,7 +342,7 @@ function renderOverviewLNB() {
 
                         교과가 없습니다.<br>상단 <i class="ph-bold ph-plus inline-block"></i> 버튼을 눌러 추가하세요.
 
-                    </div>`;
+                    </div>${typeof renderTrashFooter === 'function' ? renderTrashFooter() : ''}`;
 
         return;
 
@@ -395,7 +406,7 @@ function renderOverviewLNB() {
 
                 </div>
 
-            `).join('');
+            `).join('') + (typeof renderTrashFooter === 'function' ? renderTrashFooter() : '');
 
 }
 
@@ -486,17 +497,21 @@ function createNewSubject() {
 
 function deleteSubject(id) {
 
-    showConfirm('이 교과를 정말 삭제하시겠습니까? (하위 차시 모두 삭제됨)', () => {
+    const subject = globalState.subjects.find(s => String(s.id) === String(id));
+    if (!subject) return;
+    showConfirm(`'${subject.title}' 교과를 휴지통으로 옮깁니다(차시 ${(subject.lessons || []).length}개 포함).\n교과 목록 아래 휴지통에서 30일 동안 되살릴 수 있습니다.`, () => {
 
+        moveSubjectToTrash(subject, '삭제');
         globalState.subjects = globalState.subjects.filter(s => String(s.id) !== String(id));
 
         saveState().then(() => {
             renderOverviewLNB();
             renderDiagram();
             closeDetailPanel();
+            window.showToast?.(`'${subject.title}' 교과를 휴지통으로 옮겼습니다.`, 'success');
         });
 
-    });
+    }, { okLabel: '휴지통으로 옮기기', title: '교과 삭제' });
 
 }
 
@@ -979,11 +994,13 @@ window.exportSelectedToZip = async function () {
     if (totalFiles === 0) return window.showAlert('내보낼 내용이 없습니다.');
 
     try {
+        zip.file('save_data.yaml', JSON.stringify(subjectsBackupMeta(checkedIds), null, 2)); // 데이터 연동 → zip 파일 불러오기로 이 교과들을 되살린다
         const blob = await zip.generateAsync({ type: 'blob' });
         const zipName = checkedIds.length === 1
             ? `${(globalState.subjects.find(s => String(s.id) === String(checkedIds[0]))?.title || '교과').replace(/[^\w가-힣\s]/g, '')}_교안.zip`
             : `교안_${checkedIds.length}개교과.zip`;
         saveAs(blob, zipName);
+        recordBackupTime();
         if (window.showToast) window.showToast(`📦 ${totalFiles}개 파일이 ZIP으로 다운로드되었습니다.`, 'success');
     } catch (e) {
         console.error('[ZIP]', e);
@@ -1103,8 +1120,10 @@ window.exportAllToZip = async function () {
     if (totalFiles === 0) return window.showAlert('내보낼 내용이 없습니다.');
 
     try {
+        zip.file('save_data.yaml', JSON.stringify(subjectsBackupMeta([subj.id]), null, 2)); // 데이터 연동 → zip 파일 불러오기로 이 교과를 되살린다
         const blob = await zip.generateAsync({ type: 'blob' });
         saveAs(blob, `${subjectName}_전체교안.zip`);
+        recordBackupTime();
         if (window.showToast) window.showToast(`📦 ${totalFiles}개 파일이 ZIP으로 다운로드되었습니다.`, 'success');
     } catch (e) {
         console.error('[ZIP Export]', e);
@@ -1786,6 +1805,9 @@ window.startBatchGeneration = async function () {
 
     if (isNaN(count) || count < 1 || count > 15) return window.showAlert('생성할 차시 수를 1~15 사이로 입력해주세요.');
 
+    const replacedLessons = (courseData || []).filter(mod => mod && mod.id !== 'mainQuest');
+    if (replacedLessons.length && !(await confirmAsync(`이 교과의 차시 ${replacedLessons.length}개를 휴지통으로 옮기고 새로 만듭니다.\n휴지통(차시 목록 위)에서 30일 동안 되살릴 수 있습니다.`, { okLabel: '새로 만들기', tone: 'primary', title: '차시 다시 만들기' }))) return;
+
 
 
     const submitBtn = document.getElementById('batch-submit-btn');
@@ -1998,6 +2020,7 @@ window.startBatchGeneration = async function () {
 
             updatedSubj.title = title;
 
+            if (replacedLessons.length) moveLessonsToTrash(replacedLessons, updatedSubj.id);
             updatedSubj.lessons = generatedLessons;
 
 

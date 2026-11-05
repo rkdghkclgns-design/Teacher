@@ -461,6 +461,10 @@ async function handleGenerate() {
 
     if (!topic) return window.showAlert('교육 주제를 입력해주세요.');
 
+    // 차시가 있으면 확인을 받고, 기존 차시는 휴지통으로 보낸다(덮어써서 잃지 않게)
+    const replacedLessons = (courseData || []).filter(mod => mod && mod.id !== 'mainQuest');
+    if (replacedLessons.length && !(await confirmAsync(`이 교과의 차시 ${replacedLessons.length}개를 휴지통으로 옮기고 새 목차를 만듭니다.\n휴지통(차시 목록 위)에서 30일 동안 되살릴 수 있습니다.`, { okLabel: '새 목차 만들기', tone: 'primary', title: '차시 목차 다시 만들기' }))) return;
+
 
 
     document.getElementById('sidebar-loading').style.display = 'flex';
@@ -499,7 +503,7 @@ async function handleGenerate() {
 
         if (!Array.isArray(parsed)) throw new Error("Invalid format received");
 
-
+        if (replacedLessons.length) moveLessonsToTrash(replacedLessons);
 
         courseData = parsed.map((item, idx) => ({
 
@@ -577,7 +581,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
     // 이전엔 status==='done'이면 tabContents가 남아있어 5탭 자동생성이 스킵되고
     // mod.content와 tabContents가 어긋나 같은 내용이 2회 이상 보이는 문제 발생.
     if (mod.status === 'done' || (mod.tabContents && Object.values(mod.tabContents).some(v => v))) {
-        if (mod.content) await archiveContent({ title: mod.title, content: mod.content, images: mod.images }); // 중단하거나 실패해도 이전 교안을 되찾을 수 있게 한다
+        await archiveContents([mod], '다시 생성 전'); // 중단하거나 실패해도 히스토리에서 이전 교안(5개 탭)으로 되돌릴 수 있게 한다
         mod.tabContents = { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null };
         // 재생성 시 옛 이미지 캐시도 비움 (새 본문에 맞는 이미지로 갱신)
         mod.images = {};
@@ -824,10 +828,14 @@ window.promptAndGenerateModule = function (moduleId) {
     if (!mod) return;
     if (window.isLessonPipelineRunning()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
     const existing = Array.isArray(mod.keyConcepts) ? mod.keyConcepts : [];
-    const label = mod.status === 'done' ? `재생성: ${mod.title}` : `교안 생성: ${mod.title}`;
+    const regenerating = mod.status === 'done';
+    const label = regenerating ? `다시 생성: ${mod.title}` : `교안 생성: ${mod.title}`;
+    const opts = regenerating
+        ? { warning: '5개 탭과 그림을 모두 새로 만듭니다. 손으로 고친 내용도 바뀝니다. 지금 내용은 히스토리에 남아 되돌릴 수 있습니다. 한 탭만 바꾸려면 그 탭의 "이 탭 생성"을 쓰세요.', okLabel: '모두 다시 생성' }
+        : {};
     showKeyConceptsPrompt(label, existing, (concepts) => {
         generateModuleContent(moduleId, concepts);
-    });
+    }, opts);
 };
 
 // ── F1-2: 메인퀘스트도 핵심개념 팝업 래퍼 ──

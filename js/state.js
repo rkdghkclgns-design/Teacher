@@ -416,15 +416,14 @@ async function loadMockData() {
 
 
 // 여러 글을 한 번에 남긴다. 글마다 저장하면 이미지가 많은 과정에서 느려진다
-async function archiveContents(mods) {
+// reason: '다시 생성 전'·'되돌리기 전'·'불러오기 전'처럼 남긴 까닭(히스토리 목록에 보인다)
+async function archiveContents(mods, reason = '') {
     const now = Date.now();
-    const entries = mods.map((mod, index) => ({
-        id: now + index,
-        title: mod.title,
-        content: mod.content,
-        images: mod.images ? JSON.parse(JSON.stringify(mod.images)) : {}, // 히스토리에 이미지 레지스트리도 복사
-        date: new Date().toLocaleString()
-    }));
+    const date = new Date().toLocaleString();
+    const entries = mods
+        .filter(mod => mod && (mod.content || Object.values(mod.tabContents || {}).some(Boolean)))
+        .map((mod, index) => historyEntry(mod, { id: now + index, date, reason })); // 차시 id와 5개 탭도 남겨 되돌리기에 쓴다
+    if (!entries.length) return;
     contentHistory.push(...entries);
 
     await saveState();
@@ -435,8 +434,8 @@ async function archiveContents(mods) {
     }
 }
 
-async function archiveContent(mod) {
-    await archiveContents([mod]);
+async function archiveContent(mod, reason = '') {
+    await archiveContents([mod], reason);
 }
 
 // --- History UI ---
@@ -471,7 +470,7 @@ function updateHistoryBadges() {
 async function renderHistoryUI(area) {
     updateHistoryBadges();
     if (!Array.isArray(contentHistory) || contentHistory.length === 0) {
-        area.innerHTML = `<div class="h-full flex items-center justify-center text-textMuted bg-[#12121e]">저장된 히스토리가 없습니다. (모듈 삭제 시 자동 저장됩니다)</div>`;
+        area.innerHTML = `<div class="h-full flex items-center justify-center text-textMuted bg-[#12121e]">저장된 히스토리가 없습니다. (차시를 지우거나 다시 만들기 전에 자동으로 남습니다)</div>`;
         return;
     }
 
@@ -543,10 +542,13 @@ window.renderHistoryList = function () {
                     <input type="checkbox" class="w-4 h-4 rounded border-white/20 bg-black/50 accent-accent pointer-events-none" ${isSelected ? 'checked' : ''}>
                     <div>
                         <h4 class="font-bold ${isSelected ? 'text-white' : 'text-white/80'} text-sm">${escapeHtml(h.title)}</h4>
-                        <span class="text-xs text-white/60">${escapeHtml(h.date)}</span>
+                        <span class="text-xs text-white/60">${escapeHtml(h.date)}${h.reason ? ` · ${escapeHtml(h.reason)}` : ''}${h.tabContents ? ' · 5개 탭' : ''}</span>
                     </div>
                 </div>
-                <button onclick="event.stopPropagation(); viewHistoryItem(${Number(h.id)})" class="text-accent hover:text-white hover:bg-accent text-xs font-bold px-3 py-1.5 bg-accent/10 rounded transition-colors border border-accent/20">내용 보기</button>
+                <div class="flex items-center gap-1.5 shrink-0">
+                    <button onclick="event.stopPropagation(); viewHistoryItem(${Number(h.id)})" class="text-accent hover:text-white hover:bg-accent text-xs font-bold px-3 py-1.5 bg-accent/10 rounded transition-colors border border-accent/20">내용 보기</button>
+                    <button onclick="event.stopPropagation(); restoreHistoryItem(${Number(h.id)})" class="text-white text-xs font-bold px-3 py-1.5 bg-accent hover:bg-accentHover rounded transition-colors" title="${h.tabContents ? '그 차시를 이 기록으로 되돌립니다' : '이 기록을 새 차시로 되살립니다'}">되돌리기</button>
+                </div>
             </div>
         `;
     }).join('');
@@ -846,7 +848,8 @@ window.viewHistoryItem = function (id) {
             htmlContent = `<pre style="white-space:pre-wrap;word-break:break-word;">${resolved.replace(/</g, '&lt;')}</pre>`;
         }
 
-        showModal(`[복구] ${item.title || '제목 없음'}`, htmlContent);
+        const restoreBar = `<div class="not-prose mb-4 flex items-center gap-2 p-3 rounded-lg bg-accent/10 border border-accent/30 text-xs text-gray-700"><span class="flex-1">${escapeHtml(item.date || '')}${item.reason ? ` · ${escapeHtml(item.reason)}` : ''} 기록입니다.</span><button onclick="restoreHistoryItem(${Number(item.id)})" class="px-3 py-1.5 font-bold text-white bg-accent rounded hover:bg-accentHover">이 버전으로 되돌리기</button></div>`;
+        showModal(`히스토리: ${escapeHtml(item.title || '제목 없음')}`, restoreBar + htmlContent);
 
     } catch (e) {
         console.error("히스토리 복원 오류:", e);
@@ -1062,6 +1065,7 @@ window.exportAllModules = async function () {
         // 묶음 ZIP 생성 (이름은 프로젝트_교과명)
         const content = await zip.generateAsync({ type: "blob" });
         saveAs(content, `${safeCourseName}_${safeSubjName}.zip`);
+        recordBackupTime();
 
     } catch (e) {
         console.error("전체 ZIP 생성 오류:", e);
@@ -1311,7 +1315,12 @@ window.importProjectZip = async function (event) {
         }
 
         if (!metaObj) {
-            throw new Error("유효한 Web Agent 세이브 파일(save_data.yaml 파싱 실패 또는 누락)이 아닙니다.");
+            throw new Error("되살릴 수 있는 백업 파일이 아닙니다(save_data.yaml이 없습니다). 위쪽 ZIP이나 데이터 연동 → zip으로 내보내기로 받은 파일을 골라 주세요.");
+        }
+
+        if (metaObj.scope === 'subjects') {
+            await importSubjectsBackup(metaObj);
+            return;
         }
 
         let isSingleModule = !metaObj.context;
@@ -1370,15 +1379,16 @@ window.importProjectZip = async function (event) {
             window.showAlert('단일 차시 교안을 현재 교과에 성공적으로 가져왔습니다!');
 
         } else {
-            // 기존 교안 데이터를 히스토리에 백업 (덮어쓰기 전 안전장치)
-            if (Array.isArray(courseData) && courseData.length > 0) {
-                courseData.forEach(mod => {
-                    if (mod && mod.content) archiveContent(mod);
-                });
-            }
+            // 전체를 바꾸기 전에 묻고, 지금 상태를 백업 파일로 내려받는다
+            const incomingCount = (metaObj.context.subjects || []).length;
+            const ok = await confirmAsync(`지금 브라우저의 모든 작업(교과 ${globalState.subjects.length}개)을 이 파일의 내용(교과 ${incomingCount}개)으로 바꿉니다.\n바꾸기 전에 지금 상태를 백업 파일로 내려받습니다. 마음이 바뀌면 그 파일을 다시 불러오면 됩니다.`, { okLabel: '백업 받고 바꾸기', title: '전체 불러오기' });
+            if (!ok) return;
+            await downloadSafetyBackup('불러오기전');
+            await archiveContents((courseData || []).filter(Boolean), '불러오기 전');
+            const keptTrash = { lessonTrash: globalState.lessonTrash, subjectTrash: globalState.subjectTrash };
 
             // 2순회: globalState 통째 복원 (전체 코스 모드)
-            globalState = sanitizeState(metaObj.context) || sanitizeState({});
+            globalState = Object.assign(sanitizeState(metaObj.context) || sanitizeState({}), keptTrash);
 
             // 3순회: courseData 재구성 및 이미지 역치환 (Map에서 로컬 에디전트 메모리로 전송)
             const restoredSubj = globalState.subjects.find(s => s.id === currentSubjectId) || globalState.subjects[0];
@@ -1666,22 +1676,23 @@ window.loadFromProjectFolder = async function () {
             return window.showAlert('save_data.yaml에 유효한 상태 데이터가 없습니다.');
         }
 
-        // 현재 데이터 백업
-        if (Array.isArray(courseData) && courseData.length > 0) {
-            courseData.forEach(mod => {
-                if (mod && mod.content) archiveContent(mod);
-            });
-        }
+        // 바꾸기 전에 묻고, 지금 상태를 백업 파일로 내려받는다
+        const ok = await confirmAsync(`'${dirHandle.name}' 폴더의 작업으로 지금 브라우저의 모든 작업(교과 ${globalState.subjects.length}개)을 바꿉니다.\n바꾸기 전에 지금 상태를 백업 파일로 내려받습니다.`, { okLabel: '백업 받고 바꾸기', title: '작업 폴더에서 불러오기' });
+        if (!ok) return;
+        await downloadSafetyBackup('폴더연결전');
+        await archiveContents((courseData || []).filter(Boolean), '불러오기 전');
+        const keptTrash = { lessonTrash: globalState.lessonTrash, subjectTrash: globalState.subjectTrash };
 
         // 상태 복원
         const sanitized = sanitizeState(parsed.state);
         if (sanitized) {
-            globalState = sanitized;
+            globalState = Object.assign(sanitized, keptTrash);
         }
 
-        // 히스토리 복원
+        // 히스토리는 합친다(방금 남긴 기록까지 지우지 않게)
         if (Array.isArray(parsed.history)) {
-            contentHistory = parsed.history;
+            const merged = new Map([...parsed.history, ...contentHistory].map(item => [item.id, item]));
+            contentHistory = [...merged.values()].sort((a, b) => a.id - b.id);
         }
 
         // 교과 데이터 복원

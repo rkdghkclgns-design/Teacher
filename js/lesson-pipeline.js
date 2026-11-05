@@ -292,7 +292,7 @@ window.startLessonGeneration = function (moduleId) {
     if (!mod) return;
     if (_pipeline) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
     if (pipelineSteps(moduleId, {}).some(step => step.needed(mod))) return window.runLessonPipeline(moduleId);
-    return window.showConfirm('모든 항목이 있습니다. 교안 탭을 모두 다시 만들까요?', () => generateAllTabs(moduleId));
+    return window.showConfirm('모든 항목이 있습니다. 교안 탭을 모두 다시 만들까요?', () => generateAllTabs(moduleId), { okLabel: '모두 다시 만들기', tone: 'primary' });
 };
 
 // 도구 메뉴는 바깥을 누르면 닫는다
