@@ -52,7 +52,7 @@
 
                     </div>
 
-                    <div class="font-bold text-lg text-white leading-tight">${globalState.courseTitle}</div>
+                    <div class="font-bold text-lg text-white leading-tight">${escapeHtml(globalState.courseTitle)}</div>
 
                 </div>
 
@@ -100,7 +100,7 @@
 
                                 ${subj.lessons && subj.lessons.length > 0 ? subj.lessons.map((lesson, lIdx) => `
 
-                                    <div id="node-less-${subj.id}-${lesson.id}" onclick="event.stopPropagation(); location.hash='#editor/${subj.id}/${lesson.id}'" class="bg-black/30 border ${lesson.status === 'done' ? 'border-accent/30 bg-accent/5' : 'border-white/5'} px-4 py-3 rounded-lg z-10 w-[240px] shrink-0 hover:border-white/20 hover:-translate-y-0.5 shadow-sm hover:shadow-lg transition-all group cursor-pointer pointer-events-auto" title="${lesson.description || ''} (클릭하여 편집)">
+                                    <div id="node-less-${escapeHtml(String(subj.id))}-${escapeHtml(String(lesson.id))}" onclick="event.stopPropagation(); location.hash='#editor/${escapeHtml(String(subj.id))}/${escapeHtml(String(lesson.id))}'" class="bg-black/30 border ${lesson.status === 'done' ? 'border-accent/30 bg-accent/5' : 'border-white/5'} px-4 py-3 rounded-lg z-10 w-[240px] shrink-0 hover:border-white/20 hover:-translate-y-0.5 shadow-sm hover:shadow-lg transition-all group cursor-pointer pointer-events-auto" title="${escapeHtml(lesson.description || '')} (클릭하여 편집)">
 
                                         <div class="flex gap-2.5 items-center">
 

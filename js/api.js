@@ -497,11 +497,17 @@ async function handleGenerate() {
 
 
 
-        if (!Array.isArray(parsed)) throw new Error("Invalid format received");
+        if (!Array.isArray(parsed)) throw new Error('AI 답을 차시 목차로 읽지 못했습니다. 다시 눌러 주세요.');
 
-        if (replacedLessons.length) moveLessonsToTrash(replacedLessons, startSubjectId);
+        // 기다리는 동안 다른 교과를 열었을 수 있다. 새 목차는 시작한 교과에만 쓴다
+        const startSubject = startSubjectId ? globalState.subjects.find(s => s.id === startSubjectId) : null;
+        if (startSubjectId && !startSubject) throw new Error('목차를 만드는 동안 그 교과가 지워졌습니다.');
+        const onStart = !startSubject || currentSubjectId === startSubjectId;
+        // 반영하는 지금의 차시를 휴지통으로 보낸다(기다리는 동안 더하거나 고친 차시도 잃지 않게)
+        const replacingNow = ((onStart ? courseData : startSubject.lessons) || []).filter(mod => mod && mod.id !== 'mainQuest');
+        if (replacingNow.length) moveLessonsToTrash(replacingNow, startSubjectId);
 
-        courseData = parsed.map((item, idx) => ({
+        const newLessons = parsed.map((item, idx) => ({
 
             id: Date.now() + idx,
 
@@ -525,11 +531,14 @@ async function handleGenerate() {
 
         }));
 
-        currentTopic = topic;
-
-
-
-        renderSidebar();
+        if (onStart) {
+            courseData = newLessons;
+            currentTopic = topic;
+            renderSidebar();
+        } else {
+            startSubject.lessons = newLessons;
+            window.showToast?.(`'${startSubject.title}' 교과에 새 차시 목차를 만들었습니다.`, 'success');
+        }
 
         saveState();
 
@@ -1945,6 +1954,7 @@ function addReferenceUrl() {
     const input = document.getElementById('reference-url-input');
     const url = (input?.value || '').trim();
     if (!url) return;
+    if (!/^https?:\/\//i.test(url)) return window.showAlert('https:// 로 시작하는 웹 주소만 넣을 수 있습니다.');
     const subj = globalState.subjects.find(s => s.id === currentSubjectId);
     if (!subj) return window.showAlert('교과를 먼저 선택해주세요.');
     if (subj.referenceUrls.some(r => r.url === url)) return window.showAlert('이미 등록된 URL입니다.');
@@ -2012,7 +2022,7 @@ function showNotebookNameDialog(url, subj) {
 
     confirmBtn.addEventListener('click', doConfirm);
     cancelBtn.addEventListener('click', () => overlay.remove());
-    nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doConfirm(); if (e.key === 'Escape') overlay.remove(); });
+    nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) doConfirm(); if (e.key === 'Escape') overlay.remove(); });
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 }
 
@@ -2032,7 +2042,7 @@ function renderReferenceUrls() {
     if (subj.referenceUrls.length === 0) { container.innerHTML = ''; return; }
     container.innerHTML = subj.referenceUrls.map((r, i) =>
         `<div class="flex items-center gap-1 py-0.5 text-[0.6875rem]">
-            <a href="${r.url}" target="_blank" class="text-accent hover:underline truncate flex-1" title="${r.url}">${r.title || r.url}</a>
+            <a href="${/^https?:\/\//i.test(String(r.url)) ? escapeHtml(r.url) : '#'}" target="_blank" rel="noopener noreferrer" class="text-accent hover:underline truncate flex-1" title="${escapeHtml(r.url)}">${escapeHtml(r.title || r.url)}</a>
             <button onclick="removeReferenceUrl(${i})" class="text-red-400 hover:text-red-300 px-1 shrink-0">✕</button>
         </div>`
     ).join('');
@@ -2408,6 +2418,8 @@ window.cancelFileUpload = function (moduleId) {
 }
 
 function renderEditor(mod) {
+
+    window.clearAISelection?.(); // 다른 차시·탭에서 기억한 선택으로 고치지 않게
 
     const area = document.getElementById('editor-content-area');
 
@@ -2793,9 +2805,9 @@ window.toggleEditorMode = function (mode) {
                                 } catch (err2) {
                                     console.warn(`[Mermaid] 다이어그램 ${i + 1} 최종 실패:`, err2.message);
                                     el.innerHTML = `<div style="padding:12px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:8px;color:#f87171;font-size:13px;">
-                                        <strong>⚠️ Mermaid 렌더링 실패</strong><br>
-                                        <code style="font-size:11px;opacity:0.7;">${err2.message}</code><br>
-                                        <pre style="margin-top:8px;font-size:11px;opacity:0.5;white-space:pre-wrap;">${code.substring(0, 200)}</pre>
+                                        <strong>⚠️ 다이어그램을 그리지 못했습니다</strong><br>
+                                        <code style="font-size:11px;opacity:0.7;">${escapeHtml(err2.message)}</code><br>
+                                        <pre style="margin-top:8px;font-size:11px;opacity:0.5;white-space:pre-wrap;">${escapeHtml(code.substring(0, 200))}</pre>
                                     </div>`;
                                 }
                             }
@@ -2902,7 +2914,28 @@ window.switchAIMode = function (mode) {
 
 const AI_COMMAND_EDIT_PLACEHOLDER = '고칠 내용을 쓰세요 · 고른 글만, 안 고르면 이 탭 전체를 고칩니다';
 
+let aiCommandBusy = false;
+
+// 한 번에 하나만 실행한다(한글 Enter·연타로 두 번 부르지 않게). 보기 화면에서 시작했으면 어떻게 끝나든 보기로 돌아온다
 window.executeAICommand = async function () {
+    if (aiCommandBusy) return;
+    aiCommandBusy = true;
+    const renderView = document.getElementById('render-view');
+    const startedInView = !!renderView && !renderView.classList.contains('hidden');
+    const startedOn = currentEditingModuleId;
+    try {
+        await runAICommand();
+    } finally {
+        aiCommandBusy = false;
+        const raw = document.getElementById('raw-view');
+        if (startedInView && String(currentEditingModuleId) === String(startedOn) && raw && !raw.classList.contains('hidden')) {
+            window.saveRawContent?.(); // 기다리는 동안 원문 칸에 쓴 글을 잃지 않게
+            toggleEditorMode('view');
+        }
+    }
+};
+
+async function runAICommand() {
 
     const input = document.getElementById('ai-command-input');
     const btn = document.getElementById('ai-command-send');
@@ -2935,8 +2968,12 @@ window.executeAICommand = async function () {
             capturedSelection = rawView.value.substring(selStart, selEnd).trim();
         }
         if (!capturedSelection) {
-            // 고른 글이 없으면 이 탭 전체를 고친다. 바뀐 부분은 미리 보고 골라 반영한다(tabs.js)
-            return reinforceCurrentTab(currentEditingModuleId, command);
+            // 고른 글이 없으면 이 탭 전체를 고친다. 시간과 비용이 크므로 한 번 묻는다. 바뀐 부분은 미리 보고 골라 반영한다(tabs.js)
+            const mod = getEditingModule();
+            const size = mod ? getActiveTabSource(mod).length : 0;
+            const ok = await confirmAsync(`고른 글이 없어 이 탭 전체(약 ${size.toLocaleString()}자)를 AI가 고칩니다.\n몇 분 걸릴 수 있고, 바뀐 부분은 미리 보고 골라 반영합니다.\n\n한 부분만 고치려면 취소한 뒤 본문에서 글을 끌어 고르세요.`, { okLabel: '탭 전체 고치기', tone: 'primary', title: '이 탭 전체를 고칠까요?' });
+            if (ok) reinforceCurrentTab(currentEditingModuleId, command); // 진행 막대에서 기다리므로 명령줄을 잡아 두지 않는다
+            return;
         }
     }
 

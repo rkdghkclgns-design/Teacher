@@ -43,12 +43,28 @@ const historyKey = item => String(item.id);
 const trashKey = entry => `${entry.at}|${(entry.lesson || entry.subject || {}).id}`;
 
 // 백업 파일의 히스토리·휴지통을 지금 것과 합친다(불러와도 기록을 잃지 않게)
+// 휴지통 항목은 모양만 확인한다. 안의 교과·차시는 되살릴 때 sanitizeState를 거친다(restoreSubject, restoreLesson)
+const isObject = value => !!value && typeof value === 'object' && !Array.isArray(value);
+const validTrash = (list, key) => (Array.isArray(list) ? list : []).filter(entry => isObject(entry) && isObject(entry[key]));
+const validHistory = list => (Array.isArray(list) ? list : []).filter(item => isObject(item) && Number.isFinite(Number(item.id)));
+
 function mergeBackupExtras(meta, current) {
     return {
-        history: mergeUnique(current.history, meta.history, historyKey).sort((a, b) => a.id - b.id),
-        lessonTrash: mergeUnique(current.lessonTrash, meta.trash?.lessonTrash, trashKey),
-        subjectTrash: mergeUnique(current.subjectTrash, meta.trash?.subjectTrash, trashKey)
+        history: capHistory(mergeUnique(current.history, validHistory(meta.history), historyKey).sort((a, b) => a.id - b.id)),
+        lessonTrash: mergeUnique(current.lessonTrash, validTrash(meta.trash?.lessonTrash, 'lesson'), trashKey),
+        subjectTrash: mergeUnique(current.subjectTrash, validTrash(meta.trash?.subjectTrash, 'subject'), trashKey)
     };
+}
+
+// 휴지통에서 되살리는 교과·차시도 불러온 상태처럼 검사한다(남이 준 백업의 휴지통에서 올 수 있다)
+function cleanTrashSubject(subject) {
+    if (typeof sanitizeState !== 'function') return subject;
+    return sanitizeState({ subjects: [JSON.parse(JSON.stringify(subject))] }).subjects[0];
+}
+
+function cleanTrashLesson(lesson) {
+    if (typeof sanitizeState !== 'function') return lesson;
+    return sanitizeState({ subjects: [{ id: 'trash', lessons: [JSON.parse(JSON.stringify(lesson))] }] }).subjects[0].lessons[0];
 }
 
 function planSubjectImport(current, incoming) {
@@ -199,15 +215,18 @@ function moveSubjectToTrash(subject, reason = '') {
     globalState.subjectTrash = [entry, ...liveSubjectTrash()].slice(0, SUBJECT_TRASH_LIMIT);
 }
 
-// 같은 id나 이름의 교과가 있으면 새 id와 '(복원)'을 붙여 나란히 둔다
+const allLessonIds = () => globalState.subjects.flatMap(subject => (subject.lessons || []).map(lesson => lesson.id));
+
+// 같은 id나 이름의 교과가 있으면 새 id와 '(복원)'을 붙여 나란히 둔다. 차시 id는 화면 코드가 숫자로 쓰므로 숫자로 새로 준다
 function restoreSubject(index) {
     const entry = liveSubjectTrash()[index];
     if (!entry) return null;
-    const clash = globalState.subjects.some(subject => String(subject.id) === String(entry.subject.id) || subject.title === entry.subject.title);
+    const trashed = cleanTrashSubject(entry.subject);
+    const clash = globalState.subjects.some(subject => String(subject.id) === String(trashed.id) || subject.title === trashed.title);
     const freshId = prefix => (typeof generateUniqueId === 'function' ? generateUniqueId(prefix) : `${prefix}${Date.now()}_${Math.random().toString(36).slice(2, 7)}`);
     const subject = clash
-        ? { ...entry.subject, id: freshId('subject_'), title: `${entry.subject.title} (복원)`, lessons: (entry.subject.lessons || []).map(lesson => ({ ...lesson, id: freshId('lesson_') })) }
-        : entry.subject;
+        ? { ...trashed, id: freshId('subject_'), title: `${trashed.title} (복원)`, lessons: renumberLessons(trashed.lessons || [], allLessonIds()) }
+        : trashed;
     globalState.subjects = [...globalState.subjects, subject];
     globalState.subjectTrash = globalState.subjectTrash.filter((_, i) => i !== index);
     return subject;
@@ -245,6 +264,66 @@ function closeLessonEditor() {
     if (area) area.innerHTML = '<div class="h-full flex items-center justify-center text-textMuted text-sm">왼쪽 목록에서 차시를 고르세요.</div>';
 }
 
+/* ---------- 불러온 상태 검사: 백업 ZIP·폴더는 남이 준 파일일 수 있다 ---------- */
+// id는 화면 코드(onclick 속성 등)에 그대로 들어가므로 안전한 글자만 받는다
+const SAFE_STATE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const isSafeStateId = id => (typeof id === 'string' || typeof id === 'number') && SAFE_STATE_ID.test(String(id));
+
+// 글 값은 문자열로 맞춘다(자르지 않는다). 객체는 받지 않는다(toString을 바꾼 객체로 멈추지 않게). 화면에는 escapeHtml을 거쳐 넣는다
+const stateText = value => (['string', 'number', 'boolean'].includes(typeof value) ? String(value) : '');
+
+// 참고 링크는 http(s) 주소만 남긴다(javascript: 같은 주소를 막는다)
+function safeReferenceUrls(list) {
+    return (Array.isArray(list) ? list : [])
+        .filter(ref => ref && typeof ref === 'object' && typeof ref.url === 'string' && /^https?:\/\//i.test(ref.url))
+        .map(ref => ({ ...ref, title: stateText(ref.title) }));
+}
+
+// 차시 id는 화면 코드에 따옴표 없이 들어가므로 숫자여야 한다. 예전 형식에서 차시 목록에 든 최종 평가('mainQuest')는 그대로 둔다
+function normalizeLessonId(id) {
+    if (id === 'mainQuest') return id;
+    if (typeof id === 'number' && Number.isSafeInteger(id) && id >= 0) return id;
+    if (typeof id === 'string' && /^\d{1,15}$/.test(id)) return Number(id);
+    return null;
+}
+
+// 교과마다 차시 목록 안에서 숫자가 아니거나 겹치는 id에만 새 숫자를 준다. 바른 id는 그대로 둔다.
+// 교과가 다르면 같은 id여도 된다(주소·판서 영상·작업 기록이 교과 id와 함께 가리킨다).
+// 새 id는 그 목록의 가장 큰 id 다음 수라, 저장하지 않고 다시 열어도 같게 나온다
+function assignLessonIds(lessonLists) {
+    return lessonLists.map(list => {
+        const reserved = new Set(list.map(lesson => normalizeLessonId(lesson?.id)).filter(id => typeof id === 'number'));
+        const seen = new Set();
+        let next = Math.max(0, ...reserved) + 1;
+        const fresh = () => {
+            while (reserved.has(next) || seen.has(next)) next += 1;
+            return next;
+        };
+        return list.map(lesson => {
+            const id = normalizeLessonId(lesson.id);
+            const safe = id !== null && !seen.has(id) ? id : fresh();
+            seen.add(safe);
+            return safe === lesson.id ? lesson : { ...lesson, id: safe };
+        });
+    });
+}
+
+// 지금 있는 차시들과 겹치지 않는 새 숫자 id로 바꾼 사본(휴지통 되살리기·단일 차시 불러오기)
+function renumberLessons(lessons, takenIds, start = Date.now()) {
+    const taken = new Set([...takenIds].map(id => normalizeLessonId(id)).filter(id => id !== null));
+    let next = start;
+    return lessons.map(lesson => {
+        while (taken.has(next)) next += 1;
+        taken.add(next);
+        return { ...lesson, id: next };
+    });
+}
+
+/* ---------- 작업 기록 상한 ---------- */
+// 기록 한 칸이 차시 그림까지 담으므로 개수를 넘으면 가장 오래된 기록부터 지운다(백업·저장이 커지지 않게)
+const HISTORY_LIMIT = 200;
+const capHistory = (list, limit = HISTORY_LIMIT) => (list.length > limit ? list.slice(list.length - limit) : list);
+
 /* ---------- 작업 기록(히스토리) 되돌리기 ---------- */
 async function restoreHistoryItem(id) {
     const entry = contentHistory.find(item => item.id === id);
@@ -280,7 +359,9 @@ if (typeof window !== 'undefined') {
         stateSnapshot, backupMeta, planSubjectImport, mergeSubjects, describeSubjectImport, backupAgeLabel,
         historyEntry, historyRestoreTarget, lessonFromHistory, confirmAsync, subjectsBackupMeta,
         downloadSafetyBackup, recordBackupTime, renderBackupIndicator, moveSubjectToTrash, restoreSubject,
-        liveSubjectTrash, restoreHistoryItem, importSubjectsBackup, mergeBackupExtras, closeLessonEditor
+        liveSubjectTrash, restoreHistoryItem, importSubjectsBackup, mergeBackupExtras, closeLessonEditor,
+        isSafeStateId, stateText, safeReferenceUrls, normalizeLessonId, assignLessonIds, renumberLessons, capHistory,
+        cleanTrashLesson
     });
     if (typeof document !== 'undefined' && document.addEventListener) {
         document.addEventListener('DOMContentLoaded', () => {

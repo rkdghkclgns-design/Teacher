@@ -156,28 +156,41 @@ function generateUniqueId(prefix = '') {
     return prefix + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);
 }
 
+// 불러온 상태를 믿지 않는다(백업 ZIP·폴더는 남이 준 파일일 수 있다). 검사 함수는 data-safety.js
+// id는 안전한 글자·숫자만 남기고, 글 값은 문자열로 맞춘다. 화면에 넣을 때는 escapeHtml을 거친다
 function sanitizeState(state) {
-    if (!state) return null;
+    if (!state || typeof state !== 'object') return null;
     delete state.apiKey; // 이전 버전 저장 파일에 남은 API 키는 불러오지 않음
-    state.courseId = state.courseId || "course_" + Date.now();
-    state.courseTitle = state.courseTitle || "새 과정";
-    state.subjects = Array.isArray(state.subjects) ? state.subjects : [];
+    state.courseId = isSafeStateId(state.courseId) ? state.courseId : "course_" + Date.now();
+    state.courseTitle = stateText(state.courseTitle) || "새 과정";
+    if (state.courseField !== undefined) state.courseField = stateText(state.courseField);
+    state.subjects = Array.isArray(state.subjects) ? state.subjects.filter(s => s && typeof s === 'object') : [];
 
+    const subjectIds = new Set();
     state.subjects.forEach(s => {
-        s.id = s.id || generateUniqueId('subject_');
-        s.title = s.title || '제목 없음';
-        s.description = s.description || '';
-        s.namingConvention = s.namingConvention || '';
-        s.referenceUrls = Array.isArray(s.referenceUrls) ? s.referenceUrls : [];
+        s.id = isSafeStateId(s.id) && !subjectIds.has(String(s.id)) ? s.id : generateUniqueId('subject_');
+        subjectIds.add(String(s.id));
+        s.title = stateText(s.title) || '제목 없음';
+        s.description = stateText(s.description);
+        s.namingConvention = stateText(s.namingConvention);
+        s.referenceUrls = safeReferenceUrls(s.referenceUrls);
         s.referenceText = typeof s.referenceText === 'string' ? s.referenceText : '';
         s.autoSlide = typeof s.autoSlide === 'boolean' ? s.autoSlide : false;
-        s.lessons = Array.isArray(s.lessons) ? s.lessons : [];
-        s.mainQuest = s.mainQuest || {
+        s.lessons = Array.isArray(s.lessons) ? s.lessons.filter(l => l && typeof l === 'object') : [];
+        s.mainQuest = (s.mainQuest && typeof s.mainQuest === 'object') ? s.mainQuest : {
             id: 'mainQuest', title: '👑 최종 평가', description: '교과 전체를 종합한 최종 평가입니다.', status: 'waiting', content: null, images: {}
         };
+        s.mainQuest.id = 'mainQuest';
+        s.mainQuest.title = stateText(s.mainQuest.title) || '👑 최종 평가';
+        s.mainQuest.description = stateText(s.mainQuest.description);
+    });
+    // 차시 id는 화면 코드에 따옴표 없이 들어가므로 숫자로 맞춘다(바른 id는 그대로)
+    const numbered = assignLessonIds(state.subjects.map(s => s.lessons));
+    state.subjects.forEach((s, index) => {
+        s.lessons = numbered[index];
         s.lessons.forEach(l => {
-            l.id = l.id || generateUniqueId('lesson_');
-            l.title = l.title || '차시';
+            l.title = stateText(l.title) || '차시';
+            l.description = stateText(l.description);
             l.images = l.images || {};
             l.tabContents = l.tabContents || {
                 basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null
@@ -424,7 +437,11 @@ async function archiveContents(mods, reason = '') {
         .filter(mod => mod && (mod.content || Object.values(mod.tabContents || {}).some(Boolean)))
         .map((mod, index) => historyEntry(mod, { id: now + index, date, reason, subjectId: currentSubjectId })); // 차시 id·교과 id·5개 탭도 남겨 되돌리기에 쓴다
     if (!entries.length) return;
-    contentHistory.push(...entries);
+    const merged = [...contentHistory, ...entries];
+    contentHistory = capHistory(merged);
+    if (merged.length > contentHistory.length) {
+        console.info(`[작업 기록] ${HISTORY_LIMIT}개를 넘어 오래된 기록 ${merged.length - contentHistory.length}개를 지웠습니다.`);
+    }
 
     await saveState();
 
@@ -1011,7 +1028,9 @@ window.exportCurrentModule = async function () {
 
 
 window.exportAllModules = async function () {
-    if (!Array.isArray(courseData) || courseData.length === 0) return window.showAlert('내보낼 데이터가 없습니다.');
+    // 과정 전체를 담으므로 지금 연 교과가 없어도(개요 화면) 받을 수 있다
+    if (!globalState.subjects.length) return window.showAlert('백업할 교과가 없습니다.');
+    if (!Array.isArray(courseData)) courseData = [];
     const subj = globalState.subjects.find(s => s.id === currentSubjectId);
 
     // 과정명(Project Name) 안전화
@@ -1064,12 +1083,15 @@ window.exportAllModules = async function () {
 
         // 묶음 ZIP 생성 (이름은 프로젝트_교과명)
         const content = await zip.generateAsync({ type: "blob" });
-        saveAs(content, `${safeCourseName}_${safeSubjName}.zip`);
+        saveAs(content, `${safeCourseName}_과정전체백업_${backupStamp()}.zip`);
         recordBackupTime();
 
     } catch (e) {
         console.error("전체 ZIP 생성 오류:", e);
-        window.showAlert('압축 파일 생성 중 오류가 발생했습니다. JSZip 라이브러리가 로드되었는지 확인하세요.');
+        const tooBig = e instanceof RangeError || /Invalid string length/i.test(e?.message || '');
+        window.showAlert(tooBig
+            ? '그림이 많아 과정 전체를 한 파일로 만들지 못했습니다. 작업 기록에서 오래된 기록을 지우거나, 교과 백업 ZIP을 교과별로 받아 주세요.'
+            : `백업 파일을 만들지 못했습니다: ${e?.message || '알 수 없는 오류'}`);
     }
 }
 
@@ -1331,7 +1353,7 @@ window.importProjectZip = async function (event) {
             if (!subj) throw new Error("현재 선택된 교과가 없습니다. 교과를 먼저 생성해주세요.");
 
             let newMod = {
-                id: 'm_' + Date.now() + Math.floor(Math.random() * 1000),
+                id: renumberLessons([{}], (subj.lessons || []).map(lesson => lesson.id))[0].id,
                 title: metaObj.module || '불러온 교안',
                 description: '',
                 status: 'waiting',
@@ -1439,12 +1461,12 @@ window.importProjectZip = async function (event) {
             // SPA 라우터를 통해 개요 화면으로 안전하게 전환
             location.hash = '#overview';
 
-            window.showAlert('성공적으로 로컬 세이브 파일을 불러와 전역 복원했습니다!');
+            window.showAlert('백업 파일로 과정 전체를 되살렸습니다.');
         }
 
     } catch (e) {
         console.error("ZIP 불러오기 오류:", e);
-        window.showAlert(`불러오기 실패: ${e.message}`);
+        window.showAlert(`백업 파일을 되살리지 못했습니다: ${e.message}`);
     } finally {
         event.target.value = ''; // 재업로드를 위해 인풋 리셋
     }
@@ -1506,6 +1528,8 @@ window.connectProjectFolder = async function () {
         const dirHandle = await window.showDirectoryPicker({
             mode: 'readwrite'
         });
+        // 이미 저장본이 있는 폴더면 덮어쓰기 전에 묻고, 기존 저장본은 다른 이름으로 남긴다
+        if (!(await confirmFolderOverwrite(dirHandle))) return;
         projectFolderHandle = dirHandle;
 
         // [추가] IndexedDB에 핸들 저장 (새로고침 유지용) - 브라우저 정책상 DataCloneError 발생 시 넘겨감
@@ -1517,15 +1541,13 @@ window.connectProjectFolder = async function () {
             }
         }
 
-        // 연결 즉시 현재 상태를 폴더에 동기화
-        await syncToLinkedFolder();
+        // 연결 즉시 현재 상태를 폴더에 동기화. 실패했으면 띠로 알렸으므로 '연결됨'으로 바꾸지 않는다
+        if (!(await syncToLinkedFolder())) return;
 
         // UI 업데이트
-        document.getElementById('folder-connection-indicator').innerHTML = `
-            <i class="ph-fill ph-folder text-cyan-400 text-sm"></i>
-            <span class="text-white/90 font-medium truncate max-w-[100px]">${dirHandle.name}</span>
-            <i class="ph-bold ph-caret-down text-[0.6875rem] text-white/50 ml-1"></i>
-        `;
+        setFolderIndicator('on', dirHandle.name);
+        folderSyncFailed = false;
+        window.hideFolderSyncBanner();
         // 드롭다운 토글 기능으로 변경
         document.getElementById('folder-connection-indicator').onclick = toggleFolderDropdown;
 
@@ -1608,32 +1630,24 @@ window.restoreProjectFolderConnection = async function () {
             if (hasPermission) {
                 // 이미 권한이 유지되어 있다면 바로 복원
                 projectFolderHandle = storedHandle;
-                document.getElementById('folder-connection-indicator').innerHTML = `
-                    <i class="ph-fill ph-folder text-cyan-400 text-sm"></i>
-                    <span class="text-white/90 font-medium truncate max-w-[100px]">${storedHandle.name}</span>
-                    <i class="ph-bold ph-caret-down text-[0.6875rem] text-white/50 ml-1"></i>
-                `;
+                setFolderIndicator('on', storedHandle.name);
                 document.getElementById('folder-connection-indicator').onclick = toggleFolderDropdown;
             } else {
                 // 권한이 만료된 상태 -> 사용자가 버튼을 눌렀을 때만 requestPermission 호출
                 console.warn('저장된 폴더 핸들의 권한이 만료되었습니다. 클릭을 통해 재인증이 필요합니다.');
 
                 const indicator = document.getElementById('folder-connection-indicator');
-                indicator.innerHTML = `
-                    <i class="ph-fill ph-folder-lock text-orange-400 text-sm"></i>
-                    <span class="text-orange-400/90 font-medium truncate max-w-[100px]">${storedHandle.name} (클릭하여 재연결)</span>
-                `;
+                setFolderIndicator('locked', storedHandle.name);
+                // 머리줄 글자만 바뀌면 놓치므로 화면 위에도 알린다
+                showFolderSyncBanner('브라우저를 다시 열어 PC 폴더 자동 저장이 멈췄습니다. 지금 작업은 브라우저에만 저장됩니다.', '다시 연결', () => indicator.onclick?.());
                 // 원클릭 재인증 이벤트 바인딩
                 indicator.onclick = async () => {
                     try {
                         const granted = await verifyPermission(storedHandle, true); // 클릭 이벤트 컨텍스트에서는 팝업 가능
                         if (granted) {
                             projectFolderHandle = storedHandle;
-                            indicator.innerHTML = `
-                                <i class="ph-fill ph-folder text-cyan-400 text-sm"></i>
-                                <span class="text-white/90 font-medium truncate max-w-[100px]">${storedHandle.name}</span>
-                                <i class="ph-bold ph-caret-down text-[0.6875rem] text-white/50 ml-1"></i>
-                            `;
+                            setFolderIndicator('on', storedHandle.name);
+                            window.hideFolderSyncBanner();
                             indicator.onclick = toggleFolderDropdown; // 드롭다운으로 롤백
                             window.showToast(`[${storedHandle.name}] 폴더 쓰기 권한이 복원되었습니다.`);
                         }
@@ -1697,7 +1711,7 @@ window.loadFromProjectFolder = async function () {
         // 히스토리는 합친다(방금 남긴 기록까지 지우지 않게)
         if (Array.isArray(parsed.history)) {
             const merged = new Map([...parsed.history, ...contentHistory].map(item => [item.id, item]));
-            contentHistory = [...merged.values()].sort((a, b) => a.id - b.id);
+            contentHistory = capHistory([...merged.values()].sort((a, b) => a.id - b.id));
         }
 
         // 교과 데이터 복원
@@ -1717,14 +1731,12 @@ window.loadFromProjectFolder = async function () {
             }
         }
 
-        // UI 동기화
-        await saveState();
-        document.getElementById('folder-connection-indicator').innerHTML = `
-            <i class="ph-fill ph-folder text-cyan-400 text-sm"></i>
-            <span class="text-white/90 font-medium truncate max-w-[100px]">${dirHandle.name}</span>
-            <i class="ph-bold ph-caret-down text-[0.6875rem] text-white/50 ml-1"></i>
-        `;
+        // UI 동기화. 표시를 먼저 바꾸고 저장한다(폴더 저장이 실패하면 그 알림이 남는다)
+        setFolderIndicator('on', dirHandle.name);
+        folderSyncFailed = false;
+        window.hideFolderSyncBanner();
         document.getElementById('folder-connection-indicator').onclick = toggleFolderDropdown;
+        await saveState();
 
 
         if (typeof renderSidebar === 'function') renderSidebar();
@@ -1742,8 +1754,9 @@ window.loadFromProjectFolder = async function () {
 /**
  * 연결된 폴더에 전체 상태를 동기화 (saveState 후크에서 호출)
  */
+// 저장했으면 true. 실패하면 화면 위 띠로 알리고 false
 async function syncToLinkedFolder() {
-    if (!projectFolderHandle) return; // linkedDirHandle -> projectFolderHandle
+    if (!projectFolderHandle) return false; // linkedDirHandle -> projectFolderHandle
 
     try {
         // 권한 재확인 (탭 전환 후 권한 만료 방어)
@@ -1755,7 +1768,8 @@ async function syncToLinkedFolder() {
                 // updateFolderConnectionUI(false); // Removed, replaced by direct UI update in disconnect
                 console.warn('폴더 쓰기 권한이 거부되어 연결이 해제되었습니다.');
                 await window.disconnectProjectFolder(); // Call the new disconnect function
-                return;
+                notifyFolderStopped();
+                return false;
             }
         }
 
@@ -1828,24 +1842,150 @@ async function syncToLinkedFolder() {
             }
         }
 
+        markFolderSyncOk(); // 다시 저장되면 실패 알림을 거둔다
+        return true;
     } catch (e) {
         console.warn('폴더 동기화 실패:', e.message);
         // 상태 캐시 에러 처리 (크롬 버그 등 대응)
         if (e.message && e.message.includes('state cached in an interface object')) {
             console.warn('File System 핸들 만료 문제. 연결 해제 처리합니다.');
             projectFolderHandle = null; // linkedDirHandle -> projectFolderHandle
-            // updateFolderConnectionUI(false); // Removed
             await window.disconnectProjectFolder(); // Call the new disconnect function
-            return;
+            notifyFolderStopped();
+            return false;
         }
 
         // 폴더 접근 실패 시 자동 연결 해제 (예: 폴더 삭제됨, 권한 만료 등)
         if (e.name === 'NotFoundError' || e.name === 'NotAllowedError') {
             projectFolderHandle = null; // linkedDirHandle -> projectFolderHandle
-            // updateFolderConnectionUI(false); // Removed
             await window.disconnectProjectFolder(); // Call the new disconnect function
+            notifyFolderStopped();
+            return false;
         }
+        markFolderSyncFailed(e); // 저장만 실패했으면 연결은 두고 화면 위에 알린다
+        return false;
     }
+}
+
+/* ---------- PC 폴더 상태 표시와 멈춤 알림 ---------- */
+let folderSyncFailed = false;
+
+// 폴더 이름은 macOS 등에서 <, > 를 쓸 수 있어 escapeHtml로 넣는다
+function folderIndicatorHtml(kind, name = '') {
+    const safe = escapeHtml(name);
+    if (kind === 'locked') return `<i class="ph-fill ph-folder-lock text-orange-400 text-sm"></i>
+        <span class="text-orange-400/90 font-medium truncate max-w-[160px]">${safe} (눌러서 다시 연결)</span>`;
+    if (kind === 'failed') return `<i class="ph-fill ph-warning text-rose-400 text-sm"></i>
+        <span class="text-rose-300 font-medium truncate max-w-[160px]">PC 폴더 저장 실패</span>`;
+    return `<i class="ph-fill ph-folder text-cyan-400 text-sm"></i>
+        <span class="text-white/90 font-medium truncate max-w-[100px]">${safe}</span>
+        <i class="ph-bold ph-caret-down text-[0.6875rem] text-white/50 ml-1"></i>`;
+}
+
+function setFolderIndicator(kind, name) {
+    const indicator = document.getElementById('folder-connection-indicator');
+    if (indicator) indicator.innerHTML = folderIndicatorHtml(kind, name);
+}
+
+function showFolderSyncBanner(message, actionLabel, onAction) {
+    const banner = document.getElementById('folder-sync-banner');
+    if (!banner) return;
+    document.getElementById('folder-sync-banner-text').textContent = message;
+    const action = document.getElementById('folder-sync-banner-action');
+    action.textContent = actionLabel;
+    action.onclick = () => {
+        window.hideFolderSyncBanner();
+        onAction?.();
+    };
+    banner.classList.remove('hidden');
+}
+
+window.hideFolderSyncBanner = function () {
+    document.getElementById('folder-sync-banner')?.classList.add('hidden');
+};
+
+function folderSyncFailureMessage(err) {
+    if (err instanceof RangeError || /Invalid string length/i.test(err?.message || '')) {
+        return '그림이 많아 PC 폴더에 한 파일로 저장하지 못했습니다. 브라우저에는 저장됐습니다. 백업 ZIP을 교과별로 받아 두세요.';
+    }
+    if (err?.name === 'QuotaExceededError') return 'PC 디스크 공간이 부족해 폴더에 저장하지 못했습니다. 브라우저에는 저장됐습니다.';
+    return `PC 폴더에 저장하지 못했습니다(${err?.message || '알 수 없는 오류'}). 브라우저에는 저장됐습니다.`;
+}
+
+// 저장이 실패하면 한 번만 알린다. 다음 저장이 되면 markFolderSyncOk가 거둔다
+function markFolderSyncFailed(err) {
+    if (folderSyncFailed) return;
+    folderSyncFailed = true;
+    setFolderIndicator('failed', projectFolderHandle?.name || '');
+    showFolderSyncBanner(folderSyncFailureMessage(err), '다른 폴더에 저장', () => window.connectProjectFolder());
+}
+
+function markFolderSyncOk() {
+    if (!folderSyncFailed) return;
+    folderSyncFailed = false;
+    setFolderIndicator('on', projectFolderHandle?.name || '');
+    window.hideFolderSyncBanner();
+}
+
+// 폴더에 닿지 못해 자동 저장을 껐을 때
+function notifyFolderStopped() {
+    folderSyncFailed = false;
+    showFolderSyncBanner('PC 폴더에 닿지 못해 자동 저장을 껐습니다(폴더가 옮겨졌거나 지워졌거나 권한이 없습니다). 지금 작업은 브라우저에만 저장됩니다.', '다른 폴더에 저장', () => window.connectProjectFolder());
+}
+
+// 고른 폴더에 저장본(save_data.yaml)이 있으면 덮어쓰기 전에 묻는다. 덮어쓰면 기존 파일은 다른 이름으로 남긴다
+// { status: 'none' } 저장본 없음 / { status: 'ok', text } / { status: 'unreadable', error }
+async function readFolderSave(dirHandle) {
+    let handle;
+    try {
+        handle = await dirHandle.getFileHandle('save_data.yaml');
+    } catch (err) {
+        if (err.name === 'NotFoundError' || err.name === 'TypeMismatchError') return { status: 'none' };
+        return { status: 'unreadable', error: err };
+    }
+    try {
+        return { status: 'ok', text: await (await handle.getFile()).text() };
+    } catch (err) {
+        return { status: 'unreadable', error: err };
+    }
+}
+
+const FOLDER_SUMMARY_MAX = 5 * 1024 * 1024; // 이보다 크면 요약을 건너뛴다(화면이 멈추지 않게)
+
+function folderSaveSummary(text) {
+    if (text.length > FOLDER_SUMMARY_MAX) return '';
+    try {
+        const parsed = simpleYamlParse(text);
+        const count = parsed?.state?.subjects?.length;
+        const time = parsed?.lastSync ? new Date(parsed.lastSync) : null;
+        const when = time && !Number.isNaN(time.getTime()) ? time.toLocaleString() : '';
+        return [Number.isFinite(count) ? `교과 ${count}개` : '', when ? `마지막 저장 ${when}` : ''].filter(Boolean).join(', ');
+    } catch (err) {
+        console.warn('[폴더 연결] 기존 저장본 요약 실패:', err.message);
+        return '';
+    }
+}
+
+async function confirmFolderOverwrite(dirHandle) {
+    const save = await readFolderSave(dirHandle);
+    if (save.status === 'none') return true;
+    if (save.status === 'unreadable') {
+        console.warn('[폴더 연결] 기존 저장본을 읽지 못했습니다:', save.error);
+        window.showAlert(`'${dirHandle.name}' 폴더의 기존 저장본(save_data.yaml)을 읽지 못해 사본을 남길 수 없습니다. 덮어쓰지 않도록 연결을 멈췄습니다. 다른 빈 폴더를 골라 주세요.`);
+        return false;
+    }
+    const existing = save.text;
+    const summary = folderSaveSummary(existing);
+    const keepName = `save_data_이전_${backupStamp()}.yaml`;
+    const ok = await confirmAsync(
+        `'${dirHandle.name}' 폴더에는 이미 저장해 둔 작업이 있습니다${summary ? `(${summary})` : ''}.\n\n`
+        + `그 작업을 열려면 취소한 뒤 내보내기·백업 → '저장해 둔 폴더 열기'를 누르세요.\n`
+        + `지금 작업으로 덮어쓰면 기존 저장본은 ${keepName}으로 남겨 둡니다.`,
+        { okLabel: '지금 작업으로 덮어쓰기', title: '이 폴더에 저장본이 있습니다' }
+    );
+    if (!ok) return false;
+    await writeTextFile(dirHandle, keepName, existing);
+    return true;
 }
 
 /**

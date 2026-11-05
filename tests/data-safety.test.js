@@ -118,5 +118,108 @@ test('새 차시로 되살리기: 예전 기록은 기본학습 칸에, 탭 기�
     assert.strictEqual(tabs.status, 'done');
 });
 
+/* ---------- 불러온 상태 검사: 남이 준 백업 ZIP·폴더 ---------- */
+const { isSafeStateId, stateText, safeReferenceUrls, assignLessonIds, renumberLessons, capHistory } = { ...ctx, ...ctx.window };
+
+test('id는 안전한 글자만, 글 값은 문자열로, 참고 링크는 http(s)만', () => {
+    assert.strictEqual(isSafeStateId('subject_1793844618467'), true);
+    assert.strictEqual(isSafeStateId('x"><img src=x onerror=alert(1)>'), false);
+    assert.strictEqual(isSafeStateId("a');alert(1);//"), false);
+    assert.strictEqual(isSafeStateId(''), false);
+    assert.strictEqual(stateText(null), '');
+    assert.strictEqual(stateText(12345), '12345');
+    assert.strictEqual(stateText('가'.repeat(5000)).length, 5000, '글은 자르지 않는다');
+    assert.strictEqual(stateText({ toString: null }), '', '객체는 받지 않는다');
+    const refs = JSON.parse(JSON.stringify(safeReferenceUrls([
+        { url: 'javascript:alert(1)', title: 'x' }, { url: 'https://example.com/a', title: '<b>예</b>' }, null, 'https://문자열'
+    ])));
+    assert.deepStrictEqual(refs.map(ref => ref.url), ['https://example.com/a']);
+});
+
+test('차시 id: 숫자가 아니거나 교과 안에서 겹치면 새 숫자, 바른 id는 그대로', () => {
+    const lists = [
+        [{ id: 101 }, { id: '102' }, { id: 'lesson_abc' }, { id: 'viewModule(1)' }, { id: 101 }],
+        [{ id: 101 }, { id: 103 }],
+        [{ id: 'mainQuest' }, { id: 'x' }]
+    ];
+    const [first, second, third] = JSON.parse(JSON.stringify(assignLessonIds(lists)));
+    assert.deepStrictEqual(first.map(l => l.id), [101, 102, 103, 104, 105], '가장 큰 id 다음 수부터');
+    assert.deepStrictEqual(second.map(l => l.id), [101, 103], '다른 교과와 같은 id는 그대로 둔다(교과 id와 함께 가리킨다)');
+    assert.deepStrictEqual(third.map(l => l.id), ['mainQuest', 1], '예전 형식의 최종 평가 id는 그대로');
+    assert.strictEqual(JSON.stringify(assignLessonIds(lists)), JSON.stringify(assignLessonIds(lists)), '저장하지 않고 다시 열어도 같은 id');
+    const renumbered = JSON.parse(JSON.stringify(renumberLessons([{ id: 'lesson_x', title: '가' }, { id: 5 }], [300, '301'], 300)));
+    assert.deepStrictEqual(renumbered.map(l => l.id), [302, 303], '지금 있는 차시와 겹치지 않는 숫자');
+    assert.strictEqual(renumbered[0].title, '가');
+});
+
+test('작업 기록은 상한을 넘으면 오래된 것부터 지운다', () => {
+    const list = Array.from({ length: 205 }, (_, i) => ({ id: i }));
+    const kept = capHistory(list);
+    assert.strictEqual(kept.length, 200);
+    assert.strictEqual(kept[0].id, 5);
+    assert.strictEqual(capHistory([{ id: 1 }]).length, 1);
+});
+
+test('sanitizeState: 악성 백업의 id·과정명·링크·차시가 화면 코드에 들어갈 수 없게 바뀐다', () => {
+    const stateSource = fs.readFileSync(path.join(__dirname, '..', 'js', 'state.js'), 'utf8').replace(/\r\n/g, '\n');
+    const extract = name => {
+        const start = stateSource.indexOf(`function ${name}(`);
+        const end = stateSource.indexOf('\n}\n', start);
+        assert.ok(start >= 0 && end > start, `${name}을 찾지 못함`);
+        return stateSource.slice(start, end + 2);
+    };
+    vm.runInContext(`${extract('generateUniqueId')}\n${extract('sanitizeState')}`, ctx);
+    const evil = '"><img src=x onerror="window.pwned=1">';
+    const state = ctx.sanitizeState(JSON.parse(JSON.stringify({
+        apiKey: 'AIza-FAKE-TEST-KEY',
+        courseId: evil,
+        courseTitle: { toString: null },
+        courseField: { toString: null },
+        subjects: [
+            null,
+            {
+                id: evil, title: evil, referenceUrls: [{ url: 'javascript:fetch(1)', title: 't' }],
+                mainQuest: { id: evil, title: 7 },
+                lessons: [{ id: "1);alert(1);//" }, { id: 7 }, null, { id: 7 }]
+            },
+            { id: 'subject_ok', lessons: [], referenceUrls: [{ url: { toString: null } }] },
+            { id: { toString: null }, lessons: [] }
+        ]
+    })));
+    assert.strictEqual(state.apiKey, undefined, '키는 불러오지 않는다');
+    assert.ok(/^course_\d+$/.test(state.courseId));
+    assert.strictEqual(typeof state.courseTitle, 'string');
+    assert.strictEqual(state.subjects.length, 3, '객체가 아닌 교과는 뺀다');
+    const [bad, ok, dup] = state.subjects;
+    assert.ok(/^subject_[A-Za-z0-9]+$/.test(bad.id), bad.id);
+    assert.strictEqual(ok.id, 'subject_ok');
+    assert.ok(/^subject_/.test(dup.id) && dup.id !== 'subject_ok', '글자가 아닌 교과 id는 새로 준다');
+    assert.strictEqual(ok.referenceUrls.length, 0);
+    assert.strictEqual(state.courseField, '');
+    assert.strictEqual(bad.referenceUrls.length, 0);
+    assert.strictEqual(bad.mainQuest.id, 'mainQuest');
+    assert.strictEqual(typeof bad.mainQuest.title, 'string');
+    assert.strictEqual(bad.lessons.length, 3, '객체가 아닌 차시는 뺀다');
+    bad.lessons.forEach(lesson => assert.ok(Number.isSafeInteger(lesson.id), String(lesson.id)));
+    assert.strictEqual(new Set(bad.lessons.map(lesson => lesson.id)).size, 3, '겹치는 차시 id도 새로 준다');
+    assert.strictEqual(bad.lessons[1].id, 7, '바른 id는 그대로');
+});
+
+test('백업의 휴지통·작업 기록은 모양이 맞는 것만 받고, 되살리는 차시도 검사한다', () => {
+    const merged = ctx.mergeBackupExtras({
+        history: [null, { id: 'abc' }, { id: 9, title: '기록' }],
+        trash: {
+            lessonTrash: [null, { at: 't', lesson: 'x' }, { at: 't2', lesson: { id: '1);alert(1)//', title: { toString: null } } }],
+            subjectTrash: [{ at: 't3', subject: [] }, { at: 't4', subject: { id: 'x" onmouseover="a()' } }]
+        }
+    }, { history: [], lessonTrash: [], subjectTrash: [] });
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(merged.history.map(h => h.id))), [9]);
+    assert.strictEqual(merged.lessonTrash.length, 1);
+    assert.strictEqual(merged.subjectTrash.length, 1);
+    const cleaned = JSON.parse(JSON.stringify((ctx.cleanTrashLesson || ctx.window.cleanTrashLesson)(merged.lessonTrash[0].lesson)));
+    assert.ok(Number.isSafeInteger(cleaned.id), String(cleaned.id));
+    assert.strictEqual(cleaned.title, '차시');
+});
+
 console.log(`\n${count - failed}/${count} passed`);
 if (failed) process.exit(1);

@@ -123,6 +123,7 @@ window.openParagraphEditor = function (event) {
         return;
     }
     window.getSelection()?.removeAllRanges(); // 두 번 누르면 단어가 골라져 서식 막대가 뜬다
+    window.clearAISelection?.(); // 그 단어를 AI 명령줄이 기억하지 않게
     window.hideHoverTooltip?.();
     mountParagraphEditor(target, { mod, tabId: currentLessonTab, source, block });
 };

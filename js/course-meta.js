@@ -142,7 +142,12 @@ function restoreLesson(index) {
     const entry = globalState.lessonTrash[index];
     const subject = globalState.subjects.find(item => item.id === entry.subjectId) || globalState.subjects.find(item => item.id === currentSubjectId);
     if (!subject) return false;
-    const lesson = lessonTitleTaken(entry.lesson.title, entry.lesson.id) ? { ...entry.lesson, title: `${entry.lesson.title} (복원)` } : entry.lesson;
+    // 남이 준 백업의 휴지통에서 왔을 수 있어 검사하고, 같은 교과 안에서 id가 겹치면 새 숫자를 준다(data-safety.js)
+    const cleaned = typeof cleanTrashLesson === 'function' ? cleanTrashLesson(entry.lesson) : entry.lesson;
+    const siblings = subject.id === currentSubjectId ? courseData : (subject.lessons || []);
+    const clash = siblings.some(item => String(item.id) === String(cleaned.id));
+    const unique = clash && typeof renumberLessons === 'function' ? renumberLessons([cleaned], siblings.map(item => item.id))[0] : cleaned;
+    const lesson = lessonTitleTaken(unique.title, unique.id) ? { ...unique, title: `${unique.title} (복원)` } : unique;
     if (subject.id === currentSubjectId) courseData = [...courseData, lesson];
     subject.lessons = subject.id === currentSubjectId ? courseData : [...(subject.lessons || []), lesson];
     globalState.lessonTrash = globalState.lessonTrash.filter((_, i) => i !== index);
@@ -232,8 +237,12 @@ async function onTrashClick(event) {
     }
     if (action === 'purge-subject') {
         const index = Number(event.target.dataset.index);
-        globalState.subjectTrash = liveSubjectTrash().filter((_, i) => i !== index);
-        return refreshTrash();
+        const entry = liveSubjectTrash()[index];
+        if (!entry) return;
+        return window.showConfirm(`'${entry.subject.title}' 교과와 차시 ${(entry.subject.lessons || []).length}개를 영구 삭제합니다. 되돌릴 수 없습니다.`, () => {
+            globalState.subjectTrash = liveSubjectTrash().filter((_, i) => i !== index);
+            return refreshTrash();
+        }, { okLabel: '영구 삭제', title: '교과 영구 삭제' });
     }
     const index = Number(event.target.dataset.index);
     if (action === 'restore') {
@@ -241,7 +250,14 @@ async function onTrashClick(event) {
         if (!restoreLesson(index)) return window.showAlert('복원할 교과를 찾지 못했습니다.');
         window.showToast?.(`'${entry.lesson.title}' 차시를 복원했습니다.`, 'success');
     }
-    if (action === 'purge') globalState.lessonTrash = globalState.lessonTrash.filter((_, i) => i !== index);
+    if (action === 'purge') {
+        const entry = globalState.lessonTrash[index];
+        if (!entry) return;
+        return window.showConfirm(`'${entry.lesson.title}' 차시를 영구 삭제합니다. 되돌릴 수 없습니다.`, () => {
+            globalState.lessonTrash = globalState.lessonTrash.filter((_, i) => i !== index);
+            return refreshTrash();
+        }, { okLabel: '영구 삭제', title: '차시 영구 삭제' });
+    }
     await refreshTrash();
 }
 

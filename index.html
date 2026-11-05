@@ -871,6 +871,15 @@
         </div>
     </header>
 
+    <!-- PC 폴더 자동 저장이 멈추거나 실패하면 머리줄 아래에 뜨는 띠 (state.js showFolderSyncBanner) -->
+    <div id="folder-sync-banner" role="alert"
+        class="hidden fixed top-[62px] left-1/2 -translate-x-1/2 z-[150] w-max max-w-[92vw] flex items-center gap-3 px-4 py-2 rounded-xl bg-[#3b0d1a]/95 border border-rose-500/40 text-xs text-rose-100 shadow-[0_8px_30px_rgba(0,0,0,0.5)]">
+        <i class="ph-fill ph-warning text-rose-300 text-base shrink-0" aria-hidden="true"></i>
+        <span id="folder-sync-banner-text" class="flex-1 leading-relaxed"></span>
+        <button type="button" id="folder-sync-banner-action" class="shrink-0 px-2.5 py-1 font-bold text-white bg-rose-500/40 hover:bg-rose-500/60 rounded-lg"></button>
+        <button type="button" onclick="hideFolderSyncBanner()" aria-label="알림 닫기" class="shrink-0 text-rose-200/70 hover:text-white"><i class="ph-bold ph-x"></i></button>
+    </div>
+
     <!-- Settings Panel -->
     <div id="settings-panel"
         class="hidden fixed top-[60px] right-4 w-[340px] bg-[#1a1a2e] border border-white/10 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.7)] z-[200] animate-fade-in overflow-hidden">
@@ -1565,7 +1574,7 @@
                         </label>
                         <input type="text" id="ai-command-input" aria-label="AI에게 고칠 내용 요청" placeholder="고칠 내용을 쓰세요 · 고른 글만, 안 고르면 이 탭 전체를 고칩니다"
                             class="flex-1 bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-accent transition-colors"
-                            onkeydown="if(event.key==='Enter') executeAICommand()">
+                            onkeydown="if(event.key==='Enter' && !event.isComposing) executeAICommand()">
 
                         <button id="ai-command-send" onclick="executeAICommand()"
                             class="px-5 py-2 bg-gradient-to-r from-accent to-accentHover text-white text-sm font-bold rounded-lg hover:shadow-lg transition-all shrink-0">

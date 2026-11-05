@@ -208,7 +208,7 @@ function designUnitHtml(unit, unitIndex) {
                 <span class="text-xs font-bold text-textLight shrink-0">${unitIndex + 1}.</span>
                 <input data-design-unit-title="${unitIndex}" value="${escapeHtml(unit.title)}" aria-label="단원 제목" class="flex-1 min-w-0 ${DESIGN_FIELD_CLASS}">
                 <span id="design-unit-status-${unitIndex}" class="flex items-center gap-1 shrink-0">${designUnitStatusHtml(unit, unitIndex)}</span>
-                <input type="number" min="1" data-design-hours="${unitIndex}" value="${unit.hours}" aria-label="단원 시간" class="w-14 ${DESIGN_FIELD_CLASS} text-right">
+                <input type="number" min="1" data-design-hours="${unitIndex}" value="${Number(unit.hours) || 0}" aria-label="단원 시간" class="w-14 ${DESIGN_FIELD_CLASS} text-right">
                 <span class="text-[0.6875rem] text-textMuted">시간</span>
             </div>
             ${unit.modules.map((module, moduleIndex) => designBlockHtml(module, unitIndex, moduleIndex)).join('')}

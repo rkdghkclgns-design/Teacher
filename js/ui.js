@@ -174,14 +174,14 @@ window.showKeyConceptsPrompt = function (title, defaultConcepts, onConfirm, opts
         <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[420px] p-6 shadow-2xl flex flex-col" onclick="event.stopPropagation()">
             <div class="flex items-center gap-3 mb-4">
                 <i class="ph-fill ph-lightbulb text-2xl text-accent"></i>
-                <h3 class="font-bold text-white text-sm">${title}</h3>
+                <h3 class="font-bold text-white text-sm">${escapeHtml(title)}</h3>
             </div>
             <p class="text-xs text-textMuted mb-3 leading-relaxed">이 차시에서 반드시 다뤄야 할 핵심 개념을 입력하세요.<br>쉼표(,)로 구분하며, 비워두면 AI가 자동 구성합니다.</p>
             ${opts.warning ? `<p class="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 mb-3 leading-relaxed"><i class="ph-bold ph-warning"></i> ${escapeHtml(opts.warning)}</p>` : ''}
             <input type="text" id="kc-prompt-input" value="${escapeHtml(defaults.join(', '))}"
                 placeholder="예: 게임 루프, 프레임 레이트, 델타 타임"
                 class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent transition-colors mb-4"
-                onkeydown="if(event.key==='Enter'){document.getElementById('kc-prompt-ok').click();}">
+                onkeydown="if(event.key==='Enter' && !event.isComposing){document.getElementById('kc-prompt-ok').click();}">
             <div class="flex justify-end gap-2">
                 <button class="px-4 py-2 text-xs font-bold text-textLight bg-white/5 hover:bg-white/10 rounded-lg transition-colors" onclick="this.closest('.fixed').remove()">취소</button>
                 <button id="kc-prompt-ok" class="px-4 py-2 text-xs font-bold text-white bg-accent hover:bg-accentHover rounded-lg transition-colors flex items-center gap-1">
@@ -1304,6 +1304,8 @@ window.initSelectionHoverUI = function () {
             hideHoverTooltip();
             return;
         }
+        // 아래 명령줄을 누르면 화면의 선택이 풀리므로 고른 글을 기억해 둔다(명령줄 위에 인용으로 보인다)
+        rememberAISelection(sel.toString().trim());
 
         // 선택된 Range의 화면 좌표 계산
         const range = sel.getRangeAt(0);
@@ -1329,6 +1331,8 @@ window.initSelectionHoverUI = function () {
     });
 
     document.addEventListener('mousedown', (e) => {
+        // 본문을 다시 누르면 기억한 선택을 버린다(새로 끌어 고르면 다시 기억한다)
+        if (e.target.closest?.('#render-view')) window.clearAISelection?.();
         const tooltip = document.getElementById('ai-floating-toolbar');
         if (tooltip && !tooltip.contains(e.target)) {
             // 툴팁 외부 클릭 시 선택이 해제되므로 숨김 처리 보강
@@ -1355,18 +1359,9 @@ function hideHoverTooltip() {
 window.activateHoverAIEdit = function () {
     hideHoverTooltip();
 
-    // 선택된 텍스트 보관 및 UI 갱신
+    // 선택된 텍스트 보관 및 UI 갱신(고를 때 이미 기억했지만, 그 사이 바뀌었을 수 있다)
     const sel = window.getSelection();
-    let text = sel ? sel.toString().trim() : '';
-    if (text) {
-        window.currentCapturedSelection = text;
-        const displayRegion = document.getElementById('ai-selected-text-display');
-        const displayContent = document.getElementById('ai-selected-text-content');
-        if (displayRegion && displayContent) {
-            displayContent.textContent = text;
-            displayRegion.classList.remove('hidden');
-        }
-    }
+    rememberAISelection(sel ? sel.toString().trim() : '');
 
     // AI 커맨드 바가 숨겨져 있다면 강제로 보이게 전환 (로직 우회 등 대비)
     const cmdBar = document.getElementById('ai-command-bar');
@@ -1382,6 +1377,17 @@ window.activateHoverAIEdit = function () {
         input.scrollIntoView({ behavior: 'smooth', block: 'center' }); // 화면 가운데로 스크롤
     }
 };
+
+function rememberAISelection(text) {
+    if (!text) return;
+    window.currentCapturedSelection = text;
+    const region = document.getElementById('ai-selected-text-display');
+    const content = document.getElementById('ai-selected-text-content');
+    if (region && content) {
+        content.textContent = text;
+        region.classList.remove('hidden');
+    }
+}
 
 window.clearAISelection = function () {
     window.currentCapturedSelection = null;
@@ -2015,15 +2021,15 @@ window.renderCacheList = async function () {
                 <div class="group bg-black/20 border border-white/5 rounded-xl p-3 hover:bg-white/5 transition-colors relative overflow-hidden">
                     <div class="flex justify-between items-start mb-2">
                         <div class="flex-1 min-w-0 pr-2">
-                            <h4 class="text-[0.75rem] font-bold text-white truncate" title="${item.keyword}">${item.keyword}</h4>
-                            <p class="text-xs text-textMuted mt-0.5">${dateStr} · ${item.format}</p>
+                            <h4 class="text-[0.75rem] font-bold text-white truncate" title="${escapeHtml(item.keyword)}">${escapeHtml(item.keyword)}</h4>
+                            <p class="text-xs text-textMuted mt-0.5">${dateStr} · ${escapeHtml(item.format)}</p>
                         </div>
-                        <button onclick="deleteSingleCache('${item.keyword}')" class="w-6 h-6 flex items-center justify-center rounded bg-rose-500/10 hover:bg-rose-500/30 text-rose-400 opacity-0 group-hover:opacity-100 transition-all shrink-0">
+                        <button onclick="deleteSingleCache(${escapeHtml(JSON.stringify(String(item.keyword)))})" class="w-6 h-6 flex items-center justify-center rounded bg-rose-500/10 hover:bg-rose-500/30 text-rose-400 opacity-0 group-hover:opacity-100 transition-all shrink-0">
                             <i class="ph-bold ph-trash text-xs"></i>
                         </button>
                     </div>
                     <div class="aspect-video bg-black/40 rounded flex items-center justify-center overflow-hidden border border-white/5">
-                        <img src="${item.base64}" class="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt="Cached Image">
+                        <img src="${escapeHtml(item.base64)}" class="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt="Cached Image">
                     </div>
                 </div>
             `;

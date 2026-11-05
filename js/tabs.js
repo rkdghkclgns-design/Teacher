@@ -503,7 +503,8 @@ async function reinforceCurrentTab(moduleId, command = '') {
     if (!reinforceCmd) return window.showAlert('고칠 내용을 아래 칸에 써 주세요.');
 
     const tabMeta = LESSON_TABS.find(t => t.id === tabId);
-    await window.runLessonJob(moduleId, { label: `${tabMeta.label} AI로 고치기`, current: tabId, alerts: true }, async () => {
+    const shownLabel = mod.id === 'mainQuest' ? '최종 평가' : tabMeta.label; // 최종 평가는 탭이 없다
+    await window.runLessonJob(moduleId, { label: `${shownLabel} AI로 고치기`, current: tabId, alerts: true }, async () => {
         try {
             window.setPipelineStatus('AI가 고친 글을 받고 있습니다...');
             const systemInstruction = CONTEXT_CORE.personas.instructor +
@@ -530,7 +531,7 @@ async function reinforceCurrentTab(moduleId, command = '') {
             if (storedTabMarkdown(mod, tabId) !== existingContent) return window.showAlert('고치는 동안 탭 내용이 바뀌어 반영하지 않았습니다. 다시 실행해 주세요.');
             window.setPipelineStatus('바뀐 섹션을 골라 반영해 주세요.');
             const approved = await previewAiChange(existingContent, resultText, {
-                title: `${tabMeta.label} AI 수정 미리보기`,
+                title: `${shownLabel} AI 수정 미리보기`,
                 tabId,
                 truncated,
                 note: truncated ? '응답이 출력 한도에서 잘렸습니다. 마지막 섹션은 기본으로 고르지 않았습니다.' : ''
@@ -540,7 +541,7 @@ async function reinforceCurrentTab(moduleId, command = '') {
             if (!(await commitTabChange(mod, tabId, existingContent, approved, `AI 수정 반영(탭 전체): ${reinforceCmd}`))) return;
             const commandInput = document.getElementById('ai-command-input');
             if (commandInput && commandInput.value.trim() === reinforceCmd) commandInput.value = ''; // 반영한 요청만 지운다
-            window.notifyLessonJobDone(`${tabMeta.label}에 AI 수정을 반영했습니다.`);
+            window.notifyLessonJobDone(`${shownLabel}에 AI 수정을 반영했습니다.`);
         } catch (err) {
             console.error('[탭 전체 AI 수정] 실패:', err);
             window.showAlert('AI 수정 중 오류: ' + err.message);
