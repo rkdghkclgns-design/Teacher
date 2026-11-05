@@ -809,14 +809,15 @@ async function generateModuleContent(moduleId, keyConcepts) {
         mod.content = fullContent;
         mod.status = 'done';
         Object.assign(mod, withHistoryNote(mod, 'AI 교안 생성'));
-        currentEditingModuleId = mod.id;
+        // 만드는 동안 다른 교과로 옮겼으면 그 화면에 이 차시를 열지 않는다(그 교과의 같은 번호 차시를 원문 저장이 덮는다). 이어지는 전체 생성이 멈춘 까닭을 알린다
+        if (lessonOpenHere(subj, mod)) currentEditingModuleId = mod.id;
 
         // 5탭 마이그레이션: 기본학습 탭에 콘텐츠 저장
         if (typeof migrateMonolithicContent === 'function') migrateMonolithicContent(mod);
 
         await saveState();
         renderSidebar();
-        renderEditor(mod);
+        if (lessonOpenHere(subj, mod)) renderEditor(mod);
 
         if (stopped) {
             reported = true;
@@ -841,7 +842,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
             mod.status = 'done';
             await saveState();
             renderSidebar();
-            renderEditor(mod);
+            if (lessonOpenHere(subj, mod)) renderEditor(mod);
             window.showAlert('⚠️ 중간 오류가 발생했지만 작성된 부분까지 저장했습니다.\n수동으로 나머지를 보완하거나 재생성하세요.');
         }
 
@@ -866,13 +867,32 @@ window.promptAndGenerateModule = function (moduleId) {
         : {};
     showKeyConceptsPrompt(label, existing, (concepts) => {
         generateModuleContent(moduleId, concepts);
-    }, opts);
+    }, { ...opts, estimateHtml: moduleGenerationEstimate(mod) });
 };
+
+// 카드의 교안 생성·다시 생성이 이어서 할 일(전체 생성과 같은 미리 보기, cost-estimate.js): 5개 탭(기본 학습부터 다시 만든다),
+// 이어지는 전체 생성이 채우는 삽화·NCS 요소·교수안·슬라이드와 문제은행. 미리 보기를 만들 수 없으면 ''
+function moduleGenerationEstimate(mod) {
+    if (typeof lessonWork !== 'function' || typeof estimateBoxHtml !== 'function') return '';
+    try {
+        return estimateBoxHtml(lessonWork({
+            tabs: LESSON_TABS.map(tab => tab.id),
+            gyosuan: typeof lessonNeedsGyosuan === 'function' ? lessonNeedsGyosuan(mod) : !mod.gyosuan?.docMd,
+            qbank: true,
+            art: typeof lessonWantsArt === 'function' && lessonWantsArt(mod),
+            ncs: typeof needsElementAutoAssign === 'function' && needsElementAutoAssign(mod)
+        }, currentEstimateSettings().imageAmount));
+    } catch (err) {
+        console.warn('[미리 보기] 교안 생성 예고를 만들지 못했습니다:', err);
+        return '';
+    }
+}
 
 // ── F1-2: 메인퀘스트도 핵심개념 팝업 래퍼 ──
 window.promptAndGenerateMainQuest = function () {
     const subj = globalState.subjects.find(s => s.id === currentSubjectId);
     if (!subj) return;
+    if (window.isLessonPipelineRunning?.()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
     const mq = subj.mainQuest;
     const existing = Array.isArray(mq?.keyConcepts) ? mq.keyConcepts : [];
     showKeyConceptsPrompt('최종 평가 만들기', existing, (concepts) => {
@@ -887,6 +907,9 @@ async function generateMainQuest() {
     const subj = globalState.subjects.find(s => s.id === currentSubjectId);
 
     if (!subj) return;
+    // 진행 막대의 생성과 함께 돌면 그 작업의 중지가 이 그림까지 멈춘다. 끝난 뒤에 만든다
+    if (window.isLessonPipelineRunning?.()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
+    window.resetTabGenStop?.(); // 앞서 중지한 작업의 신호가 남아 있으면 그림을 하나도 그리지 않는다. 새 끊기 신호로 시작한다
 
     const mq = subj.mainQuest;
 
@@ -941,15 +964,19 @@ async function generateMainQuest() {
 
         mq.status = 'done';
 
-        currentEditingModuleId = 'mainQuest';
-
-
-
         await saveState();
 
         renderSidebar();
 
-        renderEditor(mq);
+        // 만드는 동안 다른 교과로 옮겼으면 그 교과의 최종 평가 화면에 이 글을 그리지 않는다(다음 원문 저장이 그 교과의 최종 평가를 덮는다)
+        if (lessonOpenHere(subj, mq)) {
+            currentEditingModuleId = 'mainQuest';
+            renderEditor(mq);
+        } else if (globalState.subjects.includes(subj) && subj.mainQuest === mq) {
+            window.showToast?.(`'${subj.title}' 교과의 최종 평가를 만들었습니다. 그 교과를 열면 볼 수 있습니다.`, 'success');
+        } else { // 그사이 교과를 지웠거나 백업·PC 폴더를 불러와 바뀌었다: 넣을 곳이 없다
+            window.showToast?.('최종 평가를 만드는 동안 그 교과를 지웠거나 백업·PC 폴더를 불러와, 만든 최종 평가를 넣지 못했습니다.', 'warning');
+        }
 
     } catch (err) {
 
@@ -1531,9 +1558,8 @@ async function processImageTags(mod, markdown, { onStatus = null, isStopped = ()
             const safeKoreanDesc = escapeHtml(koreanDesc);
 
             if (b64Image) {
-                if (!mod.images) mod.images = {};
+                // 그림은 글에 자리를 넣을 때(아래) 차시 그림에 담는다. 그리는 동안 원문을 저장하면 글이 아직 가리키지 않는 그림을 덜어 낸다(tabs.js dropUnusedLessonImages)
                 const imgId = 'img_' + Date.now() + Math.floor(Math.random() * 1000);
-                mod.images[imgId] = b64Image;
 
                 let vendorIcon = 'ph-sparkle'; // default (AI)
                 if (vendorLabel.includes('Google') || vendorLabel.includes('웹 검색')) vendorIcon = 'ph-google-logo';
@@ -1548,10 +1574,8 @@ async function processImageTags(mod, markdown, { onStatus = null, isStopped = ()
                 const captionText = escapeHtml(captionSource.slice(0, 80));
                 const imgHTML = `\n${imageWrapperHtml(imgId, tag.keyword, safeKoreanDesc, captionText)}\n`;
 
-                successCount++;
-                return { fullMatch: tag.fullMatch, html: imgHTML };
+                return { fullMatch: tag.fullMatch, html: imgHTML, imgId, image: b64Image };
             } else {
-                failCount++;
                 console.warn(`[Image Pipeline] (${index + 1}/${pickedTags.length}) ⚠️ 이미지 미확보: ${tag.keyword}`);
                 return { fullMatch: tag.fullMatch, html: imagePlaceholderHtml(`이미지 영역: ${safeKoreanDesc}`, tag.keyword) };
             }
@@ -1561,7 +1585,6 @@ async function processImageTags(mod, markdown, { onStatus = null, isStopped = ()
                 outcome = 'stopped';
                 return null;
             }
-            failCount++;
             console.error(`이미지 처리 실패 (${tag.keyword}):`, e);
             return { fullMatch: tag.fullMatch, html: imagePlaceholderHtml(`이미지 확보 실패: ${escapeHtml(tag.keyword)}`, tag.keyword) };
         }
@@ -1579,13 +1602,29 @@ async function processImageTags(mod, markdown, { onStatus = null, isStopped = ()
 
     // 기다리는 동안 글이 바뀌었으면 최신 글에 넣는다. 지운 태그 자리의 이미지는 넣지 않는다
     // 새로 만든 글이면 최신 글에도 같은 기준으로 태그를 보충해야 자동으로 넣은 태그 자리의 이미지가 빠지지 않는다
+    // 그림은 자리를 넣는 이 한 걸음에서 차시 그림에 담는다(latest()가 고치던 원문을 저장하며 쓰지 않는 그림을 덜어 내도 새 그림은 남게). 부른 쪽은 돌려받은 글을 곧바로 탭에 넣는다
     let output = latest ? (inject ? autoInjectImageTags(latest()) : latest()) : result;
+    let gone = 0; // 그리는 동안 글에서 지운 자리(그 그림은 담지 않는다)
     for (const rep of replacements) {
-        if (rep) output = output.replace(rep.fullMatch, () => rep.html); // 함수로 넘겨야 그림 설명 속 $ 기호를 바꿀 글 규칙으로 읽지 않는다
+        if (!rep) continue;
+        const at = output.indexOf(rep.fullMatch);
+        if (at < 0) {
+            gone += 1;
+            continue;
+        }
+        output = output.slice(0, at) + rep.html + output.slice(at + rep.fullMatch.length); // 글 조각으로 이어 붙여 그림 설명 속 $ 기호를 바꿀 글 규칙으로 읽지 않는다
+        if (!rep.imgId) {
+            failCount++;
+            continue;
+        }
+        if (!mod.images || typeof mod.images !== 'object') mod.images = {};
+        mod.images[rep.imgId] = rep.image;
+        successCount++;
     }
     if (stats) {
         stats.made += successCount;
         stats.failed += failCount;
+        if (gone) stats.gone = (stats.gone || 0) + gone;
     }
     if (blockedLeft && _imageRun) _imageRun.left += blockedLeft;
 
@@ -1625,10 +1664,10 @@ function countImageSlots(mod, parts = lessonTextParts(mod), clean = text => text
     return parts.reduce((sum, part) => sum + pendingImageTags(clean(storedTabMarkdown(mod, part.id))).length, 0);
 }
 
-// 그림을 채운 작업의 끝 알림. slots: 시작할 때 센 자리 수(중지·한도로 못 간 자리는 남은 자리로 센다)
+// 그림을 채운 작업의 끝 알림. slots: 시작할 때 센 자리 수(중지·한도로 못 간 자리는 남은 자리로 센다. 그리는 동안 글에서 지운 자리 gone은 빼고)
 // 못 만든 자리는 그림 없는 자리(이미지 영역·이미지 확보 실패)가 되고, 그 자리의 '다시 검색'이 새 그림을 만들어 넣는다(doRegenerateImage)
-function imageFillSummary({ made = 0, failed = 0 }, slots = 0) {
-    const left = Math.max(0, slots - made - failed);
+function imageFillSummary({ made = 0, failed = 0, gone = 0 }, slots = 0) {
+    const left = Math.max(0, slots - made - failed - gone);
     const retry = "그 자리의 '다시 검색'으로 다시 해 보세요.";
     const madeText = made ? `그림 ${made}장을 넣었습니다.` : '넣은 그림은 없습니다.';
     const head = !failed ? madeText
@@ -1653,6 +1692,10 @@ function lessonStillLive(subj, mod) {
 // 그 차시의 그 탭을 지금 화면에서 보고 있는지. 다른 교과의 같은 번호 차시나 불러온 차시(같은 번호, 다른 객체)는 아니다
 const isShowingLessonTab = (subj, mod, tabId) => currentSubjectId === subj?.id && getEditingModule(mod.id) === mod && isViewingTab(mod, tabId);
 
+// 시작한 교과가 아직 열려 있고 그 차시(최종 평가)가 그 교과의 그 객체인지. 오래 걸린 생성이 끝나 화면에 열기 전에 본다
+// (다른 교과로 옮겼으면 같은 번호의 그 교과 차시나 그 교과의 최종 평가 화면에 이 글을 그리지 않는다. 다음 원문 저장이 그쪽을 덮는다)
+const lessonOpenHere = (subj, mod) => !!subj && !!mod && currentSubjectId === subj.id && getEditingModule(mod.id) === mod;
+
 const SAVE_AGAIN_HINT = '브라우저 저장 공간을 확인한 뒤 Ctrl+S로 다시 저장해 주세요.';
 
 // 일괄 이미지 찾기의 탭 하나. 그리는 동안 차시가 지워지거나 불러온 내용으로 바뀌면 넣지 않고 'gone', 저장하지 못하면 'save', 아니면 ''
@@ -1668,6 +1711,7 @@ async function fillTabImages(subj, mod, tabId, stats) {
     if (!lessonStillLive(subj, mod)) return 'gone';
     stats.made += tabStats.made;
     stats.failed += tabStats.failed;
+    stats.gone = (stats.gone || 0) + (tabStats.gone || 0);
     setTabMarkdown(mod, tabId, processed);
     const saved = (await saveState()) !== false; // 브라우저에 저장하지 못하면 false(알림은 saveState가 띄운다)
     if (isShowingLessonTab(subj, mod, tabId)) renderEditor(mod);
@@ -1785,6 +1829,7 @@ window.sanitizeAllContent = async function () {
                 cleaned += done.changed;
                 stats.made += done.stats.made;
                 stats.failed += done.stats.failed;
+                stats.gone = (stats.gone || 0) + (done.stats.gone || 0);
                 // 바뀐 차시만 저장한다(저장마다 PC 폴더 동기화가 돈다). 저장하지 못하면 그림을 더 부르지 않는다
                 if (done.touched && (await saveState()) === false) halt = 'save';
             }
@@ -2875,7 +2920,7 @@ function renderEditor(mod) {
 
                     <div id="render-view" class="markdown-body animate-fade-in">${htmlContent}</div>
 
-                    <textarea id="raw-view" data-module-id="${escapeHtml(String(mod.id))}" data-tab-id="${currentLessonTab}" class="hidden w-full h-[600px] p-6 font-mono text-sm bg-gray-900 text-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-accent resize-y" spellcheck="false" onchange="saveRawContent()">${escapeHtml(typeof getActiveTabSource === 'function' ? getActiveTabSource(mod) : (mod.content || ''))}</textarea>
+                    <textarea id="raw-view" data-module-id="${escapeHtml(String(mod.id))}" data-subject-id="${escapeHtml(String(lessonSubjectIdOf(mod)))}" data-tab-id="${currentLessonTab}" class="hidden w-full h-[600px] p-6 font-mono text-sm bg-gray-900 text-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-accent resize-y" spellcheck="false" onchange="saveRawContent()">${escapeHtml(typeof getActiveTabSource === 'function' ? getActiveTabSource(mod) : (mod.content || ''))}</textarea>
 
                 </div>
 
@@ -3086,11 +3131,20 @@ window.toggleEditorMode = function (mode) {
 
 
 
+// 차시(최종 평가)가 든 교과 id. 원문 칸에 적어 둔다(pendingRawEdit). 어느 교과에서도 못 찾으면 지금 교과
+function lessonSubjectIdOf(mod) {
+    const owner = typeof lessonOwnerId === 'function' ? lessonOwnerId(mod, globalState.subjects, currentSubjectId, courseData) : null;
+    return owner ?? currentSubjectId ?? '';
+}
+
 // 원문 칸(#raw-view)에 아직 넣지 않은 글. { mod, tabId, rawView, value }, 없으면 null.
 // 편집기를 그릴 때의 차시·탭에 넣는다(화면이 바뀌는 도중의 change가 다른 탭을 덮어쓰지 않게)
 function pendingRawEdit() {
     const rawView = document.getElementById('raw-view');
     if (!rawView) return null;
+    // 다른 교과의 차시를 그린 칸이면 넣지 않는다(지금 교과의 같은 번호 차시나, 모든 교과가 같은 id인 최종 평가를 덮지 않게)
+    const drawnIn = rawView.dataset.subjectId;
+    if (drawnIn !== undefined && drawnIn !== String(currentSubjectId ?? '')) return null;
     const mod = getEditingModule(rawView.dataset.moduleId || undefined);
     if (!mod) return null;
     const tabId = rawView.dataset.tabId || currentLessonTab;

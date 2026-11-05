@@ -9,7 +9,7 @@ const ctx = { console, window: {} };
 vm.createContext(ctx);
 ['ai-errors.js', 'setup-helpers.js'].forEach(file => vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', file), 'utf8'), ctx));
 // function 선언은 ctx에, const 화살표 함수는 window로 내보낸 쪽에 있다
-const { friendlyAiError, aiError, aiProviderOf, keyCheckResult, aiQuotaKind, presetValues, activePreset, autoTextModel, isExampleCourse } = { ...ctx, ...ctx.window };
+const { friendlyAiError, aiError, aiProviderOf, keyCheckResult, aiQuotaKind, aiErrorStopsRun, presetValues, activePreset, autoTextModel, isExampleCourse } = { ...ctx, ...ctx.window };
 
 // Gemini 429 응답 본문 모양(무료 등급 한도). limit: 0이면 이 키로는 쓸 수 없는 모델, quotaId의 PerDay는 하루 한도
 const quotaBody = (limit, quotaId) => JSON.stringify({ error: { code: 429, message: 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits.\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: ' + limit + ', model: gemini-nano-banana-2.1', status: 'RESOURCE_EXHAUSTED', details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaMetric: 'generativelanguage.googleapis.com/generate_content_free_tier_requests', quotaId }] }, { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '41s' }] } });
@@ -81,6 +81,17 @@ test('429 한도 오류: 한도 0·하루 한도는 다시 보내지 않고 할 
     assert.deepStrictEqual([minute.quota, minute.noRetry], ['', false], '분당 한도는 기다렸다 다시 보낸다');
     assert.ok(minute.message.startsWith('AI 사용 한도를 넘었습니다(429)'), minute.message);
     assert.deepStrictEqual([aiError(429).quota, aiError(429).noRetry], ['', false]);
+});
+
+test('일괄 생성을 멈출 오류: 다음 차시도 같은 까닭으로 실패하는 것(하루 한도·한도 0·인터넷 끊김·키·잔액·권한·모델)만', () => {
+    assert.strictEqual(aiErrorStopsRun(aiError(429, quotaBody(250, 'GenerateRequestsPerDayPerProjectPerModel-FreeTier'), 'Gemini')), true, '하루 한도');
+    assert.strictEqual(aiErrorStopsRun(aiError(429, quotaBody(0, 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier'), 'Gemini')), true, '한도 0');
+    assert.strictEqual(aiErrorStopsRun(aiError(429, quotaBody(15, 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier'), 'Gemini')), false, '분당 한도는 기다리면 풀린다');
+    [0, 401, 402, 403, 404].forEach(status => assert.strictEqual(aiErrorStopsRun(aiError(status, '', 'Gemini')), true, String(status)));
+    assert.strictEqual(aiErrorStopsRun(aiError(400, '{"error":{"message":"API key not valid. Please pass a valid API key.","details":[{"reason":"API_KEY_INVALID"}]}}', 'Gemini')), true, '맞지 않는 Gemini 키(400)');
+    assert.strictEqual(aiErrorStopsRun(aiError(400, '{"error":{"message":"Request payload size exceeds the limit"}}', 'Gemini')), false, '그 차시만의 400은 다음 차시로 넘어간다');
+    assert.strictEqual(aiErrorStopsRun(aiError(503, '', 'Gemini')), false, '서버가 바쁜 것은 다시 해 본다');
+    [null, undefined, 'x', new Error('그냥 오류')].forEach(value => assert.strictEqual(aiErrorStopsRun(value), false));
 });
 
 test('키 연결 확인 결과', () => {

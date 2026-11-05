@@ -546,7 +546,16 @@ const LESSON_MD = [
         ctx.lockedSectionBlocks = (mod, tabId) => (tabId === 'basicLearn' && mod.tabContents?.basicLearn ? ['고정 섹션'] : []);
         let fills = 0;
         let locked = null;
-        ctx.fillMissingTabs = async (id, opts) => { fills += 1; locked = opts.lockedByTab; if (fills === 1) lesson.tabContents.basicLearn = '새 내용'; return { ok: false, error: '한도' }; };
+        // 1번 차시는 첫 시도에 탭 하나만 만들고 실패한다(재시도). 2·3번 차시는 탭을 만든다(탭을 하나도 만들지 못한 차시는 되돌린다. tests/course-flow.test.js)
+        ctx.fillMissingTabs = async (id, opts) => {
+            fills += 1;
+            locked = opts.lockedByTab;
+            if (fills === 1) lesson.tabContents.basicLearn = '새 내용';
+            if (id === 1) return { ok: false, error: '한도' };
+            const target = subject.lessons.find(item => item.id === id);
+            target.tabContents = { ...(target.tabContents || {}), basicLearn: '새 글' };
+            return { ok: true };
+        };
         const run = { stopped: false, withGyosuan: true, overwrite: true, cleared: new Map(), trashed: 0 };
         const item = { subject, lessonId: 1, title: '재미' };
         const before = plain(lesson);
@@ -558,7 +567,7 @@ const LESSON_MD = [
         assert.strictEqual(run.trashed, 1);
         assert.deepStrictEqual(archived, [], '작업 기록 칸을 쓰지 않는다(200개 상한에 밀리지 않게)');
         assert.strictEqual(lesson.gyosuan, null);
-        assert.deepStrictEqual(plain(lesson.images), {});
+        assert.deepStrictEqual(plain(lesson.images), { a: 'data:a' }, '교수안까지 다시 만들어도 판서 영상이 쓰는 그림은 남긴다(카드의 다시 생성과 같은 규칙)');
         assert.deepStrictEqual(plain(lesson.illustrations), [], '삽화를 켰으면 다시 그린다');
         assert.strictEqual(lesson.history[0].note, '일괄 생성으로 내용을 다시 만듦(이전 내용은 휴지통)');
         lesson.tabContents.basicPrac = '바뀐 글';

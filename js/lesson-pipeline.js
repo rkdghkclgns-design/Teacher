@@ -306,13 +306,13 @@ window.startLessonGeneration = function (moduleId) {
         // 빈 항목을 차례로 만들기 전에 호출 수·시간·비용 수준을 먼저 보인다(cost-estimate.js)
         const has = id => needed.some(step => step.id === id);
         const work = lessonWork({
-            tabs: needed.filter(step => LESSON_TABS.some(tab => tab.id === step.id)).length,
+            tabs: needed.filter(step => LESSON_TABS.some(tab => tab.id === step.id)).map(step => step.id), // 탭마다 그림 자리 수가 달라 탭 id로 센다
             gyosuan: has('gyosuan'), qbank: has('qbank'), art: has('art'), ncs: has('ncsElements')
         }, currentEstimateSettings().imageAmount);
         return confirmWithEstimate(`빈 항목 ${needed.length}개(${needed.map(step => step.label).join(', ')})를 차례로 만듭니다.`, work, { title: '전체 생성', okLabel: '만들기' })
             .then(ok => ok && window.runLessonPipeline(moduleId));
     }
-    const rebuild = lessonWork({ tabs: LESSON_TABS.length }, currentEstimateSettings().imageAmount);
+    const rebuild = lessonWork({ tabs: LESSON_TABS.map(tab => tab.id) }, currentEstimateSettings().imageAmount);
     return confirmWithEstimate('모든 항목이 있습니다. 교안 탭 5개를 모두 다시 만듭니다(지금 글은 작업 기록에 남습니다).', rebuild, { title: '모두 다시 만들기', okLabel: '모두 다시 만들기' })
         .then(ok => ok && generateAllTabs(moduleId));
 };

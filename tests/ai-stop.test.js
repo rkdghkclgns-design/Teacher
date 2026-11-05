@@ -678,6 +678,167 @@ async function run(name, fn) {
         }
     });
 
+    /* ---------- 4차 교차 검토: 그리는 동안의 원문 저장, 다른 교과로 옮긴 뒤 끝난 생성, 중지 신호, 카드 생성 미리 보기 ---------- */
+    // 그리는 동안 원문 칸(#raw-view)에 고친 글이 있다. tabId 탭을 보는 칸
+    const openRawEdit = (mod, tabId, value) => {
+        const raw = ctx.fakeElement();
+        raw.id = 'raw-view';
+        Object.assign(raw.dataset, { moduleId: String(mod.id), tabId });
+        raw.defaultValue = mod.tabContents[tabId];
+        raw.value = value;
+        ctx.elements['raw-view'] = raw;
+        return raw;
+    };
+    const missingRefs = mod => Object.values(mod.tabContents).filter(Boolean).join('\n').match(/local:img_\d+/g)?.map(ref => ref.slice(6)).filter(id => !(id in mod.images)) || [];
+
+    await run('그림 처리: 그리는 동안 같은 차시의 다른 탭 원문을 저장해도 이미 만든 그림을 지우지 않는다(그림은 글에 넣을 때 담는다)', async () => {
+        const learn = '## 1. 첫째\n\n<!-- [IMG: "a"] -->\n\n본문입니다.\n\n## 2. 둘째\n\n<!-- [IMG: "b"] -->\n\n본문입니다.';
+        const prac = '## 1. 실습\n\n실습 글입니다.';
+        const mod = { id: 7, title: '차시', images: {}, tabContents: { ...tabsOf(learn), basicPrac: prac }, content: learn };
+        ctx.globalState = { subjects: [{ id: 's1', title: '기획', lessons: [mod] }] };
+        ctx.currentSubjectId = 's1';
+        ctx.courseData = [mod];
+        openRawEdit(mod, 'basicPrac', prac + '\n\n강사가 고친 줄');
+        let pictures = 0;
+        ctx.fetchStub = async url => {
+            if (!isImageUrl(url)) return INTENT();
+            pictures += 1;
+            if (pictures === 2) call('saveRawContent')(); // 둘째 그림을 그리는 사이 기본 실습 원문을 저장한다(쓰지 않는 그림을 덜어 낸다)
+            return json(IMAGE_REPLY);
+        };
+        try {
+            await call('generateAllImagesInModule')(7);
+        } finally {
+            delete ctx.elements['raw-view'];
+        }
+        assert.strictEqual(pictures, 2);
+        assert.ok(mod.tabContents.basicPrac.includes('강사가 고친 줄'), '고친 원문은 저장된다');
+        const ids = mod.tabContents.basicLearn.match(/local:img_\d+/g) || [];
+        assert.strictEqual(ids.length, 2, mod.tabContents.basicLearn);
+        assert.deepStrictEqual(missingRefs(mod), [], '글이 가리키는 그림은 모두 차시 그림에 있다');
+        assert.strictEqual(Object.keys(mod.images).length, 2);
+        assert.strictEqual(ctx.toasts.at(-1), '일괄 이미지 찾기를 마쳤습니다. 그림 2장을 넣었습니다.');
+    });
+
+    await run('그림 처리: 그 탭 원문을 고치고 있었으면 그 글 위에 그림을 넣고, 그사이 지운 자리의 그림은 담지도 세지도 않는다', async () => {
+        const learn = '## 1. 첫째\n\n<!-- [IMG: "a"] -->\n\n본문입니다.\n\n## 2. 둘째\n\n<!-- [IMG: "b"] -->\n\n본문입니다.';
+        const mod = { id: 8, title: '차시', images: { img_old: 'data:image/png;base64,T0xE' }, tabContents: tabsOf(learn), content: learn };
+        ctx.globalState = { subjects: [{ id: 's1', title: '기획', lessons: [mod] }] };
+        ctx.currentSubjectId = 's1';
+        ctx.courseData = [mod];
+        // 기본 학습 원문 칸에서 둘째 그림 자리를 지우고 한 줄을 더했다(아직 넣지 않음). 그림을 다 만들면 이 글을 먼저 저장한다(latestTabMarkdown)
+        openRawEdit(mod, 'basicLearn', learn.replace('<!-- [IMG: "b"] -->', '') + '\n\n강사가 고친 줄');
+        ctx.fetchStub = async url => (isImageUrl(url) ? json(IMAGE_REPLY) : INTENT());
+        try {
+            await call('generateAllImagesInModule')(8);
+        } finally {
+            delete ctx.elements['raw-view'];
+        }
+        const text = mod.tabContents.basicLearn;
+        assert.ok(text.includes('강사가 고친 줄') && !text.includes('<!-- [IMG:'), text);
+        assert.strictEqual((text.match(/local:img_\d+/g) || []).length, 1);
+        assert.deepStrictEqual(missingRefs(mod), [], '고친 원문을 저장하며 덜어 내도 넣은 그림은 남는다');
+        assert.deepStrictEqual(Object.keys(mod.images).filter(id => id !== 'img_old').length, 1, '지운 자리의 그림은 담지 않는다');
+        assert.ok(!('img_old' in mod.images), '쓰지 않는 옛 그림은 원문 저장이 덜어 낸다');
+        assert.strictEqual(ctx.toasts.at(-1), '일괄 이미지 찾기를 마쳤습니다. 그림 1장을 넣었습니다.', '지운 자리를 넣은 그림이나 남긴 자리로 세지 않는다');
+    });
+
+    const mainQuestSubjects = () => {
+        const mq1 = { id: 'mainQuest', title: '👑 최종 평가', description: '교과1 평가', status: 'waiting', content: null, images: {} };
+        const mq2 = { id: 'mainQuest', title: '👑 최종 평가', description: '교과2 평가', status: 'done', content: '교과2가 이미 쓴 최종 평가입니다.', images: {} };
+        const s1 = { id: 's1', title: '교과1', lessons: [{ id: 1, title: '1차시', description: '설명' }], mainQuest: mq1 };
+        const s2 = { id: 's2', title: '교과2', lessons: [{ id: 1, title: '1차시', description: '설명' }], mainQuest: mq2 };
+        ctx.globalState = { subjects: [s1, s2] };
+        ctx.currentSubjectId = 's1';
+        ctx.courseData = s1.lessons;
+        ctx.currentEditingModuleId = 1;
+        ctx.elements['editor-loading'] = ctx.fakeElement();
+        ctx.buildTaskContext = () => ({ systemInstruction: '지시', userPrompt: '최종 평가를 만드세요' });
+        return { s1, s2, mq1, mq2 };
+    };
+
+    await run('최종 평가 만들기: 만드는 동안 다른 교과로 옮기면 그 교과 화면에 그리지 않고, 원문 칸도 다른 교과의 최종 평가에 넣지 않는다', async () => {
+        const { s2, mq1, mq2 } = mainQuestSubjects();
+        ctx.fetchStub = async url => {
+            vm.runInContext("currentSubjectId = 's2'; courseData = globalState.subjects[1].lessons;", ctx); // 기다리는 동안 교과2를 연다
+            return json(textReply('교과1 새 최종 평가 본문입니다.'));
+        };
+        await call('generateMainQuest')();
+        assert.strictEqual(mq1.content, '교과1 새 최종 평가 본문입니다.', '시작한 교과의 최종 평가에 넣는다');
+        assert.strictEqual(ctx.rendered, 0, '교과2 화면에 교과1의 최종 평가를 그리지 않는다');
+        assert.notStrictEqual(vm.runInContext('currentEditingModuleId', ctx), 'mainQuest', '교과2의 편집 중 차시를 최종 평가로 바꾸지 않는다');
+        assert.ok(ctx.toasts.some(text => text.includes("'교과1' 교과의 최종 평가를 만들었습니다")), JSON.stringify(ctx.toasts));
+        assert.strictEqual(mq2.content, '교과2가 이미 쓴 최종 평가입니다.');
+        // 그래도 교과1의 최종 평가를 그린 원문 칸이 남아 있으면(예전 화면) 교과2의 최종 평가에 넣지 않는다
+        const raw = ctx.fakeElement();
+        raw.id = 'raw-view';
+        Object.assign(raw.dataset, { moduleId: 'mainQuest', subjectId: 's1', tabId: 'basicLearn' });
+        raw.defaultValue = mq1.content;
+        raw.value = mq1.content + '\n\n강사가 덧붙인 문장입니다.';
+        ctx.elements['raw-view'] = raw;
+        try {
+            call('saveRawContent')();
+            assert.strictEqual(mq2.content, '교과2가 이미 쓴 최종 평가입니다.', '다른 교과의 최종 평가를 덮지 않는다');
+            assert.strictEqual(call('hasPendingRawEdit')(), false);
+            raw.dataset.subjectId = 's2'; // 교과2에서 그린 칸이면 넣는다
+            raw.defaultValue = mq2.content;
+            raw.value = mq2.content + ' 고침';
+            call('saveRawContent')();
+            assert.strictEqual(mq2.content, '교과2가 이미 쓴 최종 평가입니다. 고침');
+        } finally {
+            delete ctx.elements['raw-view'];
+        }
+        assert.strictEqual(s2.mainQuest, mq2);
+    });
+
+    await run('최종 평가 만들기: 앞서 중지한 작업의 신호가 남아도 그림을 만들고, 진행 막대의 생성이 돌면 시작하지 않는다', async () => {
+        const { mq1 } = mainQuestSubjects();
+        call('requestTabGenerationStop')(); // 앞 작업을 중지했다(신호가 남는다)
+        ctx.fetchStub = async url => {
+            if (isImageUrl(url)) return json(IMAGE_REPLY);
+            if (ctx.fetched.length === 1) return json(textReply('## 1. 과제\n\n<!-- [IMG: "과제 그림"] -->\n\n과제 설명입니다.'));
+            return INTENT();
+        };
+        await call('generateMainQuest')();
+        assert.strictEqual(imageCalls(), 1, '새 신호로 시작해 그림을 만든다');
+        assert.ok(mq1.content.includes('local:img_') && !mq1.content.includes('<!-- [IMG:'), mq1.content);
+        assert.ok(!ctx.toasts.some(text => text.includes('남겨 두었습니다')), JSON.stringify(ctx.toasts));
+        assert.strictEqual(ctx.rendered, 1, '시작한 교과를 보고 있으면 그린다');
+
+        reset();
+        mainQuestSubjects();
+        call('beginLessonPipeline')(1, { kind: 'job', alerts: true });
+        try {
+            await call('generateMainQuest')();
+            assert.strictEqual(ctx.alerts.at(-1), '진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
+            assert.strictEqual(ctx.fetched.length, 0);
+            call('promptAndGenerateMainQuest')();
+            assert.strictEqual(ctx.alerts.length, 2, '핵심 개념 창도 띄우지 않는다');
+        } finally {
+            call('finishLessonPipeline')({ quiet: true });
+        }
+    });
+
+    await run('카드의 교안 생성·다시 생성: 핵심 개념 창에 이어서 할 일의 미리 보기(호출·그림·시간)를 넣는다', async () => {
+        const mod = { id: 4, title: '차시', status: 'done', images: {}, tabContents: tabsOf('## 1. 본문\n\n글입니다.'), content: '글' };
+        ctx.globalState = { subjects: [{ id: 's1', title: '기획', lessons: [mod] }] };
+        ctx.currentSubjectId = 's1';
+        ctx.courseData = [mod];
+        const asked = [];
+        const realPrompt = ctx.showKeyConceptsPrompt;
+        ctx.showKeyConceptsPrompt = (title, defaults, onConfirm, opts) => asked.push({ title, opts });
+        try {
+            call('promptAndGenerateModule')(4);
+        } finally {
+            ctx.showKeyConceptsPrompt = realPrompt;
+        }
+        assert.strictEqual(asked.length, 1);
+        const box = asked[0].opts.estimateHtml;
+        assert.ok(box.includes('미리 보기') && box.includes('글: AI 호출 약') && box.includes('그림: 약 15장') && box.includes('걸리는 시간'), box);
+        assert.strictEqual(asked[0].opts.okLabel, '모두 다시 생성', '다시 만들기 경고와 함께 보인다');
+        assert.ok(asked[0].opts.warning);
+    });
+
     console.log('ALL PASSED');
 })().catch(err => {
     console.error(err);

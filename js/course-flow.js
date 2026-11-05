@@ -33,10 +33,11 @@ async function waitBeforeRetry(isStopped) {
     for (let i = 0; i < LESSON_RETRY_WAIT_SECONDS && !isStopped(); i++) await new Promise(r => setTimeout(r, 1000));
 }
 
-// 실패하면 잠시 뒤 한 번 더 시도한다. 재시도는 빈 탭만 채우므로 먼저 성공한 탭은 다시 만들지 않는다
+// 실패하면 잠시 뒤 한 번 더 시도한다. 재시도는 빈 탭만 채우므로 먼저 성공한 탭은 다시 만들지 않는다.
+// 다시 보내도 같은 오류(noRetry: 키·모델·한도 0·하루 한도)와 일괄 생성을 멈출 오류(halt)는 다시 해 보지 않는다
 async function generateLesson(item, attempt, isStopped, onRetry) {
     const first = await attemptSafely(attempt, item, 1);
-    if (first.ok || first.stopped || isStopped()) return first;
+    if (first.ok || first.stopped || first.halt || first.noRetry || isStopped()) return first;
     onRetry(item, first.error);
     await waitBeforeRetry(isStopped);
     if (isStopped()) return first;
@@ -50,7 +51,8 @@ function recordLessonResult(report, item, result) {
     return { ...report, partial, failed: [...report.failed, { ...item, error: result.error || '원인을 알 수 없습니다.' }] };
 }
 
-// 차시를 차례로 생성하고 결과를 모은다. 실패한 차시는 건너뛰고 계속하며, 중지는 차시와 탭 사이에서 받는다
+// 차시를 차례로 생성하고 결과를 모은다. 실패한 차시는 건너뛰고 계속하며, 중지는 차시와 탭 사이에서 받는다.
+// 다음 차시도 같은 까닭으로 실패할 오류(halt: 하루 한도·한도 0·키·연결 문제, 다른 생성이 도는 중)면 그 차시를 실패로 적고 멈춘다(halted)
 async function runLessonQueue(queue, attempt, { isStopped = () => false, onLesson = () => {}, onRetry = () => {} } = {}) {
     let report = { done: [], partial: [], failed: [], left: [], stopped: false };
     for (let i = 0; i < queue.length; i++) {
@@ -62,6 +64,7 @@ async function runLessonQueue(queue, attempt, { isStopped = () => false, onLesso
             return { ...report, partial, stopped: true, left: queue.slice(i) };
         }
         report = recordLessonResult(report, queue[i], result);
+        if (!result.ok && result.halt) return { ...report, stopped: true, halted: true, left: queue.slice(i + 1) };
     }
     return report;
 }
@@ -71,17 +74,41 @@ const lessonHasRewriteContent = lesson => lessonHasContent(lesson) || !!lesson.g
     || Object.keys(lesson.images || {}).length > 0 || (lesson.illustrations || []).length > 0;
 
 // 덮어쓰기: 비우기 직전에 차시를 통째로 휴지통에 넣고(30일 동안 되살린다. 작업 기록 칸은 쓰지 않는다) 빈 탭을 채우는 같은 경로로 다시 만든다
-// 사본은 옛 단일 본문을 탭으로 옮기기 전 모양 그대로다. 고정 섹션은 비우면 찾을 수 없으므로 먼저 챙겨 돌려준다
+// 사본은 옛 단일 본문을 탭으로 옮기기 전 모양 그대로다. 고정 섹션은 비우면 찾을 수 없으므로 먼저 챙겨 돌려준다.
+// 교수안까지 다시 만들면 그림도 덜어 내되, 다시 넣을 고정 섹션의 그림과 남는 삽화·판서 영상이 쓰는 그림은 남긴다(카드의 다시 생성과 같은 규칙, tabs.js dropUnusedLessonImages).
+// before: 비운 칸의 지우기 전 값(탭을 하나도 만들지 못하면 되돌린다, undoEmptyRewrite) / copy: 휴지통에 넣은 사본(되돌리면 뺀다)
 async function clearLessonForRewrite(mod, withGyosuan, subjectId) {
     const trashed = lessonHasRewriteContent(mod);
-    if (trashed) trashLessonCopy(mod, subjectId);
+    const copy = trashed ? trashLessonCopy(mod, subjectId) : null;
     migrateMonolithicContent(mod);
     const lockedByTab = Object.fromEntries(LESSON_TABS.map(tab => [tab.id, lockedSectionBlocks(mod, tab.id)]));
     const redraw = globalState.courseDesign?.autoArt ? { illustrations: [], artAutoDone: false } : {};
     const note = trashed ? '일괄 생성으로 내용을 다시 만듦(이전 내용은 휴지통)' : '일괄 생성으로 내용을 다시 만듦';
-    Object.assign(mod, withHistoryNote(mod, note), { content: null, tabContents: {} }, redraw, withGyosuan ? { gyosuan: null, images: {} } : {});
+    const emptied = { content: null, tabContents: {}, ...redraw, ...(withGyosuan ? { gyosuan: null } : {}) };
+    const hasImages = !!mod.images && typeof mod.images === 'object';
+    const before = Object.fromEntries([...Object.keys(emptied), 'history', 'images'].map(field => [field, field === 'images' && hasImages ? { ...mod.images } : mod[field]]));
+    Object.assign(mod, withHistoryNote(mod, note), emptied);
+    if (withGyosuan) {
+        mod.images = hasImages ? { ...mod.images } : {};
+        dropUnusedLessonImages(mod, Object.values(lockedByTab).flat().map(block => block.text));
+    }
     await saveState(); // 휴지통 사본과 비운 차시를 한 번에 저장한다
-    return { lockedByTab, trashed };
+    return { lockedByTab, trashed, copy, before };
+}
+
+// 덮어쓰기로 비운 차시에 탭을 하나도 만들지 못했으면(한도·키·연결 문제, 중지, 다른 생성) 비우기 전 내용으로 되돌리고 휴지통에 넣은 사본을 뺀다.
+// 다시 시도하면 처음처럼 비우고 만든다. 탭을 하나라도 만들었으면 그대로 둔다(이전 내용은 휴지통에 있다)
+async function undoEmptyRewrite(mod, cleared, run, key) {
+    if (LESSON_TABS.some(tab => mod.tabContents?.[tab.id])) return;
+    Object.assign(mod, cleared.before);
+    if (cleared.copy) globalState.lessonTrash = (globalState.lessonTrash || []).filter(entry => entry.lesson !== cleared.copy);
+    if (cleared.trashed) {
+        run.trashed -= 1;
+        run.restored?.add(key); // 내용이 있던 차시만 '되돌렸다'고 센다(빈 차시는 다시 실행하면 빈 탭부터 만든다)
+    }
+    run.cleared.delete(key);
+    await saveState();
+    if (getEditingModule() === mod) renderEditor(mod);
 }
 
 // 프롬프트의 참고 자료와 커리큘럼은 현재 교과를 읽으므로 차시마다 그 교과로 옮겨 간다
@@ -89,12 +116,25 @@ async function attemptLesson(item, run) {
     if (currentSubjectId !== item.subject.id) openEditor(item.subject.id);
     const mod = getEditingModule(item.lessonId);
     if (!mod) return { ok: false, error: '차시를 찾지 못했습니다. 삭제되었는지 확인해주세요.' };
+    // 진행 막대의 다른 생성(탭 하나 만들기·일괄 이미지 찾기 등)이 돌면 탭을 만들 수 없다. 차시를 비우지 않고 일괄 생성을 멈춘다
+    if (window.isLessonPipelineRunning?.()) return { ok: false, halt: true, error: '다른 생성(진행 막대의 작업)이 끝나지 않았습니다. 그 작업이 끝난 뒤 다시 실행해 주세요.' };
     const key = `${item.subject.id}:${item.lessonId}`; // 차시 id는 교과 안에서만 겹치지 않으므로 교과 id와 함께 센다
+    let cleared = null;
     if (run.overwrite && !run.cleared.has(key)) { // 재시도는 먼저 만든 탭을 지우지 않는다
-        const cleared = await clearLessonForRewrite(mod, run.withGyosuan, item.subject.id);
+        cleared = await clearLessonForRewrite(mod, run.withGyosuan, item.subject.id);
         run.cleared.set(key, cleared.lockedByTab);
+        run.restored?.delete(key);
         if (cleared.trashed) run.trashed = (run.trashed || 0) + 1;
     }
+    try {
+        return await fillRunLesson(item, run, key);
+    } finally {
+        if (cleared) await undoEmptyRewrite(mod, cleared, run, key);
+    }
+}
+
+// 차시 하나의 빈 탭, 보강(삽화·NCS), 교수안·슬라이드와 문제은행을 차례로 만든다(attemptLesson)
+async function fillRunLesson(item, run, key) {
     window.viewModule(item.lessonId);
     const tabs = await fillMissingTabs(item.lessonId, {
         lockedByTab: run.cleared?.get(key),
@@ -120,9 +160,11 @@ function runSubjects(scope) {
     return scope === 'course' ? globalState.subjects : globalState.subjects.filter(subject => subject.id === currentSubjectId);
 }
 
-// 전체 탭 생성은 탭 사이에 로딩 화면을 내리므로 _suppressTabAlert도 함께 본다
+// 전체 탭 생성은 탭 사이에 로딩 화면을 내리므로 _suppressTabAlert도 함께 본다.
+// 진행 막대의 작업(탭 하나 만들기·일괄 이미지 찾기·탭 전체 AI 고치기 등, 알림을 켜고 돈다)과 교수안 생성도 진행 중이다
 function generationBusy() {
-    return _suppressTabAlert || document.getElementById('editor-loading')?.style.display === 'flex';
+    return _suppressTabAlert || !!window.isLessonPipelineRunning?.() || (typeof _gyosuanRunning !== 'undefined' && !!_gyosuanRunning)
+        || document.getElementById('editor-loading')?.style.display === 'flex';
 }
 
 function lessonRunListHtml(title, items, detail = () => '') {
@@ -174,13 +216,17 @@ const lessonRunImageNote = note => (note ? `<p class="text-xs text-amber-300">${
 
 // trashed: 덮어쓰기로 이전 내용을 휴지통에 넣은 차시 수
 // imageNote: 그림 모델이 막혀 남긴 그림 자리 안내(api.js imageRunNote)
-function lessonRunReportHtml(report, { trashed = 0, imageNote = '' } = {}) {
+// restored: 덮어쓰기로 비웠다가 탭을 하나도 만들지 못해 지우기 전 내용으로 되돌린 차시 수(undoEmptyRewrite)
+function lessonRunReportHtml(report, { trashed = 0, imageNote = '', restored = 0 } = {}) {
     const counts = [`완료 ${report.done.length}개`, `실패 ${report.failed.length}개`, report.left.length ? `남은 ${report.left.length}개` : ''].filter(Boolean).join(' · ');
-    const unfinished = report.failed.length || report.left.length;
+    // 다시 실행하면 이어서 만들 것: 남은 차시나 탭을 만들다 만 차시(지우기 전 내용으로 되돌린 차시는 빈 탭이 없다). 멈춘 까닭이 있으면(halted) 그 줄이 대신 말한다
+    const unfinished = !report.halted && (report.left.length || report.failed.length > restored);
     return `
         <p class="text-xs font-bold text-textLight">${report.stopped ? '중지했습니다' : '일괄 생성을 마쳤습니다'} · ${counts}</p>
+        ${report.halted ? '<p class="text-xs text-amber-300">남은 차시도 같은 까닭으로 만들 수 없어 일괄 생성을 멈췄습니다. 아래 실패 까닭을 해결한 뒤 다시 실행해 주세요.</p>' : ''}
         ${lessonRunListHtml('실패해서 건너뛴 차시', report.failed, item => item.error)}
         ${lessonRunListHtml('일부 단락이 누락되었을 수 있는 차시', report.partial)}
+        ${restored > 0 ? `<p class="text-xs text-textMuted">탭을 하나도 만들지 못한 차시 ${restored}개는 지우기 전 내용으로 되돌렸습니다.</p>` : ''}
         ${unfinished ? '<p class="text-xs text-textMuted">만든 내용은 저장했습니다. 다시 실행하면 남은 탭부터 이어서 생성합니다.</p>' : ''}
         ${lessonRunTrashNote(trashed)}
         ${lessonRunImageNote(imageNote)}`;
@@ -236,12 +282,12 @@ function lessonRunWork(queue, { withGyosuan, overwrite, art }) {
     const imageAmount = currentEstimateSettings().imageAmount;
     return sumWork(queue.map(item => {
         const lesson = (item.subject.lessons || []).find(entry => entry.id === item.lessonId) || {};
-        const tabs = overwrite ? LESSON_TABS.length : lessonMissingTabs(lesson).length;
+        const tabs = overwrite ? LESSON_TABS.map(tab => tab.id) : lessonMissingTabs(lesson); // 탭마다 그림 자리 수가 달라 탭 id로 센다
         return lessonWork({
             tabs,
             gyosuan: withGyosuan && (overwrite || lessonNeedsGyosuan(lesson)),
             qbank: withGyosuan && (overwrite || questionBankGaps(lesson).length > 0),
-            art: art && tabs > 0
+            art: art && tabs.length > 0
         }, imageAmount);
     }));
 }
@@ -296,6 +342,8 @@ function rewriteConfirmText(scope, withGyosuan, art = false) {
 // button: 누른 '생성 시작' 버튼. 확인 창이 떠 있는 동안 막아 Enter로 확인 창이 두 번 뜨지 않게 한다
 async function startLessonRun(scope, button = null) {
     if (_lessonRun) return;
+    // 창을 연 뒤 다른 생성(진행 막대의 작업 등)이 시작됐을 수 있다. 그동안은 탭을 만들 수 없어 시작하지 않는다(확인 창을 기다리는 사이도 다시 본다)
+    if (generationBusy()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
     const withGyosuan = !!document.getElementById('lesson-run-gyosuan')?.checked;
     const overwrite = !!document.getElementById('lesson-run-overwrite')?.checked;
     const art = !!document.getElementById('lesson-run-art')?.checked;
@@ -308,9 +356,11 @@ async function startLessonRun(scope, button = null) {
             if (button) button.disabled = false;
         }
         if (!ok) return;
+        if (generationBusy()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
     }
+    if (_lessonRun) return;
     saveCourseDesignField({ genOptions: readLessonGenFields('run'), runGyosuan: withGyosuan, autoArt: art });
-    const run = { stopped: false, withGyosuan, overwrite, cleared: new Map(), trashed: 0 };
+    const run = { stopped: false, withGyosuan, overwrite, cleared: new Map(), trashed: 0, restored: new Set() };
     _lessonRun = run;
     setLessonRunButtons(RUN_BUTTONS.stop);
     const ownsImageRun = !!window.beginImageRun?.(); // 그림 모델이 막히면 이 실행이 끝날 때까지 다시 부르지 않는다(api.js)
@@ -321,7 +371,7 @@ async function startLessonRun(scope, button = null) {
             onLesson: (item, index, total) => setLessonRunBody(lessonRunProgressHtml(item, index, total)),
             onRetry: (item, error) => setLessonRunStatus(`${LESSON_RETRY_WAIT_SECONDS}초 뒤 다시 시도합니다... (${error})`)
         });
-        setLessonRunBody(lessonRunReportHtml(report, { trashed: run.trashed, imageNote: imageNote() }));
+        setLessonRunBody(lessonRunReportHtml(report, { trashed: run.trashed, imageNote: imageNote(), restored: run.restored.size }));
         await saveState();
         renderSidebar();
         renderOverviewLNB();

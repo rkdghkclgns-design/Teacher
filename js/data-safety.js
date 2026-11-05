@@ -2,7 +2,8 @@
 // 계산만 하는 함수(교과 합치기 계획, 백업 나이, 되돌릴 곳)는 DOM 없이 돌고 tests/data-safety.test.js가 확인한다.
 
 const BACKUP_FORMAT = 'teacher-backup';
-const BACKUP_TIME_KEY = 'teacher:last-full-backup-at'; // 그림을 담은 과정 전체 백업만 센다. 교과 백업도 세던 예전 값(teacher:last-backup-at)은 읽지 않는다
+const BACKUP_TIME_KEY = 'teacher:last-full-backup-at'; // 그림을 담은 과정 전체 백업만 센다. 교과 백업도 세던 예전 값(teacher:last-backup-at)은 시각으로 쓰지 않는다
+const OLD_BACKUP_TIME_KEY = 'teacher:last-backup-at'; // 예전 값이 남았는지만 본다(업데이트 전에 받은 백업은 세지 않는다고 알린다)
 const BACKUP_STALE_DAYS = 7;
 const SUBJECT_TRASH_LIMIT = 30;
 
@@ -39,14 +40,25 @@ function mergeUnique(first, second, keyOf) {
     return [...seen.values()];
 }
 
-const trashKey = entry => `${entry.at}|${(entry.lesson || entry.subject || {}).id}`;
+const trashKey = entry => `${entry.at}|${stateText((entry.lesson || entry.subject || {}).id)}`; // id가 객체여도 멈추지 않는다
 
 // 백업 파일의 히스토리·휴지통을 지금 것과 합친다(불러와도 기록을 잃지 않게)
 // 휴지통 항목은 모양과 지운 날짜(at)를 확인한다. 안의 교과·차시는 되살릴 때 sanitizeState를 거친다(restoreSubject, restoreLesson)
 const isObject = value => !!value && typeof value === 'object' && !Array.isArray(value);
 const validTrash = (list, key, now = Date.now()) => (Array.isArray(list) ? list : [])
     .filter(entry => isObject(entry) && isObject(entry[key]))
-    .map(entry => withTrashTime(entry, now)); // 지운 날짜도 ISO로 맞춘다(바르면 같은 객체)
+    .map(entry => cleanTrashEntry(entry, key, now));
+
+// 휴지통 한 칸의 겉모양을 맞춘다: 지운 날짜는 ISO로, 이름은 글로, 교과의 차시 목록은 배열로(휴지통 창이 그대로 보이고 센다.
+// 남이 준 백업의 { length: '<img …>' } 같은 값이 화면에 들어가지 않게). 고칠 것이 없으면 같은 객체
+function cleanTrashEntry(entry, key, now) {
+    const timed = withTrashTime(entry, now);
+    const inner = timed[key];
+    const title = inner.title === undefined || typeof inner.title === 'string' ? inner.title : stateText(inner.title);
+    const lessons = key === 'subject' && inner.lessons != null && !Array.isArray(inner.lessons) ? [] : inner.lessons;
+    if (title === inner.title && lessons === inner.lessons) return timed;
+    return { ...timed, [key]: { ...inner, title, ...(key === 'subject' ? { lessons } : {}) } };
+}
 // 작업 기록 id는 남긴 시각(ms)이다. 0 이상의 안전한 정수이거나 숫자만 든 글자일 때만 받는다(화면은 Number(id)로 찾는다). 아니면 null
 const historyIdOf = item => {
     const id = typeof item?.id === 'string' && /^\d{1,15}$/.test(item.id) ? Number(item.id) : item?.id;
@@ -125,7 +137,7 @@ function describeSubjectImport(plan, { noImages = false, lostImages = 0 } = {}) 
 // 머리줄의 마지막 백업 시각. 그림을 담은 과정 전체 백업만 센다(BACKUP_TIME_KEY)
 function backupAgeLabel(iso, now = Date.now()) {
     const at = Date.parse(iso || '');
-    if (!Number.isFinite(at)) return { text: '전체 백업 안 함', stale: true };
+    if (!Number.isFinite(at)) return { text: '전체 백업 기록 없음', stale: true, none: true }; // 이 브라우저에 남은 기록이 없다(업데이트 전에 받은 백업은 세지 않는다)
     const minutes = Math.max(0, Math.floor((now - at) / 60000));
     const days = Math.floor(minutes / 1440);
     const text = minutes < 1 ? '방금 전체 백업'
@@ -776,7 +788,7 @@ function notifyBackupFallback(kind) {
 // countsAsBackup: false면 시각을 남기지 않는다(교과 백업을 백업으로 세지 않을 때)
 function finishBackupDownload(result, { successText = '', countsAsBackup = true } = {}) {
     if (result.mode === 'none') {
-        window.showToast?.(`그림을 뺀 백업을 받았습니다(파일 이름 끝 ${BACKUP_NO_IMAGES_TAG}). 위쪽 백업 시각에는 세지 않습니다.`, 'warning');
+        window.showToast?.(`그림을 뺀 백업을 받았습니다(파일 이름 끝 ${BACKUP_NO_IMAGES_TAG}). 위쪽 전체 백업 시각에는 세지 않습니다.`, 'warning');
         return;
     }
     if (countsAsBackup) recordBackupTime();
@@ -827,6 +839,11 @@ function recordBackupTime() {
     renderBackupIndicator();
 }
 
+// 예전 백업 시각이 이 브라우저에 남았는지(업데이트 전에 백업을 받은 적이 있다)
+function hasOldBackupTime() {
+    try { return !!localStorage.getItem(OLD_BACKUP_TIME_KEY); } catch (err) { return false; }
+}
+
 function renderBackupIndicator() {
     const el = document.getElementById('last-backup-indicator');
     if (!el) return;
@@ -834,7 +851,10 @@ function renderBackupIndicator() {
     el.textContent = age.text;
     el.classList.toggle('text-amber-300', age.stale);
     el.classList.toggle('text-white/60', !age.stale);
-    el.title = `${age.stale ? '과정 전체 백업을 오래 받지 않았습니다. ' : ''}그림까지 담은 과정 전체 백업을 마지막으로 받은 때입니다(교과 백업은 세지 않습니다). 작업은 이 브라우저에만 저장됩니다. 누르면 과정 전체 백업 ZIP을 받습니다.`;
+    const head = age.none
+        ? `이 브라우저에는 그림까지 담은 과정 전체 백업을 받은 기록이 없습니다${hasOldBackupTime() ? '(이번 업데이트 전에 받은 백업은 세지 않습니다)' : ''}. 한 번 받아 두세요. `
+        : `${age.stale ? '과정 전체 백업을 오래 받지 않았습니다. ' : ''}그림까지 담은 과정 전체 백업을 마지막으로 받은 때입니다(교과 백업은 세지 않습니다). `;
+    el.title = `${head}작업은 이 브라우저에만 저장됩니다. 누르면 과정 전체 백업 ZIP을 받습니다.`;
 }
 
 /* ---------- PC 폴더 열기: 폴더의 그림 담기, 저장본 사본 이름, 확인 창·알림 글 (tests/data-safety.test.js) ---------- */
@@ -903,11 +923,26 @@ function liveSubjectTrash() {
 
 const deepCopy = value => (typeof structuredClone === 'function' ? structuredClone(value) : JSON.parse(JSON.stringify(value)));
 
+// 교과 휴지통이 넘쳐 완전히 지운 교과 수를 알리는 말. 한 번에 많이 넣어 방금 넣은 교과도 빠지면 그 수를 함께 말한다
+const subjectTrashCapText = (count, fresh = 0) => `휴지통에는 지운 교과를 ${SUBJECT_TRASH_LIMIT}개까지 둡니다. 넘친 ${count}개${fresh ? `(방금 넣은 교과 ${fresh}개 포함)` : ''}를 완전히 지웠습니다.`;
+
+// 교과들을 휴지통 앞쪽에 한 번에 넣는다. SUBJECT_TRASH_LIMIT개를 넘으면 뒤쪽(오래된 것)부터 완전히 지우고 알린다(notify: false면 부른 쪽이 알린다). 지운 수를 돌려준다
+function moveSubjectsToTrash(subjects, reason = '', { notify = true } = {}) {
+    const at = new Date().toISOString();
+    const entries = (subjects || []).filter(Boolean).map(subject => {
+        const lessons = String(subject.id) === String(currentSubjectId) && Array.isArray(courseData) ? courseData : subject.lessons;
+        return { subject: deepCopy({ ...subject, lessons: lessons || [] }), at, ...(reason ? { reason } : {}) };
+    });
+    if (!entries.length) return 0;
+    const all = [...entries, ...liveSubjectTrash()];
+    globalState.subjectTrash = all.slice(0, SUBJECT_TRASH_LIMIT);
+    const dropped = all.length - globalState.subjectTrash.length;
+    if (dropped && notify) window.showToast?.(subjectTrashCapText(dropped, Math.max(0, entries.length - SUBJECT_TRASH_LIMIT)), 'warning');
+    return dropped;
+}
+
 function moveSubjectToTrash(subject, reason = '') {
-    if (!subject) return;
-    const lessons = String(subject.id) === String(currentSubjectId) && Array.isArray(courseData) ? courseData : subject.lessons;
-    const entry = { subject: deepCopy({ ...subject, lessons: lessons || [] }), at: new Date().toISOString(), ...(reason ? { reason } : {}) };
-    globalState.subjectTrash = [entry, ...liveSubjectTrash()].slice(0, SUBJECT_TRASH_LIMIT);
+    return moveSubjectsToTrash([subject], reason);
 }
 
 const allLessonIds = () => globalState.subjects.flatMap(subject => (subject.lessons || []).map(lesson => lesson.id));
@@ -944,17 +979,33 @@ async function importSubjectsBackup(meta) {
     const openReplaced = plan.replaced.some(subject => String(subject.id) === String(currentSubjectId));
     if (openReplaced) window.saveRawContent?.(); // 고치던 원문은 바뀌기 전 교과(휴지통으로 갈 쪽)에 먼저 넣는다
     if (!(await safetyBackupOrAsk('불러오기전'))) return; // 받지 못하면 까닭을 알리고 백업 없이 계속할지 묻는다
-    plan.replaced.forEach(subject => moveSubjectToTrash(globalState.subjects.find(item => String(item.id) === String(subject.id)), '불러오기 전'));
+    // 바꾸기 전 값(브라우저에 저장하지 못하면 되돌린다. 새로고침하면 불러오기 전 저장본이 열리므로 화면도 그것과 맞춘다)
+    const before = { subjects: globalState.subjects, subjectTrash: globalState.subjectTrash, courseData };
+    const trashed = plan.replaced.map(subject => globalState.subjects.find(item => String(item.id) === String(subject.id)));
+    const dropped = moveSubjectsToTrash(trashed, '불러오기 전', { notify: false }); // 넘쳐 지운 교과는 저장한 뒤에 알린다(되돌리면 지우지 않은 것이다)
     globalState.subjects = mergeSubjects(globalState.subjects, incoming);
     const open = globalState.subjects.find(subject => String(subject.id) === String(currentSubjectId));
     if (open) courseData = open.lessons || [];
     if (openReplaced) closeLessonEditor();
-    await saveState();
+    // 이어진 PC 폴더에는 브라우저에 저장한 뒤에만 쓴다(되돌린 불러오기가 폴더에 남지 않게. 과정 전체 백업 되살리기와 같은 규칙)
+    const saved = (await saveState({ folder: false })) !== false;
+    if (!saved) {
+        Object.assign(globalState, { subjects: before.subjects, subjectTrash: before.subjectTrash });
+        courseData = before.courseData;
+    }
+    const resaved = saved || (await saveState()) !== false;
+    if (saved && typeof projectFolderHandle !== 'undefined' && projectFolderHandle) syncToLinkedFolder().catch(err => console.warn('폴더 동기화 경고:', err.message));
     if (typeof renderOverviewLNB === 'function') renderOverviewLNB();
     if (typeof renderDiagram === 'function') renderDiagram();
     if (typeof renderSidebar === 'function') renderSidebar();
     location.hash = '#overview';
+    if (!saved) {
+        return window.showAlert('이 파일의 교과를 브라우저에 저장하지 못해 불러오지 않았습니다. 화면은 불러오기 전으로 돌려 두었습니다.\n'
+            + '브라우저 저장 공간이 모자라거나 이 사이트의 저장을 막았을 수 있습니다. 확인한 뒤 다시 불러와 주세요.'
+            + (resaved ? '' : '\n불러오기 전 작업도 다시 저장하지 못했습니다. 브라우저 저장 공간을 확인한 뒤 Ctrl+S로 다시 저장해 주세요.'));
+    }
     window.showToast?.(`교과 ${incoming.length}개를 불러왔습니다.`, 'success');
+    if (dropped) window.showToast?.(subjectTrashCapText(dropped, Math.max(0, trashed.length - SUBJECT_TRASH_LIMIT)), 'warning');
 }
 
 // 지금 연 차시 편집기를 닫는다. 내용이 바뀐 뒤 남은 편집기(원문 칸 등)가 옛 글을 새 내용 위에 저장하지 않게
@@ -994,6 +1045,7 @@ const SAFE_TAB_KEY = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
 // 차시에서 목록이어야 하는 칸(아니면 .map에서 화면이 멈춘다)과 글이어야 하는 칸
 const LESSON_LIST_FIELDS = ['objectives', 'tools', 'prereqs', 'illustrations', 'refImages', 'history'];
 const LESSON_TEXT_FIELDS = ['content', 'uploadedMdName', 'uploadedMdContent'];
+const LESSON_INFO_TEXT_FIELDS = ['category', 'reviewStatus']; // 차시 카드·검색·차시 정보 창이 글로 쓰는 칸(있을 때 글로 맞춘다)
 const GYOSUAN_TEXT_FIELDS = ['docMd', 'deckMd', 'deckHtml'];
 const TRASH_FUTURE_MS = 24 * 60 * 60 * 1000; // 이보다 먼 미래로 적힌 지운 날짜는 지금으로 본다(영영 비워지지 않는 일이 없게)
 
@@ -1047,11 +1099,42 @@ function safeIllustrations(list) {
     return kept.length === list.length && kept.every((item, index) => item === list[index]) ? list : kept;
 }
 
+// 줄 객체의 글 칸을 글로 맞춘다. need는 늘 글로 두는 칸(없으면 ''), may는 있을 때만 맞추는 칸. 객체가 아니면 null(뺄 줄), 고칠 것이 없으면 같은 객체
+function textRow(row, need, may = []) {
+    if (!isObject(row)) return null;
+    const next = { ...row };
+    need.forEach(field => { next[field] = stateText(row[field]); });
+    may.forEach(field => { if (row[field] !== undefined) next[field] = stateText(row[field]); });
+    return sameFields(next, row) ? row : next;
+}
+
+// 목록 칸의 줄(카드·검색·차시 정보 창·교재 내보내기가 줄마다 글로 쓴다): 학습 목표는 글, 툴은 name·version, 선행 차시는 title과 id(글·숫자),
+// 변경 이력은 at·note. 쓸 수 없는 줄은 빼고 바른 줄은 그대로 둔다
+const LESSON_ROW_RULES = {
+    objectives: row => (typeof row === 'string' ? row : ['number', 'boolean'].includes(typeof row) ? String(row) : null),
+    tools: row => textRow(row, ['name'], ['version']),
+    prereqs: row => {
+        const next = textRow(row, ['title']);
+        if (!next || next.id == null || ['string', 'number'].includes(typeof next.id)) return next;
+        const { id, ...rest } = next;
+        return rest;
+    },
+    history: row => textRow(row, ['at', 'note'])
+};
+
+// 목록의 줄을 rule로 고친다(null이면 뺀다). 고칠 것이 없으면 같은 목록
+function safeRows(list, rule) {
+    const kept = list.map(rule).filter(row => row !== null);
+    return kept.length === list.length && kept.every((row, index) => row === list[index]) ? list : kept;
+}
+
 // 차시(최종 평가 포함)의 안쪽 값을 그 자리에서 고친다(sanitizeState가 부른다)
 function cleanLessonFields(lesson) {
     lesson.images = safeImageMap(lesson.images);
     LESSON_TEXT_FIELDS.forEach(field => { if (lesson[field] !== undefined) lesson[field] = textOrNull(lesson[field]); });
+    LESSON_INFO_TEXT_FIELDS.forEach(field => { if (lesson[field] != null && typeof lesson[field] !== 'string') lesson[field] = stateText(lesson[field]); });
     LESSON_LIST_FIELDS.forEach(field => { if (lesson[field] != null && !Array.isArray(lesson[field])) lesson[field] = []; });
+    Object.entries(LESSON_ROW_RULES).forEach(([field, rule]) => { if (Array.isArray(lesson[field])) lesson[field] = safeRows(lesson[field], rule); });
     if (Array.isArray(lesson.illustrations)) lesson.illustrations = safeIllustrations(lesson.illustrations);
     if (lesson.tabContents !== undefined) lesson.tabContents = safeTabContents(lesson.tabContents);
     if (lesson.gyosuan !== undefined) lesson.gyosuan = safeGyosuan(lesson.gyosuan);
@@ -1417,7 +1500,7 @@ if (typeof window !== 'undefined') {
     Object.assign(window, {
         stateSnapshot, backupMeta, planSubjectImport, mergeSubjects, describeSubjectImport, backupAgeLabel,
         historyEntry, historyRestoreTarget, lessonFromHistory, confirmAsync, subjectsBackupMeta,
-        downloadSafetyBackup, recordBackupTime, renderBackupIndicator, moveSubjectToTrash, restoreSubject,
+        downloadSafetyBackup, recordBackupTime, renderBackupIndicator, moveSubjectToTrash, moveSubjectsToTrash, restoreSubject,
         liveSubjectTrash, restoreHistoryItem, importSubjectsBackup, mergeBackupExtras, closeLessonEditor,
         isSafeStateId, stateText, safeReferenceUrls, normalizeLessonId, assignLessonIds, renumberLessons, capHistory,
         mergeHistory, historyMergeNote, historyCapText,
@@ -1432,7 +1515,7 @@ if (typeof window !== 'undefined') {
         BACKUP_IMAGE_LABEL, BACKUP_NO_IMAGES_TAG, BACKUP_TOO_BIG_TEXT, BACKUP_FALLBACK_TEXT,
         isBackupImageRef, backupImageInfo, backupImageRefs, backupImageFileNames, folderImageModeOf, folderCopyName,
         folderOpenPrompt, folderOpenedMessage, folderSaveUnreadableText, backupImageFromKeyedFile,
-        safeImageMap, safeTabContents, safeGyosuan, cleanLessonFields, cleanHistoryItem, isSafeImageKey, isSafeImageValue, validHistory, validTrash,
+        safeImageMap, safeTabContents, safeGyosuan, cleanLessonFields, cleanHistoryItem, isSafeImageKey, isSafeImageValue, validHistory, validTrash, cleanTrashEntry,
         trashTimeIso, withTrashTime, backupMarkdownBody, takeBackupMarkdown, relinkAttachedImages, applyBackupMarkdown,
         relinkLocalImages, attachedImageFile, attachmentImages, UNREAD_PARTIAL_BACKUP_TEXT, jsonTextParts, staleUnreadCopies,
         importTitleText, repairImageValue

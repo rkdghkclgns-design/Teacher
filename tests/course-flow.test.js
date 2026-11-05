@@ -5,7 +5,7 @@ const vm = require('vm');
 const path = require('path');
 const assert = require('assert');
 const root = path.join(__dirname, '..', 'js') + path.sep;
-const FILES = ['kbuilder/ncs-catalog.js', 'lesson-lint.js', 'lesson-opening.js', 'course-qbank.js', 'lesson-pipeline.js', 'ai-routing.js', 'course-ncs.js', 'course-design.js', 'course-design-edit.js', 'course-sessions.js', 'course-meta.js', 'lesson-editor-tools.js', 'lesson-attachments.js', 'tabs.js', 'course-flow.js'];
+const FILES = ['kbuilder/ncs-catalog.js', 'ai-errors.js', 'lesson-lint.js', 'lesson-opening.js', 'course-qbank.js', 'lesson-pipeline.js', 'ai-routing.js', 'course-ncs.js', 'course-design.js', 'course-design-edit.js', 'course-sessions.js', 'course-meta.js', 'lesson-editor-tools.js', 'lesson-attachments.js', 'tabs.js', 'course-flow.js'];
 const TABS = [['basicLearn', '기본 학습'], ['basicPrac', '기본 실습'], ['advLearn', '심화 학습'], ['advPrac', '심화 실습'], ['assessment', '학습 이해도']].map(([id, label]) => ({ id, label }));
 const TAB_IDS = TABS.map(tab => tab.id);
 
@@ -26,7 +26,7 @@ function makeContext(callGemini = async () => reply('## 본문\n\n내용')) {
         alerts: [], toasts: [], viewed: [], switched: [], archived: [], saves: 0,
         elements: { 'editor-loading': { style: {} } },
         escapeHtml, safeJSONParse: t => JSON.parse(t), extractText: d => d.candidates[0].content.parts[0].text,
-        document: { getElementById: id => ctx.elements[id] || null, createElement: () => ({}), head: { appendChild() {} } },
+        document: { getElementById: id => ctx.elements[id] || null, createElement: () => ({}), head: { appendChild() {} }, body: { appendChild() {} } },
         getEditingModule: id => ctx.courseData.find(mod => String(mod.id) === String(id)),
         openEditor: id => {
             ctx.switched.push(id);
@@ -734,6 +734,126 @@ async function run(name, fn) {
         local.globalState.subjects = [{ id: 's1', title: '교과', lessons: [lesson(1)] }];
         assert.ok(!confirmText('subject', false).includes('휴지통'), '빈 차시뿐이면 휴지통 이야기를 하지 않는다');
         assert.ok(!/(^|[^.\w])confirm\(/m.test(fs.readFileSync(root + 'course-flow.js', 'utf8')), '브라우저 기본 확인 창을 쓰지 않는다');
+    });
+
+    /* ---------- 4차 교차 검토: 다른 생성이 도는 동안, 한도·키 오류, 고정 섹션 그림, 다른 교과로 옮긴 뒤 ---------- */
+    const fullTabs = text => Object.fromEntries(TAB_IDS.map(id => [id, `${id} ${text}`]));
+    const runContext = (lessons, aiCall) => {
+        const local = makeContext(aiCall);
+        const subject = { id: 's1', title: '교과', lessons };
+        local.globalState.subjects = [subject];
+        local.currentSubjectId = 's1';
+        local.courseData = subject.lessons;
+        ['lesson-run-body', 'lesson-run-footer', 'lesson-run-status'].forEach(id => { local.elements[id] = { innerHTML: '', textContent: '' }; });
+        local.elements['lesson-run-overwrite'] = { checked: true };
+        local.confirmAsync = async () => true;
+        return local;
+    };
+
+    await run('일괄 실행: 진행 막대의 작업(알림을 켠 탭 만들기·일괄 이미지 찾기 등)이 돌면 진행 중으로 보고, 확인을 기다리는 사이 시작돼도 아무것도 비우지 않는다', async () => {
+        const original = lesson(1, fullTabs('글'), { status: 'done', images: { a: 'data:a' } });
+        const before = plain(original);
+        const local = runContext([original], async () => { throw new Error('부르면 안 된다'); });
+        const busy = () => vm.runInContext('generationBusy()', local);
+        local.beginLessonPipeline(7, { kind: 'job', alerts: true });
+        assert.strictEqual(busy(), true, '알림을 켠 작업도 진행 중이다');
+        local.finishLessonPipeline({ quiet: true });
+        assert.strictEqual(busy(), false);
+        // 남은 차시 생성 창을 연 뒤, 덮어쓰기 확인 창을 기다리는 사이 다른 작업이 시작됐다
+        local.confirmAsync = async () => { local.beginLessonPipeline(7, { kind: 'job', alerts: true }); return true; };
+        await vm.runInContext('startLessonRun', local)('subject');
+        assert.deepStrictEqual(plain(original), before, '차시를 비우지 않는다');
+        assert.deepStrictEqual(plain(local.globalState.lessonTrash || []), [], '휴지통에 넣지 않는다');
+        assert.strictEqual(local.alerts.at(-1), '진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
+        assert.strictEqual(vm.runInContext('_lessonRun', local), null);
+        // 일괄 생성 도중에 다른 작업이 시작돼도 그 차시를 비우지 않고 멈춘다
+        const result = plain(await vm.runInContext('attemptLesson', local)({ subject: local.globalState.subjects[0], lessonId: 1, title: '차시 1' }, { stopped: false, overwrite: true, withGyosuan: true, cleared: new Map(), trashed: 0, restored: new Set() }));
+        assert.deepStrictEqual([result.ok, result.halt], [false, true]);
+        assert.deepStrictEqual(plain(original), before);
+        local.finishLessonPipeline({ quiet: true });
+    });
+
+    await run('덮어쓰기 실행: 하루 한도에 걸리면 다시 해 보지 않고 멈추며, 탭을 하나도 만들지 못한 차시는 지우기 전 내용으로 되돌리고 휴지통 사본을 뺀다', async () => {
+        const first = lesson(1, fullTabs('첫 차시'), { status: 'done', images: { a: 'data:a' }, history: [{ at: '2026-11-01T00:00:00.000Z', note: '이전' }] });
+        const second = lesson(2, fullTabs('둘째 차시'), { status: 'done', images: { b: 'data:b' } });
+        const before = plain([first, second]);
+        let calls = 0;
+        const local = runContext([first, second], async () => {
+            calls += 1;
+            throw vm.runInContext('aiError', local)(429, JSON.stringify({ error: { message: 'Quota exceeded for metric: generate_content_free_tier_requests, limit: 250', details: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }] } }), 'Gemini');
+        });
+        await vm.runInContext('startLessonRun', local)('subject');
+        assert.strictEqual(calls, 1, '30초 뒤 다시 해 보지 않고, 다음 차시도 비우지 않는다');
+        assert.deepStrictEqual(plain([first, second]), before, '두 차시 모두 지우기 전 그대로(탭·그림·변경 이력)');
+        assert.deepStrictEqual(plain(local.globalState.lessonTrash), [], '되돌린 차시의 사본은 휴지통에서 뺀다');
+        assert.deepStrictEqual(plain(local.alerts), [], '차시마다 알림창을 띄우지 않는다');
+        const body = local.elements['lesson-run-body'].innerHTML;
+        assert.ok(body.includes('중지했습니다 · 완료 0개 · 실패 1개 · 남은 1개'), body);
+        assert.ok(body.includes('남은 차시도 같은 까닭으로 만들 수 없어 일괄 생성을 멈췄습니다') && body.includes('오늘 쓸 수 있는 AI 사용량을 다 썼습니다'), body);
+        assert.ok(body.includes('탭을 하나도 만들지 못한 차시 1개는 지우기 전 내용으로 되돌렸습니다'), body);
+        assert.ok(!body.includes('휴지통에 있습니다') && !body.includes('남은 탭부터 이어서'), '있지 않은 휴지통 사본이나 만든 내용을 말하지 않는다');
+    });
+
+    await run('덮어쓰기 실행: 탭을 하나라도 만들고 실패한 차시는 되돌리지 않고(이전 내용은 휴지통), 분당 한도처럼 기다리면 풀리는 오류는 30초 뒤 한 번 더 해 본다', async () => {
+        const first = lesson(1, fullTabs('첫 차시'), { status: 'done' });
+        let calls = 0;
+        const local = runContext([first], async (model, payload) => {
+            calls += 1;
+            if (tabOf(payload) === 'basicLearn') return reply('## 새 기본 학습\n\n새 글');
+            throw Object.assign(new Error('잠시 바쁩니다(503)'), { status: 503 });
+        });
+        await vm.runInContext('startLessonRun', local)('subject');
+        assert.strictEqual(first.tabContents.basicLearn.includes('새 기본 학습'), true);
+        assert.strictEqual(first.tabContents.basicPrac, undefined, '만들지 못한 탭은 비어 있다');
+        assert.strictEqual(local.globalState.lessonTrash.length, 1, '이전 내용은 휴지통에 있다');
+        assert.strictEqual(calls, 3, '첫 시도(기본 학습·기본 실습) 뒤 한 번 더(기본 실습)');
+        const body = local.elements['lesson-run-body'].innerHTML;
+        assert.ok(body.includes('차시 1개의 이전 내용은 휴지통에 있습니다') && body.includes('남은 탭부터 이어서') && !body.includes('되돌렸습니다'), body);
+    });
+
+    await run('덮어쓰기: 교수안까지 다시 만들어도 다시 넣을 고정 섹션의 그림과 남는 삽화의 그림은 지우지 않고, 되돌릴 지우기 전 그림 목록은 그대로 둔다', async () => {
+        const locked = '## 핵심 그림\n\n![화면](local:img_keep)';
+        const mod = lesson(1, { ...emptyTabs(), basicLearn: `${locked}\n\n## 다른 섹션\n\n![옛 그림](local:img_old)` }, {
+            images: { img_keep: 'data:image/png;base64,QQ==', img_old: 'data:image/png;base64,Qg==', img_illu: 'data:image/png;base64,Qw==' },
+            illustrations: [{ id: 'i1', imgId: 'img_illu' }], gyosuan: { docMd: '# 교수안 ![도표](local:img_old)' }
+        });
+        const local = runContext([mod], async () => reply('x'));
+        local.globalState.courseDesign = { autoArt: false };
+        local.lockedSectionBlocks = (lessonMod, tabId) => (tabId === 'basicLearn' ? [{ title: '핵심 그림', text: locked }] : []);
+        const cleared = await vm.runInContext('clearLessonForRewrite', local)(mod, true, 's1');
+        assert.deepStrictEqual(Object.keys(mod.images).sort(), ['img_illu', 'img_keep'], '고정 섹션·삽화의 그림은 남고 옛 탭·교수안 그림만 덜어 낸다');
+        assert.strictEqual(mod.gyosuan, null);
+        assert.deepStrictEqual(Object.keys(cleared.before.images).sort(), ['img_illu', 'img_keep', 'img_old']);
+        assert.deepStrictEqual(Object.keys(local.globalState.lessonTrash[0].lesson.images).sort(), ['img_illu', 'img_keep', 'img_old'], '휴지통 사본에는 모든 그림이 있다');
+        const keep = lesson(2, { ...emptyTabs(), basicLearn: '글' }, { images: { z: 'data:image/png;base64,Wg==' } });
+        await vm.runInContext('clearLessonForRewrite', local)(keep, false, 's1');
+        assert.deepStrictEqual(Object.keys(keep.images), ['z'], '교수안을 다시 만들지 않으면 그림은 그대로 둔다');
+    });
+
+    await run('교안 탭 모두 다시 만들기: 도중에 다른 교과로 옮기면 그 교과의 최종 평가(같은 id)를 다시 만들지 않고 멈춘다', async () => {
+        let calls = 0;
+        const local = makeContext(async (model, payload) => {
+            calls += 1;
+            if (calls === 1) { // 첫 탭을 받는 사이 교과2를 연다
+                local.currentSubjectId = 's2';
+                local.courseData = local.globalState.subjects[1].lessons;
+            }
+            return reply(`## AI가 새로 쓴 글 ${calls}\n\n내용`);
+        });
+        const quest = text => ({ id: 'mainQuest', title: '👑 최종 평가', description: '평가', status: 'done', images: {}, tabContents: fullTabs(text), content: text });
+        const s1 = { id: 's1', title: '교과1', lessons: [lesson(1)], mainQuest: quest('교과1 글') };
+        const s2 = { id: 's2', title: '교과2', lessons: [lesson(1)], mainQuest: quest('교과2 글') };
+        local.globalState.subjects = [s1, s2];
+        local.currentSubjectId = 's1';
+        local.courseData = s1.lessons;
+        local.getEditingModule = id => (id === 'mainQuest' ? local.globalState.subjects.find(subject => subject.id === local.currentSubjectId)?.mainQuest : local.courseData.find(mod => String(mod.id) === String(id)));
+        const s2Before = plain(s2.mainQuest);
+        await vm.runInContext('generateAllTabs', local)('mainQuest');
+        assert.strictEqual(calls, 1);
+        assert.ok(s1.mainQuest.tabContents.basicLearn.includes('AI가 새로 쓴 글 1'), '시작한 교과의 첫 탭은 다시 만들었다');
+        assert.deepStrictEqual(plain(s2.mainQuest), s2Before, '교과2의 최종 평가는 그대로');
+        assert.ok(local.alerts.at(-1).includes('다른 교과로 옮겼거나 차시가 바뀌어 교안 탭 다시 만들기를 멈췄습니다'), local.alerts.at(-1));
+        assert.ok(!local.toasts.some(item => item.message.includes('모두 다시 만들었습니다')), '다 만들었다고 하지 않는다');
     });
 
     console.log('ALL PASSED');

@@ -72,9 +72,9 @@ test('교과 불러오기 확인 창: 이름이 다른 같은 교과는 양쪽 �
     assert.strictEqual(ctx.window.importTitleText(null), '제목 없음');
 });
 
-test('마지막 백업 표시: 안 함·분·시간·일, 7일이 지나면 경고(과정 전체 백업만 세는 새 저장 키)', () => {
+test('마지막 백업 표시: 기록 없음·분·시간·일, 7일이 지나면 경고(과정 전체 백업만 세는 새 저장 키)', () => {
     const now = Date.parse('2026-11-05T12:00:00Z');
-    assert.deepStrictEqual({ ...backupAgeLabel(null, now) }, { text: '전체 백업 안 함', stale: true });
+    assert.deepStrictEqual({ ...backupAgeLabel(null, now) }, { text: '전체 백업 기록 없음', stale: true, none: true }, "업데이트 전에 받은 백업이 있을 수 있어 '안 함'이라고 하지 않는다");
     assert.strictEqual(backupAgeLabel('2026-11-05T11:59:40Z', now).text, '방금 전체 백업');
     assert.strictEqual(backupAgeLabel('2026-11-05T11:30:00Z', now).text, '30분 전 전체 백업');
     assert.strictEqual(backupAgeLabel('2026-11-05T09:00:00Z', now).text, '3시간 전 전체 백업');
@@ -876,7 +876,7 @@ function loadFolderSync(stored = {}) {
     const folder = fakeFolder();
     const env = loadSafety(stored, {
         globalState: { courseTitle: '과정', subjects: [{ id: 's1', title: '국어', lessons }], lessonTrash: [], subjectTrash: [] },
-        currentSubjectId: null, projectFolderHandle: folder, folderWriteCache: null, FOLDER_STAMP_KEY: 'teacher:folder-save-stamp', stateLoadFailed: false,
+        currentSubjectId: null, projectFolderHandle: folder, folderWriteCache: null, FOLDER_STAMP_KEY: 'teacher:folder-save-stamp', stateLoadFailed: false, lastBrowserSaveFailed: false,
         atob: text => Buffer.from(text, 'base64').toString('binary'),
         markFolderSyncOk() {}, markFolderSyncFailed(err) { throw err; }, notifyFolderStopped() {}
     });
@@ -948,7 +948,7 @@ function loadZipImport() {
         sanitizeState: state => (state ? JSON.parse(JSON.stringify({ subjects: [], ...state })) : null),
         archived: 0, saves: 0,
         // state.js의 읽지 못한 상태 도우미와 값(묶음 6). 이 시험은 읽은 상태에서 되살린다. PC 폴더는 잇지 않았다(브라우저에 저장한 뒤에만 폴더에 쓴다)
-        isStateLoadFailed: () => false, markStateLoaded() {}, showOverviewAfterRestore() {}, unreadRecord: undefined,
+        isStateLoadFailed: () => false, markStateLoaded() {}, showOverviewAfterRestore() {}, redrawAfterRestore() {}, unreadRecord: undefined,
         projectFolderHandle: null, pruneUnreadCopies: async () => {}
     });
     env.c.archiveContents = async () => { env.c.archived++; };
@@ -1892,6 +1892,154 @@ test('폴더의 저장본을 풀지 못했으면 교과가 없다고 하지 않�
     assert.ok(!yaml.includes('교과가 없습니다'), yaml);
     const json = W6.folderSaveUnreadableText('save_data.json');
     assert.ok(json.startsWith('이 폴더의 저장본(save_data.json)을 읽을 수 없습니다.') && !json.includes('save_data_이전'), '예전 save_data.json 폴더는 사본을 만들지 않는다');
+});
+
+/* ---------- 4차 교차 검토: 남이 준 백업의 휴지통·차시 정보 칸, 교과 휴지통 상한, 교과 불러오기 저장 실패, 백업 시각 글 ---------- */
+test('휴지통: 백업의 교과 항목은 차시 목록을 배열로, 이름을 글로 받는다(휴지통 창에 남이 쓴 HTML이 들어가지 않게). 바른 항목은 그대로', () => {
+    const now = Date.parse('2026-11-06T00:00:00Z');
+    const evil = () => JSON.parse('{"at":"2026-11-05T00:00:00.000Z","subject":{"id":"x","title":{"toString":null},"lessons":{"length":"<img src=x onerror=alert(1)>"}}}');
+    const [entry] = W6.validTrash([evil()], 'subject', now);
+    assert.deepStrictEqual(plain6(entry.subject.lessons), []);
+    assert.strictEqual(entry.subject.title, '');
+    const good = { at: '2026-11-05T00:00:00.000Z', subject: { id: 'y', title: '교과', lessons: [{ id: 1 }] } };
+    assert.strictEqual(W6.validTrash([good], 'subject', now)[0], good, '바른 항목은 같은 객체');
+    const noLessons = { at: '2026-11-05T00:00:00.000Z', subject: { id: 'z', title: '빈 교과' } };
+    assert.strictEqual(W6.validTrash([noLessons], 'subject', now)[0], noLessons, '차시 목록이 없는 항목도 그대로(되살릴 때 빈 목록이 된다)');
+    assert.strictEqual(W6.validTrash([{ at: '2026-11-05T00:00:00.000Z', lesson: { id: 1, title: 5 } }], 'lesson', now)[0].lesson.title, '5');
+    const merged = ctx.mergeBackupExtras({ trash: { subjectTrash: [evil(), JSON.parse('{"at":1,"subject":{"id":{"toString":null},"lessons":[]}}')] } }, { history: [], lessonTrash: [], subjectTrash: [] }, now);
+    assert.strictEqual(merged.subjectTrash.length, 2, 'id가 객체여도 합치기가 멈추지 않는다');
+    assert.ok(merged.subjectTrash.every(item => Array.isArray(item.subject.lessons)));
+    const state = sanitize6({ subjects: [], subjectTrash: [evil()] });
+    assert.deepStrictEqual(plain6(state.subjectTrash[0].subject.lessons), [], '브라우저 저장본·폴더의 휴지통도 같은 검사');
+});
+
+test('차시 정보 칸: 목록의 줄과 카테고리·상태를 글로 맞춰 차시 카드·검색·변경 이력·교재 내보내기가 멈추지 않는다(바른 차시는 그대로)', () => {
+    const evil = JSON.parse('{"toString":1,"valueOf":1}');
+    const lesson = W6.cleanLessonFields({
+        category: evil, reviewStatus: evil,
+        objectives: ['목표', 3, evil, null], prereqs: [{ id: 2, title: '선행' }, { id: evil, title: evil }, null],
+        tools: [{ name: evil, version: 1 }, { name: 'Unity' }, '글'], history: [null, { at: 5, note: 'x' }, { at: '2026-11-05T00:00:00.000Z', note: '노트' }]
+    });
+    assert.deepStrictEqual(plain6([lesson.category, lesson.reviewStatus]), ['', '']);
+    assert.deepStrictEqual(plain6(lesson.objectives), ['목표', '3']);
+    assert.deepStrictEqual(plain6(lesson.prereqs), [{ id: 2, title: '선행' }, { title: '' }]);
+    assert.deepStrictEqual(plain6(lesson.tools), [{ name: '', version: '1' }, { name: 'Unity' }]);
+    assert.deepStrictEqual(plain6(lesson.history), [{ at: '5', note: 'x' }, { at: '2026-11-05T00:00:00.000Z', note: '노트' }]);
+    // 차시 카드 검색(course-meta.js lessonMatchesFilter)·변경 이력(metaHistoryRows)·교재 내보내기(lesson-material.js)와 같은 쓰임
+    assert.doesNotThrow(() => `${lesson.category || ''} ${lesson.objectives.join(' ')} ${lesson.reviewStatus || '작성중'}`.toLowerCase());
+    assert.doesNotThrow(() => lesson.history.map(row => `${row.at.slice(0, 10)} ${row.note}`));
+    assert.doesNotThrow(() => lesson.tools.map(tool => `${tool.name}${tool.version ? ` ${tool.version}` : ''}`));
+    assert.doesNotThrow(() => lesson.prereqs.map(item => (item.id != null ? String(item.id) : item.title)));
+    const objectives = ['목표 하나'];
+    const tools = [{ name: 'Unity', version: '6' }];
+    const history = [{ at: '2026-11-05T00:00:00.000Z', note: '노트' }];
+    const prereqs = [{ id: 1, title: '선행' }];
+    const kept = W6.cleanLessonFields({ category: '기획', reviewStatus: '완료', objectives, tools, history, prereqs });
+    assert.ok(kept.objectives === objectives && kept.tools === tools && kept.history === history && kept.prereqs === prereqs, '바른 목록은 같은 목록');
+    assert.deepStrictEqual([kept.category, kept.reviewStatus], ['기획', '완료']);
+});
+
+testAsync('백업 ZIP 되살리기: 저장한 뒤 화면을 다시 그리다 실패해도(남이 준 파일의 이상한 값) 되살렸다고 사실대로 알린다', async () => {
+    const env = loadZipImport();
+    vm.runInContext(stateFn('function redrawAfterRestore('), env.c); // 진짜 다시 그리기(실패를 콘솔에만 남긴다)
+    env.c.renderSidebar = () => { throw new TypeError('Cannot convert object to primitive value'); };
+    env.seen.answers.push(true);
+    const meta = { format: 'teacher-backup', scope: 'full', imageMode: 'separate', context: { courseTitle: '파일 과정', subjects: [{ id: 's9', title: '파일 교과', lessons: [{ id: 1, title: '1차시', images: {} }] }] } };
+    await env.W.importProjectZip(zipFile(meta));
+    assert.strictEqual(env.c.globalState.subjects[0].title, '파일 교과');
+    assert.ok(env.seen.alerts.at(-1).startsWith('백업 파일로 과정 전체를 되살렸습니다'), env.seen.alerts.at(-1));
+    assert.ok(!env.seen.alerts.some(text => text.includes('되살리지 못했습니다')), '저장까지 한 되살리기를 못 했다고 하지 않는다');
+});
+
+test('작업 기록 보기·내보내기의 그림 넣기: img_1이 img_10을 건드리지 않고, img_로 시작하지 않는 키의 그림 칸도 마크다운 그림으로 바꾼다', () => {
+    const local = { console };
+    vm.createContext(local);
+    vm.runInContext(stateFn('function resolveMarkdownImages('), local);
+    const resolve = (md, images) => local.resolveMarkdownImages(md, images);
+    assert.strictEqual(resolve('![a](local:img_1) ![b](local:img_10)', { img_1: 'data:image/png;base64,AAAA', img_10: 'data:image/png;base64,BBBB' }), '![a](data:image/png;base64,AAAA) ![b](data:image/png;base64,BBBB)');
+    const wrapped = resolve('<div class="image-wrapper"><img src="local:ai1x2y" alt="도표" class="x"><div class="image-caption">설명</div></div>', { ai1x2y: 'data:image/png;base64,Q0ND' });
+    assert.ok(wrapped.startsWith('![도표](data:image/png;base64,Q0ND)'), wrapped);
+    assert.strictEqual(resolve('![x](local:img_9) ![y](local:img_2)', { img_2: 'teacher-image:0123456789abcdef1a' }), '![x](local:img_9) ![y]()', '목록에 없는 키는 그대로, 찾지 못한 그림은 빈 그림');
+    assert.strictEqual(resolve('![a](local:img_1)', null), '![a](local:img_1)');
+});
+
+testAsync('교과 휴지통: 30개를 넘으면 오래된 교과부터 완전히 지우고 그 수를 알린다(한 번에 많이 넣으면 방금 넣은 교과도 센다)', () => {
+    const env = loadSafety({}, { currentSubjectId: null });
+    const now = Date.now();
+    env.c.globalState.subjectTrash = Array.from({ length: 30 }, (_, i) => ({ subject: { id: `old${i}`, title: `옛 ${i}`, lessons: [] }, at: new Date(now - (i + 1) * 3600000).toISOString() }));
+    assert.strictEqual(env.W.moveSubjectToTrash({ id: 'mine', title: '내 교과', lessons: [] }, '삭제'), 1);
+    const trash = env.c.globalState.subjectTrash;
+    assert.deepStrictEqual([trash.length, trash[0].subject.id, trash.at(-1).subject.id], [30, 'mine', 'old28']);
+    assert.deepStrictEqual(env.seen.toasts.at(-1), { text: '휴지통에는 지운 교과를 30개까지 둡니다. 넘친 1개를 완전히 지웠습니다.', type: 'warning' });
+    const many = Array.from({ length: 32 }, (_, i) => ({ id: `n${i}`, title: `새 ${i}`, lessons: [] }));
+    assert.strictEqual(env.W.moveSubjectsToTrash(many, '불러오기 전'), 32);
+    assert.strictEqual(env.seen.toasts.at(-1).text, '휴지통에는 지운 교과를 30개까지 둡니다. 넘친 32개(방금 넣은 교과 2개 포함)를 완전히 지웠습니다.');
+    const count = env.seen.toasts.length;
+    assert.strictEqual(env.W.moveSubjectToTrash(null), 0);
+    env.c.globalState.subjectTrash = [];
+    assert.strictEqual(env.W.moveSubjectToTrash({ id: 'a', title: 'A', lessons: [] }), 0);
+    assert.strictEqual(env.seen.toasts.length, count, '넘치지 않으면 알리지 않는다');
+});
+
+testAsync('교과 불러오기: 브라우저에 저장하지 못하면 불러오기 전으로 되돌리고 PC 폴더에는 쓰지 않으며, 불러왔다고 하지 않는다', async () => {
+    const make = results => {
+        const synced = [];
+        const env = loadSafety({}, {
+            globalState: { courseTitle: '과정', subjects: [{ id: 's1', title: '내 교과', lessons: [{ id: 1, title: '1차시' }] }], lessonTrash: [], subjectTrash: [] },
+            currentSubjectId: 'x', sanitizeState: s => JSON.parse(JSON.stringify(s)), location: { hash: '' },
+            projectFolderHandle: { name: 'A' }, syncToLinkedFolder: async () => { synced.push('sync'); return true; }
+        });
+        const saves = [];
+        env.c.saveState = async (opts = {}) => { saves.push(opts.folder); return results.shift(); };
+        env.seen.answers.push(true);
+        return { env, synced, saves };
+    };
+    const meta = { scope: 'subjects', imageMode: 'separate', context: { subjects: [{ id: 's1', title: '파일 교과', lessons: [] }] } };
+    const fail = make([false, true]);
+    const before = fail.env.c.globalState.subjects;
+    await fail.env.W.importSubjectsBackup(meta);
+    assert.strictEqual(fail.env.c.globalState.subjects, before, '불러오기 전 교과 목록으로 되돌린다');
+    assert.deepStrictEqual(fail.env.c.globalState.subjectTrash, [], '휴지통에 넣은 내 교과 사본도 뺀다');
+    assert.deepStrictEqual(fail.saves, [false, undefined], '먼저 폴더 없이 저장하고, 되돌린 상태를 다시 저장한다');
+    assert.deepStrictEqual(fail.synced, [], '폴더에는 쓰지 않는다');
+    assert.ok(!fail.env.seen.toasts.some(item => item.text.includes('불러왔습니다')), '불러왔다고 하지 않는다');
+    const told = fail.env.seen.alerts.at(-1);
+    assert.ok(told.includes('브라우저에 저장하지 못해 불러오지 않았습니다') && !told.includes('Ctrl+S'), told);
+    const both = make([false, false]);
+    await both.env.W.importSubjectsBackup(meta);
+    assert.ok(both.env.seen.alerts.at(-1).includes('불러오기 전 작업도 다시 저장하지 못했습니다') && both.env.seen.alerts.at(-1).includes('Ctrl+S'));
+    const ok = make([true]);
+    await ok.env.W.importSubjectsBackup(meta);
+    assert.strictEqual(ok.env.c.globalState.subjects[0].title, '파일 교과');
+    assert.deepStrictEqual([ok.saves, ok.synced], [[false], ['sync']], '브라우저에 저장한 뒤에 폴더에 쓴다');
+    assert.strictEqual(ok.env.seen.toasts.at(-1).text, '교과 1개를 불러왔습니다.');
+});
+
+testAsync("머리줄 백업 시각: 기록이 없으면 '안 함'이라고 하지 않고, 업데이트 전에 받은 백업이 있었으면 세지 않는다고 알린다", () => {
+    const show = stored => {
+        const el = { textContent: '', title: '', classList: { toggle() {} } };
+        const env = loadSafety(stored);
+        env.c.document.getElementById = id => (id === 'last-backup-indicator' ? el : null);
+        env.W.renderBackupIndicator();
+        return el;
+    };
+    const upgraded = show({ 'teacher:last-backup-at': '2026-11-05T00:00:00.000Z' });
+    assert.strictEqual(upgraded.textContent, '전체 백업 기록 없음');
+    assert.ok(upgraded.title.includes('받은 기록이 없습니다(이번 업데이트 전에 받은 백업은 세지 않습니다)') && !upgraded.title.includes('오래 받지 않았습니다'), upgraded.title);
+    const fresh = show({});
+    assert.ok(fresh.title.includes('받은 기록이 없습니다.') && !fresh.title.includes('업데이트 전'), fresh.title);
+    const old = show({ 'teacher:last-full-backup-at': new Date(Date.now() - 10 * 86400000).toISOString() });
+    assert.ok(old.textContent === '10일 전 전체 백업' && old.title.startsWith('과정 전체 백업을 오래 받지 않았습니다.'), old.title);
+});
+
+test("이름 맞추기: 머리줄 시각은 어디서나 '위쪽 전체 백업 시각'이고, 불러오기 전 자동 백업도 센다고 말한다", () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+    const tutorial = fs.readFileSync(path.join(__dirname, '..', 'js', 'tutorial.js'), 'utf8');
+    [['index.html', html], ['tutorial.js', tutorial], ['data-safety.js', SAFETY_SRC]].forEach(([name, text]) => {
+        assert.ok(!text.includes('위쪽 백업 시각') && !text.includes('마지막 과정 전체 백업 시각'), name);
+    });
+    assert.ok(html.includes('위쪽 전체 백업 시각은 이 백업이나 불러오기 전 자동 백업을 받은 때입니다'));
+    assert.ok(tutorial.includes('위쪽 전체 백업 시각은 그림을 담은 과정 전체 백업과 불러오기 전 자동 백업만 셉니다'));
 });
 
 (async () => {

@@ -13,7 +13,7 @@ const ctx = {
 };
 vm.createContext(ctx);
 vm.runInContext(SOURCE, ctx);
-const { modelCostTier, lessonWork, sumWork, estimateCallSplit, estimateCalls, recordAiTiming, readAiTimings, secondsPerCall, estimateSummary, estimateLines, estimateNote } = { ...ctx, ...ctx.window };
+const { modelCostTier, lessonWork, tabImageCount, sumWork, estimateCallSplit, estimateCalls, recordAiTiming, readAiTimings, secondsPerCall, estimateSummary, estimateLines, estimateNote } = { ...ctx, ...ctx.window };
 const plain = value => JSON.parse(JSON.stringify(value));
 
 let failed = 0;
@@ -49,8 +49,24 @@ test('할 일 개수: 탭·교안 그림·슬라이드 그림·교수안·문제
     delete ctx.window.KBuilder;
     assert.strictEqual(plain(lessonWork({ tabs: 2 }, 'none')).images, 0, '이미지 양이 넣지 않음이면 교안 그림 없음');
     assert.strictEqual(plain(lessonWork({}, 'all')).ncs, 0, '탭을 만들지 않으면 NCS 배정도 없다');
-    const total = plain(sumWork([FULL, plain(lessonWork({ tabs: 1, gyosuan: true }, 'all', 4))]));
-    assert.deepStrictEqual([total.tabs, total.images, total.slideImages], [6, 19, 8]);
+    const total = plain(sumWork([FULL, plain(lessonWork({ tabs: ['basicLearn'], gyosuan: true }, 'all', 4))]));
+    assert.deepStrictEqual([total.tabs, total.images, total.slideImages], [6, 37, 8]);
+});
+
+test('그림 자리: 탭마다 탭 글 규칙의 최소 섹션 수로 센다(모두는 기본 학습의 긴 소주제까지, 학습 이해도는 0)', () => {
+    const ALL_TABS = ['basicLearn', 'basicPrac', 'advLearn', 'advPrac', 'assessment'];
+    // 핵심만: ## 섹션마다(기본 학습은 학습 목표·개요를 빼고 6개) / 모두: ## 섹션과 긴 ### 소주제마다(기본 학습 6+16, 심화 학습 3+6)
+    assert.strictEqual(tabImageCount(ALL_TABS, 'section'), 15);
+    assert.strictEqual(tabImageCount(ALL_TABS, 'all'), 37, '모두는 탭 다섯 개에 4장씩(20장)이 아니라 37장');
+    assert.strictEqual(tabImageCount(['basicLearn'], 'all'), 22);
+    assert.strictEqual(tabImageCount(['advLearn'], 'all'), 9);
+    assert.strictEqual(tabImageCount(['assessment'], 'all'), 0, '학습 이해도는 문제(짧은 소주제)뿐');
+    assert.strictEqual(tabImageCount(['basicPrac', 'advPrac'], 'section'), 6);
+    assert.strictEqual(tabImageCount(ALL_TABS, 'none'), 0);
+    assert.strictEqual(tabImageCount(['constructor', '__proto__'], 'all'), 0, '모르는 탭 이름은 세지 않는다');
+    assert.deepStrictEqual(plain(lessonWork({ tabs: ['basicPrac', 'advLearn'] }, 'all', 0)), { tabs: 2, images: 12, slideImages: 0, ncs: 1, gyosuan: 0, qbank: 0, art: 0 });
+    assert.strictEqual(plain(lessonWork({ tabs: [] }, 'all')).ncs, 0, '빈 탭 목록이면 NCS 배정도 없다');
+    assert.strictEqual(plain(lessonWork({ tabs: 5 }, 'all', 0)).images, 37, '탭 수만 알면 다섯 탭의 평균으로 센다');
 });
 
 test('호출 수: 본문·짧은 호출·그림을 나눠 세고, SVG 삽화면 그림 장수만큼 글 호출이 는다', () => {
@@ -125,6 +141,13 @@ test('보이는 글: 글·그림·걸리는 시간 세 줄, 장수는 약(남은
 
 test('안내: 그림 모델은 무료 키로 못 쓸 수 있음, 역할별 분배, 무료 키 분당 한도', () => {
     assert.ok(estimateNote(summary(FULL), 'gemini-3.8-flash').includes('그림 자리만 남깁니다'));
+    const searched = estimateNote(summary(FULL, { imageSearch: true }), 'gemini-3.8-flash');
+    assert.ok(searched.includes('교안 그림은 검색으로 찾고 못 찾은 자리만 남깁니다(슬라이드 그림은 만들지 못합니다)') && !searched.includes('그림 자리만 남깁니다'), '검색 키가 있으면 교안 그림은 검색으로 찾는다고 말한다');
+    assert.ok(estimateNote(summary({ tabs: 5, images: 15 }, { imageSearch: true }), 'gemini-3.8-flash').includes('못 찾은 자리만 남깁니다.'), '슬라이드 그림이 없으면 슬라이드 이야기는 없다');
+    assert.ok(estimateNote(summary({ gyosuan: 1, slideImages: 4 }, { imageSearch: true }), 'gemini-3.8-flash').includes('그때는 슬라이드 그림을 만들지 못합니다.'), '슬라이드 그림만이면 검색 이야기를 하지 않는다');
+    assert.ok(estimateNote(summary(FULL, { imageAmount: 'all' }), 'gemini-3.8-flash').includes("교안 이미지 양이 '모두'라 글이 길면 그림이 더 늘어납니다."));
+    assert.ok(!estimateNote(summary(FULL, { imageAmount: 'section' }), 'gemini-3.8-flash').includes('더 늘어납니다'));
+    assert.ok(!estimateNote(summary({ images: 6 }, { imageAmount: 'all', exactImages: true }), 'gemini-3.8-flash').includes('더 늘어납니다'), '남은 자리를 그대로 셌으면 늘지 않는다');
     assert.ok(!estimateNote(summary(FULL, { imageSource: 'svg' }), 'gemini-3.8-flash').includes('그림 자리만'), 'SVG 삽화는 그림 모델을 쓰지 않는다');
     assert.ok(estimateNote(summary({ tabs: 1 }, { routed: true }), 'gemini-3.8-flash').includes('역할별 AI 분배'));
     assert.ok(estimateNote(summary({ tabs: 1 }), 'gemini-3.8-flash').includes('분당 호출 한도'));

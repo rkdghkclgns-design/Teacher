@@ -119,7 +119,7 @@ test('새로 시작: 읽지 못한 저장본을 따로 옮겨 두고, 폴더 연
     assert.strictEqual(await app.ctx.restoreState(), 'failed');
     app.ctx.__set({ currentSubjectId: 'subject_1', courseData: [], projectFolderHandle: { name: '메모리 속 옛 폴더' } }); // #editor/subject_1 로 연 화면
     await app.ctx.startFreshAfterUnreadState();
-    assert.ok(app.log.confirms[0].includes("'읽지 못한 기록 내려받기'"), '먼저 파일로 받아 둘 수 있다고 알린다');
+    assert.ok(app.log.confirms[0].includes("'읽지 못한 저장본 내려받기'"), '먼저 파일로 받아 둘 수 있다고 알린다(작업 기록과 헷갈리지 않게 저장본이라고 부른다)');
     const { stateLoadFailed, currentSubjectId, projectFolderHandle } = app.get();
     assert.deepStrictEqual([stateLoadFailed, currentSubjectId, projectFolderHandle], [false, null, null]);
     const copy = app.log.writes.find(([key]) => key.startsWith('k:읽지못함:'));
@@ -521,7 +521,8 @@ test('막는 창: 뒤 화면을 막고(알림·토스트는 막지 않는다), �
     assert.strictEqual(dialogs.length, 1);
     const overlay = dialogs[0];
     assert.deepStrictEqual([overlay.attributes.role, overlay.attributes['aria-modal']], ['alertdialog', 'true']);
-    assert.ok(overlay.innerHTML.includes('data-state-load="download"') && overlay.innerHTML.includes('읽지 못한 기록 내려받기'));
+    assert.ok(overlay.innerHTML.includes('data-state-load="download"') && overlay.innerHTML.includes('읽지 못한 저장본 내려받기'));
+    assert.ok(!overlay.innerHTML.includes('읽지 못한 기록'), "'기록'은 작업 기록에만 쓴다");
     assert.ok(overlay.innerHTML.includes('data-state-load="zip"') && overlay.innerHTML.includes('data-state-load="fresh"') && overlay.innerHTML.includes('data-state-load-file'));
     assert.ok(!overlay.innerHTML.includes('data-state-load="folder"'), '폴더를 지원하지 않는 브라우저에는 폴더 버튼이 없다');
     assert.deepStrictEqual([page.inert, alertBox.inert, toast.inert, already.inert], [true, false, false, true], '뒤 화면만 막는다');
@@ -546,13 +547,13 @@ test('막는 창: 뒤 화면을 막고(알림·토스트는 막지 않는다), �
     await blind.ctx.restoreState();
     blind.ctx.showStateLoadFailedDialog();
     const overlay2 = dom2.body.children.find(el => el.id === 'state-load-dialog');
-    assert.ok(!overlay2.innerHTML.includes('읽지 못한 기록 내려받기') && overlay2.innerHTML.includes('data-state-load="folder"'));
+    assert.ok(!overlay2.innerHTML.includes('읽지 못한 저장본 내려받기') && overlay2.innerHTML.includes('data-state-load="folder"'));
     // 저장을 시도하면(Ctrl+S·자동 저장) 창이 이미 떠 있으면 또 열지 않는다
     assert.strictEqual(await blind.ctx.saveState(), false);
     assert.strictEqual(dom2.body.children.filter(el => el.id === 'state-load-dialog').length, 1);
 });
 
-test('읽지 못한 기록 내려받기: 저장소에 든 그대로 파일로 받는다(큰 저장본도 조각으로). 예전 저장본 글자는 그 글 그대로', async () => {
+test('읽지 못한 저장본 내려받기: 저장소에 든 그대로 파일로 받는다(큰 저장본도 조각으로). 예전 저장본 글자는 그 글 그대로', async () => {
     const record = { state: 'x', history: [{ id: 1, images: { '(': 'y' } }], note: '원본 "따옴표"' };
     const blobs = [];
     const extra = { Blob: class { constructor(parts, opts) { blobs.push({ parts, opts }); } }, URL: { createObjectURL: () => 'blob:1', revokeObjectURL() {} } };
@@ -622,6 +623,26 @@ test("Ctrl+S: 브라우저에 저장했을 때만 '저장했습니다'라고 한
     assert.deepStrictEqual([failed.saves, failed.alerts.length, failed.toasts.length, failed.toasts[0][1]], [1, 0, 1, 'error'], '저장하지 못했으면 저장했다고 하지 않는다');
     assert.ok(failed.toasts[0][0].startsWith('브라우저에 저장하지 못했습니다'), failed.toasts[0][0]);
     assert.deepStrictEqual(await press({ saved: true, unread: true }), { alerts: [], toasts: [], dialogs: 1, saves: 0 }, '읽지 못한 동안은 저장하지 않고 그 창을 연다');
+});
+
+test('ZIP·PC 폴더: 읽지 못한 창에서 되살리기 직전에 저장본을 다시 읽어 이제 열 수 있으면 바꾸지 않고 다시 읽기로 열게 한다(새로 시작과 같은 규칙)', async () => {
+    const app = makeApp({ db: new Map([['k', stored()]]), fail: { get: true } });
+    assert.strictEqual(await app.ctx.restoreState(), 'failed');
+    app.ctx.__fail.get = false; // 이제 읽힌다(잠깐 생긴 문제였거나 다른 창이 저장했다)
+    await importZip(app, backupFiles());
+    assert.strictEqual(app.get().stateLoadFailed, true, '읽지 못한 창 그대로(다시 읽기로 연다)');
+    assert.strictEqual(app.log.writes.length, 0, '저장본도 사본도 쓰지 않는다');
+    assert.strictEqual(app.ctx.__db.get('k').state.courseTitle, '내 과정', '지금 열 수 있는 작업을 그 파일로 바꾸지 않는다');
+    const zipTold = app.log.alerts.at(-1);
+    assert.ok(zipTold.includes('이 파일로 바꾸지 않았습니다(지운 것은 없습니다)') && zipTold.includes("'다시 읽기'를 눌러"), zipTold);
+    const entries = { 'save_data.yaml': app.ctx.simpleYamlStringify({ state: { courseTitle: '폴더 과정', subjects: [{ id: 'subject_5', title: '폴더 교과', lessons: [] }] } }) };
+    app.ctx.window.showDirectoryPicker = async () => fakeFolder('내 폴더', entries);
+    await app.ctx.loadFromProjectFolder();
+    assert.strictEqual(app.get().stateLoadFailed, true);
+    assert.strictEqual(app.log.writes.length, 0);
+    assert.ok(app.log.alerts.at(-1).includes('이 폴더로 바꾸지 않았습니다'), app.log.alerts.at(-1));
+    assert.deepStrictEqual(Object.keys(entries), ['save_data.yaml'], '폴더에 사본도 쓰지 않는다');
+    assert.strictEqual(app.get().projectFolderHandle, null);
 });
 
 (async () => {

@@ -753,7 +753,7 @@
                 </button>
                 <button id="last-backup-indicator" onclick="exportAllModules()"
                     class="ml-1 px-1.5 py-1 text-[0.6875rem] font-semibold text-white/60 rounded hover:bg-white/10 whitespace-nowrap"
-                    title="작업은 이 브라우저에만 저장됩니다. 누르면 과정 전체 백업 ZIP을 받습니다">전체 백업 안 함</button>
+                    title="작업은 이 브라우저에만 저장됩니다. 누르면 과정 전체 백업 ZIP을 받습니다">전체 백업 기록 없음</button>
             </div>
 
             <!-- 내보내기 드롭다운 (fixed) -->
@@ -816,7 +816,7 @@
                             class="flex-1 px-1.5 py-1 text-[0.6875rem] font-bold rounded border border-white/15 text-white/70 whitespace-nowrap">함께</button>
                         <button type="button" data-backup-images="separate" onclick="setBackupImageMode('separate')" aria-pressed="false" title="그림을 '그림' 폴더의 파일로 따로 담고 같은 그림은 한 번만 넣습니다. 백업이 가벼워져 큰 과정도 담기고, 되살리면 그림도 돌아옵니다. PC 폴더 자동 저장도 이 방식이니 폴더를 옮길 때는 안의 '그림' 폴더도 함께 옮기세요"
                             class="flex-1 px-1.5 py-1 text-[0.6875rem] font-bold rounded border border-white/15 text-white/70 whitespace-nowrap">따로·가볍게</button>
-                        <button type="button" data-backup-images="none" onclick="setBackupImageMode('none')" aria-pressed="false" title="이 메뉴에서 바로 받는 백업 하나만 백업 정보에서 그림을 뺍니다(파일 이름 끝 _그림없음). 그 파일로 되살리면 그림 자리가 빕니다. 읽기용 교안.html·그림 파일에서는 그림을 빼지 않습니다. 위쪽 백업 시각에 세지 않고, PC 폴더 자동 저장에는 쓰지 않습니다"
+                        <button type="button" data-backup-images="none" onclick="setBackupImageMode('none')" aria-pressed="false" title="이 메뉴에서 바로 받는 백업 하나만 백업 정보에서 그림을 뺍니다(파일 이름 끝 _그림없음). 그 파일로 되살리면 그림 자리가 빕니다. 읽기용 교안.html·그림 파일에서는 그림을 빼지 않습니다. 위쪽 전체 백업 시각에 세지 않고, PC 폴더 자동 저장에는 쓰지 않습니다"
                             class="flex-1 px-1.5 py-1 text-[0.6875rem] font-bold rounded border border-white/15 text-white/70 whitespace-nowrap">빼기</button>
                     </div>
                 </div>
@@ -825,7 +825,7 @@
                     class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
                     <i class="ph-fill ph-file-zip text-emerald-400 text-sm"></i> 교과 백업 ZIP 받기
                 </button>
-                <button onclick="exportAllModules(); toggleExportDropdown();" title="모든 교과와 설정을 한 파일로 받습니다. 위쪽 전체 백업 시각은 이 백업을 받은 때입니다(그림을 뺀 백업은 세지 않습니다). 이 파일로 되살리면 지금 작업 전체가 이 파일 내용으로 바뀝니다"
+                <button onclick="exportAllModules(); toggleExportDropdown();" title="모든 교과와 설정을 한 파일로 받습니다. 위쪽 전체 백업 시각은 이 백업이나 불러오기 전 자동 백업을 받은 때입니다(그림을 뺀 백업은 세지 않습니다). 이 파일로 되살리면 지금 작업 전체가 이 파일 내용으로 바뀝니다"
                     class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
                     <i class="ph-bold ph-archive text-emerald-400 text-sm"></i> 과정 전체 백업 ZIP 받기
                 </button>

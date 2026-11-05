@@ -4,7 +4,14 @@
 
 const ESTIMATE_RULES = {
     tabCalls: 2,                                    // 탭 하나: 본문(기본 학습은 이어쓰기가 잦아 2~6회, 나머지 1~3회) + 가끔 생성 직후 자동 수정
-    imagesPerTab: { all: 4, section: 3, none: 0 },  // 탭 하나의 그림 자리(설정의 교안 이미지 양). 실제 장수는 글의 섹션 수에 따라 달라진다
+    // 탭마다 그림 자리(설정의 교안 이미지 양). 탭 글 규칙(ui.js 탭 작성 지시)의 최소 섹션 수로 센다(api.js autoInjectImageTags·pendingImageTags):
+    // 핵심만은 ## 섹션마다 한 장(기본 학습은 학습 목표·개요를 빼고 6개, 실습·심화 학습 3개), 모두는 긴 ### 소주제마다 한 장 더(기본 학습 16개, 심화 학습 6개).
+    // 학습 이해도는 문제(짧은 ###)뿐이라 그림이 거의 없다. 글이 길면 더 늘어난다(모두는 정해진 상한이 없다)
+    imagesPerTab: {
+        all: { basicLearn: 22, basicPrac: 3, advLearn: 9, advPrac: 3, assessment: 0 },
+        section: { basicLearn: 6, basicPrac: 3, advLearn: 3, advPrac: 3, assessment: 0 },
+        none: {}
+    },
     shortCallsPerImage: 1,                          // 교안 그림 하나: 검색어 정하기(검색 키가 있으면 고르기 판정이 하나 더)
     shortCallsPerSlideImage: 2,                     // 슬라이드 그림 하나: 장면 글로 바꾸기 + 그림 속 글자 확인(kbuilder/auto-images.js)
     ncsCalls: 1,                                    // NCS 배정(교과·차시)
@@ -38,10 +45,19 @@ function defaultSlideImageCount() {
     return count > 0 ? count : 0;
 }
 
-// 차시 하나에서 할 일. imageAmount: 설정의 교안 이미지 양(all·section·none) / slideImages: 교수안을 만들면 슬라이드에 넣는 그림 수
-function lessonWork({ tabs = 0, gyosuan = false, qbank = false, art = false, ncs = tabs > 0 } = {}, imageAmount = 'section', slideImages = defaultSlideImageCount()) {
-    const perTab = ESTIMATE_RULES.imagesPerTab[imageAmount] ?? ESTIMATE_RULES.imagesPerTab.section;
-    return { tabs, images: tabs * perTab, slideImages: gyosuan ? slideImages : 0, ncs: ncs ? 1 : 0, gyosuan: gyosuan ? 1 : 0, qbank: qbank ? 1 : 0, art: art ? 1 : 0 };
+// 만들 탭들의 그림 자리 수. tabs: 탭 id 목록(탭마다 센다)이나 탭 수(어느 탭인지 모르면 탭 하나를 다섯 탭의 평균으로 센다)
+function tabImageCount(tabs, imageAmount = 'section') {
+    const perTab = ESTIMATE_RULES.imagesPerTab[imageAmount] || ESTIMATE_RULES.imagesPerTab.section;
+    if (Array.isArray(tabs)) return tabs.reduce((sum, id) => sum + (Object.prototype.hasOwnProperty.call(perTab, id) ? perTab[id] : 0), 0);
+    const counts = Object.values(perTab);
+    return counts.length ? Math.round((Number(tabs) || 0) * counts.reduce((sum, n) => sum + n, 0) / counts.length) : 0;
+}
+
+// 차시 하나에서 할 일. tabs: 만들 탭 id 목록(또는 탭 수) / imageAmount: 설정의 교안 이미지 양(all·section·none) / slideImages: 교수안을 만들면 슬라이드에 넣는 그림 수
+function lessonWork({ tabs = 0, gyosuan = false, qbank = false, art = false, ncs } = {}, imageAmount = 'section', slideImages = defaultSlideImageCount()) {
+    const tabCount = Array.isArray(tabs) ? tabs.length : (Number(tabs) || 0);
+    const withNcs = ncs === undefined ? tabCount > 0 : ncs;
+    return { tabs: tabCount, images: tabImageCount(tabs, imageAmount), slideImages: gyosuan ? slideImages : 0, ncs: withNcs ? 1 : 0, gyosuan: gyosuan ? 1 : 0, qbank: qbank ? 1 : 0, art: art ? 1 : 0 };
 }
 
 const sumWork = list => list.reduce((total, work) => {
@@ -114,7 +130,8 @@ function secondsPerImage(imageModel, source, timings = readAiTimings()) {
 /* ---------- 가늠 ---------- */
 // 시간은 범위(0.7배~1.5배)로. 한 번에 하나씩 차례로 부르므로 더한다(교수안 전개는 셋씩이라 bodyWait로 센다)
 // imageSource: 'gemini'(그림 모델, 장마다 요금) · 'higgsfield'(크레딧) · 'svg'(글 모델이 그림) / exactImages: 남은 자리를 그대로 셌다
-function estimateSummary(work, { model = '', effort = 'medium', timings = readAiTimings(), imageModel = '', imageSource = 'gemini', exactImages = false, routed = false } = {}) {
+// imageAmount: 교안 이미지 양(안내에 쓴다) / imageSearch: 그림 검색 키가 있는지(그림 모델이 막혀도 교안 그림은 검색으로 찾는다)
+function estimateSummary(work, { model = '', effort = 'medium', timings = readAiTimings(), imageModel = '', imageSource = 'gemini', exactImages = false, routed = false, imageAmount = '', imageSearch = false } = {}) {
     const split = estimateCallSplit(work);
     const body = secondsPerCall(model, effort, timings);
     const shortSeconds = secondsPerCall(model, effort, timings, 'short').seconds;
@@ -127,7 +144,7 @@ function estimateSummary(work, { model = '', effort = 'medium', timings = readAi
     const tier = modelCostTier(model);
     return {
         calls: estimateCalls(work, imageSource), images: split.images, slideImages: work.slideImages || 0,
-        imageSource, exactImages, routed,
+        imageSource, exactImages, routed, imageAmount, imageSearch,
         minutesLow, minutesHigh, tier, costLabel: COST_LABEL[tier], measured: body.measured
     };
 }
@@ -160,11 +177,21 @@ function estimateLines(summary, { modelLabel = '', imageLabel = '' } = {}) {
     ].filter(Boolean);
 }
 
+// 그림 모델을 못 쓸 때(무료 키 등) 어떻게 되는지. 검색 키가 있으면 교안 그림은 검색으로 찾는다(api.js processImageTags). 슬라이드 그림은 검색하지 않는다
+function imageBlockNote(summary) {
+    if (!summary.images || summary.imageSource !== 'gemini') return '';
+    const head = '무료 키라면 그림 모델을 못 쓸 수 있습니다.';
+    if (!summary.imageSearch) return `${head} 그때는 그림 자리만 남깁니다.`;
+    if (summary.images <= summary.slideImages) return `${head} 그때는 슬라이드 그림을 만들지 못합니다.`;
+    return `${head} 그때도 교안 그림은 검색으로 찾고 못 찾은 자리만 남깁니다${summary.slideImages ? '(슬라이드 그림은 만들지 못합니다)' : ''}.`;
+}
+
 function estimateNote(summary, model = '') {
     return [
         summary.measured ? '시간은 이 브라우저에서 잰 최근 호출 평균으로 셌습니다.' : '시간은 모델과 추론 강도로 어림했습니다.',
         summary.tier === 'low' && /gemini/i.test(model) ? '무료 키는 분당 호출 한도가 있어 더 걸릴 수 있습니다.' : '',
-        summary.images && summary.imageSource === 'gemini' ? '무료 키라면 그림 모델을 못 쓸 수 있습니다. 그때는 그림 자리만 남깁니다.' : '',
+        imageBlockNote(summary),
+        summary.images > summary.slideImages && !summary.exactImages && summary.imageAmount === 'all' ? "교안 이미지 양이 '모두'라 글이 길면 그림이 더 늘어납니다." : '',
         summary.routed ? '역할별 AI 분배가 켜져 있어 일부 글은 다른 모델이 씁니다.' : '',
         '실제 비용은 AI 공급자 요금표를 따릅니다.'
     ].filter(Boolean).join(' ');
@@ -200,7 +227,8 @@ function currentEstimateSettings() {
         effort: typeof REASONING_EFFORT !== 'undefined' ? REASONING_EFFORT : 'medium',
         imageAmount: typeof LESSON_IMAGE_AMOUNT !== 'undefined' ? LESSON_IMAGE_AMOUNT : 'section',
         imageModel, imageSource,
-        imageLabel: estimateOptionLabel(imageOptions, imageModel)
+        imageLabel: estimateOptionLabel(imageOptions, imageModel),
+        imageSearch: typeof imageSearchReady === 'function' && !!imageSearchReady() // 그림 검색 키(api.js)
     };
 }
 
@@ -225,8 +253,8 @@ function confirmWithEstimate(message, work, { title = '시작할까요?', okLabe
 
 if (typeof window !== 'undefined') {
     Object.assign(window, {
-        modelCostTier, lessonWork, sumWork, estimateCallSplit, estimateCalls, recordAiTiming, readAiTimings, secondsPerCall, secondsPerImage,
-        estimateSummary, estimateTimeText, estimateLines, estimateNote, estimateImageSource, defaultSlideImageCount,
+        modelCostTier, lessonWork, tabImageCount, sumWork, estimateCallSplit, estimateCalls, recordAiTiming, readAiTimings, secondsPerCall, secondsPerImage,
+        estimateSummary, estimateTimeText, estimateLines, estimateNote, imageBlockNote, estimateImageSource, defaultSlideImageCount,
         estimateBoxHtml, confirmWithEstimate, currentEstimateSettings
     });
 }

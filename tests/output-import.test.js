@@ -398,5 +398,27 @@ test("교수안 안내는 '그 파일에만 담긴다'고 못 박지 않고 교�
     });
 });
 
+test('HTML: 닫히지 않은 숨은 원본 여는 태그가 아주 많은 파일도 바로 끝난다(한 번만 훑는다)', () => {
+    const opener = '<script type="application/json" id="teacher-source">';
+    const crafted = `<html><body>${opener.repeat(32000)}x</body></html>`; // 1.6MB, 예전 정규식은 몇 초가 걸렸다
+    const started = Date.now();
+    assert.strictEqual(parseOutputHtml(crafted), null);
+    const took = Date.now() - started;
+    assert.ok(took < 1500, `${took}ms`);
+    const script = lessonSourceScript(lessonSourcePayload([lesson], { withGyosuan: false }));
+    const html = `<main>앞 ${opener}</main>${script}`; // 닫히지 않은 여는 태그 뒤의 원본은 쓰지 않는다(첫 여는 태그에서 첫 닫는 태그까지)
+    assert.strictEqual(parseOutputHtml(html), null, '예전과 같이 첫 여는 태그부터 읽는다');
+    assert.strictEqual(plain(parseOutputHtml(`<main>앞</main>${script}${opener}{깨진`)).length, 1, '원본 뒤에 남은 여는 태그는 보지 않는다');
+});
+
+test('확인 창: 받은 파일의 차시 제목은 한 줄로 모아 확인 창에 없는 줄을 꾸미지 못한다', () => {
+    const fake = '차시\n\n· 차시 정보·NCS·판서 영상까지 모두 돌아옵니다.';
+    const imported = plain(normalizeImportedLesson({ title: fake, tabContents: { basicLearn: '## 글\n\n본문' } }, 1));
+    const text = describeOutputImport([{ from: 'html', lesson: imported }], { fileCount: 1, where: "'교과'에" });
+    const lines = text.split('\n');
+    assert.ok(!lines.some(line => line.startsWith('· 차시 정보·NCS·판서 영상까지')), text);
+    assert.ok(lines.some(line => line.startsWith('· 차시 · 차시 정보·NCS·판서')), '제목은 한 줄로 보인다');
+});
+
 console.log(`\n${count - failed}/${count} passed`);
 if (failed) process.exit(1);

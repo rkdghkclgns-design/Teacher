@@ -746,6 +746,92 @@ test('F24 브라우저 저장(IndexedDB)은 기록이 끝까지 들어가야 저
     assert.deepStrictEqual(puts, ['test-state', 'test-state']);
 });
 
+test('F25 브라우저 저장이 실패한 동안 폴더에만 저장된 작업은, 새로고침 뒤 브라우저의 옛 작업이 덮지 않게 멈추고 폴더 열기로 되찾게 한다', async () => {
+    const { ctx, exec } = makeApp();
+    seed(exec, { title: '첫작업' });
+    const dir = fakeDir('A');
+    await connect(ctx, dir);
+    // 브라우저 저장 공간이 차서 브라우저 저장은 실패하고, 폴더에는 계속 쓴다
+    exec("DBManager.setItem = async () => { throw Object.assign(new Error('quota'), { name: 'QuotaExceededError' }); };");
+    exec("globalState.courseTitle = '새작업';");
+    assert.strictEqual(await exec('saveState()'), false);
+    await exec('waitFolderSync()');
+    assert.ok((await readText(dir, 'save_data.yaml')).includes('새작업'), '폴더에는 새 작업이 있다');
+    assert.strictEqual(JSON.parse(ctx.store.get('teacher:folder-save-stamp')).browserBehind, true, '폴더가 브라우저보다 앞섰다고 적는다');
+    assert.strictEqual(exec('isSavePending()'), true, '창을 닫기 전에 묻는다');
+    // 새로고침: 같은 이름표와 폴더 손잡이, 브라우저에는 옛 작업
+    const reload = makeApp();
+    for (const [key, value] of ctx.store) reload.ctx.store.set(key, value);
+    seed(reload.exec, { title: '첫작업' });
+    reload.ctx.storedHandle = dir;
+    reload.ctx.showDirectoryPicker = async () => dir; // 폴더 열기를 지원하는 브라우저
+    reload.exec('DBManager.getItem = async () => window.storedHandle;');
+    await reload.ctx.restoreProjectFolderConnection();
+    assert.strictEqual(reload.exec('projectFolderHandle'), null, '말없이 다시 잇지 않는다');
+    const banner = reload.ctx.elements['folder-sync-banner-text'].textContent;
+    assert.ok(banner.includes('브라우저에 저장하지 못한 작업이 PC 폴더에만') && banner.includes("'저장해 둔 폴더 열기'"), banner);
+    await reload.exec('saveState()');
+    await reload.exec('waitFolderSync()');
+    assert.ok((await readText(dir, 'save_data.yaml')).includes('새작업'), '새로고침 뒤 첫 저장이 폴더의 새 작업을 덮지 않는다');
+    // '다시 연결'은 먼저 묻는다. 덮으면 폴더의 새 작업은 사본으로 남는다
+    reload.ctx.confirmAnswer = false;
+    await reload.ctx.regrantLinkedFolder(dir);
+    const ask = reload.ctx.confirms.at(-1);
+    assert.strictEqual(ask.opts.title, '폴더에 더 새 작업이 있습니다');
+    assert.ok(ask.message.includes('이 브라우저에 저장하지 못한 작업이 들어 있어') && ask.message.includes("'저장해 둔 폴더 열기'"), ask.message);
+    assert.strictEqual(reload.exec('projectFolderHandle'), null);
+    reload.ctx.confirmAnswer = true;
+    await reload.ctx.regrantLinkedFolder(dir);
+    await reload.exec('waitFolderSync()');
+    const copy = dir.shared.log.find(p => p.startsWith('save_data_이전_'));
+    assert.ok(copy && (await readText(dir, copy)).includes('새작업'), '폴더의 새 작업은 사본으로 남는다');
+    assert.ok((await readText(dir, 'save_data.yaml')).includes('첫작업'));
+    assert.strictEqual(JSON.parse(reload.ctx.store.get('teacher:folder-save-stamp')).browserBehind, undefined, '브라우저와 폴더에 모두 저장하면 앞섰다는 표시를 지운다');
+    assert.strictEqual(reload.exec('isSavePending()'), false);
+});
+
+test('F26 폴더를 다시 열면 이 브라우저의 작업 기록·휴지통에 남은 찾지 못한 그림도 폴더의 그림 파일로 채운다', async () => {
+    // 폴더 A에 '따로'로 저장한 뒤(작업 기록·휴지통에 그림) save_data.yaml만 B로 옮긴다(그림 파일은 아직 없다)
+    const src = makeApp({ mode: 'separate' });
+    const srcState = { courseTitle: '원본', subjects: [{ id: 's1', title: '교과', lessons: [{ id: 1, title: '차시', content: '글', images: {} }] }], lessonTrash: [{ at: new Date().toISOString(), lesson: { id: 9, title: '지운 차시', content: '<img src="local:t">', images: { t: PNG2 } } }] };
+    src.exec(`globalState = sanitizeState(${JSON.stringify(srcState)}); currentSubjectId = 's1'; courseData = globalState.subjects[0].lessons;
+        contentHistory = [{ id: 1000, date: 'd', title: '기록', content: '<img src="local:h">', images: { h: ${JSON.stringify(PNG)} } }];`);
+    const a = fakeDir('A');
+    await connect(src.ctx, a);
+    const b = fakeDir('B');
+    await putFile(b, 'save_data.yaml', await readText(a, 'save_data.yaml'));
+    const { ctx, exec } = makeApp({ mode: 'inline' });
+    seed(exec, { title: '지금 작업', images: {} });
+    ctx.showDirectoryPicker = async () => b;
+    await ctx.loadFromProjectFolder();
+    const isRef = value => ctx.window.isBackupImageRef(value);
+    assert.ok(isRef(exec('contentHistory').find(item => item.title === '기록').images.h), '그림 파일이 없으면 참조로 남는다');
+    assert.ok(isRef(exec('globalState.lessonTrash').find(entry => entry.lesson.title === '지운 차시').lesson.images.t));
+    // 그림 파일을 채우고 같은 폴더를 다시 연다
+    await putFile(b, `그림/${src.ctx.window.backupImageKey(PNG)}.png`, imageBytes(PNG));
+    await putFile(b, `그림/${src.ctx.window.backupImageKey(PNG2)}.png`, imageBytes(PNG2));
+    await ctx.loadFromProjectFolder();
+    const history = exec('contentHistory').filter(item => item.title === '기록');
+    assert.strictEqual(history.length, 1, '같은 기록은 한 번만');
+    assert.strictEqual(history[0].images.h, PNG, '작업 기록의 그림이 돌아온다');
+    const trash = exec('globalState.lessonTrash').filter(entry => entry.lesson.title === '지운 차시');
+    assert.strictEqual(trash.length, 1, '같은 휴지통 항목은 한 번만');
+    assert.strictEqual(trash[0].lesson.images.t, PNG2, '휴지통의 그림이 돌아온다');
+    assert.ok(!ctx.alerts.at(-1).includes('찾지 못해'), ctx.alerts.at(-1));
+});
+
+test('F27 다시 연결: 폴더 저장본을 읽지 못하면 사본을 남길 수 없어 덮어쓰지 않고, 고르지도 않은 빈 폴더를 고르라고 하지 않는다', async () => {
+    const { ctx, exec, dir } = await lockedApp();
+    await putFile(dir, 'save_data.yaml', 'state:\n  courseTitle: "다른 PC"\n', { fail: true }); // 읽히지 않는 저장본(내려받지 않은 OneDrive 파일 등)
+    dir.grantOnRequest = true;
+    await ctx.regrantLinkedFolder(dir, exec('FOLDER_LOCKED_MESSAGE'));
+    const told = ctx.alerts.at(-1);
+    assert.ok(told.includes('사본을 남길 수 없어 덮어쓰지 않았습니다') && told.includes("'다시 연결'") && told.includes("'빈 폴더에 저장 시작'"), told);
+    assert.ok(!told.includes('다른 빈 폴더를 골라 주세요'), told);
+    assert.strictEqual(exec('projectFolderHandle'), null, '자동 저장은 멈춘 채로 둔다');
+    assert.deepStrictEqual(dir.shared.log, [], '덮어쓰지도 사본을 만들지도 않는다');
+});
+
 (async () => {
     let failed = 0;
     for (const { name, fn } of cases) {

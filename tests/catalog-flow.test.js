@@ -631,6 +631,56 @@ async function run(name, fn) {
         assert.deepStrictEqual(plain(vm.runInContext('courseData', local)).map(item => item.title), ['1차시', '2차시', '2차시 (복원)', '3차시', '지운 교과의 차시'], '교과가 없어 지금 교과로 되살리면 다른 교과의 같은 id 차시 옆이 아니라 맨 아래');
     });
 
+    await run('휴지통: 되살리기를 저장하고 목록을 다시 그리기 전에 같은 줄을 또 눌러도 다음 항목을 되살리거나 지우지 않는다', async () => {
+        const local = makeContext(noAi);
+        vm.runInContext(fs.readFileSync(root + 'data-safety.js', 'utf8'), local); // 교과 휴지통(restoreSubject, liveSubjectTrash)
+        local.globalState.subjects = [{ id: 's1', title: '교과', lessons: [{ id: 1, title: '1차시' }] }];
+        vm.runInContext('courseData = globalState.subjects[0].lessons', local);
+        const at = new Date().toISOString();
+        const deleted = title => ({ lesson: { id: title.length * 100, title }, subjectId: 's1', at });
+        const [A, B, C] = ['지운 차시 A', '지운 차시 BB', '지운 차시 CCC'].map(deleted);
+        local.globalState.lessonTrash = [A, B, C];
+        local.globalState.subjectTrash = [{ subject: { id: 'x1', title: '지운 교과 A', lessons: [] }, at }, { subject: { id: 'x2', title: '지운 교과 B', lessons: [] }, at }];
+        local.saveState = () => new Promise(resolve => setTimeout(resolve, 20)); // 그림이 많아 저장이 오래 걸린다
+        const confirms = [];
+        local.showConfirm = (message, onOk) => confirms.push({ message, onOk });
+        const click = (action, index) => vm.runInContext('onTrashClick', local)({ target: { dataset: { trashAction: action, index: String(index) } } });
+        vm.runInContext('renderTrashRows', local)();
+        const first = click('restore', 0);
+        const second = click('restore', 0); // 다시 그리기 전, 같은 버튼(지금은 다음 항목 자리)을 또 누른다
+        await Promise.all([first, second]);
+        const titles = () => plain(vm.runInContext('courseData', local)).map(item => item.title);
+        assert.deepStrictEqual(titles(), ['1차시', '지운 차시 A'], '누른 항목 하나만 되살린다');
+        assert.deepStrictEqual(local.globalState.lessonTrash, [B, C]);
+        // 다시 그리기 전에 그려 둔 줄의 완전 삭제는 그 줄의 항목을 지운다(당겨진 자리의 다른 항목이 아니다)
+        vm.runInContext('renderTrashRows', local)();
+        await click('restore', 0); // B를 되살린다(목록이 당겨진다)
+        click('purge', 1); // 그려 둔 줄에서는 C
+        assert.ok(confirms.at(-1).message.includes('지운 차시 CCC'), confirms.at(-1).message);
+        await confirms.at(-1).onOk();
+        assert.deepStrictEqual(local.globalState.lessonTrash, []);
+        assert.deepStrictEqual(titles(), ['1차시', '지운 차시 A', '지운 차시 BB']);
+        // 교과도 같다
+        vm.runInContext('renderTrashRows', local)();
+        await Promise.all([click('restore-subject', 0), click('restore-subject', 0)]);
+        assert.deepStrictEqual(plain(local.globalState.subjects.map(subject => subject.title)), ['교과', '지운 교과 A']);
+        assert.deepStrictEqual(plain(local.globalState.subjectTrash.map(entry => entry.subject.title)), ['지운 교과 B']);
+    });
+
+    await run('휴지통 창: 교과 항목의 차시 수는 목록이 배열일 때만 센다(남이 준 백업의 { length: HTML }을 화면에 넣지 않는다)', async () => {
+        const local = makeContext(noAi);
+        vm.runInContext(fs.readFileSync(root + 'data-safety.js', 'utf8'), local);
+        const at = new Date().toISOString();
+        local.globalState.lessonTrash = [];
+        local.globalState.subjectTrash = [
+            { subject: { id: 'x', title: '받은 교과', lessons: { length: '<img src=x onerror=alert(1)>' } }, at },
+            { subject: { id: 'y', title: '내 교과', lessons: [{ id: 1 }, { id: 2 }] }, at }
+        ];
+        const html = vm.runInContext('renderTrashRows', local)();
+        assert.ok(!html.includes('<img'), html);
+        assert.ok(html.includes('차시 0개') && html.includes('차시 2개'), html);
+    });
+
     await run('선행 차시: 다른 교과 연결과 상태', async () => {
         const target = { id: 1, title: '선행 차시', reviewStatus: '완료' };
         const self = { id: 2, title: '이 차시', prereqs: [] };

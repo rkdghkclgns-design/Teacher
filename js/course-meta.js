@@ -168,9 +168,12 @@ const copyLessonTree = value => (Array.isArray(value) ? value.map(copyLessonTree
     : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, copyLessonTree(item)]))
         : value);
 
-// 다시 만들기 전 사본: 차시를 통째로(탭·옛 본문·교수안과 슬라이드 화면 편집·그림·삽화·판서 영상 연결·차시 정보) 복사해 휴지통에 넣는다
+// 다시 만들기 전 사본: 차시를 통째로(탭·옛 본문·교수안과 슬라이드 화면 편집·그림·삽화·판서 영상 연결·차시 정보) 복사해 휴지통에 넣는다.
+// 넣은 사본을 돌려준다(다시 만들지 못해 되돌리면 그 사본을 휴지통에서 뺀다, course-flow.js)
 function trashLessonCopy(mod, subjectId = currentSubjectId) {
-    moveLessonsToTrash([copyLessonTree(mod)], subjectId, { reason: '다시 만들기 전', kind: LESSON_TRASH_REWRITE });
+    const copy = copyLessonTree(mod);
+    moveLessonsToTrash([copy], subjectId, { reason: '다시 만들기 전', kind: LESSON_TRASH_REWRITE });
+    return copy;
 }
 
 // 목록을 그릴 때마다 지난 항목을 비운다. 다음 저장에 함께 반영된다.
@@ -207,11 +210,19 @@ function renderTrashFooter() {
     return `<button onclick="openLessonTrash()" class="w-full mt-1 h-8 flex items-center justify-center gap-1 rounded border border-dashed border-white/15 text-[0.6875rem] font-bold text-textMuted hover:bg-white/5 hover:text-textLight" title="지운 교과와 차시를 되살립니다"><i class="ph-bold ph-trash"></i> 휴지통 · 교과 ${subjects} · 차시 ${lessons}</button>`;
 }
 
+// 휴지통 교과 항목의 차시 수. 차시 목록이 배열일 때만 센다(남이 준 백업의 { length: '<img …>' } 같은 값을 화면에 넣지 않게)
+const trashSubjectLessonCount = entry => (Array.isArray(entry?.subject?.lessons) ? entry.subject.lessons.length : 0);
+
+// 휴지통 창에 지금 그려 둔 항목(교과·차시 항목 객체). 버튼의 data-index는 이 목록의 자리다.
+// 복원·완전 삭제는 그린 항목 그대로 찾는다(앞 줄을 되살려 목록이 당겨진 뒤, 다시 그리기 전에 누른 버튼이 다음 항목을 가리키지 않게)
+let _trashRows = { subjects: [], lessons: [] };
+
 function renderSubjectTrashRows() {
     const entries = typeof liveSubjectTrash === 'function' ? liveSubjectTrash() : [];
+    _trashRows = { ..._trashRows, subjects: entries };
     return entries.map((entry, index) => `
             <div class="flex items-center gap-2 p-2 rounded-lg bg-amber-500/10 text-xs text-textLight">
-                <span class="flex-1 min-w-0 truncate"><i class="ph-bold ph-books"></i> 교과 · ${escapeHtml(entry.subject.title)}<span class="block text-[0.6875rem] text-textMuted">차시 ${(entry.subject.lessons || []).length}개 · ${escapeHtml(localTimeText(entry.at))}${entry.reason ? ` · ${escapeHtml(entry.reason)}` : ''} · 남은 기간 ${trashDaysLeft(entry)}일</span></span>
+                <span class="flex-1 min-w-0 truncate"><i class="ph-bold ph-books"></i> 교과 · ${escapeHtml(entry.subject.title)}<span class="block text-[0.6875rem] text-textMuted">차시 ${trashSubjectLessonCount(entry)}개 · ${escapeHtml(localTimeText(entry.at))}${entry.reason ? ` · ${escapeHtml(entry.reason)}` : ''} · 남은 기간 ${trashDaysLeft(entry)}일</span></span>
                 <button data-trash-action="restore-subject" data-index="${index}" class="px-2 py-1 font-bold bg-accent text-white rounded">복원</button>
                 <button data-trash-action="purge-subject" data-index="${index}" class="px-2 py-1 font-bold bg-white/10 text-rose-300 rounded">완전 삭제</button>
             </div>`).join('');
@@ -219,6 +230,7 @@ function renderSubjectTrashRows() {
 
 function renderTrashRows() {
     const subjectRows = renderSubjectTrashRows();
+    _trashRows = { ..._trashRows, lessons: [...(globalState.lessonTrash || [])] };
     const rows = (globalState.lessonTrash || []).map((entry, index) => {
         const subject = globalState.subjects.find(item => item.id === entry.subjectId);
         // 까닭('다시 만들기 전')이 붙으면 부제가 길어지므로 잘라 내지 않고 줄을 바꿔 남은 기간까지 보인다
@@ -275,32 +287,33 @@ async function onTrashClick(event) {
             return refreshTrash();
         }, { okLabel: '영구 삭제', title: '휴지통 비우기' });
     }
+    // 누른 줄에 그려 둔 항목. 그사이 되살리거나 지워 휴지통에 없으면 아무것도 하지 않는다(두 번 눌러 다음 항목까지 되살리거나 지우지 않게)
+    const index = Number(event.target.dataset.index);
     if (action === 'restore-subject') {
-        const subject = restoreSubject(Number(event.target.dataset.index));
+        const at = liveSubjectTrash().indexOf(_trashRows.subjects[index]);
+        if (at < 0) return;
+        const subject = restoreSubject(at);
         if (!subject) return window.showAlert('복원할 교과를 찾지 못했습니다.');
         window.showToast?.(`'${subject.title}' 교과를 복원했습니다.`, 'success');
         return refreshTrash();
     }
     if (action === 'purge-subject') {
-        const index = Number(event.target.dataset.index);
-        const entry = liveSubjectTrash()[index];
-        if (!entry) return;
-        return window.showConfirm(`'${entry.subject.title}' 교과와 차시 ${(entry.subject.lessons || []).length}개를 영구 삭제합니다. 되돌릴 수 없습니다.`, () => {
-            globalState.subjectTrash = liveSubjectTrash().filter((_, i) => i !== index);
+        const entry = _trashRows.subjects[index];
+        if (!entry || !liveSubjectTrash().includes(entry)) return;
+        return window.showConfirm(`'${entry.subject.title}' 교과와 차시 ${trashSubjectLessonCount(entry)}개를 영구 삭제합니다. 되돌릴 수 없습니다.`, () => {
+            globalState.subjectTrash = liveSubjectTrash().filter(item => item !== entry);
             return refreshTrash();
         }, { okLabel: '영구 삭제', title: '교과 영구 삭제' });
     }
-    const index = Number(event.target.dataset.index);
+    const entry = _trashRows.lessons[index];
+    if (!entry || !(globalState.lessonTrash || []).includes(entry)) return;
     if (action === 'restore') {
-        const entry = globalState.lessonTrash[index];
-        if (!restoreLesson(index)) return window.showAlert('복원할 교과를 찾지 못했습니다.');
+        if (!restoreLesson(globalState.lessonTrash.indexOf(entry))) return window.showAlert('복원할 교과를 찾지 못했습니다.');
         window.showToast?.(`'${entry.lesson.title}' 차시를 복원했습니다.`, 'success');
     }
     if (action === 'purge') {
-        const entry = globalState.lessonTrash[index];
-        if (!entry) return;
         return window.showConfirm(`'${entry.lesson.title}' 차시를 영구 삭제합니다. 되돌릴 수 없습니다.`, () => {
-            globalState.lessonTrash = globalState.lessonTrash.filter((_, i) => i !== index);
+            globalState.lessonTrash = globalState.lessonTrash.filter(item => item !== entry);
             return refreshTrash();
         }, { okLabel: '영구 삭제', title: '차시 영구 삭제' });
     }

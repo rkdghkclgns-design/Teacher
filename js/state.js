@@ -127,7 +127,7 @@ let currentSidebarTab = 'topic';
 let projectFolderHandle = null; // FileSystemDirectoryHandle | null
 // 저장된 작업을 읽지 못했으면 true. 그동안은 브라우저 저장소와 PC 폴더에 쓰지 않는다(restoreState가 정하고, 새로 시작·되살리기가 푼다)
 let stateLoadFailed = false;
-// 읽지 못한 저장본을 읽어 오기는 했으면 그 값(막는 창의 '읽지 못한 기록 내려받기'). 읽지도 못했으면 undefined
+// 읽지 못한 저장본을 읽어 오기는 했으면 그 값(막는 창의 '읽지 못한 저장본 내려받기'). 읽지도 못했으면 undefined
 let unreadRecord;
 
 
@@ -460,6 +460,10 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
 }
 if (typeof window.addEventListener === 'function') window.addEventListener('pagehide', () => flushSaveStateSoon());
 
+// 마지막 브라우저 저장(IndexedDB)이 실패했는지. 그동안 바뀐 내용은 화면(메모리)과 이어진 PC 폴더에만 있다.
+// 창을 닫기 전에 묻고(isSavePending), 폴더 저장본에 '브라우저가 뒤처짐'을 적어 새로고침 뒤 옛 브라우저 저장본이 폴더를 덮지 않게 한다(rememberFolderSaveStamp)
+let lastBrowserSaveFailed = false;
+
 // 브라우저 저장소(IndexedDB)에 쓴다. 끝까지 썼으면 true, 실패하면 알린 뒤 false(읽지 못한 동안은 쓰지 않고 false). 던지지 않는다.
 // PC 폴더 저장은 기다리지 않는다(실패는 띠로 알린다)
 // folder: false면 이어진 PC 폴더에는 쓰지 않는다(백업 ZIP 되살리기는 브라우저에 저장한 뒤에야 폴더에 쓴다. 저장하지 못해 되돌린 상태가 폴더에 남지 않게)
@@ -489,6 +493,7 @@ async function saveState({ folder = true } = {}) {
         console.error("IndexedDB 저장 실패", e);
         window.showAlert('데이터베이스 저장 중 오류가 발생했습니다. 브라우저 저장소 설정을 확인하세요.');
     }
+    lastBrowserSaveFailed = !savedInBrowser;
 
     // 연결된 로컬 폴더 비동기 동기화 (UI 블로킹 방지)
     if (folder && projectFolderHandle) {
@@ -497,10 +502,11 @@ async function saveState({ folder = true } = {}) {
     return savedInBrowser; // 브라우저(IndexedDB)에 저장했는지. 폴더 열기는 저장했을 때만 새로고침 뒤 이어 쓸 폴더를 기억한다
 }
 
-// 끝나지 않은 브라우저 저장이 있거나, 입력이 멈추기를 기다리는 저장(saveSoonTask)이 있으면 true. 창을 닫기 전에 묻는다(ui.js warnBeforeUnload).
+// 끝나지 않은 브라우저 저장이 있거나, 입력이 멈추기를 기다리는 저장(saveSoonTask)이 있거나, 마지막 브라우저 저장이 실패했으면 true
+// (그때 바뀐 내용은 아직 브라우저에 없다). 창을 닫기 전에 묻는다(ui.js warnBeforeUnload).
 // PC 폴더 쓰기는 세지 않는다(임시 파일에 쓰고 닫을 때 바꾸므로 끊겨도 폴더의 이전 저장본은 그대로이고, 다음 저장이 따라잡는다)
 function isSavePending() {
-    return DBManager.writing > 0 || (typeof saveSoonTask !== 'undefined' && !!saveSoonTask.pending?.());
+    return DBManager.writing > 0 || (typeof saveSoonTask !== 'undefined' && !!saveSoonTask.pending?.()) || lastBrowserSaveFailed;
 }
 
 function isStateLoadFailed() {
@@ -680,6 +686,17 @@ function showOverviewAfterRestore() {
     else if (typeof renderOverview === 'function') renderOverview();
 }
 
+// 되살려 브라우저에 저장한 뒤 목록과 개요를 다시 그린다. 그리다 실패해도(남이 준 파일에 화면이 쓰지 못하는 값이 있을 때) 되살린 작업은 이미 저장됐으므로
+// 멈추지 않고 콘솔에만 남긴다(되살리지 못했다고 잘못 알리지 않게)
+function redrawAfterRestore() {
+    try {
+        if (typeof renderSidebar === 'function') renderSidebar();
+        showOverviewAfterRestore();
+    } catch (err) {
+        console.error('[되살리기] 화면을 다시 그리지 못했습니다:', err);
+    }
+}
+
 // 막는 창의 글. folder: 이 브라우저가 폴더 열기를 지원하는지, download: 읽어 온 저장본이 있어 내려받을 수 있는지
 function stateLoadFailedText({ folder = true, download = false } = {}) {
     return [
@@ -689,7 +706,7 @@ function stateLoadFailedText({ folder = true, download = false } = {}) {
         '· 다시 읽기: 새로고침해서 한 번 더 읽습니다. 잠깐 생긴 문제라면 이것으로 됩니다.',
         '  브라우저 설정에서 이 사이트의 쿠키·사이트 데이터를 막았다면 먼저 허용해 주세요.',
         folder ? '· 과정 전체 백업 ZIP이나 저장해 둔 PC 폴더가 있으면 그것으로 되살릴 수 있습니다.' : '· 과정 전체 백업 ZIP이 있으면 그것으로 되살릴 수 있습니다.',
-        download ? '· 읽지 못한 기록 내려받기: 읽지 못한 저장본을 고치지 않은 그대로 파일로 받아 둡니다. 이 앱의 백업 ZIP처럼 바로 되살리지는 못합니다.' : null,
+        download ? '· 읽지 못한 저장본 내려받기: 읽지 못한 저장본을 고치지 않은 그대로 파일로 받아 둡니다. 이 앱의 백업 ZIP처럼 바로 되살리지는 못합니다.' : null,
         '· 새로 시작: 읽지 못한 저장본 대신 예시 과정으로 처음부터 시작합니다.'
     ].filter(line => line !== null).join('\n');
 }
@@ -736,7 +753,7 @@ function showStateLoadFailedDialog() {
                 ${button('reload', '다시 읽기', 'text-white bg-accent hover:bg-accentHover')}
                 ${button('zip', '백업 ZIP으로 되살리기', plain)}
                 ${folder ? button('folder', '저장해 둔 폴더 열기', plain) : ''}
-                ${download ? button('download', '읽지 못한 기록 내려받기', plain) : ''}
+                ${download ? button('download', '읽지 못한 저장본 내려받기', plain) : ''}
                 ${button('fresh', '새로 시작', 'text-rose-300 bg-white/5 hover:bg-white/10')}
             </div>
             <input type="file" accept=".zip" class="hidden" data-state-load-file>
@@ -785,9 +802,13 @@ async function downloadUnreadRecord() {
     }
 }
 
+// 저장본을 다시 읽어 보니 이제 열 수 있을 때(잠깐 생긴 문제였거나 다른 창이 저장했다) 알리는 말. 지금 열 수 있는 작업을 덮지 않고 '다시 읽기'로 열게 한다.
+// action: 하지 않은 일('새로 시작하지', '이 파일로 바꾸지', '이 폴더로 바꾸지')
+const unreadNowLoadsText = action => `저장된 작업을 다시 읽어 보니 이제 열 수 있어, ${action} 않았습니다(지운 것은 없습니다).\n'다시 읽기'를 눌러 열어 주세요.`;
+
 // 새로 시작: 읽지 못한 저장본 대신 예시 과정으로 연다(그 저장본은 setAsideUnreadState가 한 벌 옮겨 둔다)
 async function startFreshAfterUnreadState() {
-    const keep = unreadRecord !== undefined ? "\n먼저 '읽지 못한 기록 내려받기'로 그 저장본을 파일로 받아 둘 수 있습니다." : '';
+    const keep = unreadRecord !== undefined ? "\n먼저 '읽지 못한 저장본 내려받기'로 그 저장본을 파일로 받아 둘 수 있습니다." : '';
     const ok = await confirmAsync(
         '읽지 못한 저장본을 지우고 예시 과정으로 새로 시작합니다. 되돌릴 수 없습니다.\n'
         + 'PC 폴더 자동 저장도 끕니다. 폴더에 저장해 둔 작업은 그대로 남습니다.\n\n'
@@ -798,9 +819,7 @@ async function startFreshAfterUnreadState() {
     // 잠깐 생긴 문제였으면(이제 읽히거나 다른 창이 저장했으면) 지금 열 수 있는 작업을 예시 과정으로 덮지 않는다. 다시 읽기로 연다
     const status = await storedRecordStatus();
     if (!stateLoadFailed) return;
-    if (status === 'loads') {
-        return window.showAlert("저장된 작업을 다시 읽어 보니 이제 열 수 있어, 새로 시작하지 않았습니다(지운 것은 없습니다).\n'다시 읽기'를 눌러 열어 주세요.");
-    }
+    if (status === 'loads') return window.showAlert(unreadNowLoadsText('새로 시작하지'));
     await setAsideUnreadState();
     // 주소로 연 빈 교과(#editor/subject_1)가 남아 있으면 첫 저장이 예시 교과의 차시를 비우므로 열린 교과 없이 시작한다
     currentSubjectId = null;
@@ -1220,20 +1239,19 @@ function resolveMarkdownImages(content, images) {
 
 
 
-    // 1. 커스텀 HTML 래퍼를 표준 마크다운 이미지 문법으로 되돌림 (WAF 방어 및 깔끔한 수출)
+    // 1. 커스텀 HTML 래퍼를 표준 마크다운 이미지 문법으로 되돌림 (WAF 방어 및 깔끔한 수출). 그림 키는 [\w-]만 쓴다(data-safety.js SAFE_IMAGE_KEY)
 
-    md = md.replace(/<div class="image-wrapper">\s*<img src="(local:img_[^"]+)" alt="([^"]*)"[^>]*>[\s\S]*?<\/div>/gi, '![$2]($1)');
+    md = md.replace(/<div class="image-wrapper">\s*<img src="(local:[\w-]+)" alt="([^"]*)"[^>]*>[\s\S]*?<\/div>/gi, '![$2]($1)');
 
-
-
-    if (images) {
-
-        for (const [imgId, b64] of Object.entries(images)) {
-
-            md = md.split(`local:${imgId}`).join(/^data:image\//.test(b64) ? b64 : ''); // 찾지 못한 그림(teacher-image 참조)·빈 값은 빈 그림으로
-
-        }
-
+    // 2. local:그림 키를 그림으로. 키 모양 하나로 찾아 키 끝까지 읽고 목록에서 꺼낸다(그림 키로 글을 자르거나 정규식을 만들지 않는다. img_1이 img_10을 건드리지 않는다).
+    //    목록에 있는 키는 진짜 그림이면 그 그림, 찾지 못한 그림(teacher-image 참조)·빈 값이면 빈 그림. 목록에 없는 키는 그대로 둔다
+    if (images && typeof images === 'object') {
+        const known = new Map(Object.entries(images));
+        md = md.replace(/local:([\w-]{1,80})(?![\w-])/g, (whole, id) => {
+            if (!known.has(id)) return whole;
+            const data = known.get(id);
+            return typeof data === 'string' && /^data:image\//.test(data) ? data : '';
+        });
     }
 
     return md;
@@ -1816,6 +1834,8 @@ window.importProjectZip = async function (event) {
                 : `지금 브라우저의 모든 작업(교과 ${globalState.subjects.length}개)을 이 파일의 내용(교과 ${nextState.subjects.length}개)으로 바꿉니다.\n바꾸기 전에 지금 상태를 백업 파일로 내려받습니다. 마음이 바뀌면 그 파일을 다시 불러오면 됩니다.${imageNote}`,
                 { okLabel: unread ? '이 파일로 되살리기' : '백업 받고 바꾸기', title: '전체 불러오기' });
             if (!ok) return;
+            // 읽지 못한 저장본이 이제 열리면(잠깐 생긴 문제였거나 다른 창이 저장했다) 그 작업을 이 파일로 바꾸지 않는다(새로 시작과 같은 규칙)
+            if (unread && await storedRecordStatus() === 'loads') return window.showAlert(unreadNowLoadsText('이 파일로 바꾸지'));
             if (unread) {
                 await setAsideUnreadState({ prune: false }); // 오래된 사본은 되살린 것을 저장한 뒤에 정리한다(아래 4)
             } else {
@@ -1846,8 +1866,7 @@ window.importProjectZip = async function (event) {
                     + (resaved ? '' : '\n되살리기 전 작업도 다시 저장하지 못했습니다. 브라우저 저장 공간을 확인한 뒤 Ctrl+S로 다시 저장해 주세요.'));
             }
             if (projectFolderHandle) syncToLinkedFolder().catch(e => console.warn('폴더 동기화 경고:', e.message));
-            if (typeof renderSidebar === 'function') renderSidebar();
-            showOverviewAfterRestore();
+            redrawAfterRestore();
             await pruneUnreadCopies(); // 읽지 못한 저장본 대신 되살렸으면 이제 오래된 사본을 정리한다(새것 셋만)
 
             window.showAlert(`백업 파일로 과정 전체를 되살렸습니다.${historyMergeNote(extras.historyDropped, '파일')}`);
@@ -1991,6 +2010,7 @@ async function verifyPermission(handle, requestIfNotGranted = false) {
 const FOLDER_LOCKED_MESSAGE = 'PC 폴더 쓰기 권한이 풀려 자동 저장을 멈췄습니다. 지금 작업은 브라우저에만 저장됩니다.';
 const FOLDER_REOPENED_MESSAGE = '브라우저를 다시 열어 PC 폴더 자동 저장이 멈췄습니다. 지금 작업은 브라우저에만 저장됩니다.';
 const FOLDER_CHANGED_MESSAGE = '이 브라우저가 마지막으로 저장한 뒤 PC 폴더의 저장본이 바뀌었거나(다른 PC나 브라우저에서 저장) 확인할 수 없어, 덮어쓰지 않도록 자동 저장을 멈췄습니다. 지금 작업은 브라우저에만 저장됩니다.';
+const FOLDER_BEHIND_MESSAGE = "지난번에 브라우저에 저장하지 못한 작업이 PC 폴더에만 저장되어 있어, 덮어쓰지 않도록 자동 저장을 멈췄습니다. 그 작업을 되찾으려면 내보내기·백업 → '저장해 둔 폴더 열기'로 이 폴더를 여세요.";
 
 // 이 폴더에 자동 저장을 켠다(머리줄·드롭다운·실패 알림 정리). 저장은 부른 쪽이 한다. 표시를 먼저 바꾸므로 첫 저장이 실패하면 그 알림이 남는다
 function useLinkedFolder(handle) {
@@ -2036,7 +2056,8 @@ function lockLinkedFolder(handle, message) {
 async function regrantLinkedFolder(handle, message = FOLDER_LOCKED_MESSAGE) {
     try {
         if (!(await verifyPermission(handle, true))) return lockLinkedFolder(handle, message);
-        if (await folderSaveChangedElsewhere(handle) && !(await confirmFolderOverwrite(handle, { changed: true }))) return lockLinkedFolder(handle, FOLDER_CHANGED_MESSAGE);
+        const changed = await folderSaveChangedElsewhere(handle); // '' | 'changed' | 'behind'
+        if (changed && !(await confirmFolderOverwrite(handle, { changed }))) return lockLinkedFolder(handle, changed === 'behind' ? FOLDER_BEHIND_MESSAGE : FOLDER_CHANGED_MESSAGE);
         useLinkedFolder(handle);
         if (await syncToLinkedFolder()) window.showToast(`[${handle.name}] 폴더에 다시 저장했습니다. 이후 바뀐 내용도 자동으로 저장합니다.`, 'success');
     } catch (err) {
@@ -2049,31 +2070,39 @@ async function regrantLinkedFolder(handle, message = FOLDER_LOCKED_MESSAGE) {
 /* ---------- 이 브라우저가 마지막으로 쓴 저장본의 이름표 (그 뒤에 다른 PC·브라우저가 썼는지 알아본다) ---------- */
 const FOLDER_STAMP_KEY = 'teacher:folder-save-stamp';
 
-// save_data.yaml을 쓴 뒤 그 크기·고친 시각을 이 브라우저에 남긴다(못 남겨도 저장은 된 것이다)
-async function rememberFolderSaveStamp(handle) {
+// save_data.yaml을 쓴 뒤 그 크기·고친 시각을 이 브라우저에 남긴다(못 남겨도 저장은 된 것이다).
+// browserBehind: 이 저장본에 든 작업을 브라우저에는 저장하지 못했다(새로고침하면 브라우저의 옛 작업이 열리므로 폴더에 이어 쓰지 않고 묻는다)
+async function rememberFolderSaveStamp(handle, browserBehind = false) {
     try {
         const file = await (await handle.getFileHandle('save_data.yaml')).getFile();
-        localStorage.setItem(FOLDER_STAMP_KEY, JSON.stringify({ name: handle.name, size: file.size, modified: file.lastModified }));
+        localStorage.setItem(FOLDER_STAMP_KEY, JSON.stringify({ name: handle.name, size: file.size, modified: file.lastModified, ...(browserBehind ? { browserBehind: true } : {}) }));
     } catch (err) {
         console.warn('[PC 폴더] 저장본 이름표를 남기지 못했습니다:', err.message);
     }
 }
 
-// 이 브라우저가 마지막으로 쓴 뒤 그 폴더의 save_data.yaml이 바뀌었는지.
-// 이름표가 없거나 다른 폴더 것이면 알 수 없어 false, 저장본이 없으면 false(지킬 것이 없다), 읽지 못하면 true(묻는 쪽이 안전)
-async function folderSaveChangedElsewhere(handle) {
-    let stamp = null;
+// 이 브라우저가 마지막으로 남긴 폴더 저장본 이름표 { name, size, modified, browserBehind }. 없거나 읽지 못하면 null
+function readFolderSaveStamp() {
     try {
-        stamp = JSON.parse(localStorage.getItem(FOLDER_STAMP_KEY) || 'null');
+        const stamp = JSON.parse(localStorage.getItem(FOLDER_STAMP_KEY) || 'null');
+        return stamp && typeof stamp === 'object' ? stamp : null;
     } catch (err) {
-        stamp = null;
+        return null;
     }
-    if (!stamp || stamp.name !== handle.name) return false;
+}
+
+// 이 브라우저가 마지막으로 쓴 뒤 그 폴더의 save_data.yaml이 바뀌었는지: 'changed'(다른 곳에서 바뀌었거나 읽지 못함. 묻는 쪽이 안전),
+// 'behind'(그대로지만 이 브라우저가 쓴 그 저장본의 작업을 브라우저에는 저장하지 못했다. 폴더가 브라우저보다 새것이다), ''(바뀌지 않음).
+// 이름표가 없거나 다른 폴더 것이면 알 수 없어 '', 저장본이 없으면 ''(지킬 것이 없다)
+async function folderSaveChangedElsewhere(handle) {
+    const stamp = readFolderSaveStamp();
+    if (!stamp || stamp.name !== handle.name) return '';
     try {
         const file = await (await handle.getFileHandle('save_data.yaml')).getFile();
-        return file.size !== stamp.size || file.lastModified !== stamp.modified;
+        if (file.size !== stamp.size || file.lastModified !== stamp.modified) return 'changed';
+        return stamp.browserBehind ? 'behind' : '';
     } catch (err) {
-        return err?.name !== 'NotFoundError';
+        return err?.name === 'NotFoundError' ? '' : 'changed';
     }
 }
 
@@ -2097,7 +2126,11 @@ window.restoreProjectFolderConnection = async function () {
         if (storedHandle) {
             // 처음 열 때는 권한 창을 띄우지 못하므로 상태만 본다. 권한이 있으면 바로 이어 쓰고(다음 저장에서 씀), 없으면 '다시 연결'을 기다린다.
             // 이 브라우저가 마지막으로 쓴 뒤 다른 곳에서 저장본이 바뀌었으면 덮어쓰지 않게 멈추고 '다시 연결'에서 묻는다
-            if (!(await verifyPermission(storedHandle, false))) {
+            // 지난번에 브라우저에 저장하지 못한 작업이 폴더에만 있으면(폴더가 앞섰다) 브라우저의 옛 작업이 그 폴더를 덮지 않게 멈추고, 폴더 열기로 되찾게 알린다
+            const stamp = readFolderSaveStamp();
+            if (stamp?.browserBehind && stamp.name === storedHandle.name) {
+                lockLinkedFolder(storedHandle, FOLDER_BEHIND_MESSAGE);
+            } else if (!(await verifyPermission(storedHandle, false))) {
                 console.warn('저장된 폴더 핸들의 권한이 만료되었습니다. 클릭을 통해 재인증이 필요합니다.');
                 lockLinkedFolder(storedHandle, FOLDER_REOPENED_MESSAGE);
             } else if (await folderSaveChangedElsewhere(storedHandle)) {
@@ -2155,6 +2188,8 @@ window.loadFromProjectFolder = async function () {
         const imageNote = saved.imageMode === 'none' ? noImagesImportNote('folder', currentImageCount()) : ''; // 그림을 빼고 저장된 폴더
         const ask = folderOpenPrompt({ folderName: dirHandle.name, subjectCount: globalState.subjects.length, incomingCount: nextState.subjects.length, unread, total: images.total, missing: images.missing, imageNote });
         if (!(await confirmAsync(ask.message, { okLabel: ask.okLabel, title: '작업 폴더에서 불러오기' }))) return;
+        // 읽지 못한 저장본이 이제 열리면 그 작업을 이 폴더로 바꾸지 않는다(새로 시작과 같은 규칙)
+        if (unread && await storedRecordStatus() === 'loads') return window.showAlert(unreadNowLoadsText('이 폴더로 바꾸지'));
 
         // 첫 저장이 save_data.yaml을 다시 쓰기 전에 지금 파일을 다른 이름으로 남긴다. 못 남기면 아무것도 바꾸지 않고 멈춘다
         // (예전 save_data.json만 있는 폴더는 첫 저장이 새 save_data.yaml을 만들고 save_data.json은 건드리지 않는다)
@@ -2178,10 +2213,14 @@ window.loadFromProjectFolder = async function () {
         }
 
         // 휴지통·작업 기록은 지금 것과 폴더 것을 합친다(백업 ZIP 되살리기와 같은 규칙). 방금 남긴 '불러오기 전' 기록도 들어가게 archiveContents 다음에 한다.
-        // 넣지 못한 폴더의 기록이 그대로 남는 곳(열기 전에 남긴 사본, 예전 save_data.json 폴더는 그 파일)도 마침 알림에 적는다
+        // 넣지 못한 폴더의 기록이 그대로 남는 곳(열기 전에 남긴 사본, 예전 save_data.json 폴더는 그 파일)도 마침 알림에 적는다.
+        // 같은 기록·휴지통 항목은 이 브라우저 것을 남기므로, 이 브라우저 것에 남은 찾지 못한 그림 자리(teacher-image:…)도 폴더의 그림 파일로 채운다
+        // (그림 파일을 채운 뒤 폴더를 다시 열면 작업 기록·휴지통의 그림도 돌아오게)
+        const current = { history: contentHistory, lessonTrash: globalState.lessonTrash, subjectTrash: globalState.subjectTrash };
+        const mine = Object.keys(images.files).length ? attachBackupImages(current, images.files) : current;
         const merged = mergeBackupExtras(
             { history: images.value.history, trash: { lessonTrash: nextState.lessonTrash, subjectTrash: nextState.subjectTrash } },
-            { history: contentHistory, lessonTrash: globalState.lessonTrash, subjectTrash: globalState.subjectTrash }
+            mine
         );
         const extras = { ...merged, historyDropped: { ...merged.historyDropped, keptIn: isYaml ? keptName : 'save_data.json' } };
         const firstSubject = nextState.subjects[0] || null;
@@ -2203,8 +2242,7 @@ window.loadFromProjectFolder = async function () {
         await forgetFolderHandle();
         const browserSaved = await saveState();
         if (browserSaved) await rememberFolderHandle(dirHandle);
-        if (typeof renderSidebar === 'function') renderSidebar();
-        showOverviewAfterRestore(); // 개요가 이미 열려 있어도 옛 과정이 남지 않게 다시 그린다
+        redrawAfterRestore(); // 개요가 이미 열려 있어도 옛 과정이 남지 않게 다시 그린다
 
         // 첫 폴더 저장이 끝난 뒤 결과대로 알린다(실패했으면 화면 위 띠가 까닭을 알린다)
         await waitFolderSync();
@@ -2248,6 +2286,7 @@ async function syncLinkedFolderNow() {
     const handle = projectFolderHandle;
     if (!handle || stateLoadFailed) return false; // 저장된 작업을 읽지 못한 동안은 폴더에도 쓰지 않는다
     const snapshot = { state: globalState, history: contentHistory, subjectId: currentSubjectId, lessons: courseData };
+    const browserBehind = lastBrowserSaveFailed; // 이 상태를 브라우저에는 저장하지 못했다(폴더 저장본 이름표에 적는다)
     const cache = folderWriteCacheFor(handle);
     try {
         // 권한이 풀렸으면 묻지 않고 멈춘다(저장은 클릭 없이 돌아 브라우저가 권한 창을 띄우지 못한다)
@@ -2264,7 +2303,7 @@ async function syncLinkedFolderNow() {
             await writeTextFile(handle, 'save_data.yaml', simpleYamlStringify(saveData));
         });
         if (written.switched) notifyBackupFallback('folder');
-        await rememberFolderSaveStamp(handle);
+        await rememberFolderSaveStamp(handle, browserBehind);
 
         // 2. 지금 교과의 차시 MD와 첨부 그림(사람이 읽는 사본, 되살리기에는 쓰지 않는다)
         await writeSubjectExport(handle, snapshot, cache);
@@ -2403,10 +2442,10 @@ async function folderFileSize(dirHandle, name) {
 
 // 저장본이 가리키는 그림만 '그림' 폴더에서 파일마다 따로 읽어 제자리에 돌려놓는다. 가리키지 않는 파일은 읽지 않는다.
 // 찾지 못했거나 읽지 못했거나 내용이 이름과 맞지 않는(빈 파일, 복사가 끊긴 파일) 그림은 참조를 그대로 둔다. 그림을 담은 방식과 상관없이 참조가 있으면 읽는다.
-// 돌려주는 값: { value, total: 가리키는 그림 수, missing: 찾지 못했거나 읽지 못했거나 망가진 수 }
+// 돌려주는 값: { value, files: 읽은 그림(키 → data URL), total: 가리키는 그림 수, missing: 찾지 못했거나 읽지 못했거나 망가진 수 }
 async function readFolderImages(dirHandle, saved) {
     const keys = backupImageRefs(saved);
-    if (!keys.size) return { value: saved, total: 0, missing: 0 };
+    if (!keys.size) return { value: saved, files: {}, total: 0, missing: 0 };
     window.showToast?.(`폴더의 그림 ${keys.size}장을 읽고 있습니다...`, 'info');
     const files = {};
     let imageDir = null;
@@ -2437,7 +2476,7 @@ async function readFolderImages(dirHandle, saved) {
             }
         }
     }
-    return { value: attachBackupImages(saved, files), total: keys.size, missing: keys.size - Object.keys(files).length };
+    return { value: attachBackupImages(saved, files), files, total: keys.size, missing: keys.size - Object.keys(files).length };
 }
 
 function uint8ToBase64(bytes) {
@@ -2555,26 +2594,31 @@ async function freeFolderCopyName(dirHandle, stamp = backupStamp()) {
     throw new Error('저장본 사본 이름을 정하지 못했습니다');
 }
 
-// changed: '다시 연결'에서 이 브라우저가 마지막으로 쓴 뒤 저장본이 바뀐 것을 알았을 때(첫 문장과 제목만 다르다)
-async function confirmFolderOverwrite(dirHandle, { changed = false } = {}) {
+// changed: '다시 연결'에서 저장본이 이 브라우저가 마지막으로 쓴 것과 다를 때 그 까닭('changed' 다른 곳에서 바뀜, 'behind' 브라우저에 저장하지 못한 작업이 폴더에만 있음).
+// 첫 문장과 제목만 다르다. 저장본을 읽지 못하면 사본을 남길 수 없어 덮어쓰지 않고 false
+async function confirmFolderOverwrite(dirHandle, { changed = '' } = {}) {
     const save = await readFolderSave(dirHandle);
     if (save.status === 'none') return true;
     if (save.status === 'unreadable') {
         console.warn('[폴더 연결] 기존 저장본을 읽지 못했습니다:', save.error);
-        window.showAlert(`'${dirHandle.name}' 폴더의 기존 저장본(save_data.yaml)을 읽지 못해 사본을 남길 수 없습니다. 덮어쓰지 않도록 연결을 멈췄습니다. 다른 빈 폴더를 골라 주세요.`);
+        window.showAlert(changed
+            ? `'${dirHandle.name}' 폴더의 저장본(save_data.yaml)을 읽지 못해 사본을 남길 수 없어 덮어쓰지 않았습니다. 자동 저장은 멈춘 채로 둡니다. 폴더의 파일을 확인한 뒤 '다시 연결'을 누르거나, 내보내기·백업 → '빈 폴더에 저장 시작'으로 다른 폴더를 고르세요.`
+            : `'${dirHandle.name}' 폴더의 기존 저장본(save_data.yaml)을 읽지 못해 사본을 남길 수 없습니다. 덮어쓰지 않도록 연결을 멈췄습니다. 다른 빈 폴더를 골라 주세요.`);
         return false;
     }
     const existing = save.text;
     const summary = folderSaveSummary(existing);
     const keepName = await freeFolderCopyName(dirHandle);
-    const head = changed
-        ? `이 브라우저가 마지막으로 저장한 뒤 '${dirHandle.name}' 폴더의 저장본이 바뀌었습니다${summary ? `(${summary})` : ''}. 다른 PC나 브라우저에서 저장했을 수 있습니다.`
-        : `'${dirHandle.name}' 폴더에는 이미 저장해 둔 작업이 있습니다${summary ? `(${summary})` : ''}.`;
+    const head = changed === 'behind'
+        ? `'${dirHandle.name}' 폴더의 저장본${summary ? `(${summary})` : ''}에는 지난번에 이 브라우저에 저장하지 못한 작업이 들어 있어, 지금 브라우저의 작업보다 새것일 수 있습니다.`
+        : changed
+            ? `이 브라우저가 마지막으로 저장한 뒤 '${dirHandle.name}' 폴더의 저장본이 바뀌었습니다${summary ? `(${summary})` : ''}. 다른 PC나 브라우저에서 저장했을 수 있습니다.`
+            : `'${dirHandle.name}' 폴더에는 이미 저장해 둔 작업이 있습니다${summary ? `(${summary})` : ''}.`;
     const ok = await confirmAsync(
         `${head}\n\n`
         + `그 작업을 열려면 취소한 뒤 내보내기·백업 → '저장해 둔 폴더 열기'를 누르세요.\n`
         + `지금 작업으로 덮어쓰면 기존 저장본은 ${keepName}으로 남겨 둡니다.`,
-        { okLabel: '지금 작업으로 덮어쓰기', title: changed ? '폴더 저장본이 바뀌었습니다' : '이 폴더에 저장본이 있습니다' }
+        { okLabel: '지금 작업으로 덮어쓰기', title: changed === 'behind' ? '폴더에 더 새 작업이 있습니다' : changed ? '폴더 저장본이 바뀌었습니다' : '이 폴더에 저장본이 있습니다' }
     );
     if (!ok) return false;
     await writeTextFile(dirHandle, keepName, existing);

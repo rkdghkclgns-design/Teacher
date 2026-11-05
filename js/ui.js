@@ -172,7 +172,8 @@ window.showModal = function (title, contentHTML) {
 };
 
 // ── F1-2: 핵심개념 입력 팝업 ──
-// opts.warning: 버튼 위에 보일 경고(다시 만들기 등), opts.okLabel: 확인 버튼 이름
+// opts.warning: 버튼 위에 보일 경고(다시 만들기 등), opts.okLabel: 확인 버튼 이름,
+// opts.estimateHtml: 시작하면 이어서 할 일의 미리 보기 상자(cost-estimate.js estimateBoxHtml이 만든 HTML. 글은 그 안에서 이스케이프한다)
 window.showKeyConceptsPrompt = function (title, defaultConcepts, onConfirm, opts = {}) {
     const defaults = Array.isArray(defaultConcepts) ? defaultConcepts.filter(Boolean) : [];
     const overlay = document.createElement('div');
@@ -186,6 +187,7 @@ window.showKeyConceptsPrompt = function (title, defaultConcepts, onConfirm, opts
             </div>
             <p class="text-xs text-textMuted mb-3 leading-relaxed">이 차시에서 반드시 다뤄야 할 핵심 개념을 입력하세요.<br>쉼표(,)로 구분하며, 비워두면 AI가 자동 구성합니다.</p>
             ${opts.warning ? `<p class="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 mb-3 leading-relaxed"><i class="ph-bold ph-warning"></i> ${escapeHtml(opts.warning)}</p>` : ''}
+            ${opts.estimateHtml ? `<div class="mb-3">${opts.estimateHtml}</div>` : ''}
             <input type="text" id="kc-prompt-input" value="${escapeHtml(defaults.join(', '))}"
                 placeholder="예: 게임 루프, 프레임 레이트, 델타 타임"
                 class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent transition-colors mb-4"

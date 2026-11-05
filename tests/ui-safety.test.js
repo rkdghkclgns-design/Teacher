@@ -71,6 +71,7 @@ function loadSaving({ pendingSoon = false } = {}) {
     vm.createContext(ctx);
     vm.runInContext(`const STORAGE_KEY = 'state'; let globalState = { subjects: [] }; let contentHistory = []; let currentSubjectId = null; let courseData = [];
         const _stateTabs = null; let projectFolderHandle = null; let stateLoadFailed = false; function showStateLoadFailedDialog() {}
+        let lastBrowserSaveFailed = false;
         const saveSoonTask = { cancel() {}, pending: () => ${pendingSoon} };
         ${slice('const DBManager = {', '\n};\n')}
         ${slice('async function saveState(', '\n}\n')}
@@ -321,7 +322,13 @@ test('브라우저 저장: 트랜잭션이 끝나야 성공, 쓰는 동안은 �
     txs[1].onabort({ target: txs[1] });
     assert.strictEqual(await failing, false, '공간이 모자라 취소되면 false');
     assert.strictEqual(alerts.length, 1);
-    assert.strictEqual(vm.runInContext('isSavePending()', ctx), false, '실패해도 저장 중 수를 되돌린다');
+    assert.strictEqual(vm.runInContext('DBManager.writing', ctx), 0, '실패해도 저장 중 수를 되돌린다');
+    assert.strictEqual(vm.runInContext('isSavePending()', ctx), true, '마지막 브라우저 저장이 실패했으면 그 뒤 바뀐 내용은 아직 브라우저에 없어 창을 닫기 전에 묻는다');
+    const again = vm.runInContext('saveState()', ctx);
+    await flush(); await flush();
+    txs[2].oncomplete();
+    assert.strictEqual(await again, true);
+    assert.strictEqual(vm.runInContext('isSavePending()', ctx), false, '다시 저장하면 묻지 않는다');
     assert.strictEqual(vm.runInContext('isSavePending()', loadSaving({ pendingSoon: true }).ctx), true, '미뤄 둔 저장도 센다');
 });
 
@@ -330,7 +337,7 @@ test('소스: 머리줄 백업 시각은 과정 전체 백업을 받고, 옛 확
     const ui = js('ui.js');
     const md = js('md-toolbar.js');
     assert.ok(/id="last-backup-indicator" onclick="exportAllModules\(\)"/.test(html));
-    assert.ok(/>전체 백업 안 함<\/button>/.test(html), '처음 보이는 글도 전체 백업');
+    assert.ok(/>전체 백업 기록 없음<\/button>/.test(html), '처음 보이는 글도 전체 백업(기록이 없다고 말하고, 안 했다고 하지 않는다)');
     assert.ok(!ui.includes('btn-confirm-ok'), '확인 버튼은 그 창 안에서 찾는다');
     assert.ok(!ui.includes('recordBackupTime('), '교과 백업 ZIP은 백업 시각을 남기지 않는다');
     assert.ok(!ui.includes("e.key === 's'"));

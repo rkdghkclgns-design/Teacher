@@ -9,7 +9,9 @@ const OUTPUT_FORMAT = 'teacher-lesson-export';
 const OUTPUT_VERSION = 2; // 1: 그림을 모두 원본에 담음(af5287a). 2: 화면에 보인 그림은 원본에 null로 적고 그 <img>에서 읽는다
 const OUTPUT_FILE_MB = 80;
 const OUTPUT_FILE_MAX = OUTPUT_FILE_MB * 1024 * 1024; // 그림이 든 교과 HTML도 받되, 브라우저가 멈출 만큼 큰 파일은 받지 않는다
-const OUTPUT_SOURCE_RE = /<script type="application\/json" id="teacher-source">([\s\S]*?)<\/script>/;
+// 숨은 원본의 여는 태그와 닫는 태그. 정규식 대신 글자로 찾는다(닫지 않은 여는 태그가 아주 많은 파일에서도 한 번만 훑는다). 원본 JSON 안의 '<'는 이스케이프해 담는다(lessonSourceScript)
+const OUTPUT_SOURCE_OPEN = '<script type="application/json" id="teacher-source">';
+const OUTPUT_SOURCE_CLOSE = '</script>';
 const OUTPUT_TAB_RE = /<!--\s*teacher-tab:\s*([A-Za-z]+)\s*-->/g; // /g라서 .test()에 쓰지 않는다(lastIndex가 움직인다)
 const OUTPUT_TAB_MARK = /<!--\s*teacher-tab:/; // 탭 표시가 있는지만 볼 때
 const OUTPUT_LESSON_RE = /<!--\s*teacher-lesson:\s*title=([^\s]*)\s*-->/;
@@ -145,13 +147,22 @@ function fillShownImages(images, index, shown) {
         .filter(([, data]) => data !== undefined));
 }
 
+// 숨은 원본(JSON 글). 첫 여는 태그 뒤 첫 닫는 태그까지. 없거나 닫히지 않았으면 null
+function outputSourceText(html) {
+    const at = html.indexOf(OUTPUT_SOURCE_OPEN);
+    if (at < 0) return null;
+    const from = at + OUTPUT_SOURCE_OPEN.length;
+    const end = html.indexOf(OUTPUT_SOURCE_CLOSE, from);
+    return end < 0 ? null : html.slice(from, end);
+}
+
 function parseOutputHtml(text) {
     const html = String(text || '');
-    const match = html.match(OUTPUT_SOURCE_RE);
-    if (!match) return null;
+    const source = outputSourceText(html);
+    if (source === null) return null;
     let data;
     try {
-        data = JSON.parse(match[1]);
+        data = JSON.parse(source);
     } catch (err) {
         console.warn('[불러오기] HTML 안의 원본을 읽지 못했습니다:', err.message);
         return null;
@@ -363,8 +374,9 @@ function missingImageCount(lesson) {
 }
 
 const outputCount = n => Number(n).toLocaleString('ko-KR');
+// 확인 창에 넣는 제목: 한 줄로 모으고 길면 줄인다(받은 파일의 제목이 줄을 바꿔 확인 창에 없는 줄을 꾸미지 못하게. data-safety.js importTitleText와 같은 규칙)
 const outputShortTitle = title => {
-    const chars = Array.from(String(title));
+    const chars = Array.from(String(title).replace(/\s+/g, ' ').trim());
     return chars.length > OUTPUT_CONFIRM_TITLE ? `${chars.slice(0, OUTPUT_CONFIRM_TITLE).join('')}…` : chars.join('');
 };
 // 건너뛴 파일: 앞 몇 개만 까닭과 함께, 나머지는 '외 N개'

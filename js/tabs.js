@@ -113,7 +113,8 @@ window.refreshLessonNav = function (mod) {
     if (nav && String(currentEditingModuleId) === String(mod.id)) nav.innerHTML = renderTabBar(mod);
 };
 
-const isViewingTab = (mod, tabId) => String(currentEditingModuleId) === String(mod.id) && !_lessonPanel && currentLessonTab === tabId;
+// 그 차시(같은 객체)의 그 탭을 보고 있는지. 다른 교과의 같은 번호 차시(최종 평가는 모든 교과가 같은 id)를 보고 있으면 아니다
+const isViewingTab = (mod, tabId) => String(currentEditingModuleId) === String(mod.id) && getEditingModule(mod.id) === mod && !_lessonPanel && currentLessonTab === tabId;
 
 // 화면을 막지 않고 만드는 동안 같은 탭을 수정 모드로 고치고 있었으면 먼저 저장한다. 그래야 미리보기의 '이전 글'과 히스토리에 들어간다
 function saveOpenEditsFor(mod, tabId) {
@@ -272,8 +273,8 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
     const mod = getEditingModule(moduleId);
     if (!mod) return { ok: false, error: '차시를 찾지 못했습니다.' };
     if (!opts.background && window.isLessonPipelineRunning?.()) {
-        window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
-        return { ok: false, error: '다른 생성이 진행 중입니다.' };
+        if (!opts.quiet) window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
+        return { ok: false, error: '다른 생성(진행 막대의 작업)이 끝나지 않았습니다.', halt: true }; // 일괄 생성은 다음 차시로 가지 않고 멈춘다(course-flow.js)
     }
     if (!opts.background) showLessonView();
 
@@ -492,7 +493,8 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             ? `${tabMeta.label} 생성 실패: API 호출 한도(429)에 도달했습니다. 1~2분 후 다시 시도해 주세요. (짧은 시간에 여러 탭을 연속 생성하면 한도에 걸릴 수 있습니다.)`
             : `${tabMeta.label} 생성 중 오류: ${err.message}`;
         if (!opts.quiet) window.showAlert(message);
-        return { ok: false, error: message };
+        // noRetry: 다시 보내도 같은 오류(키·모델·한도 0·하루 한도) / halt: 다음 차시도 같은 까닭으로 실패한다(일괄 생성을 멈춘다, ai-errors.js)
+        return { ok: false, error: message, noRetry: !!err?.noRetry, halt: typeof aiErrorStopsRun === 'function' && aiErrorStopsRun(err) };
     } finally {
         // 진행도 안내 문구를 기본값으로 복원해 다음 작업에 잔여 텍스트가 남지 않도록 함
         // 화면을 막지 않고 만들 때는 다른 작업이 켠 로딩 화면을 끄지 않는다
@@ -508,8 +510,17 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
 // 교안 탭을 모두 다시 만든다. 화면을 막지 않고 진행 막대에서 탭 순서·걸린 시간·중지를 보여 주며, 이전 글은 히스토리에 남긴다
 async function generateAllTabs(moduleId) {
     const failed = [];
+    // 시작한 교과의 그 차시만 다시 만든다. 탭마다 차시를 id로 다시 찾으므로, 다른 교과로 옮기거나 차시가 바뀌면
+    // (최종 평가는 모든 교과가 같은 id) 그 교과의 차시를 다시 만들지 않게 다음 탭으로 가지 않고 멈춘다
+    const subjectId = currentSubjectId;
+    const lesson = getEditingModule(moduleId);
+    let moved = false;
     const outcome = await window.runLessonJob(moduleId, { label: '교안 탭 모두 다시 만들기', current: LESSON_TABS[0].id, total: LESSON_TABS.length }, async () => {
         for (let i = 0; i < LESSON_TABS.length; i++) {
+            if (currentSubjectId !== subjectId || !lesson || getEditingModule(moduleId) !== lesson) {
+                moved = true;
+                break;
+            }
             const tab = LESSON_TABS[i];
             window.updateLessonJob({ current: tab.id, label: tab.label, done: i });
             const result = await generateTabContent(moduleId, tab.id, { background: true, onStatus: window.setPipelineStatus });
@@ -520,6 +531,7 @@ async function generateAllTabs(moduleId) {
         return { ok: true };
     });
     if (outcome?.busy) return;
+    if (moved) return window.showAlert('다른 교과로 옮겼거나 차시가 바뀌어 교안 탭 다시 만들기를 멈췄습니다. 그 전에 다시 만든 탭은 저장했고 이전 글은 작업 기록에 있습니다. 남은 탭은 그 차시로 돌아가 탭마다 \'이 탭 생성\'으로 다시 만드세요.');
     if (_tabGenStop) return window.showAlert('전체 탭 생성을 중단했습니다. 받은 내용까지 저장했습니다.');
     if (failed.length) return window.showAlert(`${failed.join(', ')} 탭을 만들지 못했습니다. 그 탭에서 다시 생성해 주세요.`);
     window.notifyLessonJobDone('교안 탭을 모두 다시 만들었습니다. 이전 글은 작업 기록에 남았습니다.');
@@ -537,7 +549,7 @@ async function fillMissingTabs(moduleId, { isStopped = () => false, onTab = () =
         if (isStopped()) return { ok: false, stopped: true, partial };
         onTab(LESSON_TABS.find(tab => tab.id === missing[i]), i, missing.length);
         const result = await generateTabContent(moduleId, missing[i], { quiet: true, onStatus, lockedBlocks: lockedByTab[missing[i]] });
-        if (!result.ok) return { ok: false, partial, error: result.error, stopped: !!result.stopped };
+        if (!result.ok) return { ok: false, partial, error: result.error, stopped: !!result.stopped, noRetry: !!result.noRetry, halt: !!result.halt };
         partial = partial || !!result.partial;
         await new Promise(r => setTimeout(r, 2000));
     }

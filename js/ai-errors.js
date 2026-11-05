@@ -4,6 +4,9 @@
 
 const AI_SETTINGS_HINT = '오른쪽 위 ⚙ 설정';
 const AI_NO_RETRY = [400, 401, 403, 404];
+// 일괄 작업(남은 차시 생성)을 멈추는 상태 코드: 다음 차시도 같은 까닭으로 실패한다(인터넷 끊김, 키·잔액·권한·모델 문제)
+const AI_RUN_STOP = [0, 401, 402, 403, 404];
+const AI_KEY_INVALID_RE = /API[_ ]KEY[_ ]INVALID|API key not valid|invalid.*api.?key/i; // Gemini는 맞지 않는 키를 400으로 알린다
 
 const aiProviderOf = url => {
     const text = String(url || '');
@@ -30,7 +33,7 @@ function friendlyAiError(status, body = '', provider = 'AI') {
     if (status === 402 || (status !== 429 && /credit balance|billing|insufficient.?(funds|balance)|payment required/i.test(text))) {
         return `${provider === 'Claude' ? 'Claude 콘솔' : provider === 'Gemini' ? 'Google AI Studio' : 'AI 서비스'}의 잔액(크레딧)이 부족하거나 결제가 필요합니다(${status}). 충전한 뒤 다시 하거나 ${AI_SETTINGS_HINT}에서 다른 키를 넣어 주세요.`;
     }
-    if (status === 401 || (status === 400 && /API[_ ]KEY[_ ]INVALID|API key not valid|invalid.*api.?key/i.test(text))) {
+    if (status === 401 || (status === 400 && AI_KEY_INVALID_RE.test(text))) {
         return `${key}가 맞지 않습니다(${status}). ${AI_SETTINGS_HINT}에서 키를 다시 넣고 '연결 확인'을 눌러 주세요.`;
     }
     if (status === 403) return `이 ${key}로는 고른 모델을 쓸 수 없습니다(403). ${AI_SETTINGS_HINT}에서 '빠르고 저렴하게'를 누르거나 키를 확인해 주세요.`;
@@ -56,6 +59,14 @@ function aiError(status, body, provider) {
     return err;
 }
 
+// 일괄 작업을 멈출 오류인지: 기다려도 풀리지 않는 한도(한도 0·하루 한도), 인터넷 끊김, 키·잔액·권한·모델 문제(맞지 않는 Gemini 키의 400 포함).
+// 다음 차시로 넘어가도 같은 오류로 실패하므로 다시 해 보지 않고 멈춘다(course-flow.js)
+function aiErrorStopsRun(err) {
+    if (!err || typeof err !== 'object') return false;
+    if (err.quota || AI_RUN_STOP.includes(err.status)) return true;
+    return err.status === 400 && AI_KEY_INVALID_RE.test(String(err.detail || ''));
+}
+
 // 키 연결 확인(모델 목록 조회)의 결과. 조회는 비용이 들지 않는다
 function keyCheckResult(status) {
     if (status === 200) return { ok: true, text: '연결됨' };
@@ -67,5 +78,5 @@ function keyCheckResult(status) {
 }
 
 if (typeof window !== 'undefined') {
-    Object.assign(window, { friendlyAiError, aiError, aiProviderOf, keyCheckResult, aiQuotaKind });
+    Object.assign(window, { friendlyAiError, aiError, aiProviderOf, keyCheckResult, aiQuotaKind, aiErrorStopsRun });
 }
