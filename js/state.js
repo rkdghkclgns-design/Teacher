@@ -1031,6 +1031,7 @@ window.exportAllModules = async function () {
     if (!globalState.subjects.length) return window.showAlert('백업할 교과가 없습니다.');
     if (!Array.isArray(courseData)) courseData = [];
     const subj = globalState.subjects.find(s => s.id === currentSubjectId);
+    const imageMode = takeBackupImageMode(); // 이 파일에 쓸 그림 담기. 골라 둔 '빼기'는 이 파일에만 쓴다(data-safety.js)
 
     // 과정명(Project Name) 안전화
     const rawCourseTitle = globalState.courseTitle || '새_교안프로젝트';
@@ -1044,7 +1045,7 @@ window.exportAllModules = async function () {
         // 1. 최상단: 과정명 폴더 생성
         const rootFolder = zip.folder(safeCourseName);
 
-        // 2. 메타데이터 (save_data.yaml) 루트 배치
+        // 2. 메타데이터 (save_data.yaml에 넣을 내용. 파일은 5에서 넣는다)
         const metaObj = {
             project: rawCourseTitle,
             subject: subj ? subj.title : '',
@@ -1053,7 +1054,6 @@ window.exportAllModules = async function () {
             // 전체 설정 및 현황 컨텍스트 직렬화 (API 키와 삭제한 차시는 공유 파일에 남지 않도록 제외)
             context: { ...globalState, apiKey: undefined, lessonTrash: undefined }
         };
-        writeBackupData(rootFolder, metaObj); // 편의상 JSON 직렬화를 yaml 확장자로 보존. 그림 담는 방식은 메뉴에서 고른다(data-safety.js)
 
         // 3. 리소스(첨부파일) 서브폴더 & 교과 폴더 생성
         const attachFolder = rootFolder.folder("첨부파일");
@@ -1080,16 +1080,15 @@ window.exportAllModules = async function () {
             subjFolder.file(mqFileName, `# ${mq.title}\n\n` + mqContent);
         }
 
-        // 묶음 ZIP 생성 (이름은 프로젝트_교과명)
-        const content = await zip.generateAsync({ type: "blob" });
-        saveAs(content, `${safeCourseName}_과정전체백업_${backupStamp()}.zip`);
-        recordBackupTime();
+        // 5. 되살리기용 save_data.yaml(편의상 JSON을 yaml 확장자로)을 넣고 묶는다. '함께'가 크기 한도에 걸리면 '따로·가볍게'로 다시 만든다(data-safety.js)
+        const result = await buildBackupZip(zip, rootFolder, metaObj, imageMode);
+        saveAs(result.blob, backupFileName(`${safeCourseName}_과정전체백업_${backupStamp()}`, result.mode));
+        finishBackupDownload(result);
 
     } catch (e) {
         console.error("전체 ZIP 생성 오류:", e);
-        const tooBig = e instanceof RangeError || /Invalid string length/i.test(e?.message || '');
-        window.showAlert(tooBig
-            ? '그림이 많아 과정 전체를 한 파일로 만들지 못했습니다. 작업 기록에서 오래된 기록을 지우거나, 교과 백업 ZIP을 교과별로 받아 주세요.'
+        window.showAlert(isBackupTooBig(e)
+            ? BACKUP_TOO_BIG_TEXT.full
             : `백업 파일을 만들지 못했습니다: ${e?.message || '알 수 없는 오류'}`);
     }
 }
@@ -1405,12 +1404,13 @@ window.importProjectZip = async function (event) {
             window.showAlert('단일 차시 교안을 현재 교과에 성공적으로 가져왔습니다!');
 
         } else {
-            // 전체를 바꾸기 전에 묻고, 지금 상태를 백업 파일로 내려받는다
+            // 전체를 바꾸기 전에 묻고, 지금 상태를 백업 파일로 내려받는다. 그림을 뺀 파일('빼기')이면 확인 창에 알린다
             const incomingCount = (metaObj.context.subjects || []).length;
-            const ok = await confirmAsync(`지금 브라우저의 모든 작업(교과 ${globalState.subjects.length}개)을 이 파일의 내용(교과 ${incomingCount}개)으로 바꿉니다.\n바꾸기 전에 지금 상태를 백업 파일로 내려받습니다. 마음이 바뀌면 그 파일을 다시 불러오면 됩니다.`, { okLabel: '백업 받고 바꾸기', title: '전체 불러오기' });
+            const imageNote = metaObj.imageMode === 'none' ? noImagesImportNote('full', currentImageCount()) : '';
+            const ok = await confirmAsync(`지금 브라우저의 모든 작업(교과 ${globalState.subjects.length}개)을 이 파일의 내용(교과 ${incomingCount}개)으로 바꿉니다.\n바꾸기 전에 지금 상태를 백업 파일로 내려받습니다. 마음이 바뀌면 그 파일을 다시 불러오면 됩니다.${imageNote}`, { okLabel: '백업 받고 바꾸기', title: '전체 불러오기' });
             if (!ok) return;
             window.saveRawContent?.(); // 고치던 원문을 먼저 저장해 백업에 들어가게 한다
-            await downloadSafetyBackup('불러오기전');
+            if (!(await safetyBackupOrAsk('불러오기전'))) return; // 받지 못하면 까닭을 알리고 백업 없이 계속할지 묻는다
             await archiveContents((courseData || []).filter(Boolean), '불러오기 전');
             const extras = mergeBackupExtras(metaObj, { history: contentHistory, lessonTrash: globalState.lessonTrash, subjectTrash: globalState.subjectTrash });
 
@@ -1470,7 +1470,7 @@ window.importProjectZip = async function (event) {
 
     } catch (e) {
         console.error("ZIP 불러오기 오류:", e);
-        window.showAlert(`백업 파일을 되살리지 못했습니다: ${e.message}`);
+        window.showAlert(isBackupTooBig(e) ? BACKUP_TOO_BIG_TEXT.openFile : `백업 파일을 되살리지 못했습니다: ${e.message}`);
     } finally {
         event.target.value = ''; // 재업로드를 위해 인풋 리셋
     }
@@ -1500,7 +1500,12 @@ function base64ToUint8Array(b64DataUrl) {
 async function writeTextFile(dirHandle, fileName, content) {
     const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
     const writable = await fileHandle.createWritable();
-    await writable.write(content);
+    try {
+        await writable.write(content);
+    } catch (err) {
+        await writable.abort?.().catch(() => {}); // 쓰다 실패하면 바꾸지 않고 닫는다(예전 파일은 그대로, 같은 파일에 다시 쓸 수 있게)
+        throw err;
+    }
     await writable.close();
 }
 
@@ -1697,11 +1702,12 @@ window.loadFromProjectFolder = async function () {
             return window.showAlert('save_data.yaml에 유효한 상태 데이터가 없습니다.');
         }
 
-        // 바꾸기 전에 묻고, 지금 상태를 백업 파일로 내려받는다
-        const ok = await confirmAsync(`'${dirHandle.name}' 폴더의 작업으로 지금 브라우저의 모든 작업(교과 ${globalState.subjects.length}개)을 바꿉니다.\n바꾸기 전에 지금 상태를 백업 파일로 내려받습니다.`, { okLabel: '백업 받고 바꾸기', title: '작업 폴더에서 불러오기' });
+        // 바꾸기 전에 묻고, 지금 상태를 백업 파일로 내려받는다. 그림을 빼고 저장된 폴더('빼기')면 확인 창에 알린다
+        const imageNote = parsed.imageMode === 'none' ? noImagesImportNote('folder', currentImageCount()) : '';
+        const ok = await confirmAsync(`'${dirHandle.name}' 폴더의 작업으로 지금 브라우저의 모든 작업(교과 ${globalState.subjects.length}개)을 바꿉니다.\n바꾸기 전에 지금 상태를 백업 파일로 내려받습니다.${imageNote}`, { okLabel: '백업 받고 바꾸기', title: '작업 폴더에서 불러오기' });
         if (!ok) return;
         window.saveRawContent?.(); // 고치던 원문을 먼저 저장해 백업에 들어가게 한다
-        await downloadSafetyBackup('폴더연결전');
+        if (!(await safetyBackupOrAsk('폴더연결전'))) return; // 받지 못하면 까닭을 알리고 백업 없이 계속할지 묻는다
         await archiveContents((courseData || []).filter(Boolean), '불러오기 전');
         const keptTrash = { lessonTrash: globalState.lessonTrash, subjectTrash: globalState.subjectTrash };
 
@@ -1749,7 +1755,7 @@ window.loadFromProjectFolder = async function () {
     } catch (e) {
         if (e.name === 'AbortError') return;
         console.error('폴더 불러오기 오류:', e);
-        window.showAlert('폴더 불러오기 중 오류가 발생했습니다: ' + e.message);
+        window.showAlert(isBackupTooBig(e) ? BACKUP_TOO_BIG_TEXT.openFolder : '폴더 불러오기 중 오류가 발생했습니다: ' + e.message);
     }
 }
 
@@ -1775,15 +1781,18 @@ async function syncToLinkedFolder() {
             }
         }
 
-        // 1. save_data.yaml (전체 상태 + 히스토리). 그림 담는 방식은 내보내기·백업 메뉴에서 고른다(data-safety.js)
+        // 1. save_data.yaml (전체 상태 + 히스토리). 그림은 '함께'나 '따로·가볍게'로만 담는다('빼기'는 받지 않는다, data-safety.js folderImageMode).
+        //    '함께'가 크기 한도에 걸리면 '따로·가볍게'로 바꿔 다시 쓰고 한 번 알린다
         const fullData = {
             state: globalState,
             history: contentHistory,
             lastSync: new Date().toISOString()
         };
-        const imageMode = backupImageMode();
-        const saveData = imageMode === 'inline' ? fullData : await writeFolderImages(projectFolderHandle, fullData, imageMode);
-        await writeTextFile(projectFolderHandle, 'save_data.yaml', simpleYamlStringify(saveData)); // linkedDirHandle -> projectFolderHandle
+        const written = await withSeparateFallback(folderImageMode(), async mode => {
+            const saveData = mode === 'inline' ? fullData : await writeFolderImages(projectFolderHandle, fullData, mode);
+            await writeTextFile(projectFolderHandle, 'save_data.yaml', simpleYamlStringify(saveData)); // linkedDirHandle -> projectFolderHandle
+        });
+        if (written.switched) notifyBackupFallback('folder');
 
         // 2. 교과별 md 파일 및 이미지 동기화
         const subj = globalState.subjects.find(s => s.id === currentSubjectId);
@@ -1912,7 +1921,7 @@ async function readFolderImages(dirHandle, parsed) {
         }
     } catch (err) {
         console.warn('[폴더 열기] 그림 폴더를 읽지 못했습니다:', err.message);
-        window.showToast?.('폴더의 그림 일부를 읽지 못했습니다. 글은 되살렸고, 빠진 그림은 일괄 이미지 찾기로 채울 수 있습니다.', 'warning');
+        window.showToast?.("폴더 안 '그림' 폴더를 다 읽지 못했습니다. 이대로 열면 읽지 못한 그림 자리는 빈칸이 됩니다(다음 확인 창에서 취소할 수 있습니다).", 'warning');
     }
     return attachBackupImages(parsed, files);
 }
@@ -1962,9 +1971,7 @@ window.hideFolderSyncBanner = function () {
 };
 
 function folderSyncFailureMessage(err) {
-    if (err instanceof RangeError || /Invalid string length/i.test(err?.message || '')) {
-        return '그림이 많아 PC 폴더에 한 파일로 저장하지 못했습니다. 브라우저에는 저장됐습니다. 백업 ZIP을 교과별로 받아 두세요.';
-    }
+    if (isBackupTooBig(err)) return BACKUP_TOO_BIG_TEXT.folder;
     if (err?.name === 'QuotaExceededError') return 'PC 디스크 공간이 부족해 폴더에 저장하지 못했습니다. 브라우저에는 저장됐습니다.';
     return `PC 폴더에 저장하지 못했습니다(${err?.message || '알 수 없는 오류'}). 브라우저에는 저장됐습니다.`;
 }

@@ -411,5 +411,595 @@ test('알림은 먼저 뜬 알림 위에 쌓는다(상한 알림이 다른 알�
     assert.strictEqual(shown[1].style.bottom, 'calc(1.5rem + 48px)', '둘째 알림은 첫 알림 위');
 });
 
-console.log(`\n${count - failed}/${count} passed`);
-if (failed) process.exit(1);
+/* ---------- 그림 담기가 백업을 망가뜨리지 않게: '빼기'는 메뉴에서 바로 받는 백업 하나만, 자동 저장·안전 백업은 그림을 지킨다 ---------- */
+const PNG = 'data:image/png;base64,' + 'iVBORw0KGgo'.repeat(20);
+const png = i => PNG.replace('iVBOR', `iVB${i}R`);
+const bigPng = i => `data:image/png;base64,iVB${i}R${'A'.repeat(600)}`;
+const SAFETY_SRC = fs.readFileSync(path.join(__dirname, '..', 'js', 'data-safety.js'), 'utf8');
+const STATE_SRC = fs.readFileSync(path.join(__dirname, '..', 'js', 'state.js'), 'utf8').replace(/\r\n/g, '\n');
+const UI_SRC = fs.readFileSync(path.join(__dirname, '..', 'js', 'ui.js'), 'utf8').replace(/\r\n/g, '\n');
+// 소스에서 함수 하나를 잘라 온다(start 글부터 그 함수가 끝나는 줄까지)
+const fnFrom = (source, file) => (start, end = '\n}\n') => {
+    const from = source.indexOf(start);
+    const to = source.indexOf(end, from);
+    assert.ok(from >= 0 && to > from, `${file}에서 ${start}을 찾지 못함`);
+    return source.slice(from, to + end.length);
+};
+const stateFn = fnFrom(STATE_SRC, 'state.js');
+const uiFn = fnFrom(UI_SRC, 'ui.js');
+// JSZip 대신: 파일 이름과 내용만 모은다. maxText보다 긴 글을 넣거나 fail이 있으면 크기 오류처럼 던진다
+class FakeZip {
+    constructor() { this.files = {}; FakeZip.last = this; }
+    static reset() { FakeZip.maxText = 0; FakeZip.fail = null; FakeZip.last = null; }
+    static async loadAsync(file) { if (file.error) throw file.error; return file.zip; }
+    file(name, data) {
+        if (FakeZip.maxText && typeof data === 'string' && data.length > FakeZip.maxText) throw new RangeError('Invalid string length');
+        this.files[name] = data;
+        return this;
+    }
+    folder(name) { return { file: (n, d, o) => this.file(`${name}/${n}`, d, o), folder: n => this.folder(`${name}/${n}`) }; }
+    async generateAsync() { if (FakeZip.fail) throw FakeZip.fail; return { files: Object.keys(this.files) }; }
+}
+FakeZip.reset();
+// 저장소·알림·확인 창을 흉내 낸 새 창에 data-safety.js를 불러온다. seen.answers: 확인 창에 차례로 줄 답, extra.buttons: 그림 담기 버튼 흉내
+function loadSafety(stored = {}, extra = {}) {
+    const storage = { ...stored };
+    const buttons = extra.buttons || [];
+    const seen = { toasts: [], alerts: [], confirms: [], saved: [], answers: [], listeners: [] };
+    const c = {
+        console: { log() {}, info() {}, warn() {}, error() {} }, JSON, Date, Map, Set, Promise,
+        localStorage: { getItem: k => (k in storage ? storage[k] : null), setItem: (k, v) => { storage[k] = String(v); } },
+        document: {
+            querySelectorAll: selector => (selector.includes('data-backup-images') ? buttons : []), getElementById: () => null,
+            addEventListener: (type, fn, capture) => seen.listeners.push({ type, fn, capture })
+        },
+        saveAs: (blob, name) => seen.saved.push(name), JSZip: FakeZip,
+        globalState: { courseTitle: '과정', subjects: [], lessonTrash: [], subjectTrash: [] }, courseData: null, currentSubjectId: null, contentHistory: [],
+        window: {
+            showToast: (text, type) => seen.toasts.push({ text, type }),
+            showAlert: text => seen.alerts.push(text),
+            showConfirm: (message, onOk, opts) => { seen.confirms.push({ message, ...opts }); (seen.answers.shift() ? onOk : opts.onCancel)(); }
+        },
+        ...extra
+    };
+    vm.createContext(c);
+    vm.runInContext(SAFETY_SRC, c);
+    const lastBackupAt = () => storage[vm.runInContext('BACKUP_TIME_KEY', c)]; // 묶음 8이 이름을 바꿔도 같은 열쇠를 읽는다
+    return { c, W: c.window, storage, seen, lastBackupAt };
+}
+const pending = [];
+const testAsync = (name, fn) => pending.push({ name, fn });
+
+testAsync("기억한 방식: 처음은 '함께', 예전에 기억한 '빼기'는 '따로·가볍게'로 읽고, 이상한 값은 '함께'", () => {
+    assert.strictEqual(loadSafety().W.storedBackupImageMode(), 'inline');
+    assert.strictEqual(loadSafety({ 'teacher:backup-images': 'none' }).W.backupImageMode(), 'separate');
+    assert.strictEqual(loadSafety({ 'teacher:backup-images': 'none' }).W.folderImageMode(), 'separate');
+    assert.strictEqual(loadSafety({ 'teacher:backup-images': 'separate' }).W.folderImageMode(), 'separate');
+    assert.strictEqual(loadSafety({ 'teacher:backup-images': 'zzz' }).W.backupImageMode(), 'inline');
+});
+
+testAsync("'빼기'는 기억하지 않고 PC 폴더 자동 저장에 쓰이지 않으며, 백업 하나를 만들기 시작하면 풀린다", () => {
+    const buttons = ['inline', 'separate', 'none'].map(mode => ({ dataset: { backupImages: mode }, pressed: '', setAttribute(name, value) { if (name === 'aria-pressed') this.pressed = value; } }));
+    const pressed = () => buttons.filter(button => button.pressed === 'true').map(button => button.dataset.backupImages);
+    const { W, storage, seen } = loadSafety({ 'teacher:backup-images': 'separate' }, { buttons });
+    W.setBackupImageMode('none');
+    assert.strictEqual(W.backupImageMode(), 'none');
+    assert.deepStrictEqual(pressed(), ['none'], '메뉴에는 빼기가 눌려 보인다');
+    assert.strictEqual(storage['teacher:backup-images'], 'separate', '빼기는 저장하지 않는다');
+    assert.strictEqual(W.folderImageMode(), 'separate', 'PC 폴더 자동 저장은 빼기를 받지 않는다');
+    assert.ok(seen.toasts[0].text.includes('하나에만') && seen.toasts[0].text.includes("'따로·가볍게'로"), seen.toasts[0].text);
+    assert.strictEqual(W.takeBackupImageMode(), 'none', '이 백업 하나에는 빼기');
+    assert.strictEqual(W.takeBackupImageMode(), 'separate', '다음 백업은 기억한 방식');
+    assert.deepStrictEqual(pressed(), ['separate']);
+    W.setBackupImageMode('none');
+    W.setBackupImageMode('inline');
+    assert.strictEqual(W.backupImageMode(), 'inline', '다른 방식을 고르면 빼기는 풀린다');
+    assert.strictEqual(storage['teacher:backup-images'], 'inline');
+});
+
+testAsync("'빼기'는 메뉴 밖을 누르면 그 버튼이 일하기 전에 풀린다(머리줄 백업 시각·교과 목록 ZIP 버튼)", () => {
+    const { W, seen } = loadSafety();
+    const click = seen.listeners.find(item => item.type === 'click');
+    assert.ok(click && click.capture === true, '누름을 잡기 단계에서 먼저 본다');
+    const at = inMenu => ({ target: { closest: selector => (inMenu && selector === '#export-dropdown-menu' ? {} : null) } });
+    W.setBackupImageMode('none');
+    click.fn(at(true));
+    assert.strictEqual(W.backupImageMode(), 'none', '메뉴 안 누름은 그대로');
+    click.fn(at(false));
+    assert.strictEqual(W.backupImageMode(), 'inline', '메뉴 밖을 누르면 풀린다');
+    click.fn({ target: null });
+    assert.strictEqual(W.backupImageMode(), 'inline');
+});
+
+testAsync('백업 ZIP을 받은 뒤: 그림을 뺀 파일은 이름 끝 _그림없음, 백업 시각에 세지 않고, 그림이 든 백업은 센다', () => {
+    const { W, seen, lastBackupAt, storage, c } = loadSafety();
+    W.finishBackupDownload({ mode: 'none' }, { successText: '받음' });
+    assert.strictEqual(lastBackupAt(), undefined, '그림을 뺀 파일은 백업 시각에 세지 않는다');
+    assert.ok(seen.toasts.at(-1).text.includes('_그림없음') && seen.toasts.at(-1).type === 'warning');
+    W.finishBackupDownload({ mode: 'separate' }, { successText: '받음' });
+    assert.ok(lastBackupAt(), '그림이 든 백업은 센다');
+    assert.strictEqual(seen.toasts.at(-1).text, '받음');
+    delete storage[vm.runInContext('BACKUP_TIME_KEY', c)];
+    W.finishBackupDownload({ mode: 'inline' }, { countsAsBackup: false });
+    assert.strictEqual(lastBackupAt(), undefined, '세지 않게 고를 수 있다');
+    assert.strictEqual(W.backupFileName('과정_과정전체백업_20261105-1530', 'none'), '과정_과정전체백업_20261105-1530_그림없음.zip');
+    assert.strictEqual(W.backupFileName('국어_교안', 'separate'), '국어_교안.zip');
+    assert.strictEqual(W.backupFileName('국어_교안', 'inline'), '국어_교안.zip');
+});
+
+testAsync('크기 한도 오류만 골라낸다', () => {
+    const { W, c } = loadSafety();
+    assert.ok(W.isBackupTooBig(new RangeError('Invalid string length')), '다른 창의 RangeError도 글로 알아본다');
+    assert.ok(W.isBackupTooBig(new (vm.runInContext('RangeError', c))('x')));
+    assert.ok(W.isBackupTooBig(new Error('Array buffer allocation failed')));
+    assert.ok(W.isBackupTooBig(new Error('Invalid typed array length: 4294967296')));
+    assert.ok(!W.isBackupTooBig(new RangeError('Maximum call stack size exceeded')), '깊은 구조는 크기 문제가 아니다');
+    assert.ok(!W.isBackupTooBig(new Error('NotAllowedError')));
+    assert.ok(!W.isBackupTooBig(null));
+});
+
+testAsync("'함께'가 크기 한도에 걸리면 '따로·가볍게'로 다시 만들고 기억한 방식도 바꾼다(PC 폴더가 이어져 있으면 그 말도 한다)", async () => {
+    const { W, c, storage, seen } = loadSafety();
+    FakeZip.maxText = 1000;
+    const images = Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`img_${i}`, png(i)]));
+    const zip = new FakeZip();
+    const result = await W.buildBackupZip(zip, zip, { context: { subjects: [{ id: 's', lessons: [{ id: 1, images }] }] } }, 'inline');
+    assert.deepStrictEqual([result.mode, result.fellBack, result.switched], ['separate', true, true]);
+    assert.ok(result.blob, '다시 만든 파일을 돌려준다');
+    assert.ok(zip.files['save_data.yaml'].includes('"imageMode": "separate"'));
+    assert.strictEqual(Object.keys(zip.files).filter(name => name.startsWith('그림/')).length, 8);
+    assert.strictEqual(storage['teacher:backup-images'], 'separate');
+    assert.strictEqual(W.folderImageMode(), 'separate');
+    W.finishBackupDownload(result);
+    assert.ok(seen.alerts[0].includes("'따로·가볍게'로 받았습니다") && seen.alerts[0].includes('내보내기·백업 → 그림 담기'), '바꾼 곳을 알려 준다');
+    assert.ok(!seen.alerts[0].includes('PC 폴더 자동 저장도'), 'PC 폴더가 없으면 폴더 이야기는 하지 않는다');
+    c.projectFolderHandle = { name: '작업' };
+    W.notifyBackupFallback('download');
+    assert.ok(seen.alerts[1].includes('PC 폴더 자동 저장도 다음 저장부터'));
+});
+
+testAsync('ZIP을 묶다 메모리 한도에 걸려도 따로 담아 다시 만들고, 크기 오류가 아니면 그대로 알린다', async () => {
+    const { W } = loadSafety();
+    let calls = 0;
+    const zip = new FakeZip();
+    zip.generateAsync = async () => { calls++; if (calls === 1) throw new Error('Array buffer allocation failed'); return 'blob'; };
+    const result = await W.buildBackupZip(zip, zip.folder('과정'), { context: { a: { images: { x: PNG } } } }, 'inline');
+    assert.strictEqual(result.mode, 'separate');
+    assert.ok(zip.files['과정/save_data.yaml'].includes('teacher-image:'), '큰 save_data.yaml을 덮어쓴다');
+    const other = loadSafety();
+    FakeZip.fail = new Error('디스크 오류');
+    await assert.rejects(other.W.buildBackupZip(new FakeZip(), new FakeZip(), {}, 'inline'), /디스크 오류/);
+    assert.strictEqual(other.storage['teacher:backup-images'], undefined, '크기 오류가 아니면 방식을 바꾸지 않는다');
+    FakeZip.fail = null;
+    const modes = [];
+    await W.withSeparateFallback('none', async mode => { modes.push(mode); });
+    await W.withSeparateFallback('separate', async mode => { modes.push(mode); });
+    assert.deepStrictEqual(modes, ['none', 'separate'], '빼기·따로는 한 번만 쓴다');
+});
+
+testAsync("'따로·가볍게'로 다시 만들어도 실패하면 그림 담기를 바꾸지 않고, 따로 담기에 성공한 때에만 바꿔 알린다", async () => {
+    const { W, storage, seen } = loadSafety();
+    FakeZip.fail = new RangeError('Array buffer allocation failed'); // 읽기용 파일까지 커서 어느 방식으로도 ZIP을 묶지 못함
+    const zip = new FakeZip();
+    await assert.rejects(W.buildBackupZip(zip, zip, { context: { a: { images: { x: PNG } } } }, 'inline'), err => W.isBackupTooBig(err));
+    assert.strictEqual(storage['teacher:backup-images'], undefined, '둘 다 실패하면 기억한 방식은 그대로');
+    assert.strictEqual(W.backupImageMode(), 'inline');
+    assert.strictEqual(W.folderImageMode(), 'inline', "PC 폴더가 알림 없이 '그림' 폴더 방식으로 바뀌지 않는다");
+    assert.strictEqual(seen.alerts.length, 0);
+    FakeZip.fail = null;
+    const tries = [];
+    const result = await W.withSeparateFallback(W.folderImageMode(), async mode => {
+        tries.push(mode);
+        if (mode === 'inline') throw new RangeError('Invalid string length');
+    });
+    assert.deepStrictEqual(tries, ['inline', 'separate']);
+    assert.deepStrictEqual([result.mode, result.fellBack, result.switched], ['separate', true, true], '따로 담기에 성공하면 그때 바꾸고 바꿨다고 알린다');
+    assert.strictEqual(storage['teacher:backup-images'], 'separate');
+    const failed = [];
+    const other = loadSafety();
+    await assert.rejects(other.W.withSeparateFallback('inline', async mode => {
+        failed.push(mode);
+        throw mode === 'inline' ? new RangeError('Invalid string length') : Object.assign(new Error('권한 없음'), { name: 'NotAllowedError' });
+    }), /권한 없음/);
+    assert.deepStrictEqual(failed, ['inline', 'separate']);
+    assert.strictEqual(other.storage['teacher:backup-images'], undefined, '따로 쓰기가 다른 까닭으로 실패해도 바꾸지 않는다');
+});
+
+testAsync("방식을 주지 않은 writeBackupData는 '빼기'를 골라 두었어도 그림을 담는다", () => {
+    const { W } = loadSafety();
+    W.setBackupImageMode('none');
+    const zip = new FakeZip();
+    W.writeBackupData(zip, { context: { a: { images: { x: PNG } } } });
+    assert.ok(zip.files['save_data.yaml'].includes(PNG));
+});
+
+testAsync("불러오기 전 안전 백업은 고른 방식과 상관없이 따로 담고, '빼기'를 쓰지도 풀지도 않는다", async () => {
+    const { W, seen, lastBackupAt } = loadSafety({}, { globalState: { courseTitle: '과정', subjects: [{ id: 's1', title: 'A', lessons: [{ id: 1, images: { a: PNG } }] }], lessonTrash: [], subjectTrash: [] }, currentSubjectId: 's1' });
+    await W.downloadSafetyBackup('불러오기전');
+    assert.ok(FakeZip.last.files['save_data.yaml'].includes('"imageMode": "separate"'), "'함께'를 골랐어도 따로 담는다(큰 과정도 글자 수 한도에 걸리지 않게)");
+    W.setBackupImageMode('none');
+    await W.downloadSafetyBackup('불러오기전');
+    const files = FakeZip.last.files;
+    assert.ok(files['save_data.yaml'].includes('"imageMode": "separate"'));
+    assert.ok(Object.keys(files).some(name => name.startsWith('그림/') && name.endsWith('.png')));
+    const name = seen.saved.at(-1);
+    assert.ok(name.startsWith('교안백업_') && name.endsWith('_불러오기전.zip'), name);
+    assert.strictEqual(W.backupImageMode(), 'none');
+    assert.ok(lastBackupAt());
+});
+
+testAsync('안전 백업을 받지 못하면 까닭을 알리고 계속할지 묻는다(먼저 만드는 중이라고 알린다)', async () => {
+    const { W, seen } = loadSafety();
+    FakeZip.fail = new RangeError('Invalid string length');
+    seen.answers.push(false);
+    assert.strictEqual(await W.safetyBackupOrAsk('불러오기전'), false);
+    assert.ok(seen.toasts[0].text.includes('만드는 중'));
+    const ask = seen.confirms.at(-1);
+    assert.strictEqual(ask.title, '불러오기 전 백업 실패');
+    assert.ok(ask.message.includes('받지 못했습니다') && ask.message.includes('크기를 넘었습니다') && !ask.message.includes('되살리지 못했습니다'));
+    assert.ok(ask.message.includes('이대로 불러오면') && ask.message.includes('교과를 하나씩 체크해'));
+    assert.strictEqual(ask.okLabel, '백업 없이 계속');
+    assert.strictEqual(ask.tone, 'danger');
+    seen.answers.push(true);
+    assert.strictEqual(await W.safetyBackupOrAsk('폴더연결전'), true);
+    assert.strictEqual(seen.confirms.at(-1).title, '폴더 열기 전 백업 실패');
+    assert.ok(seen.confirms.at(-1).message.includes('이대로 폴더를 열면'));
+    FakeZip.fail = null;
+    const before = seen.confirms.length;
+    assert.strictEqual(await W.safetyBackupOrAsk('불러오기전'), true);
+    assert.strictEqual(seen.confirms.length, before, '받으면 묻지 않는다');
+});
+
+testAsync('교과 불러오기: 그림 없는 파일이면 확인 창에 빈칸이 될 지금 그림 수를 보이고, 안전 백업이 실패해 멈추면 아무것도 바꾸지 않는다', async () => {
+    const make = () => {
+        const env = loadSafety({}, {
+            globalState: { courseTitle: '과정', subjects: [{ id: 's1', title: '내 교과', lessons: [{ id: 1, title: '1차시', images: { a: png(1), b: png(2) } }] }], lessonTrash: [], subjectTrash: [] },
+            currentSubjectId: 'x', sanitizeState: s => JSON.parse(JSON.stringify(s)), location: { hash: '' }, saves: 0
+        });
+        env.c.saveState = async () => { env.c.saves++; };
+        return env;
+    };
+    const meta = { scope: 'subjects', imageMode: 'none', context: { subjects: [{ id: 's1', title: '파일 교과', lessons: [{ id: 1, title: '1차시', images: {} }] }] } };
+    FakeZip.fail = new RangeError('Invalid string length');
+    const stop = make();
+    stop.seen.answers.push(true, false); // 불러오기 확인은 예, 백업 실패 뒤에는 멈춤
+    await stop.W.importSubjectsBackup(meta);
+    assert.strictEqual(stop.seen.confirms.length, 2);
+    assert.ok(stop.seen.confirms[0].message.includes("그림 담기 '빼기'") && stop.seen.confirms[0].message.includes('지금 그림 2장이 빈칸이 됩니다'), stop.seen.confirms[0].message);
+    assert.strictEqual(stop.seen.confirms[0].tone, 'danger');
+    assert.strictEqual(stop.c.globalState.subjects[0].title, '내 교과', '멈추면 그대로');
+    assert.strictEqual(stop.c.globalState.subjectTrash.length, 0);
+    assert.strictEqual(stop.c.saves, 0);
+    const go = make();
+    go.seen.answers.push(true, true);
+    await go.W.importSubjectsBackup(meta);
+    assert.strictEqual(go.c.globalState.subjects[0].title, '파일 교과', '백업 없이 계속을 고르면 불러온다');
+    assert.strictEqual(go.c.globalState.subjectTrash.length, 1);
+    assert.strictEqual(go.c.saves, 1);
+    assert.strictEqual(go.seen.saved.length, 0);
+    FakeZip.fail = null;
+    const plain = make();
+    plain.seen.answers.push(true);
+    await plain.W.importSubjectsBackup({ ...meta, imageMode: 'separate' });
+    assert.ok(!plain.seen.confirms[0].message.includes('그림'), '그림이 든 파일이면 덧붙이지 않는다');
+    assert.strictEqual(plain.seen.confirms[0].tone, 'primary');
+});
+
+testAsync('그림 수와 불러오기 경고: 같은 그림은 한 번, 글 속 그림과 짧은 글은 세지 않고, 빈칸이 될 지금 그림 수를 말한다', () => {
+    const { W } = loadSafety();
+    assert.strictEqual(W.countBackupImages({ a: { images: { x: PNG, y: PNG } }, list: [png(2), '글', `본문 ![](${PNG})`], short: 'data:image/png;base64,AA' }), 2);
+    assert.strictEqual(W.countBackupImages(null), 0);
+    const full = W.noImagesImportNote('full', 3);
+    assert.ok(full.startsWith('\n\n') && full.includes('지금 그림 3장이 빈칸이 될 수 있습니다') && full.includes('불러오기 전에 받는 백업 파일에 남습니다'));
+    const folder = W.noImagesImportNote('folder', 1);
+    assert.ok(folder.includes("그림 담기 '빼기'로 저장되어") && folder.includes('지금 그림 1장이 빈칸이 됩니다'));
+    const subjects = W.noImagesImportNote('subjects', 2);
+    assert.ok(subjects.includes('교과 휴지통'));
+    // '빼기' 파일도 읽기용 교안.html·그림 파일(과정 전체 백업은 첨부파일)에는 그림이 있다. 없는 것은 되살리기용 정보의 그림이다
+    [full, folder, subjects, W.noImagesImportNote('subjects', 0)].forEach(note => {
+        assert.ok(!/(파일|폴더)에는 그림이 없습니다/.test(note), note);
+        assert.ok(note.includes('되살리기용 정보에는 그림이 담기지 않았습니다'), note);
+    });
+    assert.ok(subjects.includes('읽기용 교안.html·그림 파일의 그림은 되살리지 않습니다'), '교과 백업은 안의 읽기용 그림으로 되살리지 않는다고 알린다');
+    assert.ok(!full.includes('읽기용'), '과정 전체 백업은 첨부파일의 그림이 열린 교과에 돌아올 수 있어 그 말을 하지 않는다');
+    const none = W.noImagesImportNote('full', 0);
+    assert.ok(!/\d+장/.test(none) && none.includes('빈칸으로 보일 수 있습니다'), none);
+    assert.ok(W.noImagesImportNote('subjects', 0).includes('읽기용 교안.html'));
+    const plan = { replaced: [{ title: 'A' }], added: [] };
+    assert.ok(!W.describeSubjectImport(plan).includes('그림'), '그림 있는 파일은 예전과 같은 글');
+    assert.ok(W.describeSubjectImport(plan, { noImages: true, lostImages: 2 }).includes('지금 그림 2장이 빈칸이 됩니다'));
+});
+
+// state.js의 과정 전체 백업을 data-safety.js와 함께 실제로 돌린다(JSZip·파일 이름 도우미는 흉내)
+function loadFullBackup(stored = {}) {
+    const lessons = [{ id: 1, title: '1차시', content: '<img src="local:img_a"> <img src="local:img_b">', images: { img_a: bigPng(1), img_b: bigPng(2) } }];
+    const env = loadSafety(stored, {
+        globalState: { courseTitle: '과정', subjects: [{ id: 's1', title: '국어', lessons }], lessonTrash: [], subjectTrash: [] },
+        courseData: lessons, currentSubjectId: 's1',
+        lessonFileName: mod => `${mod.title}.md`, lessonGyosuanFiles: () => []
+    });
+    vm.runInContext(`${stateFn('function extractImagesToZip(')}\n${stateFn('window.exportAllModules = async function')}`, env.c);
+    return env;
+}
+
+testAsync("과정 전체 백업: 골라 둔 '빼기'는 그 파일 하나에만(이름 끝 _그림없음, 백업 시각에 세지 않음), '함께'가 크기 한도에 걸리면 따로 담아 받는다", async () => {
+    const drop = loadFullBackup();
+    drop.W.setBackupImageMode('none');
+    await drop.W.exportAllModules();
+    const name = drop.seen.saved.at(-1);
+    assert.ok(/^과정_과정전체백업_\d{8}-\d{4}_그림없음\.zip$/.test(name), name);
+    const data = FakeZip.last.files['과정/save_data.yaml'];
+    assert.ok(data.includes('"imageMode": "none"') && !data.includes('data:image'), '되살리기용 정보에는 그림이 없다');
+    assert.ok(Object.keys(FakeZip.last.files).some(file => file.startsWith('과정/첨부파일/')), '읽기용 첨부파일의 그림은 그대로');
+    assert.strictEqual(drop.lastBackupAt(), undefined);
+    assert.strictEqual(drop.W.backupImageMode(), 'inline', '빼기는 그 파일 하나로 끝난다');
+    await drop.W.exportAllModules();
+    assert.ok(!drop.seen.saved.at(-1).includes('_그림없음') && FakeZip.last.files['과정/save_data.yaml'].includes(bigPng(1)), '다음 백업은 그림을 담는다');
+    assert.ok(drop.lastBackupAt());
+
+    const big = loadFullBackup();
+    FakeZip.maxText = 1000;
+    await big.W.exportAllModules();
+    assert.ok(FakeZip.last.files['과정/save_data.yaml'].includes('"imageMode": "separate"'));
+    assert.strictEqual(Object.keys(FakeZip.last.files).filter(file => file.startsWith('과정/그림/')).length, 2);
+    assert.strictEqual(big.storage['teacher:backup-images'], 'separate');
+    assert.ok(big.seen.alerts[0].includes("'따로·가볍게'로 받았습니다") && big.seen.alerts[0].includes('내보내기·백업 → 그림 담기'), big.seen.alerts[0]);
+    assert.ok(big.lastBackupAt());
+    FakeZip.maxText = 0;
+
+    const fail = loadFullBackup({ 'teacher:backup-images': 'separate' });
+    FakeZip.fail = new RangeError('Invalid string length');
+    await fail.W.exportAllModules();
+    assert.strictEqual(fail.seen.saved.length, 0);
+    assert.strictEqual(fail.seen.alerts[0], fail.W.BACKUP_TOO_BIG_TEXT.full);
+
+    const failBoth = loadFullBackup();
+    FakeZip.fail = new RangeError('Array buffer allocation failed');
+    await failBoth.W.exportAllModules();
+    assert.strictEqual(failBoth.seen.saved.length, 0);
+    assert.deepStrictEqual(failBoth.seen.alerts, [failBoth.W.BACKUP_TOO_BIG_TEXT.full], '크기 안내 하나만');
+    assert.strictEqual(failBoth.storage['teacher:backup-images'], undefined, "'따로·가볍게'로도 만들지 못하면 그림 담기는 그대로");
+    assert.strictEqual(failBoth.W.folderImageMode(), 'inline');
+    assert.strictEqual(failBoth.lastBackupAt(), undefined);
+});
+
+// ui.js의 교과 백업 ZIP 둘(사이드바·개요의 고른 교과, 편집 중인 교과)을 data-safety.js와 함께 실제로 돌린다(교안 HTML·파일 이름 도우미는 흉내)
+const COURSE_FLOW_SRC = fs.readFileSync(path.join(__dirname, '..', 'js', 'course-flow.js'), 'utf8').replace(/\r\n/g, '\n');
+function loadSubjectZip(stored = {}) {
+    const lessons = [{ id: 1, title: '1차시', content: '본문 <img src="local:img_a">', images: { img_a: bigPng(1), img_b: bigPng(2) } }];
+    const env = loadSafety(stored, {
+        globalState: { courseTitle: '과정', subjects: [{ id: 's1', title: '국어', lessons }], lessonTrash: [], subjectTrash: [] },
+        courseData: lessons, currentSubjectId: 's1',
+        lessonFileBase: mod => mod.title, uniqueFileBase: base => base, lessonGyosuanFiles: () => [],
+        addLessonHtmlToZip: async jobs => { jobs.forEach(({ folder, mod }) => folder.file('교안.html', `<html>${mod.title}</html>`)); return jobs.length; }
+    });
+    const listAll = env.c.document.querySelectorAll;
+    env.c.document.querySelectorAll = selector => (selector === '.subj-zip-cb:checked' ? [{ dataset: { subjId: 's1' } }] : listAll(selector));
+    vm.runInContext([fnFrom(COURSE_FLOW_SRC, 'course-flow.js')('function zipImageParts('),
+        uiFn('window.exportSelectedToZip = async function', '\n};\n'), uiFn('window.exportAllToZip = async function', '\n};\n')].join('\n'), env.c);
+    return env;
+}
+
+testAsync("교과 백업 ZIP(ui.js): 골라 둔 '빼기'는 그 파일 하나에만(이름 끝 _그림없음, 백업 시각에 세지 않음, 읽기용 그림은 그대로), 다음 파일은 기억한 방식", async () => {
+    const env = loadSubjectZip({ 'teacher:backup-images': 'separate' });
+    env.W.setBackupImageMode('none');
+    await env.W.exportAllToZip();
+    assert.strictEqual(env.seen.saved.at(-1), '국어_전체교안_그림없음.zip');
+    const files = FakeZip.last.files;
+    assert.ok(files['save_data.yaml'].includes('"imageMode": "none"') && !files['save_data.yaml'].includes('data:image'), '되살리기용 정보에는 그림이 없다');
+    assert.strictEqual(Object.keys(files).filter(name => name.startsWith('국어/1차시/images/')).length, 2, '읽기용 그림 파일은 그대로');
+    assert.ok(files['국어/1차시/교안.html']);
+    assert.strictEqual(env.lastBackupAt(), undefined, '그림을 뺀 파일은 백업 시각에 세지 않는다');
+    assert.ok(env.seen.toasts.at(-1).text.includes('_그림없음') && env.seen.toasts.at(-1).type === 'warning');
+    assert.strictEqual(env.W.backupImageMode(), 'separate', '빼기는 그 파일 하나로 끝난다');
+
+    await env.W.exportSelectedToZip();
+    assert.strictEqual(env.seen.saved.at(-1), '국어_교안.zip', '다음 파일은 기억한 방식(따로·가볍게)');
+    assert.ok(FakeZip.last.files['save_data.yaml'].includes('"imageMode": "separate"'));
+    assert.ok(env.seen.toasts.at(-1).text.includes('ZIP으로 다운로드'));
+
+    delete env.storage[vm.runInContext('BACKUP_TIME_KEY', env.c)]; // 여기서는 '빼기' 파일이 백업 시각을 남기지 않는지만 본다
+    env.W.setBackupImageMode('none');
+    await env.W.exportSelectedToZip();
+    assert.strictEqual(env.seen.saved.at(-1), '국어_교안_그림없음.zip');
+    assert.ok(!FakeZip.last.files['save_data.yaml'].includes('data:image'));
+    assert.strictEqual(env.lastBackupAt(), undefined);
+    assert.strictEqual(env.W.backupImageMode(), 'separate');
+
+    const big = loadSubjectZip();
+    FakeZip.maxText = 1000;
+    await big.W.exportAllToZip();
+    assert.strictEqual(big.seen.saved.at(-1), '국어_전체교안.zip');
+    assert.ok(FakeZip.last.files['save_data.yaml'].includes('"imageMode": "separate"'), "'함께'가 크기 한도에 걸리면 따로 담아 받는다");
+    assert.strictEqual(big.storage['teacher:backup-images'], 'separate');
+    assert.ok(big.seen.alerts[0].includes("'따로·가볍게'로 받았습니다"), big.seen.alerts[0]);
+    FakeZip.maxText = 0;
+
+    const fail = loadSubjectZip();
+    FakeZip.fail = new RangeError('Array buffer allocation failed');
+    await fail.W.exportSelectedToZip();
+    assert.strictEqual(fail.seen.saved.length, 0);
+    assert.deepStrictEqual(fail.seen.alerts, [fail.W.BACKUP_TOO_BIG_TEXT.subjects]);
+    assert.strictEqual(fail.storage['teacher:backup-images'], undefined);
+});
+
+// PC 폴더 흉내: 파일은 이름과 내용만, 폴더는 안에 폴더를 둔다
+function fakeFolder(name = '작업') {
+    const files = {};
+    const dirs = {};
+    const notFound = () => Object.assign(new Error('없음'), { name: 'NotFoundError' });
+    return {
+        name, files, dirs, kind: 'directory',
+        queryPermission: async () => 'granted',
+        requestPermission: async () => 'granted',
+        getDirectoryHandle: async (dir, opts = {}) => {
+            if (!dirs[dir]) { if (!opts.create) throw notFound(); dirs[dir] = fakeFolder(dir); }
+            return dirs[dir];
+        },
+        getFileHandle: async (file, opts = {}) => {
+            if (!(file in files) && !opts.create) throw notFound();
+            return {
+                getFile: async () => ({ size: files[file]?.length || 0 }),
+                createWritable: async () => {
+                    let data = '';
+                    return { write: async value => { data = value; }, close: async () => { files[file] = data; }, abort: async () => {} };
+                }
+            };
+        }
+    };
+}
+// state.js의 PC 폴더 저장을 실제로 돌린다(교과 MD는 지금 연 교과가 없어 건너뛴다)
+function loadFolderSync(stored = {}) {
+    const lessons = [{ id: 1, title: '1차시', images: { img_a: png(1) } }];
+    const folder = fakeFolder();
+    const env = loadSafety(stored, {
+        globalState: { courseTitle: '과정', subjects: [{ id: 's1', title: '국어', lessons }], lessonTrash: [], subjectTrash: [] },
+        currentSubjectId: null, projectFolderHandle: folder,
+        atob: text => Buffer.from(text, 'base64').toString('binary'),
+        markFolderSyncOk() {}, markFolderSyncFailed(err) { throw err; }, notifyFolderStopped() {}
+    });
+    vm.runInContext(['function simpleYamlStringify(', 'function base64ToUint8Array(', 'async function writeTextFile(', 'async function writeBinaryFile(',
+        'async function syncToLinkedFolder(', 'async function writeFolderImages(', 'async function folderFileSize('].map(start => stateFn(start)).join('\n'), env.c);
+    return { ...env, folder };
+}
+
+testAsync("PC 폴더 자동 저장: '빼기'는 받지 않고, '함께'가 크기 한도에 걸리면 따로 담아 저장한 뒤 한 번만 알린다", async () => {
+    const plain = loadFolderSync();
+    plain.W.setBackupImageMode('none');
+    assert.strictEqual(await plain.c.syncToLinkedFolder(), true);
+    const kept = plain.folder.files['save_data.yaml'];
+    assert.ok(kept.includes(png(1)) && !kept.includes('imageMode'), "골라 둔 '빼기'여도 폴더에는 그림을 담는다(기억한 '함께')");
+
+    const big = loadFolderSync();
+    const realYaml = big.c.simpleYamlStringify;
+    let inlineTries = 0;
+    big.c.simpleYamlStringify = (obj, indent = 0) => {
+        if (!indent && obj?.state && obj.imageMode === undefined) { inlineTries++; throw new RangeError('Invalid string length'); }
+        return realYaml(obj, indent);
+    };
+    assert.strictEqual(await big.c.syncToLinkedFolder(), true);
+    const data = big.folder.files['save_data.yaml'];
+    assert.ok(data.includes('imageMode: "separate"') && data.includes('teacher-image:'), data.slice(0, 200));
+    assert.strictEqual(Object.keys(big.folder.dirs['그림'].files).length, 1);
+    assert.strictEqual(big.storage['teacher:backup-images'], 'separate');
+    assert.strictEqual(big.seen.alerts.length, 1);
+    assert.ok(big.seen.alerts[0].includes("'따로·가볍게'로 저장했습니다") && big.seen.alerts[0].includes("'그림' 폴더도 함께 옮기세요"));
+    assert.strictEqual(await big.c.syncToLinkedFolder(), true);
+    assert.strictEqual(inlineTries, 1, '다음 저장부터는 바로 따로 담는다');
+    assert.strictEqual(big.seen.alerts.length, 1, '알림은 한 번');
+});
+
+testAsync("PC 폴더 자동 저장: '따로·가볍게'로도 저장하지 못하면 방식을 그대로 두고, 나중에 따로 저장되는 때 '그림' 폴더 안내를 한다", async () => {
+    const env = loadFolderSync();
+    const realYaml = env.c.simpleYamlStringify;
+    let separateFails = true;
+    env.c.simpleYamlStringify = (obj, indent = 0) => {
+        if (!indent && obj?.state && (obj.imageMode === undefined || separateFails)) throw new RangeError('Invalid string length');
+        return realYaml(obj, indent);
+    };
+    const failures = [];
+    env.c.markFolderSyncFailed = err => failures.push(err);
+    assert.strictEqual(await env.c.syncToLinkedFolder(), false);
+    assert.strictEqual(failures.length, 1);
+    assert.ok(env.W.isBackupTooBig(failures[0]), '띠에는 크기 안내가 나간다');
+    assert.strictEqual(env.folder.files['save_data.yaml'], undefined, '저장 파일은 쓰지 못했다');
+    assert.strictEqual(env.storage['teacher:backup-images'], undefined, '그림 담기는 그대로');
+    assert.strictEqual(env.W.folderImageMode(), 'inline');
+    assert.strictEqual(env.seen.alerts.length, 0);
+
+    separateFails = false;
+    assert.strictEqual(await env.c.syncToLinkedFolder(), true);
+    assert.ok(env.folder.files['save_data.yaml'].includes('imageMode: "separate"'));
+    assert.strictEqual(env.storage['teacher:backup-images'], 'separate');
+    assert.strictEqual(env.seen.alerts.length, 1, "폴더가 처음 '그림' 폴더 방식이 되는 때 알린다");
+    assert.ok(env.seen.alerts[0].includes("'그림' 폴더도 함께 옮기세요"), env.seen.alerts[0]);
+});
+
+// state.js의 백업 ZIP 되살리기를 실제로 돌린다(ZIP은 흉내, 상태 검사·기록·저장은 스텁)
+function loadZipImport() {
+    const lessons = [{ id: 1, title: '1차시', images: { a: png(1), b: png(2) } }];
+    const env = loadSafety({}, {
+        globalState: { courseTitle: '과정', subjects: [{ id: 's1', title: '내 교과', lessons }], lessonTrash: [], subjectTrash: [] },
+        courseData: lessons, currentSubjectId: 's1', location: { hash: '' },
+        safeJSONParse: text => JSON.parse(text),
+        sanitizeState: state => (state ? JSON.parse(JSON.stringify({ subjects: [], ...state })) : null),
+        archived: 0, saves: 0
+    });
+    env.c.archiveContents = async () => { env.c.archived++; };
+    env.c.saveState = async () => { env.c.saves++; };
+    env.c.renderSidebar = () => {};
+    vm.runInContext(stateFn('window.importProjectZip = async function', '\n};\n'), env.c);
+    return env;
+}
+const zipFile = (meta, error = null) => ({ target: { value: 'x', files: [{ name: '백업.zip', error, zip: { files: { 'save_data.yaml': { dir: false, async: async () => JSON.stringify(meta) } } } }] } });
+
+testAsync('백업 ZIP 되살리기: 그림을 뺀 파일이면 확인 창에 지금 그림 수를 보이고, 안전 백업을 받지 못하면 묻고, 멈추면 아무것도 바꾸지 않는다', async () => {
+    const meta = { format: 'teacher-backup', scope: 'full', imageMode: 'none', context: { courseTitle: '파일 과정', subjects: [{ id: 's9', title: '파일 교과', lessons: [{ id: 1, title: '1차시', images: {} }] }] } };
+    const stop = loadZipImport();
+    const before = stop.c.globalState;
+    FakeZip.fail = new RangeError('Invalid string length');
+    stop.seen.answers.push(true, false);
+    const event = zipFile(meta);
+    await stop.W.importProjectZip(event);
+    assert.strictEqual(stop.seen.confirms.length, 2);
+    assert.ok(stop.seen.confirms[0].message.includes("그림 담기 '빼기'") && stop.seen.confirms[0].message.includes('지금 그림 2장이 빈칸이 될 수 있습니다'), stop.seen.confirms[0].message);
+    assert.strictEqual(stop.seen.confirms[1].title, '불러오기 전 백업 실패');
+    assert.strictEqual(stop.c.globalState, before, '멈추면 지금 작업은 그대로');
+    assert.strictEqual(stop.c.archived + stop.c.saves, 0);
+    assert.ok(!stop.seen.alerts.some(text => text.includes('되살리지 못했습니다')), '파일 탓으로 돌리지 않는다');
+    assert.strictEqual(event.target.value, '');
+
+    FakeZip.fail = null;
+    const go = loadZipImport();
+    go.seen.answers.push(true);
+    await go.W.importProjectZip(zipFile({ ...meta, imageMode: 'separate' }));
+    assert.strictEqual(go.seen.confirms.length, 1);
+    assert.ok(!go.seen.confirms[0].message.includes('그림'), '그림이 든 파일이면 덧붙이지 않는다');
+    assert.ok(go.seen.saved.at(-1).endsWith('_불러오기전.zip'));
+    assert.strictEqual(go.c.globalState.subjects[0].title, '파일 교과');
+    assert.ok(go.seen.alerts.at(-1).startsWith('백업 파일로 과정 전체를 되살렸습니다'), go.seen.alerts.at(-1));
+
+    const huge = loadZipImport();
+    await huge.W.importProjectZip(zipFile(meta, new RangeError('Invalid string length')));
+    assert.strictEqual(huge.seen.alerts[0], huge.W.BACKUP_TOO_BIG_TEXT.openFile);
+});
+
+test("백업 ZIP은 모두 buildBackupZip으로, 불러오기 전 백업은 모두 safetyBackupOrAsk로, '빼기'를 품은 방식은 takeBackupImageMode로만", () => {
+    const jsDir = path.join(__dirname, '..', 'js');
+    const sources = fs.readdirSync(jsDir).filter(f => f.endsWith('.js') && f !== 'data-safety.js').map(f => [f, fs.readFileSync(path.join(jsDir, f), 'utf8')]);
+    const users = pattern => sources.filter(([, s]) => pattern.test(s)).map(([f]) => f);
+    assert.deepStrictEqual(users(/\bwriteBackupData\(/), [], '크기 한도에 걸리면 따로 담아 다시 만드는 길(buildBackupZip)을 거친다');
+    assert.deepStrictEqual(users(/\bdownloadSafetyBackup\(/), [], '받지 못하면 묻는 길(safetyBackupOrAsk)을 거친다');
+    assert.deepStrictEqual(users(/\bbackupImageMode\(/), [], "'빼기'를 품은 방식은 백업 ZIP을 만들 때 takeBackupImageMode로만 가져간다");
+    assert.ok(STATE_SRC.includes('folderImageMode()'), "PC 폴더 자동 저장은 '빼기'를 받지 않는 방식으로 담는다");
+});
+
+test('화면·설명 글: 뺀 그림을 일괄 이미지 찾기로 채운다는 말이 없고, 빼기는 바로 받는 백업 하나만이라고 알린다', () => {
+    const rootDir = path.join(__dirname, '..');
+    const html = fs.readFileSync(path.join(rootDir, 'index.html'), 'utf8');
+    const readme = fs.readFileSync(path.join(rootDir, 'README.md'), 'utf8');
+    const js = fs.readdirSync(path.join(rootDir, 'js')).filter(f => f.endsWith('.js')).map(f => fs.readFileSync(path.join(rootDir, 'js', f), 'utf8')).join('\n');
+    assert.ok(!/일괄 이미지 찾기로 (다시 )?채[울운]/.test(html + readme + js), '일괄 이미지 찾기는 아직 채우지 않은 그림 태그만 채운다');
+    const none = html.match(/data-backup-images="none"[^>]*title="([^"]+)"/)[1];
+    assert.ok(none.includes('하나만') && none.includes('_그림없음') && none.includes('PC 폴더 자동 저장'), none);
+    assert.ok(!none.includes('가장 가벼움'), '읽기용 파일의 그림은 그대로라 가장 가볍다고 하지 않는다');
+    // '빼기'는 같은 메뉴의 백업 버튼에 쓰이므로, 그 버튼에 마우스를 올린 때 '글·그림과 함께'만 말하지 않는다
+    const subjectZip = html.match(/onclick="smartZipExport\(\); toggleExportDropdown\(\);" title="([^"]+)"/)[1];
+    assert.ok(subjectZip.includes('빼기') && subjectZip.includes('되살리기용 그림'), subjectZip);
+});
+
+test('크기 안내는 할 수 있는 길을 말한다(개요 화면 교과 목록에서 교과를 하나씩 체크해 나눠 받기)', () => {
+    const texts = ctx.window.BACKUP_TOO_BIG_TEXT;
+    Object.entries(texts).forEach(([kind, text]) => assert.ok(!text.includes('교과별로'), `${kind}: ${text}`));
+    ['full', 'subjects', 'folder', 'openFile'].forEach(kind => assert.ok(texts[kind].includes('개요 화면 교과 목록에서 교과를 하나씩 체크해'), kind));
+});
+
+(async () => {
+    for (const { name, fn } of pending) {
+        count++;
+        FakeZip.reset();
+        try { await fn(); console.log(`ok - ${name}`); } catch (e) { failed++; console.log(`FAIL - ${name}\n  ${e.message}`); }
+    }
+    console.log(`\n${count - failed}/${count} passed`);
+    if (failed) process.exit(1);
+})();

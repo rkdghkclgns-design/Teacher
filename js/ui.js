@@ -939,6 +939,7 @@ window.exportSelectedToZip = async function () {
     if (typeof JSZip === 'undefined') return window.showAlert('JSZip을 불러오는 중입니다.');
     const checkedIds = [...document.querySelectorAll('.subj-zip-cb:checked')].map(cb => cb.dataset.subjId);
     if (checkedIds.length === 0) return window.showAlert('내보낼 교과를 선택해주세요.');
+    const imageMode = takeBackupImageMode(); // 이 파일에 쓸 그림 담기. 골라 둔 '빼기'는 이 파일에만 쓴다(data-safety.js)
 
     const zip = new JSZip();
     let totalFiles = 0;
@@ -996,17 +997,16 @@ window.exportSelectedToZip = async function () {
     if (totalFiles === 0) return window.showAlert('내보낼 내용이 없습니다.');
 
     try {
-        writeBackupData(zip, subjectsBackupMeta(checkedIds)); // 내보내기·백업 → 백업 ZIP으로 되살리기로 이 교과들을 되살린다(그림 담는 방식은 메뉴에서 고름)
-        const blob = await zip.generateAsync({ type: 'blob' });
-        const zipName = checkedIds.length === 1
-            ? `${(globalState.subjects.find(s => String(s.id) === String(checkedIds[0]))?.title || '교과').replace(/[^\w가-힣\s]/g, '')}_교안.zip`
-            : `교안_${checkedIds.length}개교과.zip`;
-        saveAs(blob, zipName);
-        recordBackupTime();
-        if (window.showToast) window.showToast(`📦 ${totalFiles}개 파일이 ZIP으로 다운로드되었습니다.`, 'success');
+        // 내보내기·백업 → 백업 ZIP으로 되살리기로 이 교과들을 되살린다. '함께'가 크기 한도에 걸리면 '따로·가볍게'로 다시 만든다(data-safety.js)
+        const result = await buildBackupZip(zip, zip, subjectsBackupMeta(checkedIds), imageMode);
+        const baseName = checkedIds.length === 1
+            ? `${(globalState.subjects.find(s => String(s.id) === String(checkedIds[0]))?.title || '교과').replace(/[^\w가-힣\s]/g, '')}_교안`
+            : `교안_${checkedIds.length}개교과`;
+        saveAs(result.blob, backupFileName(baseName, result.mode));
+        finishBackupDownload(result, { successText: `📦 ${totalFiles}개 파일이 ZIP으로 다운로드되었습니다.` });
     } catch (e) {
         console.error('[ZIP]', e);
-        window.showAlert('ZIP 생성 오류: ' + e.message);
+        window.showAlert(isBackupTooBig(e) ? BACKUP_TOO_BIG_TEXT.subjects : 'ZIP 생성 오류: ' + e.message);
     }
 };
 
@@ -1053,6 +1053,7 @@ window.exportAllToZip = async function () {
     if (!subj) return window.showAlert('교과를 먼저 선택해주세요.');
     const lessonList = subj.lessons || subj.modules || [];
     if (!lessonList.length) return window.showAlert('내보낼 차시가 없습니다.');
+    const imageMode = takeBackupImageMode(); // 이 파일에 쓸 그림 담기. 골라 둔 '빼기'는 이 파일에만 쓴다(data-safety.js)
 
     const zip = new JSZip();
     const subjectName = (subj.title || subj.name || '교과').replace(/[^\w가-힣\s]/g, '').trim();
@@ -1122,14 +1123,13 @@ window.exportAllToZip = async function () {
     if (totalFiles === 0) return window.showAlert('내보낼 내용이 없습니다.');
 
     try {
-        writeBackupData(zip, subjectsBackupMeta([subj.id])); // 내보내기·백업 → 백업 ZIP으로 되살리기로 이 교과를 되살린다(그림 담는 방식은 메뉴에서 고름)
-        const blob = await zip.generateAsync({ type: 'blob' });
-        saveAs(blob, `${subjectName}_전체교안.zip`);
-        recordBackupTime();
-        if (window.showToast) window.showToast(`📦 ${totalFiles}개 파일이 ZIP으로 다운로드되었습니다.`, 'success');
+        // 내보내기·백업 → 백업 ZIP으로 되살리기로 이 교과를 되살린다. '함께'가 크기 한도에 걸리면 '따로·가볍게'로 다시 만든다(data-safety.js)
+        const result = await buildBackupZip(zip, zip, subjectsBackupMeta([subj.id]), imageMode);
+        saveAs(result.blob, backupFileName(`${subjectName}_전체교안`, result.mode));
+        finishBackupDownload(result, { successText: `📦 ${totalFiles}개 파일이 ZIP으로 다운로드되었습니다.` });
     } catch (e) {
         console.error('[ZIP Export]', e);
-        window.showAlert('ZIP 생성 중 오류: ' + e.message);
+        window.showAlert(isBackupTooBig(e) ? BACKUP_TOO_BIG_TEXT.subjects : 'ZIP 생성 중 오류: ' + e.message);
     }
 };
 

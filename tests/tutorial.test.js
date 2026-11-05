@@ -98,5 +98,11 @@ test('예전 공지 창·말풍선·옆 패널은 남아 있지 않다', () => {
     assert.ok(!/showNoticePopup|tutorial-overlay|tutorial-popover|tutorial-spotlight|tutorial-aside|tutorial-docked/.test(html + scripts));
 });
 
+test("내보내기 단계의 '그림 담기'는 빼기가 바로 받는 백업 하나에만 쓰인다고 말한다", () => {
+    const point = steps.find(s => s.id === 'export').points.find(p => p.title === '그림 담기');
+    assert.ok(point && point.text.includes('하나만') && point.text.includes('_그림없음'));
+    assert.ok(!point.text.includes('글만 담습니다'), '빼기가 늘 글만 담는다고 말하지 않는다');
+});
+
 console.log(`\n${count - failed}/${count} passed`);
 if (failed) process.exit(1);

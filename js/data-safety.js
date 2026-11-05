@@ -92,12 +92,14 @@ function mergeSubjects(current, incoming) {
     ];
 }
 
-function describeSubjectImport(plan) {
+// opts.noImages: 그림을 뺀 파일('빼기'), opts.lostImages: 빈칸이 될 바뀌는 교과의 지금 그림 수
+function describeSubjectImport(plan, { noImages = false, lostImages = 0 } = {}) {
     const lines = [
         ...plan.replaced.map(subject => `· ${subject.title} — 지금 교과를 파일 내용으로 바꿉니다(지금 내용은 교과 휴지통으로)`),
         ...plan.added.map(subject => `· ${subject.title} — 새로 추가합니다`)
     ];
-    return `교과 ${plan.replaced.length + plan.added.length}개를 불러옵니다.\n${lines.join('\n')}\n\n다른 교과는 그대로 둡니다. 불러오기 전에 지금 상태를 백업 파일로 내려받습니다.`;
+    const imageNote = noImages ? noImagesImportNote('subjects', lostImages) : '';
+    return `교과 ${plan.replaced.length + plan.added.length}개를 불러옵니다.\n${lines.join('\n')}\n\n다른 교과는 그대로 둡니다. 불러오기 전에 지금 상태를 백업 파일로 내려받습니다.${imageNote}`;
 }
 
 function backupAgeLabel(iso, now = Date.now()) {
@@ -177,30 +179,70 @@ function subjectsBackupMeta(subjectIds) {
     return backupMeta('subjects', { courseTitle: snapshot.courseTitle, subjects: snapshot.subjects.filter(subject => ids.has(String(subject.id))) });
 }
 
-// 지금 작업 전체를 되살릴 수 있는 백업 파일을 내려받는다(불러오기·폴더 연결 직전)
 /* ---------- 백업에 그림 담는 방식 (내보내기·백업 메뉴에서 고른다) ---------- */
-// inline: save_data.yaml 안에 그대로(예전과 같음, 파일 하나로 끝)
+// inline: save_data.yaml 안에 그대로(예전과 같음, 파일 하나로 끝). 크기 한도에 걸리면 저절로 separate로 바꾼다
 // separate: '그림' 폴더의 파일로 떼고 같은 그림은 한 번만(작업 기록·휴지통의 사본까지 한 장으로). 가볍고 큰 과정도 된다
-// none: 그림을 빼고 글만(가장 가벼움). 되살리면 그림 자리가 비고 일괄 이미지 찾기로 다시 채운다
+// none('빼기'): 기억하지 않는다. 메뉴를 연 채 바로 받는 백업 ZIP 하나의 save_data.yaml에서만 그림을 뺀다(읽기용 교안.html·그림 파일에서는 빼지 않는다).
+//   PC 폴더 자동 저장과 불러오기 전 백업에는 쓰지 않는다. 되살리면 그림 자리가 빈다(과정 전체 백업은 첨부파일의 그림이 열린 교과에 돌아올 수 있다).
+//   뺀 그림은 다시 채워지지 않는다(일괄 이미지 찾기는 아직 채우지 않은 그림 태그만 채운다)
 const BACKUP_IMAGE_KEY = 'teacher:backup-images';
 const BACKUP_IMAGE_MODES = ['inline', 'separate', 'none'];
+const BACKUP_IMAGE_LABEL = { inline: '함께', separate: '따로·가볍게', none: '빼기' };
+const BACKUP_NO_IMAGES_TAG = '_그림없음'; // 그림을 뺀 백업 파일 이름 끝
 const BACKUP_IMAGE_REF = 'teacher-image:';
 const BACKUP_IMAGE_DIR = '그림';
 const BACKUP_DATA_URL = /^data:(image\/[\w.+-]+);base64,([A-Za-z0-9+/=]+)$/;
 const BACKUP_IMAGE_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/svg+xml': 'svg' };
 const BACKUP_IMAGE_MIN = 64; // 이보다 짧은 글은 그림으로 보지 않는다
 
-function backupImageMode() {
+let backupImagesDropOnce = false; // '빼기'를 골라 두었다(메뉴를 연 채 바로 받는 백업 하나. 기억하지 않는다)
+let backupInlineTooBig = false; // 이 창에서 '함께'가 크기 한도에 걸려 '따로·가볍게'로 바꿨다(저장소에 적지 못해도 따로 담는다)
+
+// 이 브라우저에 기억한 방식: 'inline' | 'separate'. 예전에 기억한 '빼기'는 그림을 지키는 '따로·가볍게'로 읽는다
+function storedBackupImageMode() {
+    if (backupInlineTooBig) return 'separate';
     try {
         const mode = localStorage.getItem(BACKUP_IMAGE_KEY);
-        return BACKUP_IMAGE_MODES.includes(mode) ? mode : 'inline';
+        return mode === 'separate' || mode === 'none' ? 'separate' : 'inline';
     } catch (err) {
         return 'inline';
     }
 }
 
+// 메뉴에 눌려 보이는 방식. '빼기'는 골라 둔 동안만
+function backupImageMode() {
+    return backupImagesDropOnce ? 'none' : storedBackupImageMode();
+}
+
+// 백업 ZIP 하나를 만들기 시작할 때 한 번 부른다. 골라 둔 '빼기'는 이 파일에만 쓰고 바로 푼다
+function takeBackupImageMode() {
+    const mode = backupImageMode();
+    if (mode === 'none') clearBackupImagesDrop();
+    return mode;
+}
+
+// PC 폴더 자동 저장에 쓸 방식. '빼기'는 받지 않는다
+function folderImageMode() {
+    return storedBackupImageMode();
+}
+
+// 골라 둔 '빼기'를 푼다(그 백업을 만들기 시작했거나 메뉴 밖을 눌렀을 때)
+function clearBackupImagesDrop() {
+    if (!backupImagesDropOnce) return;
+    backupImagesDropOnce = false;
+    renderBackupImageMode();
+}
+
 function setBackupImageMode(mode) {
     if (!BACKUP_IMAGE_MODES.includes(mode)) return;
+    if (mode === 'none') {
+        backupImagesDropOnce = true;
+        renderBackupImageMode();
+        window.showToast?.(`빼기는 이 메뉴에서 바로 받는 백업 하나에만 씁니다. 받거나 메뉴를 닫으면 '${BACKUP_IMAGE_LABEL[storedBackupImageMode()]}'로 돌아갑니다.`, 'info');
+        return;
+    }
+    backupImagesDropOnce = false;
+    backupInlineTooBig = false; // 직접 고르면 그 방식을 따른다
     try {
         localStorage.setItem(BACKUP_IMAGE_KEY, mode);
     } catch (err) {
@@ -213,6 +255,45 @@ function renderBackupImageMode() {
     const mode = backupImageMode();
     document.querySelectorAll?.('[data-backup-images]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.backupImages === mode)));
 }
+
+// '함께'로는 한 파일에 담지 못할 만큼 그림이 많으면 '따로·가볍게'로 바꿔 기억한다(따로 담기에 성공한 뒤에만 부른다). 이번에 바꿨으면 true
+function switchBackupImagesToSeparate() {
+    if (storedBackupImageMode() === 'separate') return false;
+    backupInlineTooBig = true;
+    try {
+        localStorage.setItem(BACKUP_IMAGE_KEY, 'separate');
+    } catch (err) {
+        console.warn('[백업] 그림 담는 방식을 저장하지 못했습니다:', err.message);
+    }
+    renderBackupImageMode();
+    return true;
+}
+
+// 그림이 많아 글자 수·메모리 한도에 걸린 오류인지(V8: 'Invalid string length', 'Array buffer allocation failed' 등). 너무 깊은 구조(call stack)는 크기 문제가 아니다
+function isBackupTooBig(err) {
+    const message = String(err?.message || '');
+    if (/call stack/i.test(message)) return false;
+    return err instanceof RangeError || /Invalid string length|allocation failed|Invalid (typed )?array length/i.test(message);
+}
+
+// 백업 ZIP 파일 이름. 그림을 뺀 파일은 끝에 _그림없음을 붙인다(받은 사람도, 나중의 나도 알아보게)
+const backupFileName = (base, mode) => `${base}${mode === 'none' ? BACKUP_NO_IMAGES_TAG : ''}.zip`;
+
+// 크기 한도 안내. '함께'가 걸리면 저절로 '따로·가볍게'로 다시 만들므로, 여기까지 오면 따로(또는 빼기)로도 담지 못한 것이다(그림 담기는 바꾸지 않았다)
+const BACKUP_TOO_BIG_TEXT = {
+    full: '그림이 많아 과정 전체 백업 파일을 만들지 못했습니다(브라우저가 한 번에 다룰 수 있는 크기를 넘었습니다). 개요 화면 교과 목록에서 교과를 하나씩 체크해 교과 백업 ZIP으로 나눠 받아 주세요.',
+    subjects: '그림이 많아 교과 백업 ZIP을 만들지 못했습니다(브라우저가 한 번에 다룰 수 있는 크기를 넘었습니다). 개요 화면 교과 목록에서 교과를 하나씩 체크해 나눠 받거나, 다른 브라우저 탭을 닫고 다시 해 보세요.',
+    folder: '그림이 많아 PC 폴더에 저장하지 못했습니다(브라우저가 한 번에 다룰 수 있는 크기를 넘었습니다). 브라우저에는 저장됐습니다. 개요 화면 교과 목록에서 교과를 하나씩 체크해 교과 백업 ZIP으로 나눠 받아 두세요.',
+    openFile: "이 백업 파일이 너무 커서 이 브라우저에서 열지 못했습니다(브라우저가 한 번에 다룰 수 있는 크기를 넘었습니다). 이 파일을 만든 브라우저에서 내보내기·백업 → 그림 담기를 '따로·가볍게'로 골라 다시 받거나, 개요 화면 교과 목록에서 교과를 하나씩 체크해 교과 백업 ZIP으로 나눠 받아 하나씩 되살려 주세요.",
+    openFolder: "이 폴더의 저장본이 너무 커서 열지 못했습니다(브라우저가 한 번에 다룰 수 있는 크기를 넘었습니다). 이 폴더에 저장하던 브라우저에서 내보내기·백업 → 그림 담기를 '따로·가볍게'로 고르면 다음 저장부터 폴더가 가벼워져 열 수 있습니다."
+};
+
+// '함께'로 담지 못해 '따로·가볍게'로 다시 만들었을 때 알리는 말. folderToo는 PC 폴더가 이어져 있을 때 받은 쪽 알림에 덧붙인다
+const BACKUP_FALLBACK_TEXT = {
+    download: "그림이 많아 '함께'로는 한 파일에 담지 못해 '따로·가볍게'로 받았습니다. 그림은 ZIP 안 '그림' 폴더에 들어 있고, 되살리면 그림도 돌아옵니다.\n앞으로도 따로 담도록 내보내기·백업 → 그림 담기를 '따로·가볍게'로 바꿨습니다.",
+    folderToo: "\nPC 폴더 자동 저장도 다음 저장부터 따로 담습니다. 폴더를 옮기거나 복사할 때는 안의 '그림' 폴더도 함께 옮기세요.",
+    folder: "그림이 많아 PC 폴더에 '함께'로는 저장하지 못해 '따로·가볍게'로 저장했습니다. 그림은 그 폴더 안 '그림' 폴더에 따로 저장됩니다. 폴더를 옮기거나 복사할 때는 '그림' 폴더도 함께 옮기세요.\n앞으로 받는 백업도 따로 담도록 내보내기·백업 → 그림 담기를 '따로·가볍게'로 바꿨습니다."
+};
 
 // 같은 그림은 같은 이름이 되게 내용으로 이름을 짓는다(32비트 해시 둘 + 길이)
 function backupImageKey(text) {
@@ -271,6 +352,39 @@ function attachBackupImages(value, files) {
     return walk(value);
 }
 
+// 그림(data:image 글자 값) 수. 같은 그림은 한 번만 센다(떼어 내는 기준과 같다. 글 속에 섞인 그림은 세지 않는다)
+function countBackupImages(value) {
+    const seen = new Set();
+    const walk = node => {
+        if (isBackupImage(node)) seen.add(node);
+        else if (Array.isArray(node)) node.forEach(walk);
+        else if (node && typeof node === 'object') Object.values(node).forEach(walk);
+    };
+    walk(value);
+    return seen.size;
+}
+
+// 지금 작업(교과·설정)의 그림 수. 작업 기록·휴지통은 불러와도 남으므로 세지 않는다
+const currentImageCount = () => countBackupImages(currentSnapshot());
+
+// 그림을 뺀 백업('빼기')을 불러오기 전 확인 창 끝에 덧붙이는 말. kind: 'full' | 'subjects' | 'folder', lost: 빈칸이 될 지금 그림 수
+// 빠진 것은 되살리기용 정보(save_data.yaml)의 그림뿐이다. 읽기용 교안.html·그림 파일(과정 전체 백업은 첨부파일)에는 그림이 있으므로 '파일에 그림이 없다'고 하지 않는다.
+// 교과 백업은 읽기용 그림으로 되살리지 않는다. 과정 전체 백업은 첨부파일의 그림이 열린 교과의 차시에 돌아올 수 있어 '될 수 있습니다'로 말한다
+function noImagesImportNote(kind, lost = 0) {
+    const head = kind === 'folder'
+        ? "이 폴더는 그림 담기 '빼기'로 저장되어 되살리기용 정보에는 그림이 담기지 않았습니다."
+        : "이 파일은 그림 담기 '빼기'로 받은 백업이라 되살리기용 정보에는 그림이 담기지 않았습니다.";
+    const readable = kind === 'subjects' ? ' 파일 안 읽기용 교안.html·그림 파일의 그림은 되살리지 않습니다.' : '';
+    const count = Number(lost) || 0;
+    if (count <= 0) return `\n\n${head}${readable} 불러온 교안의 그림 자리는 빈칸으로 보일 수 있습니다.`;
+    const body = {
+        full: ` 되살리면 지금 그림 ${count}장이 빈칸이 될 수 있습니다. 지금 그림은 불러오기 전에 받는 백업 파일에 남습니다.`,
+        subjects: ` 불러오면 바뀌는 교과의 지금 그림 ${count}장이 빈칸이 됩니다. 지금 그림은 교과 휴지통과 불러오기 전에 받는 백업 파일에 남습니다.`,
+        folder: ` 열면 지금 그림 ${count}장이 빈칸이 됩니다. 지금 그림은 불러오기 전에 받는 백업 파일에 남습니다.`
+    };
+    return `\n\n${head}${readable}${body[kind] || body.full}`;
+}
+
 // 그림 파일 이름·내용(base64)과 그 반대
 function backupImageFile(key, dataUrl) {
     const match = String(dataUrl).match(BACKUP_DATA_URL);
@@ -283,8 +397,9 @@ function backupImageFromFile(name, base64) {
     return { key: String(name).replace(/\.[^.]+$/, ''), dataUrl: `data:${mime};base64,${base64}` };
 }
 
-// 백업 ZIP(또는 그 안의 폴더)에 save_data.yaml을 쓴다. 고른 방식에 따라 그림은 안에 두거나, '그림/' 파일로 떼거나, 뺀다
-function writeBackupData(folder, meta, mode = backupImageMode()) {
+// 백업 ZIP(또는 그 안의 폴더)에 save_data.yaml을 쓴다. 방식에 따라 그림은 안에 두거나, '그림/' 파일로 떼거나, 뺀다.
+// 방식을 주지 않으면 기억한 방식('빼기'는 아님). 같은 이름으로 다시 쓰면 앞의 save_data.yaml을 덮어쓴다(JSZip)
+function writeBackupData(folder, meta, mode = storedBackupImageMode()) {
     if (mode === 'inline') return folder.file('save_data.yaml', JSON.stringify(meta, null, 2));
     const { value, files } = detachBackupImages(meta, mode);
     folder.file('save_data.yaml', JSON.stringify({ ...value, imageMode: mode }, null, 2));
@@ -297,15 +412,86 @@ function writeBackupData(folder, meta, mode = backupImageMode()) {
     return null;
 }
 
+// write(mode)로 써 본다. '함께'가 크기 한도에 걸리면 '따로·가볍게'로 다시 쓰고, 그게 되면 기억한 방식도 '따로·가볍게'로 바꾼다(백업 ZIP·PC 폴더 저장이 같이 쓴다).
+// 따로 쓰기도 실패하면 기억한 방식은 그대로 두고 그 오류를 던진다(알리지 않은 채 PC 폴더가 '그림' 폴더 방식으로 바뀌지 않게)
+// 돌려줌: { mode: 실제로 쓴 방식, fellBack: 따로 담아 다시 썼는지, switched: 이번에 기억한 방식을 바꿨는지 }
+async function withSeparateFallback(mode, write) {
+    if (mode !== 'inline') {
+        await write(mode);
+        return { mode, fellBack: false, switched: false };
+    }
+    try {
+        await write('inline');
+        return { mode: 'inline', fellBack: false, switched: false };
+    } catch (err) {
+        if (!isBackupTooBig(err)) throw err;
+        console.warn('[백업] 그림이 많아 따로 담아 다시 만듭니다:', err.message);
+        await write('separate');
+        const switched = switchBackupImagesToSeparate();
+        return { mode: 'separate', fellBack: true, switched };
+    }
+}
+
+// 되살리기용 save_data.yaml을 넣고 ZIP을 만든다(folder: zip 자신이나 그 안의 폴더). 다시 만들 때는 같은 이름의 save_data.yaml을 덮어쓴다
+async function buildBackupZip(zip, folder, meta, mode) {
+    let blob = null;
+    const result = await withSeparateFallback(mode, async used => {
+        writeBackupData(folder, meta, used);
+        blob = await zip.generateAsync({ type: 'blob' });
+    });
+    return { ...result, blob };
+}
+
+// '함께'로 담지 못해 '따로·가볍게'로 다시 만들었을 때 알린다(kind: 'download' | 'folder'). 받은 쪽은 PC 폴더가 이어져 있으면 그 말도 덧붙인다
+function notifyBackupFallback(kind) {
+    const folderOn = kind !== 'folder' && typeof projectFolderHandle !== 'undefined' && !!projectFolderHandle;
+    window.showAlert?.((kind === 'folder' ? BACKUP_FALLBACK_TEXT.folder : BACKUP_FALLBACK_TEXT.download) + (folderOn ? BACKUP_FALLBACK_TEXT.folderToo : ''));
+}
+
+// 백업 ZIP을 받은 뒤 한 번에 정리한다: 백업 시각 기록(그림을 뺀 파일은 세지 않음)과 알림 하나
+// countsAsBackup: false면 시각을 남기지 않는다(교과 백업을 백업으로 세지 않을 때)
+function finishBackupDownload(result, { successText = '', countsAsBackup = true } = {}) {
+    if (result.mode === 'none') {
+        window.showToast?.(`그림을 뺀 백업을 받았습니다(파일 이름 끝 ${BACKUP_NO_IMAGES_TAG}). 위쪽 백업 시각에는 세지 않습니다.`, 'warning');
+        return;
+    }
+    if (countsAsBackup) recordBackupTime();
+    if (result.fellBack) return notifyBackupFallback('download');
+    if (successText) window.showToast?.(successText, 'success');
+}
+
+// 지금 작업 전체를 되살릴 수 있는 백업 파일을 내려받는다(불러오기·폴더 열기 직전).
+// 되살릴 때 쓸 파일이므로 고른 방식과 상관없이 늘 '따로·가볍게'로 담는다(그림을 지키고, 큰 과정도 글자 수 한도에 걸리지 않게)
 async function downloadSafetyBackup(label) {
     const zip = new JSZip();
     const extra = { history: contentHistory, trash: { lessonTrash: globalState.lessonTrash || [], subjectTrash: globalState.subjectTrash || [] } };
-    // 되살릴 때 쓸 안전 백업이므로 '빼기'를 골랐어도 그림은 따로 담는다
-    const mode = backupImageMode() === 'none' ? 'separate' : backupImageMode();
-    writeBackupData(zip, backupMeta('full', currentSnapshot(), new Date(), extra), mode);
+    writeBackupData(zip, backupMeta('full', currentSnapshot(), new Date(), extra), 'separate');
     const blob = await zip.generateAsync({ type: 'blob' });
     saveAs(blob, `교안백업_${backupStamp()}_${label}.zip`);
     recordBackupTime();
+}
+
+// 안전 백업 이름표마다, 받지 못했을 때 보일 제목과 말
+const SAFETY_BACKUP_ACTIONS = {
+    '불러오기전': { title: '불러오기 전 백업 실패', go: '불러오면' },
+    '폴더연결전': { title: '폴더 열기 전 백업 실패', go: '폴더를 열면' }
+};
+
+// 불러오기 직전의 안전 백업. 받지 못하면 까닭을 알리고 백업 없이 계속할지 묻는다. 계속하면 true, 멈추면 false
+async function safetyBackupOrAsk(label) {
+    window.showToast?.('바꾸기 전에 지금 상태를 백업 파일로 만드는 중입니다.', 'info');
+    try {
+        await downloadSafetyBackup(label);
+        return true;
+    } catch (err) {
+        console.error('[백업] 지금 상태를 백업 파일로 받지 못했습니다:', err);
+        const action = SAFETY_BACKUP_ACTIONS[label] || { title: '백업 실패', go: '계속하면' };
+        const reason = isBackupTooBig(err) ? '그림이 많아 브라우저가 한 번에 다룰 수 있는 크기를 넘었습니다' : (err?.message || '알 수 없는 오류');
+        return confirmAsync(
+            `지금 상태를 백업 파일로 받지 못했습니다(${reason}).\n이대로 ${action.go} 지금 작업으로 되돌릴 백업 파일이 없습니다.\n\n멈추고, 개요 화면 교과 목록에서 교과를 하나씩 체크해 교과 백업 ZIP을 먼저 받아 두기를 권합니다.`,
+            { okLabel: '백업 없이 계속', tone: 'danger', title: action.title }
+        );
+    }
 }
 
 function readBackupTime() {
@@ -366,11 +552,15 @@ async function importSubjectsBackup(meta) {
     const incoming = (sanitizeState({ subjects: meta.context?.subjects || [] }) || { subjects: [] }).subjects;
     if (!incoming.length) return window.showAlert('이 파일에는 되살릴 교과가 없습니다.');
     const plan = planSubjectImport(globalState.subjects, incoming);
-    const ok = await confirmAsync(describeSubjectImport(plan), { okLabel: '백업 받고 불러오기', tone: 'primary', title: '교과 불러오기' });
+    // 그림을 뺀 파일('빼기')이면 확인 창에 알리고, 빈칸이 될 바뀌는 교과의 지금 그림 수를 함께 보인다
+    const noImages = meta.imageMode === 'none';
+    const replacedIds = new Set(plan.replaced.map(subject => String(subject.id)));
+    const lostImages = noImages ? countBackupImages(currentSnapshot().subjects.filter(subject => replacedIds.has(String(subject.id)))) : 0;
+    const ok = await confirmAsync(describeSubjectImport(plan, { noImages, lostImages }), { okLabel: '백업 받고 불러오기', tone: noImages ? 'danger' : 'primary', title: '교과 불러오기' });
     if (!ok) return;
     const openReplaced = plan.replaced.some(subject => String(subject.id) === String(currentSubjectId));
     if (openReplaced) window.saveRawContent?.(); // 고치던 원문은 바뀌기 전 교과(휴지통으로 갈 쪽)에 먼저 넣는다
-    await downloadSafetyBackup('불러오기전');
+    if (!(await safetyBackupOrAsk('불러오기전'))) return; // 받지 못하면 까닭을 알리고 백업 없이 계속할지 묻는다
     plan.replaced.forEach(subject => moveSubjectToTrash(globalState.subjects.find(item => String(item.id) === String(subject.id)), '불러오기 전'));
     globalState.subjects = mergeSubjects(globalState.subjects, incoming);
     const open = globalState.subjects.find(subject => String(subject.id) === String(currentSubjectId));
@@ -578,9 +768,17 @@ if (typeof window !== 'undefined') {
         isSafeStateId, stateText, safeReferenceUrls, normalizeLessonId, assignLessonIds, renumberLessons, capHistory,
         mergeHistory, historyMergeNote, historyCapText,
         cleanTrashLesson, backupImageMode, setBackupImageMode, renderBackupImageMode, backupImageKey, detachBackupImages,
-        attachBackupImages, backupImageFile, backupImageFromFile, writeBackupData, isBackupImageName, base64ByteLength
+        attachBackupImages, backupImageFile, backupImageFromFile, writeBackupData, isBackupImageName, base64ByteLength,
+        storedBackupImageMode, takeBackupImageMode, folderImageMode, clearBackupImagesDrop, switchBackupImagesToSeparate,
+        isBackupTooBig, backupFileName, withSeparateFallback, buildBackupZip, notifyBackupFallback, finishBackupDownload,
+        safetyBackupOrAsk, countBackupImages, currentImageCount, noImagesImportNote,
+        BACKUP_IMAGE_LABEL, BACKUP_NO_IMAGES_TAG, BACKUP_TOO_BIG_TEXT, BACKUP_FALLBACK_TEXT
     });
     if (typeof document !== 'undefined' && document.addEventListener) {
+        // '빼기'는 메뉴를 연 채 바로 받는 백업 하나에만 쓴다. 메뉴 밖을 누르면 그 버튼이 일하기 전에(잡기 단계) 푼다(머리줄 백업 시각·교과 목록 ZIP 버튼)
+        document.addEventListener('click', event => {
+            if (!event.target?.closest?.('#export-dropdown-menu')) clearBackupImagesDrop();
+        }, true);
         document.addEventListener('DOMContentLoaded', () => {
             renderBackupIndicator();
             renderBackupImageMode();
