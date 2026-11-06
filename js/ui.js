@@ -667,8 +667,13 @@ function deleteSubject(id) {
 
     const subject = globalState.subjects.find(s => String(s.id) === String(id));
     if (!subject) return;
+    // 생성이 도는 동안에는 교과를 휴지통으로 옮기지 않는다(그 교과의 차시를 만드는 중이면 만들던 결과가 버려진다, course-meta.js trashRestoreBlocked)
+    const busy = () => typeof trashRestoreBlocked === 'function' && trashRestoreBlocked();
+    if (busy()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
     showConfirm(`'${subject.title}' 교과를 휴지통으로 옮깁니다(차시 ${(subject.lessons || []).length}개 포함).\n교과 목록 아래 휴지통에서 30일 동안 되살릴 수 있습니다.`, () => {
 
+        if (busy()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.'); // 확인 창을 띄운 사이 시작된 생성
+        if (String(id) === String(currentSubjectId)) window.saveRawContent?.(); // 고치던 원문을 먼저 그 차시에 넣고 옮긴다
         moveSubjectToTrash(subject, '삭제');
         globalState.subjects = globalState.subjects.filter(s => String(s.id) !== String(id));
         if (String(id) === String(currentSubjectId)) {
@@ -1624,7 +1629,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // F1: 도움말(누르고 있어도 한 번만 띄운다)
         if (e.key === 'F1') {
             e.preventDefault();
-            if (!e.repeat) window.showAlert('키보드 단축키:\n• Ctrl+S: 저장\n• Esc: 열린 창 닫기(취소와 같다)\n• F1: 이 도움말');
+            if (!e.repeat) window.showAlert('키보드 단축키:\n• Ctrl+S: 저장\n• Esc: 열린 창 닫기(취소와 같습니다)\n• F1: 이 도움말');
         }
     });
 });

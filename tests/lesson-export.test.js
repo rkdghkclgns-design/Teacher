@@ -94,5 +94,21 @@ test('보이는 그림에 키와 차시 번호를 달고, 같은 그림은 앞 �
     assert.deepStrictEqual([...shown.keys()], ['a1', 'b'], '빈 그림(찾지 못한 그림 자리·빈 값)에는 달지 않는다');
 });
 
+test('그림 넣기는 코드 블록 안을 바꾸지 않고, 빈 자리로 둘 괄호는 그림 키 모양((local:img_1))만 본다(코드 예제의 ToString(local: true)는 그대로)', () => {
+    // 화면처럼 data.js의 코드 블록 따라가기를 함께 싣는다
+    const dataSource = fs.readFileSync(path.join(__dirname, '..', 'js', 'data.js'), 'utf8').replace(/\r\n/g, '\n');
+    const slice = head => { const at = dataSource.indexOf(head); return dataSource.slice(at, dataSource.indexOf('\n}\n', at) + 2); };
+    const withData = { console, window: {}, document: {}, LESSON_TABS };
+    vm.createContext(withData);
+    vm.runInContext(`${slice('function fenceStateAfter(')}\n${slice('function stashCodeFences(')}`, withData);
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'lesson-export.js'), 'utf8'), withData);
+    const inline = withData.inlineLessonImages;
+    const code = '```csharp\nvar text = date.ToString(local: true);\nvar key = "local:img_1";\n```';
+    const md = `${code}\n\n그림 ![a](local:img_1) 와 없는 그림 ![b](local:img_9), 문장 속 \`ToString(local: true)\`.`;
+    const out = inline(md, { img_1: 'data:image/png;base64,AAA' });
+    assert.ok(out.startsWith(code), out);
+    assert.ok(out.includes('![a](data:image/png;base64,AAA)') && out.includes('![b]()') && out.includes('`ToString(local: true)`'), out);
+});
+
 console.log(`\n${count - failed}/${count} passed`);
 if (failed) process.exit(1);

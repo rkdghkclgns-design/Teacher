@@ -67,10 +67,16 @@ function markTermParagraphs(html) {
 }
 
 /* ---------- 교안 안의 버튼 ---------- */
-// 코드 블록의 코드만 복사한다(api.js lessonCodeBlockHtml). 이름표는 CSS이고 버튼에는 글자가 없다
+// 코드 블록의 코드만 복사한다(api.js lessonCodeBlockHtml). 이름표는 CSS이고 버튼에는 글자가 없다.
+// 앱이 그린 코드 블록은 글자만 담는다. 안에 다른 요소가 든 블록(남이 준 교안에 HTML로 넣은 블록)은 화면에 숨긴 글까지 복사될 수 있어 복사하지 않는다
 async function copyLessonCode(button) {
     const box = button.closest('.lesson-code');
-    const code = (box?.querySelector('pre code') || box?.querySelector('pre'))?.textContent ?? '';
+    const holder = box?.querySelector('pre code') || box?.querySelector('pre');
+    if (!holder || holder.children?.length) {
+        window.showToast?.('이 코드 블록은 앱이 만든 모양이 아니라 복사하지 않았습니다. 코드를 끌어 골라 복사해 주세요.', 'warning');
+        return;
+    }
+    const code = holder.textContent ?? '';
     try {
         if (typeof copyPlainText === 'function') await copyPlainText(code); // 클립보드가 막히면 선택 복사로 대신한다(course-list.js)
         else await navigator.clipboard.writeText(code);

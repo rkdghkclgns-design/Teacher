@@ -177,36 +177,51 @@ function readShownImages(html, read = streamPlain(html), dom = outputDomOnce(htm
     return found;
 }
 
-// 판서 영상 [{ src, poster, title }]. 영상·표지 그림은 data URL로 되돌린 값
+// 판서 영상 [{ src, poster, title, key }]. 영상·표지 그림은 data URL로 되돌린 값. key: 내보낼 때 적은 그림 키(data-wb-image, 예전 파일에는 없다)
 function outputVideosOf(html, read, dom) {
     if (!html.includes('<video')) return [];
     const doc = dom();
     const tags = doc
-        ? Array.from(doc.querySelectorAll('video[data-wb-video]'), video => ({ src: video.getAttribute('src'), poster: video.getAttribute('poster'), label: video.getAttribute('aria-label') }))
-        : outputTags(html, 'video').filter(attrs => attrs.has('data-wb-video')).map(attrs => ({ src: attrs.get('src'), poster: attrs.get('poster'), label: attrs.get('aria-label') }));
+        ? Array.from(doc.querySelectorAll('video[data-wb-video]'), video => ({ src: video.getAttribute('src'), poster: video.getAttribute('poster'), label: video.getAttribute('aria-label'), key: video.getAttribute('data-wb-image') }))
+        : outputTags(html, 'video').filter(attrs => attrs.has('data-wb-video')).map(attrs => ({ src: attrs.get('src'), poster: attrs.get('poster'), label: attrs.get('aria-label'), key: attrs.get('data-wb-image') }));
     return tags.map(tag => ({
         src: read.dataOf(tag.src || ''),
         poster: read.dataOf(tag.poster || ''),
-        title: String(tag.label || '').replace(/^판서 영상:\s*/, '').trim().slice(0, OUTPUT_VIDEO_TITLE)
+        title: String(tag.label || '').replace(/^판서 영상:\s*/, '').trim().slice(0, OUTPUT_VIDEO_TITLE),
+        key: OUTPUT_IMAGE_KEY_RE.test(String(tag.key || '')) ? String(tag.key) : ''
     }));
 }
 
 // 원본을 담은 HTML의 판서 영상을 그 표지 그림과 같은 그림 키에 붙인다(내보낼 때 표지 <img>는 빠지고 그림은 원본에 남는다).
-// 맞는 그림 키를 찾지 못한 영상은 첫 차시의 importNotes.videosLost로 센다
+// 내보낼 때 적은 그림 키가 있으면 그 자리에(같은 그림을 가진 다른 키가 아니라), 없으면(예전 파일) 아직 영상이 없는 첫 자리에 붙인다.
+// 같은 그림을 두 곳에 써서 같은 영상이 두 번 들어 있으면 한 번만 붙인다(잃은 것으로 세지 않는다).
+// 맞는 그림 키를 찾지 못한 영상은 첫 차시의 importNotes.videosLost로 센다. 표지 그림 → [차시, 키]를 한 번만 만들어 영상마다 모든 차시를 다시 훑지 않는다
 function withOutputVideos(lessons, html, read, dom) {
     const videos = outputVideosOf(html, read, dom);
     if (!videos.length) return lessons;
     const placed = lessons.map(lesson => (lesson && typeof lesson === 'object' ? { ...lesson, videos: [] } : lesson));
+    const byPoster = new Map();
+    placed.forEach(lesson => {
+        if (!lesson?.videos || !lesson.images || typeof lesson.images !== 'object') return;
+        Object.entries(lesson.images).forEach(([key, data]) => {
+            if (typeof data !== 'string') return;
+            if (!byPoster.has(data)) byPoster.set(data, []);
+            byPoster.get(data).push({ lesson, key });
+        });
+    });
+    const taken = owner => owner.lesson.videos.some(item => item.key === owner.key);
     let lost = 0;
     videos.forEach(video => {
-        const owner = OUTPUT_VIDEO_RE.test(video.src) && OUTPUT_IMAGE_RE.test(video.poster) ? placed.find(lesson => lesson?.videos
-            && Object.entries(lesson.images || {}).some(([key, data]) => data === video.poster && !lesson.videos.some(item => item.key === key))) : null;
+        const owners = OUTPUT_VIDEO_RE.test(video.src) && OUTPUT_IMAGE_RE.test(video.poster) ? byPoster.get(video.poster) || [] : [];
+        const marked = video.key ? owners.find(owner => owner.key === video.key) : null;
+        const candidates = marked ? [marked] : owners;
+        if (candidates.some(owner => owner.lesson.videos.some(item => item.key === owner.key && item.data === video.src))) return; // 같은 영상을 이미 붙였다
+        const owner = candidates.find(item => !taken(item));
         if (!owner) {
             lost += 1;
             return;
         }
-        const [key] = Object.entries(owner.images).find(([itemKey, data]) => data === video.poster && !owner.videos.some(item => item.key === itemKey));
-        owner.videos.push({ key, data: video.src, title: video.title });
+        owner.lesson.videos.push({ key: owner.key, data: video.src, title: video.title });
     });
     const first = placed.findIndex(lesson => lesson && typeof lesson === 'object');
     if (lost && first >= 0) placed[first] = { ...placed[first], importNotes: { ...placed[first].importNotes, videosLost: lost } };
@@ -257,6 +272,8 @@ function parseOutputHtml(text, read = streamPlain(text)) {
         return null;
     }
     if (!data || data.format !== OUTPUT_FORMAT || !Array.isArray(data.lessons)) return null;
+    // 차시가 상한보다 많은 파일은 그림·영상을 맞춰 보기 전에 그대로 돌려준다(readOutputText가 까닭을 알린다). 남이 만든 아주 긴 목록에서 멈추지 않게
+    if (data.lessons.length > OUTPUT_FILE_LESSONS) return data.lessons;
     const isObject = value => !!value && typeof value === 'object';
     const dom = outputDomOnce(html);
     const lessons = data.lessons.map(lesson => (isObject(lesson) ? outputRestoredLesson(lesson, read) : lesson));

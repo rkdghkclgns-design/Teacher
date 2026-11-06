@@ -268,6 +268,45 @@ if (a &lt; 3) {}</code></pre>
         assert.deepStrictEqual(plain(crafted.videos), [{ key: 'k', data: MP4, title: '' }], '영상은 data:video만, 그림이 있는 키에 하나만');
     });
 
+    testAsync('원본이 있는 HTML: 판서 영상은 내보낼 때 적은 그림 키(data-wb-image)에 붙이고(같은 그림을 가진 다른 키가 아니라), 같은 영상이 두 번 들어 있으면 한 번만 붙이고 잃었다고 세지 않는다', async () => {
+        const two = { title: '같은 그림 두 자리', tabContents: { basicLearn: '![a](local:img_1)\n\n![b](local:img_3)' }, images: { img_1: POSTER, img_3: POSTER } };
+        const marked = fakeFile('키.html', `<main><video src="${MP4}" poster="${POSTER}" data-wb-video="wb_3" data-wb-image="img_3"></video></main>${ctx.lessonSourceScript(ctx.lessonSourcePayload([two], { shown: [new Map()] }))}`);
+        const lesson = ctx.normalizeImportedLesson((await W('readOutputFile')(marked))[0].raw, 1);
+        assert.deepStrictEqual(plain(lesson.videos).map(video => video.key), ['img_3'], '영상을 만든 그림 자리에');
+        const once = { title: '한 키 두 자리', tabContents: { basicLearn: '![a](local:img_1)\n\n![a](local:img_1)' }, images: { img_1: POSTER } };
+        const repeated = fakeFile('두번.html', `<main><video src="${MP4}" poster="${POSTER}" data-wb-video="wb_1"></video><video src="${MP4}" poster="${POSTER}" data-wb-video="wb_1"></video></main>${ctx.lessonSourceScript(ctx.lessonSourcePayload([once], { shown: [new Map()] }))}`);
+        const again = ctx.normalizeImportedLesson((await W('readOutputFile')(repeated))[0].raw, 1);
+        assert.deepStrictEqual([plain(again.videos).map(video => video.key), again.importNotes], [['img_1'], undefined], '잃은 영상이 없다');
+        assert.ok(jsSource('whiteboard-video.js').includes('player.dataset.wbImage = imgId'), '보기 화면의 영상에 그림 키를 단다(내보내기가 그대로 담는다)');
+    });
+
+    test('조각 읽기: 글이 너무 많은 파일의 안내는 글자 수를 그대로 적는다(268백만 자처럼 어색하게 쓰지 않는다)', () => {
+        const message = W('streamTooLong')().message;
+        assert.ok(message.includes('그림·영상을 뺀 글만 268,435,456자가 넘습니다') && !message.includes('백만'), message);
+    });
+
+    test('원본이 있는 HTML: 차시가 2,000개를 넘는 파일은 그림·영상을 맞춰 보기 전에 알린다(남이 만든 아주 긴 목록에서 멈추지 않게)', () => {
+        const lessons = Array.from({ length: 5000 }, (unused, i) => ({ title: `차시 ${i}`, tabContents: { basicLearn: '글' }, images: { [`img_${i}`]: POSTER } }));
+        const videos = Array.from({ length: 5000 }, (unused, i) => `<video src="${MP4}" poster="data:image/png;base64,${Buffer.from(`no-${i}`).toString('base64')}" data-wb-video="wb_${i}"></video>`).join('');
+        const html = `<main>${videos}</main>${ctx.lessonSourceScript({ format: 'teacher-lesson-export', version: 2, lessons })}`;
+        const started = Date.now();
+        assert.throws(() => W('readOutputText')('많은.html', html), /차시가 너무 많은 파일입니다\(2,000개 넘음\)/);
+        assert.ok(Date.now() - started < 2000, `${Date.now() - started}ms`);
+    });
+
+    testAsync('예전 HTML: 코드 안에서 들여쓴 ``` 줄보다 긴 펜스로 감싸고, 이상한 언어 표기는 버리며, 코드의 빈 줄 둘·줄 끝 공백은 그대로 둔다', async () => withDom(async () => {
+        const nested = '<pre><code class="language-md">- 목록\n  ```js\n  let a = 1;\n  ```\n</code></pre>';
+        const crafted = '<pre><code class="language-x```">a\n</code></pre>';
+        const spaced = '<pre><code class="language-python">def a():\n    pass\n\n\ndef b():   \n    pass\n</code></pre>';
+        const html = `<!DOCTYPE html><html><head><title>코드 차시</title></head><body><main class="lesson-doc"><section class="lesson-tab"><div class="lesson-tab-label">기본학습</div><h2>코드</h2>${nested}<p>뒤의 설명 문단입니다.</p><h2>다음 섹션</h2>${crafted}${spaced}<p>끝</p></section></main></body></html>`;
+        const items = await W('readOutputFile')(fakeFile('코드.html', html));
+        const md = ctx.normalizeImportedLesson(items[0].raw, 1).tabContents.basicLearn;
+        assert.ok(md.includes('````md\n- 목록\n  ```js\n  let a = 1;\n  ```\n````'), md);
+        assert.ok(md.includes('```\na\n```') && !md.includes('x```'), '언어 표기가 앱의 모양이 아니면 버린다');
+        assert.ok(md.includes('def a():\n    pass\n\n\ndef b():   \n    pass'), '코드의 빈 줄 둘과 줄 끝 공백은 코드다');
+        assert.ok(md.includes('```\n\n뒤의 설명 문단입니다.\n\n## 다음 섹션'), '코드 블록 뒤의 글과 제목은 글로 남는다');
+    }));
+
     test('AVIF 그림(Higgsfield)도 원본과 화면 표시에서 받고 빈칸으로 세지 않는다', () => {
         const payload = { format: 'teacher-lesson-export', version: 2, lessons: [{ title: 'a', tabContents: { basicLearn: '![](local:k1) ![](local:k2)' }, images: { k1: AVIF, k2: null } }] };
         const html = `<img src="${AVIF}" data-teacher-image="k2" data-teacher-lesson="0">${ctx.lessonSourceScript(payload)}`;

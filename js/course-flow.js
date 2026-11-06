@@ -178,13 +178,16 @@ function generationBusy() {
 // 돌고 있는 AI 작업이 있는가. 창을 닫기 전에 묻는다(ui.js hasUnsavedWork). 닫으면 만들던 결과와 그 비용을 잃는다.
 // 새 생성을 막는 조건(generationBusy: 진행 막대의 작업·교수안·로딩 화면. 분량 채우기 뒤의 자동 수정·그림·저장도 그 안이다)에 더해
 // 일괄 생성·기존 내용 보강·과정 설계·차시 목차 만들기, 기본 학습 분량 채우기(lesson-volume.js), 열어 둔 삽화·문제은행 창의 작업,
-// 컨벤션 검수 창의 AI 수정 제안도 센다. 뒤에 싣는 파일의 이름은 typeof로 본다(그 파일을 싣지 않은 화면·시험에서도 멈추지 않게)
+// 컨벤션 검수 창의 AI 수정 제안도 센다. 답을 기다리는 AI 호출(api.js callGemini)도 센다: 창을 닫아도 이어지는 삽화·문제은행 작업,
+// 참고 자료 판독, 그림 다시 찾기, 블록 다시 설계, 학습 목표 세트 추가, NCS 추천, 과정 화풍처럼 따로 표시가 없는 작업이다.
+// 뒤에 싣는 파일의 이름은 typeof로 본다(그 파일을 싣지 않은 화면·시험에서도 멈추지 않게)
 function isAiWorkRunning() {
     return generationBusy() || !!_lessonRun
         || (typeof _backfillRun !== 'undefined' && !!_backfillRun)
         || (typeof _designBusy !== 'undefined' && !!_designBusy)
         || document.getElementById('sidebar-loading')?.style.display === 'flex'
         || !!window.isVolumeFilling?.()
+        || !!window.aiCallsWaiting?.()
         || (typeof _lessonArt !== 'undefined' && !!_lessonArt?.busy)
         || (typeof _qbank !== 'undefined' && !!_qbank?.busy)
         || (typeof _review !== 'undefined' && !!_review?.busy);
@@ -204,7 +207,7 @@ function lessonRunQueueHtml(queue, uploaded) {
 
 function lessonRunIntroHtml(queue, uploaded, withGyosuan = false) {
     return `
-        <p class="text-xs text-textLight">내용이 비어 있는 탭만 차례로 생성합니다. 이미 있는 탭은 그대로 둡니다. 차시마다 몇 분 걸릴 수 있습니다. 교안을 만든 차시에는 NCS 능력단위요소도 확정 전 상태로 배정합니다. 기본 학습은 낭독 480분 분량을 채우느라 차시마다 20분 넘게 걸릴 수 있습니다.</p>
+        <p class="text-xs text-textLight">내용이 비어 있는 탭만 차례로 생성합니다. 이미 있는 탭은 그대로 둡니다. 차시마다 몇 분 걸릴 수 있습니다. 교안을 만든 차시에는 NCS 능력단위요소도 확정 전 상태로 배정합니다. 기본학습은 낭독 480분 분량을 채우느라 차시마다 20분 넘게 걸릴 수 있습니다.</p>
         <div id="lesson-run-queue" class="space-y-2">${lessonRunQueueHtml(queue, uploaded)}</div>
         <div id="lesson-run-estimate"></div>
         <label class="flex items-start gap-2 text-xs text-textLight">
@@ -217,7 +220,7 @@ function lessonRunIntroHtml(queue, uploaded, withGyosuan = false) {
         </label>
         <label class="flex items-start gap-2 text-xs text-textLight">
             <input id="lesson-run-art" type="checkbox" ${globalState.courseDesign?.autoArt ? 'checked' : ''}>
-            <span>교안에 SVG 삽화 넣기<span class="block text-[0.6875rem] text-textMuted">기본 학습의 섹션에 그려 넣습니다. 차시마다 호출이 늘고, 차시의 전체 생성에도 같이 적용됩니다.</span></span>
+            <span>교안에 SVG 삽화 넣기<span class="block text-[0.6875rem] text-textMuted">기본학습의 섹션에 그려 넣습니다. 차시마다 호출이 늘고, 차시의 전체 생성에도 같이 적용됩니다.</span></span>
         </label>
         ${lessonGenFieldsHtml('run', globalState.courseDesign?.genOptions)}
         <p class="text-xs text-textMuted">생성 옵션은 과정 기본값으로 저장됩니다. 차시 정보에서 따로 정한 값이 있으면 그 값을 씁니다.</p>`;
@@ -249,8 +252,8 @@ function lessonRunReportHtml(report, { trashed = 0, imageNote = '', restored = 0
         ${report.halted ? '<p class="text-xs text-amber-300">남은 차시도 같은 까닭으로 만들 수 없어 일괄 생성을 멈췄습니다. 아래 실패 까닭을 해결한 뒤 다시 실행해 주세요.</p>' : ''}
         ${lessonRunListHtml('실패해서 건너뛴 차시', report.failed, item => item.error)}
         ${lessonRunListHtml('일부 단락이 누락되었을 수 있는 차시', report.partial)}
-        ${lessonRunListHtml('기본 학습 분량이 목표에 못 미친 차시', report.short || [], item => `낭독 약 ${item.readMinutes}분`)}
-        ${(report.short || []).length ? "<p class=\"text-xs text-textMuted\">그 차시의 기본 학습 탭 위 '분량 채우기'로 이어서 늘릴 수 있습니다.</p>" : ''}
+        ${lessonRunListHtml('기본학습 분량이 목표에 못 미친 차시', report.short || [], item => `낭독 약 ${item.readMinutes}분`)}
+        ${(report.short || []).length ? "<p class=\"text-xs text-textMuted\">그 차시의 기본학습 탭 위 '분량 채우기'로 이어서 늘릴 수 있습니다.</p>" : ''}
         ${restored > 0 ? `<p class="text-xs text-textMuted">탭을 하나도 만들지 못한 차시 ${restored}개는 지우기 전 내용으로 되돌렸습니다.</p>` : ''}
         ${unfinished ? '<p class="text-xs text-textMuted">만든 내용은 저장했습니다. 다시 실행하면 남은 탭부터 이어서 생성합니다.</p>' : ''}
         ${lessonRunTrashNote(trashed)}
@@ -312,7 +315,8 @@ function lessonRunWork(queue, { withGyosuan, overwrite, art }) {
             tabs,
             gyosuan: withGyosuan && (overwrite || lessonNeedsGyosuan(lesson)),
             qbank: withGyosuan && (overwrite || questionBankGaps(lesson).length > 0),
-            art: art && tabs.length > 0
+            art: art && tabs.length > 0,
+            volumeMinutes: lessonVolumeMinutes(lesson) // 차시 시간이 480분보다 긴 차시는 그만큼 분량 보강이 늘어난다
         }, imageAmount);
     }));
 }

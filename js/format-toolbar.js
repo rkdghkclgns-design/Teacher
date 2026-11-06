@@ -140,7 +140,9 @@ function formatContext() {
 }
 
 /* ---------- 적용·저장·되돌리기 ---------- */
-// 저장이 실패해도 화면은 다시 그린다(편집 상자나 막대가 남아 다음 편집을 막지 않게). 실패는 알린다
+// 저장이 실패해도 화면은 다시 그린다(편집 상자나 막대가 남아 다음 편집을 막지 않게). 실패는 알린다(saveState도 알린다).
+// 다시 그리는 것은 저장을 마친 때에도 그 차시의 그 탭을 보고 있을 때만이다(저장이 오래 걸리는 사이 다른 차시로 옮겼으면 옛 차시를 그 위에 그리지 않는다).
+// 브라우저에 저장했는지(saveState의 답, 실패하면 false)를 돌려준다
 window.writeLessonTab = function (mod, tabId, md, afterRender) {
     const area = document.getElementById('editor-content-area');
     const scrollTop = area ? area.scrollTop : 0;
@@ -149,11 +151,16 @@ window.writeLessonTab = function (mod, tabId, md, afterRender) {
         .catch(err => {
             console.error('[교안 저장] 실패:', err);
             window.showToast?.('바꾼 내용을 저장하지 못했습니다. 잠시 뒤 Ctrl+S로 다시 저장해 주세요.', 'error');
+            return false;
         })
-        .then(() => {
-            renderEditor(mod);
-            if (area) area.scrollTop = scrollTop;
-            afterRender?.();
+        .then(saved => {
+            const showing = typeof isViewingTab === 'function' ? isViewingTab(mod, tabId) : getEditingModule() === mod;
+            if (showing) {
+                renderEditor(mod);
+                if (area) area.scrollTop = scrollTop;
+                afterRender?.();
+            }
+            return saved;
         });
 };
 

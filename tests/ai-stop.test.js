@@ -880,6 +880,30 @@ async function run(name, fn) {
         assert.ok(asked[0].opts.warning);
     });
 
+    await run('AI 호출 세기: 답을 기다리는 호출이 있는 동안 알리고(창을 닫아도 이어지는 삽화·참고 자료 판독 등), 끝나거나 실패하면 센 것을 되돌린다', async () => {
+        const local = makeContext();
+        const waiting = () => vm.runInContext('aiCallsWaiting()', local);
+        let answer;
+        local.fetchStub = () => new Promise(resolve => { answer = resolve; });
+        const pending = vm.runInContext("callGemini('gemini-3.8-flash', { contents: [{ role: 'user', parts: [{ text: '질문' }] }] })", local);
+        assert.strictEqual(waiting(), true, '보낸 뒤 답을 기다리는 동안');
+        for (let i = 0; i < 20 && !answer; i++) await new Promise(resolve => setImmediate(resolve));
+        answer(json(textReply('답')));
+        await pending;
+        assert.strictEqual(waiting(), false, '답을 받으면 끝');
+        local.fetchStub = async () => json({ error: { code: 400, message: 'bad' } }, 400);
+        await vm.runInContext("callGemini('gemini-3.8-flash', { contents: [{ role: 'user', parts: [{ text: '질문' }] }], attempts: 1 })", local).catch(() => {});
+        assert.strictEqual(waiting(), false, '실패해도 되돌린다');
+        // Higgsfield 그림은 callGemini를 거치지 않지만 그리는 동안 함께 센다(그림 다시 찾기 등)
+        vm.runInContext("IMAGE_MODEL = 'higgsfield:recraft'; apiKey = ''; generateHiggsfieldImage = () => new Promise(resolve => { window.__drawn = resolve; });", local);
+        const image = vm.runInContext("generateImageAPI('그림')", local);
+        for (let i = 0; i < 20 && !local.__drawn; i++) await new Promise(resolve => setImmediate(resolve));
+        assert.strictEqual(waiting(), true, 'Higgsfield 그림을 기다리는 동안');
+        local.__drawn('https://cdn.example/a.png');
+        assert.strictEqual(await image, 'https://cdn.example/a.png');
+        assert.strictEqual(waiting(), false, '그림을 받으면 끝');
+    });
+
     console.log('ALL PASSED');
 })().catch(err => {
     console.error(err);

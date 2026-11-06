@@ -338,15 +338,27 @@ function callGemini(modelName, { pinModel, signal = null, waitSignal = null, att
     const model = modelName === TEXT_MODEL && !pinModel ? roleModel(payload.taskRole) : modelName;
     if (signal?.aborted || waitSignal?.aborted) return Promise.reject(abortError());
     const started = Date.now();
-    const call = isClaudeModel(model)
-        ? callClaude(model, payload, { signal, attempts })
-        : requestGemini(model, payload, { onRetry, signal, waitSignal, attempts });
+    _aiCallsWaiting += 1;
+    let call;
+    try {
+        call = isClaudeModel(model)
+            ? callClaude(model, payload, { signal, attempts })
+            : requestGemini(model, payload, { onRetry, signal, waitSignal, attempts });
+    } catch (err) {
+        _aiCallsWaiting -= 1;
+        throw err;
+    }
     // 성공한 호출에 걸린 시간을 모델별로(짧은 호출은 따로) 모아 일괄 작업 예고 시간에 쓴다(cost-estimate.js)
-    return call.then(result => {
+    return Promise.resolve(call).then(result => {
         window.recordAiTiming?.(model, Date.now() - started, timing);
         return result;
-    });
+    }).finally(() => { _aiCallsWaiting -= 1; });
 }
+
+// 보낸 뒤 답을 기다리는 AI 호출 수. 창을 닫아도 이어지는 작업(삽화·문제은행 창을 닫은 뒤의 그림, 참고 자료 판독, 그림 다시 찾기, 블록 다시 설계 등)도
+// 이 호출로 센다(course-flow.js isAiWorkRunning: 창을 닫기 전에 묻고, 휴지통 되살리기·작업 기록 되돌리기·불러오기를 막는다)
+let _aiCallsWaiting = 0;
+window.aiCallsWaiting = () => _aiCallsWaiting > 0;
 
 
 
@@ -530,10 +542,14 @@ async function handleGenerate() {
 
     if (!topic) return window.showAlert('교육 주제를 입력해주세요.');
 
-    // 차시가 있으면 확인을 받고, 기존 차시는 휴지통으로 보낸다(덮어써서 잃지 않게)
+    // 차시가 있으면 확인을 받고, 기존 차시는 휴지통으로 보낸다(덮어써서 잃지 않게).
+    // 생성이 도는 동안에는 차시를 휴지통으로 옮기지 않는다(만드는 중인 차시를 옮기면 만들던 결과가 버려진다, course-meta.js trashRestoreBlocked)
+    const busy = () => typeof trashRestoreBlocked === 'function' && trashRestoreBlocked();
     const startSubjectId = currentSubjectId;
     const replacedLessons = (courseData || []).filter(mod => mod && mod.id !== 'mainQuest');
+    if (replacedLessons.length && busy()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
     if (replacedLessons.length && !(await confirmAsync(`이 교과의 차시 ${replacedLessons.length}개를 휴지통으로 옮기고 새 목차를 만듭니다.\n휴지통(차시 목록 위)에서 30일 동안 되살릴 수 있습니다.`, { okLabel: '새 목차 만들기', tone: 'primary', title: '차시 목차 다시 만들기' }))) return;
+    if (replacedLessons.length && busy()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.'); // 확인 창을 띄운 사이 시작된 생성
 
 
 
@@ -577,8 +593,12 @@ async function handleGenerate() {
         const startSubject = startSubjectId ? globalState.subjects.find(s => s.id === startSubjectId) : null;
         if (startSubjectId && !startSubject) throw new Error('목차를 만드는 동안 그 교과가 지워졌습니다.');
         const onStart = !startSubject || currentSubjectId === startSubjectId;
-        // 반영하는 지금의 차시를 휴지통으로 보낸다(기다리는 동안 더하거나 고친 차시도 잃지 않게)
+        // 반영하는 지금의 차시를 휴지통으로 보낸다(기다리는 동안 더하거나 고친 차시도 잃지 않게). 그사이 시작된 생성이 있으면 바꾸지 않는다
+        // (이 작업의 로딩 표시는 먼저 내리고 본다. 그 표시도 AI 작업으로 센다)
         const replacingNow = ((onStart ? courseData : startSubject.lessons) || []).filter(mod => mod && mod.id !== 'mainQuest');
+        document.getElementById('sidebar-loading').style.display = 'none';
+        if (replacingNow.length && busy()) throw new Error('목차를 만드는 동안 다른 생성이 시작되어 반영하지 않았습니다. 그 생성이 끝난 뒤 다시 눌러 주세요.');
+        if (replacingNow.length && onStart) window.saveRawContent?.(); // 고치던 원문을 먼저 그 차시에 넣고 휴지통으로 보낸다
         if (replacingNow.length) moveLessonsToTrash(replacingNow, startSubjectId);
 
         const newLessons = parsed.map((item, idx) => ({
@@ -608,6 +628,8 @@ async function handleGenerate() {
         if (onStart) {
             courseData = newLessons;
             currentTopic = topic;
+            // 휴지통으로 옮긴 차시의 편집기·원문 칸이 남지 않게 닫는다(남은 칸에 쓴 글은 넣을 차시가 없어 사라진다)
+            if (typeof closeLessonEditor === 'function') closeLessonEditor();
             renderSidebar();
         } else {
             startSubject.lessons = newLessons;
@@ -840,17 +862,21 @@ async function generateModuleContent(moduleId, keyConcepts) {
             ...volumeSnap, md: autoInjectImageTags(fullContent), mod, tabId: 'basicLearn', lockedBlocks, targetMinutes, codeTopic, fromUpload: !!mod.uploadedMdContent,
             isStopped, isLive: () => !subj || lessonStillLive(subj, mod), onStatus: setLoadingStatus, waitSignal: window.aiStopSignal?.() || null
         }) : null;
-        if (volume?.gone) { // 채우는 동안 차시를 지웠거나 백업·PC 폴더를 불러왔다. 그 차시에 쓰지 않는다
+        // 채우는 동안이나 채운 뒤(고치기·그림)에 차시를 지웠거나 백업·PC 폴더를 불러왔다. 그 차시에 쓰지 않고 채운 글은 작업 기록에 남긴다
+        const lessonGone = async md => {
             reported = true;
-            window.showAlert('차시가 지워졌거나 불러온 내용으로 바뀌어 기본학습 만들기를 멈췄습니다.');
-            return;
-        }
+            const kept = volume && md && typeof keepVolumeText === 'function' ? ` ${await keepVolumeText(mod, md)}` : '';
+            window.showAlert(`차시가 지워졌거나 불러온 내용으로 바뀌어 기본학습 만들기를 멈췄습니다.${kept}`);
+        };
+        if (volume?.gone) return lessonGone(volume.added ? volume.md : '');
         if (volume) fullContent = volume.md;
-        const volumeHalt = !!volume && typeof aiErrorStopsRun === 'function' && aiErrorStopsRun(volume.error); // 하루 한도·키 문제: 고치기·그림·남은 탭도 같은 까닭으로 실패한다
+        const volumeHalt = !!volume && typeof aiErrorStopsRun === 'function' && aiErrorStopsRun(volume.error); // 하루 한도·키 문제: 남은 탭도 같은 까닭으로 실패한다
+        // 다시 보내도 같은 오류(noRetry, lesson-volume.js isVolumeHalt)로 멈췄을 때도 고치기·그림은 같은 까닭으로 실패하므로 하지 않는다
+        const volumeQuit = volumeHalt || (!!volume && typeof isVolumeHalt === 'function' && isVolumeHalt(volume.error));
 
         // 중단하면 끝까지 받지 못한 글이므로 자동 수정과 이미지 생성 비용을 쓰지 않는다
         const stopped = isStopped();
-        if (!stopped && !volumeHalt) {
+        if (!stopped && !volumeQuit) {
             if (moduleId !== 'mainQuest') {
                 const floor = volume ? { rounds: VOLUME_FIX_ROUNDS, minSpokenChars: volume.targetChars, isStopped } : {}; // 채운 분량 아래로 줄이지 않는다
                 fullContent = await autoFixGeneratedTab({ tabId: 'basicLearn', md: fullContent, lockedBlocks, onStatus: setLoadingStatus, ...floor });
@@ -861,6 +887,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
 
             fullContent = restoreLockedSections(await processImageTags(mod, fullContent, { onStatus: setLoadingStatus, inject: !volume }), lockedBlocks);
         }
+        if (volume && subj && !lessonStillLive(subj, mod)) return lessonGone(fullContent);
 
         mod.content = fullContent;
         mod.status = 'done';
@@ -883,7 +910,9 @@ async function generateModuleContent(moduleId, keyConcepts) {
         }
         if (volumeHalt) { // 남은 탭도 같은 까닭으로 실패하므로 만들지 않는다
             reported = true;
-            window.showAlert(`${volume.error.message}\n기본학습(낭독 약 ${readMinutes}분)은 저장했습니다. 남은 탭은 한도가 풀린 뒤 '전체 생성'으로 만드세요.`);
+            // 기본학습이 목표에 못 미쳤으면 그 탭은 전체 생성이 다시 채우지 않는다(빈 항목만 만든다). 분량 채우기로 이어서 늘린다
+            const shortHint = spokenChars(fullContent) < volume.targetChars ? ` 목표 ${volume.targetMinutes}분에 못 미친 기본학습은 한도가 풀린 뒤 기본학습 탭 위 '분량 채우기'로 이어서 늘리세요.` : '';
+            window.showAlert(`${volume.error.message}\n기본학습(낭독 약 ${readMinutes}분)은 저장했습니다. 남은 탭은 한도가 풀린 뒤 '전체 생성'으로 만드세요.${shortHint}`);
             return;
         }
 
@@ -958,7 +987,8 @@ function moduleGenerationEstimate(mod) {
             qbank: true,
             art: typeof lessonWantsArt === 'function' && lessonWantsArt(mod),
             ncs: typeof needsElementAutoAssign === 'function' && needsElementAutoAssign(mod),
-            fillsVolume: mod.id !== 'mainQuest' // 최종 평가는 기본 학습 분량을 채우지 않는다
+            fillsVolume: mod.id !== 'mainQuest', // 최종 평가는 기본학습 분량을 채우지 않는다
+            volumeMinutes: lessonVolumeMinutes(mod)
         }, currentEstimateSettings().imageAmount));
     } catch (err) {
         console.warn('[미리 보기] 교안 생성 예고를 만들지 못했습니다:', err);
@@ -973,10 +1003,13 @@ window.promptAndGenerateMainQuest = function () {
     if (window.isLessonPipelineRunning?.()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
     const mq = subj.mainQuest;
     const existing = Array.isArray(mq?.keyConcepts) ? mq.keyConcepts : [];
-    showKeyConceptsPrompt('최종 평가 만들기', existing, (concepts) => {
+    // 이미 만든 최종 평가를 다시 만들면 지금 본문(손으로 고친 글 포함)은 작업 기록에 남기고 새로 쓴다
+    const remaking = !!(mq?.content || Object.values(mq?.tabContents || {}).some(Boolean));
+    const opts = remaking ? { warning: '최종 평가를 새로 만듭니다. 손으로 고친 내용도 바뀝니다. 지금 내용은 작업 기록에 남아 되돌릴 수 있습니다.', okLabel: '다시 만들기' } : {};
+    showKeyConceptsPrompt(remaking ? '최종 평가 다시 만들기' : '최종 평가 만들기', existing, (concepts) => {
         if (concepts.length > 0 && mq) mq.keyConcepts = concepts;
         generateMainQuest();
-    });
+    }, opts);
 };
 
 
@@ -1034,10 +1067,15 @@ async function generateMainQuest() {
 
         let markdownContent = extractText(data);
 
+        // 지금 최종 평가(손으로 고친 글 포함)는 작업 기록에 남긴다. 예전에 탭으로 만든 최종 평가(tabContents)는 그 탭들도 함께 남긴다
+        if (typeof archiveContents === 'function') await archiveContents([mq], '다시 생성 전');
+
         markdownContent = await processImageTags(mq, markdownContent);
 
 
 
+        // 최종 평가는 본문 하나다(탭이 없는 최종 평가). 예전 탭(tabContents)이 남아 있으면 화면이 옛 탭 글을 보이고 다음 탭 저장이 새 본문을 지우므로 걷어 낸다
+        delete mq.tabContents;
         mq.content = markdownContent;
 
         mq.status = 'done';
@@ -1397,7 +1435,8 @@ function autoInjectImageTags(markdown) {
     // - 교강사 가이드·강사 전용: 강사 노트 영역
     // - 개요·Overview: 차시 시작 안내문 (이미지 불필요, 사용자 요청)
     // - 요약·정리·마무리·Summary: 마무리 섹션도 보통 이미지 불요
-    const SKIP_RE = /학습\s*목표|Objectives?|교강사\s*가이드|강사\s*전용|개요|Overview|요약|정리|마무리|Summary/i;
+    // - 학습 후 체크리스트: 확인 목록이라 그림이 필요 없다(그림 한 장에 검색어·판정·그림 호출이 든다)
+    const SKIP_RE = /학습\s*목표|Objectives?|교강사\s*가이드|강사\s*전용|개요|Overview|요약|정리|마무리|Summary|체크리스트/i;
 
     // 섹션을 헤딩 단위로 분리하여 각 섹션의 길이·이미지 보유 여부 점검
     // 코드 블록 안의 # 줄과 이미지 태그는 제목·그림으로 보지 않는다
@@ -1413,7 +1452,8 @@ function autoInjectImageTags(markdown) {
         const m = outside && line.match(/^(#{2,3})\s+(.+)$/);
         if (m) {
             if (cur) sections.push(cur);
-            const title = m[2].replace(ICON_RE, '').replace(/^\[|\]$/g, '').trim();
+            // 검색어는 제목 글만 쓴다. (⏱ N분)은 분량 채우기가 다시 매기면 낡은 시간이 그림 설명·검색어에 남는다
+            const title = m[2].replace(ICON_RE, '').replace(IMAGE_TIME_LABEL, ' ').replace(/\s{2,}/g, ' ').replace(/^\[|\]$/g, '').trim();
             cur = { startLine: i, level: m[1].length, title, content: '', hasImage: false };
         } else if (cur) {
             cur.content += line + '\n';
@@ -1464,7 +1504,8 @@ function pickImageTags(markdown, tags, amount) {
 }
 
 const IMAGE_TAG_RE = /<!--\s*\[IMG:\s*"?([^"]+)"?\]\s*-->/g;
-const IMAGE_SKIP_SECTIONS = /학습\s*목표|objectives?|개요|overview|요약|정리|마무리|summary/i;
+const IMAGE_SKIP_SECTIONS = /학습\s*목표|objectives?|개요|overview|요약|정리|마무리|summary|체크리스트/i;
+const IMAGE_TIME_LABEL = /\(\s*⏱[^()]*\)/g; // 섹션 제목의 (⏱ N분). 그림 자리 검색어에는 넣지 않는다
 
 // 태그 바로 앞 500자 안의 가장 가까운 # 제목이 학습 목표·개요·요약 같은 글 위주 섹션인지
 function inSkippedImageSection(markdown, fullMatch) {
@@ -1474,12 +1515,12 @@ function inSkippedImageSection(markdown, fullMatch) {
     return heading >= 0 && IMAGE_SKIP_SECTIONS.test(before.substring(heading, heading + 60));
 }
 
-// 이 글에서 실제로 처리할 그림 자리. 글 위주 섹션의 태그와 이미 있는 그림을 가리키는 local: 태그(백업 ZIP 되살리기)는 빼고,
-// 이미지 양 설정으로 고른다. 예고(일괄 이미지 찾기·콘텐츠 정리)와 실제 처리가 같은 수를 쓴다
+// 이 글에서 실제로 처리할 그림 자리. 코드 블록 안의 태그(코드 예제)와 글 위주 섹션의 태그, 이미 있는 그림을 가리키는 local: 태그(백업 ZIP 되살리기)는 빼고,
+// 이미지 양 설정으로 고른다. 예고(일괄 이미지 찾기·콘텐츠 정리)와 실제 처리가 같은 수를 쓴다. 검색어의 (⏱ N분)은 뗀다(예전에 넣은 태그)
 function pendingImageTags(markdown, amount = 'all') {
-    const text = String(markdown || '');
-    const tags = [...text.matchAll(IMAGE_TAG_RE)].map(match => ({ fullMatch: match[0], keyword: match[1].trim() }));
-    return pickImageTags(text, tags.filter(tag => !/^local:/.test(tag.keyword) && !inSkippedImageSection(text, tag.fullMatch)), amount);
+    const text = stashCodeFences(String(markdown || '')).text;
+    const tags = [...text.matchAll(IMAGE_TAG_RE)].map(match => ({ fullMatch: match[0], keyword: match[1].replace(IMAGE_TIME_LABEL, ' ').replace(/\s{2,}/g, ' ').trim() }));
+    return pickImageTags(text, tags.filter(tag => tag.keyword && !/^local:/.test(tag.keyword) && !inSkippedImageSection(text, tag.fullMatch)), amount);
 }
 window.pendingImageTags = pendingImageTags;
 
@@ -1504,6 +1545,7 @@ async function processImageTags(mod, markdown, { onStatus = null, isStopped = ()
     const result = markdown;
     const pickedTags = pendingImageTags(markdown, amount);
     if (pickedTags.length === 0) return result;
+    const proseText = stashCodeFences(markdown).text; // 검색 문맥은 코드 블록 밖의 같은 태그 자리에서 읽는다
 
     // 부른 쪽 진행 막대에 장수와 남은 시간을 보인다. 남은 시간은 지금까지 걸린 평균으로 잰다
     const startedAt = Date.now();
@@ -1541,7 +1583,7 @@ async function processImageTags(mod, markdown, { onStatus = null, isStopped = ()
         try {
 
             // [Phase F10] 1. 문맥 기반 검색어 튜닝 에이전트 가동
-            const context = getContextWindow(markdown, tag.fullMatch, 400);
+            const context = getContextWindow(proseText, tag.fullMatch, 400);
             const intent = await extractSearchIntent(tag.keyword, context, signal);
             const searchQuery = (intent && intent.search_query) ? intent.search_query : tag.keyword;
 
@@ -1686,7 +1728,10 @@ async function processImageTags(mod, markdown, { onStatus = null, isStopped = ()
     // 기다리는 동안 글이 바뀌었으면 최신 글에 넣는다. 지운 태그 자리의 이미지는 넣지 않는다
     // 새로 만든 글이면 최신 글에도 같은 기준으로 태그를 보충해야 자동으로 넣은 태그 자리의 이미지가 빠지지 않는다
     // 그림은 자리를 넣는 이 한 걸음에서 차시 그림에 담는다(latest()가 고치던 원문을 저장하며 쓰지 않는 그림을 덜어 내도 새 그림은 남게). 부른 쪽은 돌려받은 글을 곧바로 탭에 넣는다
-    let output = latest ? (inject ? autoInjectImageTags(latest()) : latest()) : result;
+    // 코드 블록은 자리표시로 바꿔 두고 찾는다(코드 예제 속 같은 모양의 태그에 그림 칸을 넣지 않게). 코드 글자는 그대로 되돌린다
+    const finalText = latest ? (inject ? autoInjectImageTags(latest()) : latest()) : result;
+    const code = stashCodeFences(finalText, { keepSpaces: true });
+    let output = code.text;
     let gone = 0; // 그리는 동안 글에서 지운 자리(그 그림은 담지 않는다)
     for (const rep of replacements) {
         if (!rep) continue;
@@ -1727,7 +1772,7 @@ async function processImageTags(mod, markdown, { onStatus = null, isStopped = ()
         }
     }
 
-    return output;
+    return code.restore(output);
 }
 
 // 그림 자리를 채울 글: 탭이 있는 차시는 글이 있는 탭마다, 탭으로 나뉘기 전 차시와 최종 평가는 본문 하나
@@ -1845,7 +1890,7 @@ function cleanLessonMarkdown(mod) {
     return lessonTextParts(mod).reduce((count, part) => {
         saveOpenEditsFor(mod, part.id); // 원문 칸에서 고치던 글을 먼저 저장해 덮어쓰지 않는다(tabs.js)
         const before = storedTabMarkdown(mod, part.id);
-        const after = sanitizeMarkdownContent(before);
+        const after = sanitizeMarkdownContent(before, { promptLabels: false }); // 강사가 쓴 대괄호 줄은 지시 라벨로 보지 않는다(data.js)
         if (after === before) return count;
         setTabMarkdown(mod, part.id, after);
         return count + 1;
@@ -2071,7 +2116,8 @@ async function generateImageAPI(prompt, { signal = null, onRetry = null } = {}) 
         try {
             if (!isHiggsfieldModel(model)) return await requestImageModel(model, prompt, { signal, onRetry });
             const started = Date.now();
-            const url = await generateHiggsfieldImage(model, prompt, { signal });
+            _aiCallsWaiting += 1; // 답을 기다리는 AI 호출로 센다(창을 닫기 전에 묻는다). Higgsfield는 callGemini를 거치지 않는다
+            const url = await generateHiggsfieldImage(model, prompt, { signal }).finally(() => { _aiCallsWaiting -= 1; });
             window.recordAiTiming?.(model, Date.now() - started); // Higgsfield는 callGemini를 거치지 않아 여기서 잰다
             return url;
         } catch (e) {
@@ -2730,60 +2776,64 @@ window.deleteModule = function (id) {
 
 }
 
-// v7.2: 단원 일괄 삭제
+// 이 교과의 차시를 모두 휴지통으로 옮긴다. keep: 작업 기록에도 남긴다(한 번에 남겨 기록 id가 겹치지 않고 상한 알림도 한 번만 뜬다)
+function trashAllLessons(keep) {
+    window.saveRawContent?.(); // 고치던 원문을 먼저 그 차시에 넣고 옮긴다
+    const lessons = courseData.filter(m => m.id !== 'mainQuest');
+    if (keep && typeof archiveContents === 'function') archiveContents(lessons.filter(mod => mod.content || mod.tabContents));
+    moveLessonsToTrash(lessons);
+    courseData = courseData.filter(m => m.id === 'mainQuest');
+    currentEditingModuleId = null;
+    document.getElementById('editor-content-area').innerHTML = '<div class="h-full flex items-center justify-center text-textMuted text-sm">모든 차시를 휴지통으로 옮겼습니다.</div>';
+    document.getElementById('ai-command-bar').classList.add('hidden');
+    saveState().then(() => renderSidebar());
+    window.showToast?.(keep ? `${lessons.length}개 차시를 작업 기록에 남기고 휴지통으로 옮겼습니다.` : `${lessons.length}개 차시를 휴지통으로 옮겼습니다.`, 'success');
+}
+
+// v7.2: 단원 일괄 삭제. 앱의 창 틀(ui.js openAppDialog)로 띄운다: Esc·바깥 클릭은 취소, Tab은 창 안에서만, 처음 포커스는 취소
 window.deleteAllModules = function () {
     if (!courseData || courseData.length === 0) {
         return window.showAlert('삭제할 차시가 없습니다.');
     }
     const count = courseData.filter(m => m.id !== 'mainQuest').length;
     if (count === 0) return window.showAlert('삭제할 차시가 없습니다.');
+    // 생성이 도는 동안에는 차시를 휴지통으로 옮기지 않는다(deleteModule과 같다, course-meta.js trashRestoreBlocked)
+    const busy = () => typeof trashRestoreBlocked === 'function' && trashRestoreBlocked();
+    if (busy()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
 
-    // v7.3: 3버튼 다이얼로그 — 삭제 / 보관함 저장 / 취소
+    // v7.3: 3버튼 다이얼로그 — 휴지통으로 / 작업 기록에도 남기고 휴지통으로 / 취소
     const overlay = document.createElement('div');
     overlay.id = 'delete-all-overlay';
     overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
     overlay.innerHTML = `
-        <div style="background:#1a1a2e;border:1px solid rgba(255,255,255,0.1);border-radius:16px;padding:32px;max-width:420px;width:90%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.5);">
-            <div style="font-size:48px;margin-bottom:16px;">⚠️</div>
-            <h3 style="color:#f3f4f6;font-size:18px;font-weight:700;margin-bottom:8px;">차시 일괄 삭제</h3>
-            <p style="color:#9ca3af;font-size:14px;margin-bottom:24px;">총 <strong style="color:#f87171;">${count}개</strong> 차시를 삭제합니다.<br>보관함의 기존 저장 내용은 유지됩니다.</p>
+        <div data-app-dialog-panel onclick="event.stopPropagation()" style="background:#1a1a2e;border:1px solid rgba(255,255,255,0.1);border-radius:16px;padding:32px;max-width:420px;width:90%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+            <div style="font-size:48px;margin-bottom:16px;" aria-hidden="true">⚠️</div>
+            <h3 data-app-dialog-title style="color:#f3f4f6;font-size:18px;font-weight:700;margin-bottom:8px;">차시 일괄 삭제</h3>
+            <p data-app-dialog-text style="color:#9ca3af;font-size:14px;margin-bottom:24px;">총 <strong style="color:#f87171;">${count}개</strong> 차시를 휴지통으로 옮깁니다.<br>휴지통(차시 목록 위)에서 30일 동안 되살릴 수 있습니다.</p>
             <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
-                <button id="delete-all-confirm" style="padding:10px 20px;background:#ef4444;color:#fff;font-weight:700;border:none;border-radius:8px;cursor:pointer;font-size:14px;">🗑️ 즉시 삭제</button>
-                <button id="delete-all-archive" style="padding:10px 20px;background:#8b5cf6;color:#fff;font-weight:700;border:none;border-radius:8px;cursor:pointer;font-size:14px;">📦 보관함에 저장 후 삭제</button>
-                <button id="delete-all-cancel" style="padding:10px 20px;background:rgba(255,255,255,0.1);color:#9ca3af;font-weight:600;border:1px solid rgba(255,255,255,0.1);border-radius:8px;cursor:pointer;font-size:14px;">취소</button>
+                <button type="button" id="delete-all-confirm" data-delete-all="trash" style="padding:10px 20px;background:#ef4444;color:#fff;font-weight:700;border:none;border-radius:8px;cursor:pointer;font-size:14px;">🗑️ 휴지통으로 옮기기</button>
+                <button type="button" id="delete-all-archive" data-delete-all="keep" style="padding:10px 20px;background:#8b5cf6;color:#fff;font-weight:700;border:none;border-radius:8px;cursor:pointer;font-size:14px;">📦 작업 기록에도 남기고 옮기기</button>
+                <button type="button" id="delete-all-cancel" data-delete-all="cancel" style="padding:10px 20px;background:rgba(255,255,255,0.1);color:#9ca3af;font-weight:600;border:1px solid rgba(255,255,255,0.1);border-radius:8px;cursor:pointer;font-size:14px;">취소</button>
             </div>
         </div>`;
     document.body.appendChild(overlay);
-
-    const cleanup = () => overlay.remove();
-
-    document.getElementById('delete-all-cancel').onclick = cleanup;
-    overlay.onclick = (e) => { if (e.target === overlay) cleanup(); };
-
-    document.getElementById('delete-all-confirm').onclick = () => {
-        // 즉시 삭제 (보관함 저장 없이)
-        moveLessonsToTrash(courseData.filter(m => m.id !== 'mainQuest'));
-        courseData = courseData.filter(m => m.id === 'mainQuest');
-        currentEditingModuleId = null;
-        document.getElementById('editor-content-area').innerHTML = '<div class="h-full flex items-center justify-center text-textMuted text-sm">모든 차시가 삭제되었습니다.</div>';
-        document.getElementById('ai-command-bar').classList.add('hidden');
-        saveState().then(() => renderSidebar());
-        if (window.showToast) window.showToast(`${count}개 차시가 즉시 삭제되었습니다.`, 'success');
-        cleanup();
+    const cancelButton = overlay.querySelector('[data-delete-all="cancel"]');
+    const dialog = typeof openAppDialog === 'function'
+        ? openAppDialog(overlay, { role: 'alertdialog', focus: cancelButton })
+        : { tooSoon: () => false, close: () => overlay.remove() };
+    if (typeof openAppDialog !== 'function') overlay.onclick = event => { if (event.target === overlay) dialog.close(); };
+    // 막 뜬 창의 클릭은 받지 않는다(두 번 누른 클릭의 둘째로 지우지 않게). 창을 띄운 사이 시작된 생성이 있으면 옮기지 않는다
+    const choose = keep => () => {
+        if (dialog.tooSoon()) return;
+        dialog.close();
+        if (busy()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
+        trashAllLessons(keep);
     };
-
-    document.getElementById('delete-all-archive').onclick = () => {
-        // 보관함에 저장 후 삭제. 한 번에 남겨 기록 id가 겹치지 않고 상한 알림도 한 번만 뜬다
-        if (typeof archiveContents === 'function') archiveContents(courseData.filter(mod => mod.id !== 'mainQuest' && (mod.content || mod.tabContents)));
-        moveLessonsToTrash(courseData.filter(m => m.id !== 'mainQuest'));
-        courseData = courseData.filter(m => m.id === 'mainQuest');
-        currentEditingModuleId = null;
-        document.getElementById('editor-content-area').innerHTML = '<div class="h-full flex items-center justify-center text-textMuted text-sm">모든 차시가 삭제되었습니다.</div>';
-        document.getElementById('ai-command-bar').classList.add('hidden');
-        saveState().then(() => renderSidebar());
-        if (window.showToast) window.showToast(`${count}개 차시가 보관함에 저장 후 삭제되었습니다.`, 'success');
-        cleanup();
+    cancelButton.onclick = () => {
+        if (!dialog.tooSoon()) dialog.close();
     };
+    overlay.querySelector('[data-delete-all="trash"]').onclick = choose(false);
+    overlay.querySelector('[data-delete-all="keep"]').onclick = choose(true);
 }
 
 window.addModule = function () {
@@ -2854,13 +2904,18 @@ function emptyTabPromptHtml(mod, tabless) {
     const hint = tabless ? '아래 버튼을 눌러 AI로 최종 평가를 만드세요.' : `아래 버튼을 눌러 AI로 «${tabLabel}» 탭 교안을 생성하세요.`;
     const action = tabless ? 'promptAndGenerateMainQuest()' : `runTabJob('${mod.id}', currentLessonTab)`;
     const label = tabless ? '최종 평가 만들기' : `«${tabLabel}» 탭 생성하기`;
+    // 차시의 기본학습은 낭독 목표 분량까지 채우느라 오래 걸린다(시작 전에 호출 수·시간을 보이고 묻는다, lesson-pipeline.js runTabJob)
+    const fills = !tabless && mod.id !== 'mainQuest' && currentLessonTab === 'basicLearn';
+    const wait = fills
+        ? `기본학습은 강사가 소리 내어 읽어도 ${typeof lessonVolumeMinutes === 'function' ? lessonVolumeMinutes(mod) : 480}분이 걸리는 분량까지 채우느라 20분 넘게 걸릴 수 있습니다. 시작하기 전에 AI 호출 수와 걸리는 시간을 먼저 보여 드립니다.`
+        : '생성에는 수십 초가 걸릴 수 있습니다.';
     return `
             <div class="flex flex-col items-center justify-center text-center py-20 px-6 select-none">
                 <div class="w-16 h-16 mb-5 flex items-center justify-center rounded-2xl bg-accent/10 text-accent text-3xl">
                     <i class="ph-bold ph-sparkle"></i>
                 </div>
                 <h3 class="text-lg font-bold text-gray-800 mb-2">${title}</h3>
-                <p class="text-sm text-gray-500 mb-6 leading-relaxed">${hint}<br>생성에는 수십 초가 걸릴 수 있습니다.</p>
+                <p class="text-sm text-gray-500 mb-6 leading-relaxed">${hint}<br>${wait}</p>
                 <button onclick="${action}"
                     class="px-5 py-2.5 text-sm font-bold text-white bg-accent rounded-lg hover:bg-accentHover transition-colors flex items-center gap-2 shadow-sm hover:-translate-y-0.5">
                     <i class="ph-bold ph-lightning"></i> ${label}
@@ -3001,7 +3056,7 @@ ${tabGenerateButtonsHtml(mod, tabless)}
                             <button onclick="downloadImagesAsJPG('${mod.id}')" class="px-3 py-1.5 text-xs font-bold bg-teal-50 text-teal-600 border border-teal-200 rounded hover:bg-teal-100 flex items-center gap-1 transition-colors" title="이미지 JPG 다운로드">
                                 <i class="ph-bold ph-download-simple"></i> 이미지 저장
                             </button>
-                            <button onclick="insertImageSlot()" class="px-2 py-1 text-xs font-bold rounded border border-gray-200 text-gray-600 hover:text-gray-800 transition-all" title="이미지 슬롯 삽입">🖼️</button>
+                            <button onclick="insertImageSlot()" class="px-2 py-1 text-xs font-bold rounded border border-gray-200 text-gray-600 hover:text-gray-800 transition-all" title="그림 자리 넣기" aria-label="그림 자리 넣기">🖼️</button>
                         <button onclick="openSectionLocks('${mod.id}')" class="px-3 py-1.5 text-[0.6875rem] font-bold bg-slate-50 text-slate-600 border border-slate-200 rounded hover:bg-slate-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="다시 생성해도 유지할 섹션 선택"><i class="ph-bold ph-lock-simple"></i> 섹션 고정</button>
                         <button onclick="openLessonArt('${mod.id}')" class="px-3 py-1.5 text-[0.6875rem] font-bold bg-sky-50 text-sky-600 border border-sky-200 rounded hover:bg-sky-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="SVG 삽화 생성·수정·배치"><i class="ph-bold ph-paint-brush"></i> 삽화</button>
                         <button onclick="copyTabMarkdown('${mod.id}')" class="px-3 py-1.5 text-[0.6875rem] font-bold bg-sky-50 text-sky-600 border border-sky-200 rounded hover:bg-sky-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="현재 탭의 마크다운을 클립보드에 복사"><i class="ph-bold ph-copy"></i> 복사</button>
@@ -3017,10 +3072,12 @@ ${tabGenerateButtonsHtml(mod, tabless)}
 
                     </div>
 
-                    <!-- 탐색줄: 위쪽 버튼 줄과 함께 붙어 있게 같은 sticky 안에 둔다(높이가 바뀌어도 틈이 생기지 않는다) -->
-                    <div class="flex items-center gap-0.5 px-4 py-1 bg-white border-t border-gray-200 overflow-x-auto">
-                        <div id="lesson-nav-items" class="flex items-center gap-0.5">${renderTabBar(mod)}</div>
-                        <div class="flex-1"></div>
+                    <!-- 탐색줄: 위쪽 버튼 줄과 함께 붙어 있게 같은 sticky 안에 둔다(높이가 바뀌어도 틈이 생기지 않는다).
+                         탭 단추만 옆으로 밀어 보고, 낭독 분량 표시(분량 채우기)는 밀지 않아도 늘 오른쪽 끝에 보인다 -->
+                    <div class="flex items-center gap-0.5 px-4 py-1 bg-white border-t border-gray-200">
+                        <div class="flex-1 min-w-0 overflow-x-auto">
+                            <div id="lesson-nav-items" class="flex items-center gap-0.5 w-max">${renderTabBar(mod)}</div>
+                        </div>
                         <span id="lesson-volume-chip" class="hidden"></span>
                     </div>
 
@@ -3695,26 +3752,70 @@ function lessonImageTargets(mod, imgId) {
 // 원문의 그림 자리 세 모양. 정해 둔 모양으로만 찾고 주소는 글자 그대로 견준다(그림 키나 data URL로 정규식을 만들지 않는다).
 // 그림 틀: <div class="image-wrapper"><img src="…"> 뒤의 AI 표시(span)·다시 찾기 버튼·그림 설명(image-caption)과 닫는 </div>까지.
 // 그 사이 글에 '<'가 있어도 되지만 안쪽 <div나 빈 줄에서 멈춘다(모양이 다른 옛 틀은 맨 <img>만 지운다. 블록을 넘어 지우지 않는다).
-// 빈 줄은 \r\n으로 끝나는 줄(윈도에서 만든 MD)도 센다
-const IMAGE_WRAPPER_BLOCK = /<div class="image-wrapper(?:\s[^"]*)?"[^>]*>(?:(?!\n[ \t\r]*\n)\s)*<img\b[^>]*?\ssrc="([^"]*)"[^>]*>(?:(?!<div|<\/div>|\n[ \t\r]*\n)[\s\S])*(?:<div class="image-caption"[^>]*>(?:(?!<div|<\/div>|\n[ \t\r]*\n)[\s\S])*<\/div>(?:(?!<div|<\/div>|\n[ \t\r]*\n)[\s\S])*)?<\/div>/g;
+// 빈 줄은 \r\n으로 끝나는 줄(윈도에서 만든 MD)도 센다.
+// 태그 안을 훑는 자리는 다음 '<'에서도 멈춘다(닫지 않은 <img·![가 아주 많은 글도 글 길이만큼만 훑는다)
+const IMAGE_WRAPPER_BLOCK = /<div class="image-wrapper(?:\s[^"<>]*)?"[^<>]*>(?:(?!\n[ \t\r]*\n)\s)*<img\b[^<>]*?\ssrc="([^"]*)"[^<>]*>(?:(?!<div|<\/div>|\n[ \t\r]*\n)[\s\S])*(?:<div class="image-caption"[^<>]*>(?:(?!<div|<\/div>|\n[ \t\r]*\n)[\s\S])*<\/div>(?:(?!<div|<\/div>|\n[ \t\r]*\n)[\s\S])*)?<\/div>/g;
 // 붙여 넣은 맨 그림 <img src="…">(src 앞에 다른 속성이 있어도 된다)
-const HTML_IMAGE_TAG = /<img\b[^>]*?\ssrc="([^"]*)"[^>]*>/g;
+const HTML_IMAGE_TAG = /<img\b[^<>]*?\ssrc="([^"]*)"[^<>]*>/g;
 // 마크다운 그림 ![설명](주소)
-const MD_IMAGE_TAG = /!\[[^\]]*\]\(([^)\s]*)\)/g;
+const MD_IMAGE_TAG = /!\[[^\[\]]*\]\(([^()\s]*)\)/g;
 const LESSON_IMAGE_SHAPES = [IMAGE_WRAPPER_BLOCK, HTML_IMAGE_TAG, MD_IMAGE_TAG];
 const PICTURE_GAP = '\u0000그림\u0000'; // 지운 자리 표시(줄 정리에만 쓰고 남기지 않는다)
 
-// 코드 블록(``` 펜스) 밖의 글 덩어리에만 change를 부른다. 코드 예제 속 <img>·![]()는 그림이 아니다. 줄 나눔은 그대로 둔다
+// 그림 지우기가 따라가는 코드 펜스: ``` 와 ~~~ (3개 이상, 들여쓰기 허용). 여는 펜스와 같은 글자로 같거나 더 길게 닫는다.
+// 언어 칸에 `가 든 ``` 줄(```npm install```)은 인라인 코드다(data.js fenceStateAfter와 같다). 펜스 밖이면 null
+function pictureFenceAfter(fence, line) {
+    const [, marks, rest] = String(line).match(/^\s*(`{3,}|~{3,})(.*?)\r?$/) || [];
+    if (!marks) return fence;
+    if (!fence) return marks[0] === '`' && rest.includes('`') ? null : { mark: marks[0], size: marks.length };
+    return marks[0] === fence.mark && marks.length >= fence.size && !rest.trim() ? null : fence;
+}
+
+// from 뒤에서 `가 꼭 size개 이어진 자리(더 길거나 짧은 `줄은 건너뛴다). 없으면 -1
+function backtickRunAt(line, size, from) {
+    for (let at = line.indexOf('`', from); at !== -1;) {
+        let end = at;
+        while (line[end] === '`') end += 1;
+        if (end - at === size) return at;
+        at = line.indexOf('`', end);
+    }
+    return -1;
+}
+
+// 한 줄 안의 인라인 코드(`…`, 같은 수의 `로 열고 닫는다)를 자리표시로 바꾼다. 닫지 않은 `는 글자다. 바꾼 코드는 codes에 모은다
+function maskInlineCode(line, codes) {
+    let out = '';
+    let from = 0;
+    let at = line.indexOf('`');
+    while (at !== -1) {
+        let end = at;
+        while (line[end] === '`') end += 1;
+        const close = backtickRunAt(line, end - at, end);
+        if (close === -1) {
+            at = line.indexOf('`', end);
+            continue;
+        }
+        out += `${line.slice(from, at)}\u0000INLINE${codes.push(line.slice(at, close + end - at)) - 1}\u0000`;
+        from = close + end - at;
+        at = line.indexOf('`', from);
+    }
+    return out + line.slice(from);
+}
+
+// 코드 블록(``` · ~~~ 펜스)과 인라인 코드(`…`) 밖의 글 덩어리에만 change를 부른다. 코드 예제 속 <img>·![]()는 그림이 아니다. 줄 나눔은 그대로 둔다
 function mapPictureProse(md, change) {
     const out = [];
     let prose = [];
-    let fence = 0;
+    let fence = null;
     const flush = () => {
-        if (prose.length) out.push(change(prose.join('\n')));
+        if (!prose.length) return;
+        const codes = [];
+        const masked = prose.map(line => maskInlineCode(line, codes)).join('\n');
+        out.push(change(masked).replace(/\u0000INLINE(\d+)\u0000/g, (whole, i) => codes[i] ?? whole));
         prose = [];
     };
     md.split('\n').forEach(line => {
-        const next = fenceStateAfter(fence, line);
+        const next = pictureFenceAfter(fence, line);
         if (fence || next) {
             flush();
             out.push(line);
@@ -3767,10 +3868,11 @@ function withoutLessonImages(md, refs) {
 }
 
 // AI 작업이 도는 중인지. 다시 만들기·일괄 생성·분량 채우기는 비운 탭에 돌려 넣을 고정 섹션의 그림을 쥐고 있다(그동안은 그림 값을 지우지 않는다).
-// 있는 표시만 읽는다(course-flow.js generationBusy·_lessonRun, lesson-pipeline.js, lesson-volume.js)
+// 창을 닫기 전에 묻는 AI 작업(course-flow.js isAiWorkRunning: 창을 닫아도 이어지는 삽화 등)도 같이 본다. 있는 표시만 읽는다(lesson-pipeline.js, lesson-volume.js)
 function pictureJobRunning() {
     return (typeof generationBusy === 'function' && !!generationBusy())
         || (typeof _lessonRun !== 'undefined' && !!_lessonRun)
+        || (typeof isAiWorkRunning === 'function' && !!isAiWorkRunning())
         || !!window.isLessonPipelineRunning?.()
         || !!window.isVolumeFilling?.();
 }
@@ -3861,8 +3963,8 @@ window.deleteImage = async function (imgId) {
         if (drop.length) mod.images = Object.fromEntries(Object.entries(mod.images).filter(([key]) => !drop.includes(key)));
     }
     rawViewAfterImageDelete(mod, tabId);
-    await window.writeLessonTab(mod, tabId, now.text);
-    window.showToast?.('그림을 지웠습니다.', 'success');
+    // 저장하지 못했으면(saveState가 이미 알렸다) 지웠다고 알리지 않는다
+    if ((await window.writeLessonTab(mod, tabId, now.text)) !== false) window.showToast?.('그림을 지웠습니다.', 'success');
 };
 
 /* ---------- 보기 화면: 그림 틀·붙여 넣은 그림의 삭제 버튼 ---------- */
@@ -3915,10 +4017,11 @@ window.downloadImagesAsJPG = function (moduleId) {
 
     // 현재 탭 이미지만 vs 전체 차시 이미지 선택
     const tabId = typeof currentLessonTab !== 'undefined' ? currentLessonTab : null;
-    const tabContent = tabId && mod.tabContents ? (mod.tabContents[tabId] || '') : '';
-    // 받을 수 있는 그림만 센다(찾지 못한 그림의 teacher-image 참조·빈 값은 내려받을 수 없다)
+    // 보고 있는 탭의 저장된 글(탭이 없는 최종 평가·옛 차시는 기본학습 칸의 본문, tabs.js tabSourceFor)
+    const tabContent = tabId ? String(tabSourceFor(mod, tabId) || '') : '';
+    // 받을 수 있는 그림만 센다(찾지 못한 그림의 teacher-image 참조·빈 값은 내려받을 수 없다). local:img_1과 local:img_10을 가른다(textUsesImage)
     const allImgIds = Object.keys(mod.images).filter(id => /^data:image\//.test(String(mod.images[id] || '')));
-    const tabImgIds = allImgIds.filter(id => tabContent.includes(id));
+    const tabImgIds = allImgIds.filter(id => textUsesImage(tabContent, id));
 
     if (tabImgIds.length === 0 && allImgIds.length === 0) {
         return window.showAlert('다운로드할 이미지가 없습니다.');
@@ -3981,6 +4084,14 @@ async function insertImageSlot() {
     const mod = getEditingModule();
     const tabId = typeof currentLessonTab !== 'undefined' ? currentLessonTab : 'basicLearn';
     if (!mod || !isViewingTab(mod, tabId)) return window.showAlert('그림 자리는 보고 있는 교안 탭에 넣습니다. 교안 탭을 연 뒤 다시 눌러 주세요.');
+    const rawOpen = () => {
+        const box = document.getElementById('raw-view');
+        return !!box && !box.classList.contains('hidden') && String(box.dataset.moduleId) === String(mod.id) && (box.dataset.tabId || tabId) === tabId;
+    };
+    // 빈 탭에 그림 자리만 넣으면 탭을 만든 것으로 보여 '탭 생성하기' 안내가 사라지고 일괄 생성·전체 생성이 그 탭을 건너뛴다(원문 칸에서 직접 쓰는 중이면 넣는다)
+    const emptyTab = () => !rawOpen() && !String((mod.tabContents ? (showsOtherTabsText(mod, tabId) ? '' : tabSourceFor(mod, tabId)) : mod.content) || '').trim();
+    const EMPTY_TAB_SLOT = '이 탭은 아직 비어 있습니다. 먼저 탭을 만든 뒤 그림 자리를 넣어 주세요.';
+    if (emptyTab()) return window.showAlert(EMPTY_TAB_SLOT);
     const answer = await window.promptAsync('찾을 그림의 검색어를 적으세요(영어 권장).', { title: '그림 자리 넣기', okLabel: '넣기', placeholder: '예: game loop diagram' });
     const keyword = imageSlotKeyword(answer);
     if (!keyword) return;
@@ -3988,16 +4099,17 @@ async function insertImageSlot() {
     if (!isViewingTab(mod, tabId)) return window.showToast?.('다른 차시나 탭으로 옮겨 그림 자리를 넣지 않았습니다.', 'warning');
     const tag = `\n<!-- [IMG: "${keyword}"] -->\n`;
     const raw = document.getElementById('raw-view');
-    if (raw && !raw.classList.contains('hidden') && String(raw.dataset.moduleId) === String(mod.id) && (raw.dataset.tabId || tabId) === tabId) {
+    if (rawOpen()) {
         insertTextAtCursor(raw, tag); // 원문 칸에 넣고 바로 저장한다(state.js)
         raw.focus();
         return;
     }
     window.flushVisibleRawView?.(); // 다른 차시·탭을 그린 채 열린 원문 칸이 있으면 그 글을 먼저 그 차시에 넣는다(다시 그리며 잃지 않게)
+    if (emptyTab()) return window.showAlert(EMPTY_TAB_SLOT); // 묻는 동안 탭이 비었다
     // 탭이 없는 최종 평가는 본문(content)이 곧 보이는 글이다. 비운 기본학습에 보이는 다른 탭을 합친 글은 기본학습에 옮겨 넣지 않는다(showsOtherTabsText)
     const source = mod.tabContents ? (showsOtherTabsText(mod, tabId) ? '' : tabSourceFor(mod, tabId)) : mod.content || '';
     setTabMarkdown(mod, tabId, source + tag);
     saveState();
     renderEditor(mod);
-    window.showToast?.("그림 자리를 탭 끝에 넣었습니다. 도구의 '일괄 이미지 찾기'가 이 자리에 그림을 찾아 넣습니다.", 'success');
+    window.showToast?.("그림 자리를 탭 끝에 넣었습니다. 도구의 '일괄 이미지 찾기'를 누르면 이 자리에 그림을 찾아 넣습니다.", 'success');
 }

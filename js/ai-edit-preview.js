@@ -166,7 +166,7 @@ function sectionRowHtml(row, index, checked, dropGone = false) {
         </div>`;
 }
 
-function aiChangeHtml({ title, note, summary, rows, accepted, dropGone = false }) {
+function aiChangeHtml({ title, note, summary, rows, accepted, dropGone = false, cancelLabel = '취소' }) {
     const changed = rows.map((row, index) => ({ row, index })).filter(({ row }) => sectionChanged(row));
     return `
         <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[720px] max-w-[92vw] max-h-[84vh] flex flex-col shadow-2xl">
@@ -180,21 +180,21 @@ function aiChangeHtml({ title, note, summary, rows, accepted, dropGone = false }
                 ${changed.length && changed.length < rows.length ? `<p class="text-xs text-textMuted">변경 없는 섹션 ${rows.length - changed.length}개는 그대로 둡니다.</p>` : ''}
             </div>
             <div class="p-3 border-t border-white/10 flex justify-end gap-2">
-                <button data-diff-action="cancel" class="px-4 py-2 text-xs font-bold text-textLight bg-white/10 rounded-lg hover:bg-white/20">취소</button>
+                <button data-diff-action="cancel" class="px-4 py-2 text-xs font-bold text-textLight bg-white/10 rounded-lg hover:bg-white/20">${escapeHtml(cancelLabel)}</button>
                 <button data-diff-action="apply" ${changed.length ? '' : 'disabled'} class="px-4 py-2 text-xs font-bold text-white bg-accent rounded-lg hover:bg-accentHover disabled:opacity-50">선택한 섹션 반영</button>
             </div>
         </div>`;
 }
 
 // 고른 섹션을 반영한 마크다운을 돌려준다. 취소하면 null
-// rewrite: 탭 전체를 다시 쓴 글이다 (defaultAcceptedRows 참고)
-function previewAiChange(beforeMd, afterMd, { title = 'AI 수정 미리보기', tabId, note = '', truncated = false, rewrite = false } = {}) {
+// rewrite: 탭 전체를 다시 쓴 글이다 (defaultAcceptedRows 참고) / cancelLabel: 취소 단추 이름(오래 걸린 작업은 '반영하지 않기')
+function previewAiChange(beforeMd, afterMd, { title = 'AI 수정 미리보기', tabId, note = '', truncated = false, rewrite = false, cancelLabel = '취소' } = {}) {
     const rows = alignMdSections(beforeMd, afterMd);
     let accepted = defaultAcceptedRows(rows, truncated, rewrite);
     return new Promise(resolve => {
         const overlay = document.createElement('div');
         overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9200]';
-        overlay.innerHTML = aiChangeHtml({ title, note, summary: lintDeltaLabel(beforeMd, composeSectionChoice(rows, accepted), tabId), rows, accepted, dropGone: rewrite && !truncated });
+        overlay.innerHTML = aiChangeHtml({ title, note, summary: lintDeltaLabel(beforeMd, composeSectionChoice(rows, accepted), tabId), rows, accepted, dropGone: rewrite && !truncated, cancelLabel });
         overlay.addEventListener('change', event => {
             const index = Number(event.target.dataset?.sectionRow);
             if (Number.isNaN(index)) return;

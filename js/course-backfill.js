@@ -112,7 +112,7 @@ function backfillIntroHtml(work) {
         <div id="backfill-count">${backfillCountHtml(work)}</div>
         <label class="flex items-start gap-2 text-xs text-textLight">
             <input id="backfill-art" type="checkbox">
-            <span>기본 학습에 삽화도 넣기<span class="block text-[0.6875rem] text-textMuted">차시마다 삽화 후보 1회와 삽화 최대 ${ILLUSTRATION_MAX_IDEAS}장 호출이 늘어납니다.</span></span>
+            <span>기본학습에 삽화도 넣기<span class="block text-[0.6875rem] text-textMuted">차시마다 삽화 후보 1회와 삽화 최대 ${ILLUSTRATION_MAX_IDEAS}장 호출이 늘어납니다.</span></span>
         </label>`;
 }
 

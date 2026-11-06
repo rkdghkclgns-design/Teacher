@@ -357,14 +357,31 @@ async function run(name, fn) {
         assert.strictEqual((await ensure(long)({ md, targetMinutes: 600 })).calls, 30, '600분이면 30번');
     });
 
-    await run('분량 채우기: 뒤의 ## 섹션을 코드 블록으로 삼키는 답은 제목 검사에서 버리고 늘지 않은 것으로 센다', async () => {
+    await run('분량 채우기: 답 안에서 닫지 않은 코드 블록(``` 끝처럼 뒤에 글이 붙은 줄은 닫는 펜스가 아니다)은 답 끝에서 닫아 뒤의 ## 섹션을 코드로 삼키지 않는다', async () => {
         const ctx = genContext();
         const md = draftMd();
         ctx.callGemini = volumeModel(ctx, { replyFor: k => reply(`### ■ 삼키는 소주제 ${k}\n\n${filler(1500)}\n\n\`\`\`python\nx = 1\n\`\`\` 끝\n\n${filler(1500)}`) });
         const result = await ensure(ctx)({ md });
-        assert.deepStrictEqual([result.calls, result.added, result.reason], [2, 0, 'stall']);
-        assert.deepStrictEqual(titleKeys(ctx, result.md), titleKeys(ctx, md));
-        assert.ok(!result.md.includes('삼키는 소주제'));
+        assert.deepStrictEqual(titleKeys(ctx, result.md), titleKeys(ctx, md), '## 제목은 그대로 보인다');
+        const fence = call(ctx, 'nextCodeFence');
+        assert.ok(call(ctx, 'mdSections')(result.md).every(section => section.text.split('\n').reduce(fence, 0) === 0), '붙인 코드 블록은 그 섹션 안에서 닫힌다');
+        assert.ok(result.added > 0 && result.md.includes('### ■ 삼키는 소주제 1'));
+    });
+
+    await run('섹션 나누기: 한 줄짜리 ```npm install```은 코드 블록을 열지 않고, ```` 블록 안의 ``` 줄과 ## 줄은 코드다(다른 펜스 규칙과 같다)', async () => {
+        const ctx = genContext();
+        const titles = md => plain(call(ctx, 'mdSections')(md).map(section => section.title));
+        assert.deepStrictEqual(titles('## A (⏱ 60분)\n설치 명령:\n```npm install```\n본문\n## B (⏱ 60분)\nB 본문\n## C\nC 본문'), ['A (⏱ 60분)', 'B (⏱ 60분)', 'C']);
+        assert.deepStrictEqual(titles('## A\n\n````markdown\n```js\nx\n```\n## 코드 속 제목\n````\n\n## B\n\n끝'), ['A', 'B']);
+        // 분량 채우기: 그런 줄이 있는 초안도 섹션마다 채우고 체크리스트 뒤에 붙이지 않으며 (⏱) 합계는 목표 시간이다
+        const md = draftMd({ sectionBody: i => (i === 2 ? `설치합니다.\n\n\`\`\`npm install\`\`\`\n\n${filler(2400)}` : filler(2400)) });
+        ctx.callGemini = volumeModel(ctx, { deliver: 0.75 });
+        const result = await ensure(ctx)({ md });
+        assert.strictEqual(result.reason, 'target');
+        const sections = call(ctx, 'mdSections')(result.md);
+        assert.ok(sections.at(-1).title.includes('학습 후 체크리스트') && !sections.at(-1).text.includes('### ■'), '체크리스트는 맨 끝이고 소주제가 붙지 않는다');
+        assert.strictEqual(call(ctx, 'volumeLabelSum')(result.md), 480);
+        assert.ok(new Set(ctx.sections.map(item => item.sectionTitle)).size >= 6, '여러 섹션을 고른다');
     });
 
     await run('분량 채우기: 중지하면 받던 답까지 붙이고 다음 호출을 하지 않으며 (⏱)를 다시 매기지 않는다. 기다리는 중 중지도 멈춘다', async () => {
@@ -442,7 +459,9 @@ async function run(name, fn) {
         assert.ok(statuses.some(text => text.includes('낭독 약') && text.includes('/480분') && text.includes('보강 1/24회')), statuses.find(text => text.includes('낭독')));
         assert.ok(ctx.alerts.at(-1).includes('낭독 약') && ctx.alerts.at(-1).includes('(목표 480분)'), ctx.alerts.at(-1));
         assert.deepStrictEqual([ctx.imageCalls, ctx.imageOpts.inject], [1, false], '그림 자리는 초안에만 미리 넣었으므로 더 넣지 않는다');
-        assert.ok(saved.includes('<!-- [IMG: "1. 내용 1 (⏱ '), '초안의 ## 섹션에 그림 자리를 넣었다');
+        assert.ok(saved.includes('<!-- [IMG: "1. 내용 1"] -->'), '초안의 ## 섹션에 그림 자리를 넣었다');
+        assert.ok(!/\[IMG:[^\]]*⏱/.test(saved), '그림 자리 검색어에는 (⏱ N분)을 넣지 않는다(다시 매긴 뒤 낡은 시간이 남지 않게)');
+        assert.ok(!saved.includes('[IMG: "학습 후 체크리스트'), '체크리스트에는 그림 자리를 넣지 않는다');
         assert.strictEqual(call(ctx, 'volumeLabelSum')(saved), 480);
     });
 
@@ -501,7 +520,7 @@ async function run(name, fn) {
         assert.deepStrictEqual([report.halted, report.stopped, report.failed.length, report.left.length, report.short.length], [true, true, 1, 1, 1]);
         assert.strictEqual(report.short[0].readMinutes, filled.readMinutes);
         const html = call(batch, 'lessonRunReportHtml')(report);
-        assert.ok(html.includes('기본 학습 분량이 목표에 못 미친 차시 1개') && html.includes(`낭독 약 ${filled.readMinutes}분`) && html.includes("'분량 채우기'"), html);
+        assert.ok(html.includes('기본학습 분량이 목표에 못 미친 차시 1개') && html.includes(`낭독 약 ${filled.readMinutes}분`) && html.includes("'분량 채우기'"), html);
     });
 
     await run('탭 생성: 분량 채우기 중에 중지하면 받은 데까지 저장하고 고치기·그림 없이 중단을 알린다', async () => {
@@ -590,6 +609,7 @@ async function run(name, fn) {
         assert.ok(quotaMod.tabContents.basicLearn.includes('### ■ 보강 1'), '받은 글은 저장한다');
         assert.strictEqual(quota.alerts.length, 1, quota.alerts.join(' | '));
         assert.ok(quota.alerts[0].includes(DAILY_MESSAGE) && quota.alerts[0].includes('낭독 약'), quota.alerts[0]);
+        assert.ok(quota.alerts[0].includes('목표 480분') && quota.alerts[0].includes("기본학습 탭 위 '분량 채우기'로 이어서 늘리세요"), '모자란 기본학습을 이어서 늘리는 법을 알린다(전체 생성은 빈 항목만 만든다)');
         assert.strictEqual(quota.pipelineCalls.length, 0, '남은 탭은 만들지 않는다');
         assert.strictEqual(quota.imageCalls, 0);
     });
@@ -609,7 +629,7 @@ async function run(name, fn) {
         await call(ctx, 'runLessonPipeline')(1);
         assert.deepStrictEqual(order, ['basicLearn']);
         const alert = ctx.alerts.at(-1);
-        ['기본학습 분량 채우기: 오늘 쓸 수 있는', '같은 까닭으로 남은 항목은 만들지 않았습니다.', '기본 학습 분량이 목표에 못 미친 항목: 기본학습(낭독 약 300분/목표 480분)', "'분량 채우기'"].forEach(text => assert.ok(alert.includes(text), `${text}\n${alert}`));
+        ['기본학습 분량 채우기: 오늘 쓸 수 있는', '같은 까닭으로 남은 항목은 만들지 않았습니다.', '목표 분량에 못 미친 항목: 기본학습(낭독 약 300분/목표 480분)', "'분량 채우기'"].forEach(text => assert.ok(alert.includes(text), `${text}\n${alert}`));
         order.length = 0;
         ctx.generateTabContent = async (id, tabId) => { order.push(tabId); return tabId === 'basicLearn' ? { ok: true, short: true, readMinutes: 410, targetMinutes: 480 } : { ok: true }; };
         lesson.tabContents = {};
@@ -636,7 +656,7 @@ async function run(name, fn) {
 
     await run('일괄 생성 안내: 기본학습 분량 때문에 오래 걸린다고 알린다', () => {
         const ctx = genContext();
-        assert.ok(call(ctx, 'lessonRunIntroHtml')([], [], false).includes('기본 학습은 낭독 480분 분량을 채우느라 차시마다 20분 넘게 걸릴 수 있습니다.'));
+        assert.ok(call(ctx, 'lessonRunIntroHtml')([], [], false).includes('기본학습은 낭독 480분 분량을 채우느라 차시마다 20분 넘게 걸릴 수 있습니다.'));
         const plainReport = call(ctx, 'lessonRunReportHtml')({ done: [], partial: [], failed: [], left: [], stopped: false });
         assert.ok(!plainReport.includes('분량'), '모자란 차시가 없으면 그 줄도 없다');
     });
@@ -686,7 +706,7 @@ async function run(name, fn) {
         const gen = { gen: { length: '길게 (약 1,500자)', level: '실무 경험자' } };
         assert.ok(!call(pure, 'lessonGenBrief')(gen, 'basicLearn').includes('섹션 하나당 분량') && call(pure, 'lessonGenBrief')(gen, 'basicLearn').includes('실무 경험자'));
         assert.ok(call(pure, 'lessonGenBrief')(gen, 'basicPrac').includes('섹션 하나당 분량: 길게 (약 1,500자)'));
-        assert.ok(call(pure, 'lessonGenFieldsHtml')('run').includes('섹션당 분량(기본 학습 제외)'));
+        assert.ok(call(pure, 'lessonGenFieldsHtml')('run').includes('섹션당 분량(기본학습 제외)'));
     });
 
     /* ---------- 탭 위 표시와 분량 채우기 ---------- */
@@ -717,7 +737,7 @@ async function run(name, fn) {
         assert.ok(panel.includes(' · 낭독 약 300분(목표 480분)'), '검수 패널에도 보인다');
     });
 
-    await run("분량 채우기 버튼: 호출 수·시간을 묻고, 채운 뒤 바뀐 섹션을 골라 반영하며 이전 글은 작업 기록에 남긴다. 그사이 탭이 바뀌면 반영하지 않는다", async () => {
+    await run("분량 채우기 버튼: 모자란 만큼의 호출 수·시간을 묻고, 채운 뒤 바뀐 섹션을 골라 반영하며 이전 글은 작업 기록에 '분량 채우기 전'으로 남긴다. 섹션 제목이 바뀌어 붙일 곳이 없으면 채운 글을 작업 기록에 남긴다", async () => {
         const start = draftMd();
         const mod = { ...MOD, tabContents: { basicLearn: start, basicPrac: null, advLearn: null, advPrac: null, assessment: null } };
         const ctx = genContext();
@@ -725,10 +745,14 @@ async function run(name, fn) {
         ctx.callGemini = volumeModel(ctx, {});
         answerPreview(ctx, 'apply');
         await call(ctx, 'fillLessonVolume')('1');
-        assert.ok(ctx.confirms[0].message.includes('낭독 약') && ctx.confirms[0].message.includes('AI 호출 약 16회') && ctx.confirms[0].message.includes('낭독 480분'), ctx.confirms[0].message);
+        const calls = call(ctx, 'volumeCallEstimate')(start, 480);
+        assert.strictEqual(calls, Math.ceil((GOAL - call(ctx, 'spokenChars')(start)) / 5000) + 3, '모자란 낭독 글자 ÷ 5,000자 + 자동 수정 3번');
+        const asked = ctx.confirms[0].message;
+        assert.ok(asked.includes('낭독 약') && asked.includes(`AI 호출 약 ${calls}회`) && asked.includes('낭독 480분'), asked);
+        assert.ok(!asked.includes('있던 글은 바꾸지 않고') && asked.includes('시간(⏱)을 낭독 길이에 맞춰 다시 매깁니다') && asked.includes('AI가 고쳐 쓸 수 있습니다'), '하는 일을 사실대로 말한다');
         assert.strictEqual(ctx.confirms[0].opts.title, '기본학습 분량 채우기');
         assert.ok(call(ctx, 'spokenChars')(mod.tabContents.basicLearn) >= TARGET_CHARS, '반영했다');
-        assert.deepStrictEqual(ctx.archived.map(item => [item.tabId, item.reason, item.content === start]), [['basicLearn', '고치기 전', true]]);
+        assert.deepStrictEqual(ctx.archived.map(item => [item.tabId, item.reason, item.content === start]), [['basicLearn', '분량 채우기 전', true]]);
         assert.ok(mod.history[0].note.startsWith('기본학습 분량 채우기(낭독 약 '), mod.history[0].note);
         assert.ok(ctx.toasts.at(-1).message.includes('채웠습니다'), JSON.stringify(ctx.toasts.at(-1)));
         assert.strictEqual(ctx.imageCalls, 0, '그림은 만들지 않는다');
@@ -739,8 +763,10 @@ async function run(name, fn) {
         changing.callGemini = volumeModel(changing, { onCall: k => { if (k === 1) edited.tabContents.basicLearn = '## 고친 글\n\n기다리는 동안 고쳤습니다.'; } });
         answerPreview(changing, 'apply');
         await call(changing, 'fillLessonVolume')(1);
-        assert.strictEqual(edited.tabContents.basicLearn, '## 고친 글\n\n기다리는 동안 고쳤습니다.');
-        assert.ok(changing.alerts.at(-1).includes('탭 내용이 바뀌어 반영하지 않았습니다'), changing.alerts.at(-1));
+        assert.strictEqual(edited.tabContents.basicLearn, '## 고친 글\n\n기다리는 동안 고쳤습니다.', '고친 글은 그대로');
+        assert.ok(changing.alerts.at(-1).includes('섹션 제목이 바뀌어') && changing.alerts.at(-1).includes("'분량 채우기 결과(반영 안 함)'"), changing.alerts.at(-1));
+        const kept = changing.archived.find(item => item.reason === '분량 채우기 결과(반영 안 함)');
+        assert.ok(kept && kept.tabId === 'basicLearn' && call(changing, 'spokenChars')(kept.content) >= TARGET_CHARS, '채운 글은 작업 기록에 남는다');
 
         const declined = genContext();
         declined.currentMod = { ...MOD, tabContents: { basicLearn: start } };
@@ -807,6 +833,15 @@ async function run(name, fn) {
         assert.ok(out.includes('본문입니다.') && out.includes('## 문서 구조와 흐름'), '대괄호 없는 제목은 둔다');
     });
 
+    await run('콘텐츠 정리: 저장된 교안의 서식만 고치고, 강사가 쓴 **[문서 구조]** 같은 대괄호 줄은 지시 라벨로 보지 않고 남긴다(막 받은 AI 답에서만 지운다)', () => {
+        const ctx = genContext();
+        const md = '## 2. 기획서 쓰기 (⏱ 30분)\n\n**[문서 구조]**\n\n- 표지, 목차, 본문 순서입니다.\n\n[이 교안의 학습 목표]\n\n본문입니다.';
+        const mod = { ...MOD, tabContents: { basicLearn: md, basicPrac: null, advLearn: null, advPrac: null, assessment: null } };
+        call(ctx, 'cleanLessonMarkdown')(mod);
+        assert.ok(mod.tabContents.basicLearn.includes('**[문서 구조]**') && mod.tabContents.basicLearn.includes('[이 교안의 학습 목표]'), mod.tabContents.basicLearn);
+        assert.ok(!call(ctx, 'sanitizeMarkdownContent')(md).includes('[문서 구조]'), 'AI 답을 받을 때는 지운다');
+    });
+
     /* ---------- 생성 지시 ---------- */
     const promptCtx = (() => {
         const ctx = {
@@ -868,20 +903,29 @@ async function run(name, fn) {
     });
 
     /* ---------- 미리 보기 예고 ---------- */
-    await run('미리 보기: 기본학습을 만들면 분량 보강 긴 호출 16번을 더하고, 잰 긴 호출 시간이 있으면 그 시간을 쓴다', () => {
+    await run('미리 보기: 기본학습을 만들면 분량 보강 호출 상한(480분이면 24번)과 자동 수정 3번을 긴 호출로 더하고, 잰 긴 호출 시간이 있으면 그 시간을 쓴다', () => {
         const ectx = { console, window: {}, JSON, Math, Object, localStorage: { getItem: () => null, setItem() {} } };
         vm.createContext(ectx);
         vm.runInContext(source('cost-estimate.js'), ectx);
         const work = vm.runInContext('lessonWork', ectx);
-        assert.strictEqual(plain(work({ tabs: ['basicLearn'] }, 'section', 0)).volume, 1);
+        assert.deepStrictEqual([plain(work({ tabs: ['basicLearn'] }, 'section', 0)).volume, plain(work({ tabs: ['basicLearn'] }, 'section', 0)).volumeCalls], [1, 27]);
         assert.ok(!('volume' in plain(work({ tabs: ['basicPrac'] }, 'section', 0))) && !('volume' in plain(work({ tabs: 5 }, 'section', 0))), '탭 수만 알면 세지 않는다');
-        assert.deepStrictEqual(plain(vm.runInContext('estimateCallSplit', ectx)({ tabs: 1, volume: 1 })), { body: 2, bodyWait: 2, short: 0, images: 0, long: 16 });
-        assert.strictEqual(vm.runInContext('estimateCalls', ectx)({ tabs: 1, volume: 1 }), 18);
-        const summary = (timings = {}) => plain(vm.runInContext('estimateSummary', ectx)({ tabs: 1, volume: 1 }, { model: 'gemini-3.8-flash', effort: 'medium', timings }));
-        assert.deepStrictEqual([summary().minutesLow, summary().minutesHigh], [12, 26], '긴 호출은 본문 호출의 3배(60초)');
+        assert.deepStrictEqual(plain(vm.runInContext('estimateCallSplit', ectx)({ tabs: 1, volume: 1 })), { body: 2, bodyWait: 2, short: 0, images: 0, long: 27 });
+        assert.strictEqual(vm.runInContext('estimateCalls', ectx)({ tabs: 1, volume: 1 }), 29);
+        const summary = (timings = {}, extra = {}) => plain(vm.runInContext('estimateSummary', ectx)({ tabs: 1, volume: 1, ...extra }, { model: 'gemini-3.8-flash', effort: 'medium', timings }));
+        assert.deepStrictEqual([summary().minutesLow, summary().minutesHigh], [19, 42], '긴 호출은 본문 호출의 3배(60초): 2×20초 + 27×60초 + 4초');
         const measured = summary({ 'gemini-3.8-flash#long': { count: 3, avg: 30000 } });
-        assert.deepStrictEqual([measured.minutesLow, measured.minutesHigh], [6, 14], '2×20초 + 16×30초 + 4초');
-        assert.ok(vm.runInContext('estimateNote', ectx)(summary(), 'gemini-3.8-flash').includes('기본 학습은 낭독 480분(공백 포함 약 120,000자)이 될 때까지'));
+        assert.deepStrictEqual([measured.minutesLow, measured.minutesHigh], [10, 22], '2×20초 + 27×30초 + 4초');
+        const note = vm.runInContext('estimateNote', ectx);
+        assert.ok(note(summary(), 'gemini-3.8-flash').includes('기본학습은 낭독 480분(공백 포함 약 120,000자)이 될 때까지') && note(summary(), 'gemini-3.8-flash').includes('긴 호출이 약 27번'));
+        // 차시 시간이 긴 차시는 목표와 호출 상한이 늘고, 여러 차시는 차시마다의 수와 가장 긴 목표를 보인다. 지금 글로 센 분량 채우기는 그 수를 쓴다
+        const long = plain(work({ tabs: ['basicLearn'], volumeMinutes: 600 }, 'section', 0));
+        assert.deepStrictEqual([long.volumeCalls, long.volumeMinutes], [33, 600], '600분이면 상한 30번 + 자동 수정 3번');
+        const both = plain(vm.runInContext('sumWork', ectx)([plain(work({ tabs: ['basicLearn'] }, 'section', 0)), long]));
+        assert.deepStrictEqual([both.volume, both.volumeCalls, both.volumeMinutes], [2, 60, 600]);
+        const twoNote = note(plain(vm.runInContext('estimateSummary', ectx)(both, { model: 'gemini-3.8-flash', timings: {} })), 'gemini-3.8-flash');
+        assert.ok(twoNote.includes('낭독 600분(공백 포함 약 150,000자)') && twoNote.includes('차시마다 긴 호출이 약 30번'), twoNote);
+        assert.ok(note(summary({}, { volumeCalls: 4, volumeMinutes: 480 }), 'gemini-3.8-flash').includes('긴 호출이 약 4번'), '거의 찬 기본학습은 적게 센다');
         assert.ok(!vm.runInContext('estimateNote', ectx)(plain(vm.runInContext('estimateSummary', ectx)({ tabs: 1 }, { model: 'gemini-3.8-flash', timings: {} })), 'gemini-3.8-flash').includes('낭독'));
         const lexport = { console, window: {}, document: {}, LESSON_TABS: [] };
         vm.createContext(lexport);
@@ -958,6 +1002,214 @@ async function run(name, fn) {
         assert.strictEqual(plain(work({ tabs: ['basicLearn'] }, 'section', 0)).volume, 1, '기본값은 센다');
         assert.strictEqual((source('lesson-pipeline.js').match(/fillsVolume: moduleId !== 'mainQuest'/g) || []).length, 2, '전체 생성과 모두 다시 만들기');
         assert.ok(source('api.js').includes("fillsVolume: mod.id !== 'mainQuest'"), '카드의 교안 생성');
+    });
+
+    /* ---------- 5차 교차 검토 ---------- */
+    const lessonOf = (basicLearn, extra = {}) => ({ ...MOD, tabContents: { basicLearn, basicPrac: null, advLearn: null, advPrac: null, assessment: null }, ...extra });
+    // 미리 보기에 답한다. before(overlay): 답하기 전에 할 일(원문 칸을 벗어나며 넣기, 섹션 고르기 등)
+    const answerPreviewWith = (ctx, action, before = () => {}) => {
+        ctx.onOverlay = overlay => {
+            if (overlay.id === 'lesson-pipeline-bar') return;
+            ctx.previewHtml = overlay.innerHTML;
+            setImmediate(() => {
+                before(overlay);
+                overlay.fire('click', { target: { dataset: { diffAction: action } } });
+            });
+        };
+    };
+
+    await run('비운 기본학습: 다른 탭에만 글이 있으면 탭 위 표시를 숨기고 분량 채우기는 먼저 만들라고만 한다. 원문 칸·화면도 다른 탭 글을 기본학습 글로 보이지 않는다', async () => {
+        const ctx = genContext();
+        const lesson = { ...MOD, tabContents: { basicLearn: null, basicPrac: '# 🛠️ 기본 실습\n\n실습 글입니다.', advLearn: `## 심화\n\n${filler(5000)}`, advPrac: null, assessment: null } };
+        lesson.content = `${lesson.tabContents.basicPrac}\n\n---\n\n${lesson.tabContents.advLearn}`;
+        ctx.currentMod = lesson;
+        vm.runInContext("currentLessonTab = 'basicLearn'; _lessonPanel = null;", ctx);
+        call(ctx, 'syncVolumeChip')(lesson);
+        assert.strictEqual(ctx.elements['lesson-volume-chip'].className, 'hidden', '다른 탭 글을 세지 않는다');
+        ctx.callGemini = volumeModel(ctx, {});
+        await call(ctx, 'fillLessonVolume')(1);
+        assert.deepStrictEqual([ctx.alerts.at(-1), ctx.confirms.length, ctx.prompts.length, lesson.tabContents.basicLearn], ['먼저 기본학습 탭을 생성해 주세요.', 0, 0, null]);
+        assert.deepStrictEqual([call(ctx, 'tabSourceFor')(lesson, 'basicLearn'), call(ctx, 'getActiveTabContent')(lesson), call(ctx, 'storedTabMarkdown')(lesson, 'basicLearn')], ['', '', ''], '원문 칸·화면·검수가 읽는 글');
+        const legacy = lessonOf(null, { content: '## 옛 본문\n\n옛 글입니다.' });
+        assert.deepStrictEqual([call(ctx, 'tabSourceFor')(legacy, 'basicLearn'), call(ctx, 'storedTabMarkdown')(legacy, 'basicLearn')], [legacy.content, legacy.content], '탭 글이 하나도 없는 옛 차시의 본문은 기본학습이다');
+        assert.strictEqual(call(ctx, 'tabSourceFor')({ id: 'mainQuest', content: '최종 평가 글' }, 'basicLearn'), '최종 평가 글', '탭이 없는 최종 평가');
+    });
+
+    await run('분량 채우기: 채우는 동안 기본학습을 고쳐도(그림 지우기·두 번 눌러 고치기) 늘린 소주제를 지금 글에 이어 붙여 반영하고, 열어 둔 원문 칸의 글도 미리 보기 전에 넣는다', async () => {
+        const start = draftMd({ sectionBody: i => (i === 0 ? `지울 문장입니다. ${filler(2400)}` : filler(2400)) });
+        const mod = lessonOf(start);
+        const ctx = genContext();
+        ctx.currentMod = mod;
+        let typing = false;
+        let typed = false;
+        ctx.elements['raw-view'] = { ...fakeElement(), dataset: { moduleId: '1', tabId: 'basicLearn' } };
+        // 원문 칸: 채우는 동안 글을 덧붙였고, 칸을 벗어나면(미리 보기 단추를 누르며) 탭에 넣는다
+        ctx.saveRawContent = () => {
+            if (!typing || typed) return;
+            typed = true;
+            mod.tabContents.basicLearn += '\n\n- 원문 칸에서 덧붙인 확인 항목입니다.';
+        };
+        ctx.callGemini = volumeModel(ctx, { onCall: k => {
+            if (k === 3) mod.tabContents.basicLearn = mod.tabContents.basicLearn.replace('지울 문장입니다. ', '');
+            if (k === 4) typing = true;
+        } });
+        answerPreviewWith(ctx, 'apply', () => ctx.saveRawContent());
+        await call(ctx, 'fillLessonVolume')(1);
+        const saved = mod.tabContents.basicLearn;
+        assert.ok(!ctx.alerts.some(text => text.includes('반영하지')), ctx.alerts.join(' / '));
+        assert.ok(!saved.includes('지울 문장입니다.') && saved.includes('원문 칸에서 덧붙인 확인 항목입니다.') && saved.includes('### ■ 보강 1'), '고친 글과 늘린 소주제가 함께 남는다');
+        assert.ok(call(ctx, 'spokenChars')(saved) >= TARGET_CHARS);
+        assert.deepStrictEqual(titleKeys(ctx, saved), titleKeys(ctx, start), '## 제목은 그대로');
+        const before = ctx.archived.find(item => item.reason === '분량 채우기 전');
+        assert.ok(before && !before.content.includes('지울 문장입니다.') && before.content.includes('원문 칸에서 덧붙인'), '작업 기록에는 채우기 직전의 지금 글이 남는다');
+        assert.ok(ctx.previewHtml.includes('늘린 소주제를 지금 글에 이어 붙였습니다'), '미리 보기에 알린다');
+    });
+
+    await run("분량 채우기: 미리 보기에서 '반영하지 않기'를 고르면 채운 글을 작업 기록에 남기고 알린다. 섹션을 골라 반영하면 고른 글로 (⏱)를 다시 매긴다", async () => {
+        const start = draftMd();
+        const mod = lessonOf(start);
+        const ctx = genContext();
+        ctx.currentMod = mod;
+        ctx.callGemini = volumeModel(ctx, {});
+        answerPreviewWith(ctx, 'cancel');
+        await call(ctx, 'fillLessonVolume')(1);
+        assert.strictEqual(mod.tabContents.basicLearn, start, '탭은 그대로');
+        assert.ok(ctx.previewHtml.includes('반영하지 않기'), '단추 이름');
+        const kept = ctx.archived.find(item => item.reason === '분량 채우기 결과(반영 안 함)');
+        assert.ok(kept && call(ctx, 'spokenChars')(kept.content) >= TARGET_CHARS, '채운 글은 작업 기록에 있다');
+        assert.ok(ctx.toasts.at(-1).message.includes("작업 기록에 '분량 채우기 결과(반영 안 함)'으로 남겼습니다"), JSON.stringify(ctx.toasts.at(-1)));
+
+        // 예전 라벨이 모두 10분인 초안: 한 섹션만 빼고 반영해도 라벨 합계는 480분이다
+        const tenMinutes = draftMd().replace(/\(⏱ (?:60|45)분\)/g, '(⏱ 10분)');
+        const pick = lessonOf(tenMinutes);
+        const partial = genContext();
+        partial.currentMod = pick;
+        partial.callGemini = volumeModel(partial, {});
+        answerPreviewWith(partial, 'apply', overlay => {
+            const row = (partial.previewHtml.match(/data-section-row="(\d+)" checked/) || [])[1];
+            overlay.fire('change', { target: { dataset: { sectionRow: row }, checked: false } });
+        });
+        await call(partial, 'fillLessonVolume')(1);
+        assert.notStrictEqual(pick.tabContents.basicLearn, tenMinutes, '반영했다');
+        assert.strictEqual(call(partial, 'volumeLabelSum')(pick.tabContents.basicLearn), 480, '고른 글로 다시 매긴다');
+    });
+
+    await run('분량 채우기: 다른 교과로 옮겨도 그 차시에 반영한다. 늘린 소주제가 없으면 자동 수정을 부르지 않는다', async () => {
+        const start = draftMd();
+        const mod = lessonOf(start);
+        const other = lessonOf('## 다른 교과의 차시\n\n다른 글입니다.');
+        const s1 = { id: 's1', title: '교과1', lessons: [mod] };
+        const s2 = { id: 's2', title: '교과2', lessons: [other] };
+        const ctx = genContext();
+        Object.assign(ctx, { currentMod: mod, globalState: { subjects: [s1, s2] }, currentSubjectId: 's1', courseData: s1.lessons });
+        ctx.callGemini = volumeModel(ctx, { onCall: k => { if (k === 2) Object.assign(ctx, { currentSubjectId: 's2', courseData: s2.lessons, currentMod: other }); } });
+        answerPreviewWith(ctx, 'apply');
+        await call(ctx, 'fillLessonVolume')(1);
+        assert.ok(call(ctx, 'spokenChars')(mod.tabContents.basicLearn) >= TARGET_CHARS, '시작한 교과의 그 차시에 반영했다');
+        assert.strictEqual(other.tabContents.basicLearn, '## 다른 교과의 차시\n\n다른 글입니다.', '옮겨 간 교과의 같은 번호 차시는 그대로');
+
+        const bad = draftMd({ sectionBody: () => `${filler(2400)} 앞에서 다룬 반복입니다.` }); // 컨벤션 필수 지적이 남은 초안
+        const idle = genContext();
+        idle.currentMod = lessonOf(bad);
+        idle.callGemini = volumeModel(idle, { replyFor: k => reply(`### ■ 짧은 보강 ${k}\n\n${filler(300)}`) });
+        answerPreviewWith(idle, 'apply'); // 라벨 합계(460분)가 목표에서 벗어나 시간만 다시 매긴 글을 보인다
+        await call(idle, 'fillLessonVolume')(1);
+        assert.strictEqual(idle.prompts.filter(text => text.includes('[작업]')).length, 0, '있던 글만 고치는 호출은 하지 않는다');
+        assert.ok(idle.prompts.filter(text => text.startsWith('volume_expand')).length === 2, '잇달아 늘지 않아 두 번에 멈췄다');
+        assert.ok(idle.toasts.at(-1).message.includes('목표 480분에 못 미칩니다'), JSON.stringify(idle.toasts.at(-1)));
+    });
+
+    await run('탭 생성: 채운 뒤(그림 단계)에 차시가 지워지거나 불러온 내용으로 바뀌면 그 차시에 쓰지 않고 채운 글을 작업 기록에 남기며, 만들었다고 하지 않는다', async () => {
+        const mod = lessonOf(null);
+        const subject = { id: 's1', title: '교과', lessons: [mod] };
+        const ctx = genContext();
+        Object.assign(ctx, { currentMod: mod, globalState: { subjects: [subject] }, currentSubjectId: 's1', courseData: subject.lessons });
+        ctx.callGemini = volumeModel(ctx, { draft: draftMd() });
+        vm.runInContext("processImageTags = async (mod, md) => { window.imageCalls += 1; globalState = { subjects: [{ id: 's1', title: '불러온 교과', lessons: [] }] }; courseData = []; return md; };", ctx);
+        const result = plain(await call(ctx, 'generateTabContent')(1, 'basicLearn', { background: true }));
+        assert.strictEqual(result.ok, false);
+        assert.ok(result.error.includes('차시가 지워졌거나 불러온 내용으로 바뀌어') && result.error.includes("'분량 채우기 결과(반영 안 함)'"), result.error);
+        const kept = ctx.archived.find(item => item.reason === '분량 채우기 결과(반영 안 함)');
+        assert.ok(kept && call(ctx, 'spokenChars')(kept.content) >= TARGET_CHARS, '채운 글은 작업 기록에 남는다');
+        assert.strictEqual(ctx.saved, 0, '불러온 작업에 버려진 차시를 저장하지 않는다');
+        assert.ok(!ctx.alerts.concat(ctx.toasts.map(item => item.message)).some(text => text.includes('탭이 생성되었습니다')), '만들었다고 하지 않는다');
+
+        // 교안 전체 생성(카드)도 같다
+        const card = { id: 9, title: '반복과 합계', description: '합계를 구합니다.', status: 'waiting' };
+        const cardSubject = { id: 's1', title: '교과', lessons: [card] };
+        const cctx = genContext();
+        Object.assign(cctx, { currentMod: card, globalState: { subjects: [cardSubject] }, currentSubjectId: 's1', courseData: cardSubject.lessons });
+        cctx.runLessonPipeline = async () => { cctx.pipelineCalls.push(1); };
+        cctx.callGemini = volumeModel(cctx, { draft: draftMd() });
+        vm.runInContext("processImageTags = async (mod, md) => { globalState = { subjects: [] }; courseData = []; return md; };", cctx);
+        await call(cctx, 'generateModuleContent')(9, []);
+        assert.ok(!card.content && cctx.pipelineCalls.length === 0, '쓰지 않고 남은 탭으로 이어 가지 않는다');
+        assert.ok(cctx.alerts.at(-1).includes('기본학습 만들기를 멈췄습니다') && cctx.archived.some(item => item.reason === '분량 채우기 결과(반영 안 함)'), cctx.alerts.at(-1));
+    });
+
+    await run('탭 생성: 다시 보내도 같은 오류(noRetry 400)로 분량 채우기가 멈추면 자동 수정과 그림을 하지 않고, 일괄 생성은 멈추지 않는다', async () => {
+        const mod = lessonOf(null);
+        const ctx = genContext();
+        ctx.currentMod = mod;
+        const bad400 = () => Object.assign(new Error('AI가 요청을 받지 못했습니다(400).'), { status: 400, noRetry: true });
+        ctx.callGemini = volumeModel(ctx, { draft: draftMd({ sectionBody: () => `${filler(2400)} 앞에서 다룬 반복입니다.` }), onCall: () => { throw bad400(); } });
+        const result = plain(await call(ctx, 'generateTabContent')(1, 'basicLearn', { background: true }));
+        assert.strictEqual(result.ok, true);
+        assert.ok(!result.halt, '다음 차시는 다른 글이라 일괄 생성은 이어 간다');
+        assert.deepStrictEqual([ctx.prompts.filter(text => text.includes('[작업]')).length, ctx.imageCalls], [0, 0], '고치기·그림 호출을 하지 않는다');
+        assert.ok(mod.tabContents.basicLearn, '받은 초안은 저장한다');
+    });
+
+    await run('탭 위 표시: 분은 내림이라 모자란 글이 목표 시간으로 보이지 않고, 화면이 숨기는 첫머리는 세지 않는다', () => {
+        const ctx = genContext();
+        const chip = ctx.elements['lesson-volume-chip'];
+        vm.runInContext("currentLessonTab = 'basicLearn'; _lessonPanel = null;", ctx);
+        const almost = lessonOf(`## 1. 내용 (⏱ 480분)\n\n${filler(119900)}`);
+        const spoken = call(ctx, 'spokenChars')(almost.tabContents.basicLearn);
+        assert.ok(spoken < TARGET_CHARS && Math.round(spoken / 250) === 480, String(spoken));
+        call(ctx, 'syncVolumeChip')(almost);
+        assert.ok(chip.innerHTML.includes('낭독 약 479분 / 목표 480분') && chip.innerHTML.includes('분량 채우기'), chip.innerHTML);
+        assert.strictEqual(call(ctx, 'readAloudMinutes')(almost.tabContents.basicLearn), 479);
+        // 첫 제목 앞의 목록뿐인 머리말(화면이 숨긴다)은 세지 않는다
+        const body = `# 📝 반복과 합계\n\n## 학습 목표\n\n- 합계를 구할 수 있습니다.\n\n## 1. 내용 (⏱ 480분)\n\n${filler(118500)}`;
+        const opened = lessonOf(`- ${filler(3000)}\n\n${body}`);
+        assert.ok(call(ctx, 'spokenChars')(opened.tabContents.basicLearn) >= TARGET_CHARS && call(ctx, 'spokenChars')(body) < TARGET_CHARS);
+        call(ctx, 'syncVolumeChip')(opened);
+        assert.ok(chip.className.includes('amber') && chip.innerHTML.includes('분량 채우기'), chip.innerHTML);
+    });
+
+    await run("이 탭 생성: 차시의 기본학습은 먼저 호출 수·시간을 보이고 묻는다(다른 탭·최종 평가는 묻지 않는다). 빈 기본학습 안내는 '수십 초'라고 하지 않는다", async () => {
+        const ctx = genContext();
+        const mod = lessonOf(null);
+        ctx.currentMod = mod;
+        ctx.callGemini = volumeModel(ctx, { draft: draftMd() });
+        ctx.confirmAnswer = false;
+        const declined = plain(await call(ctx, 'runTabJob')(1, 'basicLearn'));
+        assert.deepStrictEqual([declined.cancelled, ctx.prompts.length], [true, 0], '그만두면 부르지 않는다');
+        const asked = ctx.confirms[0];
+        assert.strictEqual(asked.opts.title, '기본학습 만들기');
+        assert.ok(asked.message.includes('480분') && asked.message.includes('20분 넘게') && asked.message.includes('AI 호출 약') && asked.message.includes('긴 호출이 약 27번'), asked.message);
+        ctx.confirmAnswer = true;
+        await call(ctx, 'runTabJob')(1, 'basicPrac');
+        assert.strictEqual(ctx.confirms.length, 1, '다른 탭은 묻지 않는다');
+        vm.runInContext("currentLessonTab = 'basicLearn'", ctx);
+        const learnHint = call(ctx, 'emptyTabPromptHtml')(mod, false);
+        assert.ok(learnHint.includes('20분 넘게 걸릴 수 있습니다') && !learnHint.includes('수십 초'), learnHint);
+        vm.runInContext("currentLessonTab = 'basicPrac'", ctx);
+        assert.ok(call(ctx, 'emptyTabPromptHtml')(mod, false).includes('생성에는 수십 초가 걸릴 수 있습니다.'));
+    });
+
+    await run('낭독 세기: 닫지 않은 <·[·<!--가 아주 많은 글도 길이에 비례한 시간에 센다(남이 준 MD로 화면이 멈추지 않게)', () => {
+        const spoken = call(pure, 'spokenChars');
+        const started = Date.now();
+        spoken('가나다라마<'.repeat(20000));
+        spoken('가나다라['.repeat(40000));
+        spoken('가나다라![설명'.repeat(20000));
+        spoken('가나<!--'.repeat(20000));
+        spoken('가나<table>'.repeat(20000));
+        spoken('가나(⏱ 5'.repeat(20000));
+        assert.ok(Date.now() - started < 1500, `${Date.now() - started}ms`);
+        assert.strictEqual(call(pure, 'spokenText')('앞 <!-- 숨김 --> 뒤 <table><tr><td>표</td></tr></table> 끝 <b>굵게</b> [링크](https://a.b/c) ![그림](local:img_1) <!-- 닫지 않은 주석'), '앞 뒤 끝 굵게 링크 <!-- 닫지 않은 주석', '닫힌 주석·표·태그·링크·그림은 예전과 같게 빼고, 닫지 않은 주석은 예전처럼 글로 둔다');
     });
 
     console.log(`\n${count - failed}/${count} passed`);

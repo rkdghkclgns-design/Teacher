@@ -372,17 +372,46 @@ const DBManager = {
 // Data Management Layer
 
 /* ---------- 다른 탭 변경 알림 ---------- */
-// 저장은 과정 전체를 덮어쓰므로, 다른 탭의 변경을 모른 채 저장하면 그쪽 작업이 사라진다
+// 저장은 과정 전체를 덮어쓰므로, 다른 탭의 변경을 모른 채 저장하면 그쪽 작업이 사라진다.
+// 다른 탭이 저장한 뒤에는 이 탭에서 저장하기 전에(오래 걸린 생성이 끝나 저절로 저장할 때도) 덮어쓸지 묻는다
 const STATE_WARN_INTERVAL_MS = 60000;
 const _stateTabs = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('teacher-state');
 let _stateWarnedAt = 0;
+let _stateForeignSaves = 0; // 다른 탭이 저장한 횟수
+let _stateForeignSeen = 0;  // 이 탭이 덮어써도 된다고 답한 때까지의 횟수(이보다 많으면 그 뒤에 다른 탭이 저장했다)
+let _stateOverwriteAsk = null; // 덮어쓸지 묻는 중인 물음. 묻는 동안 부른 저장은 새로 묻지 않고 이 답을 기다린다
 
 if (_stateTabs) {
     _stateTabs.onmessage = () => {
+        _stateForeignSaves += 1;
         if (Date.now() - _stateWarnedAt < STATE_WARN_INTERVAL_MS) return;
         _stateWarnedAt = Date.now();
-        window.showToast?.('다른 탭에서 과정이 바뀌었습니다. 여기서 저장하면 그 변경을 덮어쓰니 새로고침해 주세요.', 'warning');
+        window.showToast?.('다른 탭에서 과정을 저장했습니다. 이 탭에서 저장하기 전에 덮어쓸지 묻습니다. 그 탭에서 바꾼 내용을 보려면 새로고침해 주세요.', 'warning');
     };
+}
+
+const STATE_OVERWRITE_TEXT = '다른 탭에서 이 과정을 저장했습니다. 이 탭의 내용으로 저장하면 그 탭에서 바꾼 내용이 사라집니다.\n'
+    + "덮어쓰지 않으려면 '저장하지 않기'를 누르고 새로고침해 다른 탭이 저장한 내용을 불러오세요(이 탭에서 바꾼 내용은 사라지니, 필요한 글은 먼저 복사해 두세요).";
+
+// 다른 탭이 저장한 뒤라면 이 탭의 내용으로 덮어쓸지 앱의 확인 창으로 묻는다(취소하면 false). 한 번 덮어쓰기로 답하면 다른 탭이 또 저장할 때까지 묻지 않는다
+function allowStateOverwrite() {
+    if (_stateForeignSaves <= _stateForeignSeen) return Promise.resolve(true);
+    if (_stateOverwriteAsk) return _stateOverwriteAsk;
+    const seen = _stateForeignSaves;
+    // 물음을 먼저 걸어 두고 창은 다음 차례에 연다(창으로 포커스가 옮겨 가며 원문 칸이 다시 저장해도 이 답을 기다리게, gyosuan-view.js와 같다)
+    const ask = Promise.resolve()
+        .then(() => (typeof confirmAsync === 'function'
+            ? confirmAsync(STATE_OVERWRITE_TEXT, { title: '다른 탭에서 저장한 과정', okLabel: '이 탭 내용으로 저장', cancelLabel: '저장하지 않기', tone: 'danger', dismissible: false })
+            : true))
+        .then(ok => {
+            if (ok) _stateForeignSeen = Math.max(_stateForeignSeen, seen);
+            return ok;
+        })
+        .finally(() => {
+            if (_stateOverwriteAsk === ask) _stateOverwriteAsk = null;
+        });
+    _stateOverwriteAsk = ask;
+    return ask;
 }
 
 /* ---------- 저장 미루기와 PC 폴더 저장 줄 세우기 (DOM 없이 돈다. tests/folder-sync.test.js) ---------- */
@@ -522,6 +551,12 @@ async function saveState({ folder = true } = {}) {
         return false;
     }
     window.cancelSaveStateSoon?.(); // 이 저장이 미뤄 둔 저장(참고자료 칸)을 대신한다
+    // 다른 탭이 저장한 뒤면 덮어쓸지 묻는다. 저장하지 않기를 고르면 쓰지 않고(창을 닫기 전에 묻게 저장 실패로 둔다) false
+    if (_stateForeignSaves > _stateForeignSeen && !(await allowStateOverwrite())) {
+        lastBrowserSaveFailed = true;
+        window.showToast?.('저장하지 않았습니다. 다른 탭이 저장한 내용을 보려면 새로고침해 주세요.', 'warning');
+        return false;
+    }
     let savedInBrowser = false;
     try {
         if (currentSubjectId) {
@@ -554,7 +589,7 @@ async function saveState({ folder = true } = {}) {
 // (그때 바뀐 내용은 아직 브라우저에 없다). 창을 닫기 전에 묻는다(ui.js warnBeforeUnload).
 // PC 폴더 쓰기는 세지 않는다(임시 파일에 쓰고 닫을 때 바꾸므로 끊겨도 폴더의 이전 저장본은 그대로이고, 다음 저장이 따라잡는다)
 function isSavePending() {
-    return DBManager.writing > 0 || (typeof saveSoonTask !== 'undefined' && !!saveSoonTask.pending?.()) || lastBrowserSaveFailed;
+    return DBManager.writing > 0 || (typeof saveSoonTask !== 'undefined' && !!saveSoonTask.pending?.()) || lastBrowserSaveFailed || !!_stateOverwriteAsk;
 }
 
 function isStateLoadFailed() {
@@ -1865,12 +1900,25 @@ window.handleImageInputSelect = function (event) {
 // =========================================================================
 // ZIP 세이브 파일 복원 (Load Import) 체계
 // =========================================================================
+// 생성·분량 채우기 같은 AI 작업이 도는 동안에는 과정·교과를 백업이나 PC 폴더의 것으로 바꾸지 않는다(만들던 차시가 버려진 객체에 쓰여 결과를 잃는다).
+// 막았으면 알리고 true. 다른 파일의 표시는 그 파일이 없어도(테스트 등) 멈추지 않게 typeof로 읽는다(course-flow.js isAiWorkRunning, course-meta.js trashRestoreBlocked)
+function stateReplaceBlocked() {
+    const busy = (typeof trashRestoreBlocked === 'function' && trashRestoreBlocked())
+        || (typeof isAiWorkRunning === 'function' && isAiWorkRunning()) || !!window.isVolumeFilling?.();
+    if (busy) window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
+    return busy;
+}
+
 window.importProjectZip = async function (event) {
     const file = event.target.files[0];
     if (!file) return;
 
     if (!file.name.endsWith('.zip')) {
         window.showAlert('지원하지 않는 세이브 파일입니다. (.zip 형식만 가능)');
+        event.target.value = '';
+        return;
+    }
+    if (typeof stateReplaceBlocked === 'function' && stateReplaceBlocked()) {
         event.target.value = '';
         return;
     }
@@ -1976,7 +2024,8 @@ window.importProjectZip = async function (event) {
                 ? `읽지 못한 브라우저 저장본 대신 이 파일의 작업(교과 ${nextState.subjects.length}개)으로 엽니다.\n읽지 못한 저장본은 이 파일 내용으로 바뀝니다. PC 폴더 자동 저장은 꺼 둡니다. 필요하면 다시 켜 주세요.${imageNote}`
                 : `지금 브라우저의 모든 작업(교과 ${globalState.subjects.length}개)을 이 파일의 내용(교과 ${nextState.subjects.length}개)으로 바꿉니다.\n바꾸기 전에 지금 상태를 백업 파일로 내려받습니다. 마음이 바뀌면 그 파일을 다시 불러오면 됩니다.${imageNote}`,
                 { okLabel: unread ? '이 파일로 되살리기' : '백업 받고 바꾸기', title: '전체 불러오기' });
-            if (!ok) return;
+            if (!ok || (typeof stateReplaceBlocked === 'function' && stateReplaceBlocked())) return; // 확인 창을 띄운 사이 시작된 생성이 있으면 바꾸지 않는다
+            if (typeof allowStateOverwrite === 'function' && !(await allowStateOverwrite())) return; // 다른 탭이 저장한 뒤면 바꾸기 전에 묻는다(바꾼 뒤 저장에서 물으면 되살리기를 되돌려야 한다)
             // 읽지 못한 저장본이 이제 열리면(잠깐 생긴 문제였거나 다른 창이 저장했다) 그 작업을 이 파일로 바꾸지 않는다(새로 시작과 같은 규칙)
             if (unread && await storedRecordStatus() === 'loads') return window.showAlert(unreadNowLoadsText('이 파일로 바꾸지'));
             if (unread) {
@@ -2295,6 +2344,7 @@ window.loadFromProjectFolder = async function () {
     if (!('showDirectoryPicker' in window)) {
         return window.showAlert('이 브라우저는 폴더 불러오기를 지원하지 않습니다.');
     }
+    if (typeof stateReplaceBlocked === 'function' && stateReplaceBlocked()) return;
 
     try {
         const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
@@ -2330,7 +2380,8 @@ window.loadFromProjectFolder = async function () {
         const unread = isStateLoadFailed();
         const imageNote = saved.imageMode === 'none' ? noImagesImportNote('folder', currentImageCount()) : ''; // 그림을 빼고 저장된 폴더
         const ask = folderOpenPrompt({ folderName: dirHandle.name, subjectCount: globalState.subjects.length, incomingCount: nextState.subjects.length, unread, total: images.total, missing: images.missing, imageNote });
-        if (!(await confirmAsync(ask.message, { okLabel: ask.okLabel, title: '작업 폴더에서 불러오기' }))) return;
+        if (!(await confirmAsync(ask.message, { okLabel: ask.okLabel, title: '작업 폴더에서 불러오기' })) || (typeof stateReplaceBlocked === 'function' && stateReplaceBlocked())) return;
+        if (typeof allowStateOverwrite === 'function' && !(await allowStateOverwrite())) return; // 다른 탭이 저장한 뒤면 바꾸기 전에 묻는다
         // 읽지 못한 저장본이 이제 열리면 그 작업을 이 폴더로 바꾸지 않는다(새로 시작과 같은 규칙)
         if (unread && await storedRecordStatus() === 'loads') return window.showAlert(unreadNowLoadsText('이 폴더로 바꾸지'));
 

@@ -380,6 +380,22 @@ async function run(name, fn) {
         assert.strictEqual(mod.gyosuan.sourceKey, 'k');
     });
 
+    await run('진행 막대의 작업(분량 채우기 등)이 도는 동안 교수안 생성 버튼은 시작하지 않는다(같은 중지 표시를 써서 서로의 중지를 풀거나 멈추지 않게). 전체 생성의 교수안 단계(background)는 그대로 돈다', async () => {
+        const ai = responder();
+        const ctx = makeContext(ai);
+        const mod = lesson(3);
+        ctx.getEditingModule = () => mod;
+        let stops = 0;
+        ctx.beginGenerationStop = () => { stops += 1; };
+        ctx.isLessonPipelineRunning = () => true;
+        assert.strictEqual(await ctx.generateGyosuan('m1'), false);
+        assert.deepStrictEqual([ai.prompts.length, stops], [0, 0], '부르지도 중지 표시를 풀지도 않는다');
+        assert.ok(ctx.alerts.at(-1).includes('진행 중인 생성이 끝난 뒤'), ctx.alerts.at(-1));
+        ctx.refreshAfterGyosuan = () => {};
+        const step = await vm.runInContext('runGyosuanGeneration', ctx)('m1', { background: true });
+        assert.strictEqual(step.ok, true, `전체 생성의 교수안 단계: ${step.error || ''}`);
+    });
+
     await run('교안 없음·메인 퀘스트(content만) 처리', async () => {
         const ctx = makeContext(responder());
         const empty = { id: 'm1', title: 'x', tabContents: {} };

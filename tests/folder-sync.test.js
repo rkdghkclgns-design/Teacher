@@ -426,6 +426,27 @@ test('F12 폴더 열기를 취소하면 폴더에도 브라우저에도 아무�
     assert.strictEqual(exec('projectFolderHandle'), null);
 });
 
+test('F12b 생성·분량 채우기가 도는 동안에는 폴더를 열지 않고, 확인 창을 띄운 사이 시작된 생성이 있어도 바꾸지 않는다(만들던 차시가 버려진 객체에 쓰여 결과를 잃지 않게)', async () => {
+    const { ctx, exec } = makeApp();
+    seed(exec);
+    const b = fakeDir('B');
+    await putFile(b, 'save_data.yaml', `state:\n  courseTitle: "폴더"\n  subjects: ${JSON.stringify(FOLDER_SUBJECTS)}\n`);
+    b.shared.log.length = 0;
+    const before = exec('globalState');
+    let picked = 0;
+    ctx.showDirectoryPicker = async () => { picked += 1; return b; };
+    ctx.isAiWorkRunning = () => true;
+    await ctx.loadFromProjectFolder();
+    assert.deepStrictEqual([picked, ctx.confirms.length], [0, 0], '폴더를 고르게 하지도 않는다');
+    assert.ok(ctx.alerts.at(-1).includes('진행 중인 생성이 끝난 뒤'), ctx.alerts.at(-1));
+    ctx.isAiWorkRunning = () => ctx.confirms.length > 0; // 확인 창을 띄운 사이 시작된 생성
+    await ctx.loadFromProjectFolder();
+    assert.deepStrictEqual([picked, ctx.confirms.length], [1, 1]);
+    assert.deepStrictEqual(b.shared.log, [], '폴더에 사본도 쓰지 않는다');
+    assert.strictEqual(exec('globalState'), before);
+    assert.strictEqual(exec('projectFolderHandle'), null);
+});
+
 test('F13 사본 이름은 앞 사본을 덮지 않는다', async () => {
     const { ctx } = makeApp();
     const dir = fakeDir('A');

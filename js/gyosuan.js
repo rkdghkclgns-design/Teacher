@@ -528,6 +528,9 @@ async function runGyosuanGeneration(moduleId, opts = {}) {
     if (!parts.length) return { ok: false, error: '교안 내용이 없습니다. 먼저 탭을 생성해주세요.' };
     const loading = document.getElementById('editor-loading');
     if (_gyosuanRunning || loading?.style.display === 'flex') return { ok: false, error: '진행 중인 생성이 끝난 뒤 다시 시도해주세요.' };
+    // 진행 막대의 작업(분량 채우기·탭 만들기 등)은 로딩 화면을 띄우지 않는다. 같은 중지 표시를 써서 함께 돌면 서로의 중지를 풀거나 멈추므로 끝난 뒤에 만든다
+    // (전체 생성이 부르는 교수안 단계는 background로 그 작업 안에서 돈다)
+    if (!opts.background && (window.isLessonPipelineRunning?.() || window.isVolumeFilling?.())) return { ok: false, error: '진행 중인 생성이 끝난 뒤 다시 시도해주세요.' };
 
     _gyosuanRunning = true;
     _gyosuanOnStatus = opts.onStatus || null;

@@ -192,6 +192,36 @@ test('같은 그림에 새 영상이 와도 되살린 차시가 예전 영상을
     assert.ok(ctx.db['wbvideo:wb_old0000001'], '되살린 차시의 영상 파일은 남긴다');
 });
 
+test('영상을 기다리는 동안 그 그림을 지웠으면 붙이지 않고(보이지 않는 영상이 파일을 붙잡지 않게) 받은편지함에서 지운 뒤 알린다', async () => {
+    const mod = { ...storyLesson(), tabContents: { basicLearn: SECTIONED.replace('<div class="image-wrapper"><img src="local:img_story"><button class="image-regenerate-btn" data-img-id="img_story"></button></div>', '') } };
+    const now = Date.now();
+    const request = { subjectId: 's1', lessonId: 7, tabId: 'basicLearn', imgId: 'img_story', label: '개념 이해 › 시나리오', createdAt: now };
+    const ctx = makeContext({ mod, files: ['whiteboard-video.js'], stored: { [REQUESTS_KEY]: JSON.stringify({ wb_gone0000001: request }) } });
+    ctx.inbox = [{ requestId: 'wb_gone0000001', blob: new Blob(['v']), extension: 'mp4', title: '세계관', createdAt: now }];
+    const placed = await ctx.collectWhiteboardVideos();
+    assert.deepStrictEqual([placed.length, mod.whiteboardVideos, ctx.db['wbvideo:wb_gone0000001'], ctx.inbox.length, ctx.saves], [0, undefined, undefined, 0, 0]);
+    assert.ok(ctx.toasts.some(text => text.includes("'개념 이해 › 시나리오' 그림은 판서 영상을 기다리는 동안 지워져")), ctx.toasts.join('|'));
+    assert.ok(!ctx.toasts.some(text => text.includes('판서 영상으로 바꿨습니다')), '바꿨다고 하지 않는다');
+    // 그림 값(data URL)을 글에 바로 쓴 자리와 local:img_story10 같은 다른 키는 가른다
+    const direct = { ...storyLesson(), tabContents: { basicLearn: '## 1. 절\n\n![그림](data:image/png;base64,STORY)' } };
+    assert.strictEqual(makeContext({ mod: direct, files: ['whiteboard-video.js'] }).whiteboardPictureInLesson(direct, 'img_story'), true);
+    const longer = { ...storyLesson(), tabContents: { basicLearn: '![그림](local:img_story10)' }, images: {} };
+    assert.strictEqual(makeContext({ mod: longer, files: ['whiteboard-video.js'] }).whiteboardPictureInLesson(longer, 'img_story'), false);
+});
+
+test('바뀐 예전 영상 파일을 지우지 못해도 새 영상은 화면에 붙이고 알린다(남은 파일은 나중에 정리한다)', async () => {
+    const mod = { ...storyLesson(), whiteboardVideos: { img_story: { id: 'wb_old0000001', title: '예전', ext: 'mp4', at: 1 } } };
+    const now = Date.now();
+    const request = { subjectId: 's1', lessonId: 7, tabId: 'basicLearn', imgId: 'img_story', label: 'x', createdAt: now };
+    const ctx = makeContext({ mod, files: ['whiteboard-video.js'], stored: { [REQUESTS_KEY]: JSON.stringify({ wb_new0000001: request }) } });
+    ctx.DBManager.deleteItem = async () => { throw new Error('TransactionInactiveError'); };
+    ctx.inbox = [{ requestId: 'wb_new0000001', blob: new Blob(['new']), extension: 'mp4', title: '새', createdAt: now }];
+    const placed = await ctx.collectWhiteboardVideos();
+    assert.deepStrictEqual([placed.length, mod.whiteboardVideos.img_story.id], [1, 'wb_new0000001']);
+    assert.deepStrictEqual(ctx.applied, [mod], '새 영상을 그린다');
+    assert.ok(ctx.toasts.some(text => text.includes('판서 영상으로 바꿨습니다')), ctx.toasts.join('|'));
+});
+
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 10, 6);
 const ORPHANS_KEY = 'teacher:whiteboard-orphans';

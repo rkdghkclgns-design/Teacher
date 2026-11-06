@@ -20,12 +20,16 @@ const ESTIMATE_RULES = {
     qbankCalls: 2,                                  // 문제은행 채우기
     artCalls: 4,                                    // SVG 삽화(후보 1회 + 그림 최대 3장)
     ocrMaxCallsPerPdf: 8,                           // 스캔 PDF: 30쪽까지 4쪽마다 1회
-    volumeCalls: 16                                 // 기본 학습 분량 보강 보통 12~20번 + 자동 수정 0~2번(lesson-volume.js)
+    // 기본 학습 분량 보강(lesson-volume.js): 호출 하나가 낭독 글자 약 5,000자를 늘린다고 보고, 호출 상한(목표 글자 ÷ 5,000, 480분이면 24번, 최대 48번)까지 센다.
+    // 실제 답은 부탁한 글자의 절반쯤만 써 초안이 짧으면 상한 가까이 쓴다. 채운 뒤 컨벤션 필수 지적 자동 수정이 3번까지 이어진다
+    volumeCharsPerCall: 5000,
+    volumeCallLimit: 48,
+    volumeFixCalls: 3
 };
 const CALL_SECONDS = { low: 20, mid: 45, high: 90 };       // 잰 기록이 없을 때 본문 호출 하나(초)
 const SHORT_CALL_FACTOR = 0.3;                             // 잰 기록이 없을 때 짧은 호출은 본문 호출의 이만큼
 const LONG_CALL_FACTOR = 3;                                // 잰 기록이 없을 때 분량 보강(긴 글) 호출은 본문 호출의 이만큼
-const ESTIMATE_VOLUME = { minutes: 480, chars: 120000 };   // lesson-lint.js BASIC_LEARN_MIN_MINUTES × READ_CHARS_PER_MINUTE와 같다(테스트는 lesson-lint.js 없이 돈다)
+const ESTIMATE_VOLUME = { minutes: 480, charsPerMinute: 250 }; // lesson-lint.js BASIC_LEARN_MIN_MINUTES·READ_CHARS_PER_MINUTE와 같다(테스트는 lesson-lint.js 없이 돈다)
 const IMAGE_CALL_SECONDS = { gemini: 25, higgsfield: 60 }; // 잰 기록이 없을 때 그림 한 장(초)
 const ESTIMATE_GAPS = { image: 7, tab: 4 };                // 교안 그림 사이 간격(api.js IMAGE_TAG_GAP_MS), 탭·단계 사이 쉬는 시간(초)
 const EFFORT_FACTOR = { low: 0.7, medium: 1, high: 1.5, xhigh: 1.75, max: 2 };
@@ -56,27 +60,41 @@ function tabImageCount(tabs, imageAmount = 'section') {
     return counts.length ? Math.round((Number(tabs) || 0) * counts.reduce((sum, n) => sum + n, 0) / counts.length) : 0;
 }
 
+// 차시의 기본학습 낭독 목표(분). lesson-lint.js basicLearnTargetMinutes(차시 시간이 480분보다 길면 그 시간)를 따르고, 없으면(테스트) 480분
+const lessonVolumeMinutes = mod => (typeof basicLearnTargetMinutes === 'function' ? basicLearnTargetMinutes(mod) : ESTIMATE_VOLUME.minutes);
+
+// 낭독 minutes분을 채우는 긴 호출 수: 초안을 모르면 호출 상한까지 쓴다고 보고 채운 뒤 자동 수정을 더한다(lesson-volume.js volumeCallEstimate는 지금 글로 센다)
+function volumeCallsFor(minutes = ESTIMATE_VOLUME.minutes) {
+    const rule = ESTIMATE_RULES;
+    const chars = Math.max(ESTIMATE_VOLUME.minutes, Number(minutes) || 0) * ESTIMATE_VOLUME.charsPerMinute;
+    return Math.min(rule.volumeCallLimit, Math.ceil(chars / rule.volumeCharsPerCall)) + rule.volumeFixCalls;
+}
+
 // 차시 하나에서 할 일. tabs: 만들 탭 id 목록(또는 탭 수) / imageAmount: 설정의 교안 이미지 양(all·section·none) / slideImages: 교수안을 만들면 슬라이드에 넣는 그림 수
-// 기본 학습을 만들면 낭독 분량 채우기(volume)도 센다. 탭 수만 알면 어느 탭인지 몰라 세지 않는다. 분량을 채우지 않는 최종 평가는 fillsVolume: false
-function lessonWork({ tabs = 0, gyosuan = false, qbank = false, art = false, ncs, fillsVolume = true } = {}, imageAmount = 'section', slideImages = defaultSlideImageCount()) {
+// 기본 학습을 만들면 낭독 분량 채우기(volume: 차시 수, volumeCalls: 긴 호출 수, volumeMinutes: 낭독 목표 분)도 센다. 탭 수만 알면 어느 탭인지 몰라 세지 않는다.
+// 분량을 채우지 않는 최종 평가는 fillsVolume: false. volumeMinutes: 그 차시의 낭독 목표(차시 시간이 480분보다 길면 그 시간)
+function lessonWork({ tabs = 0, gyosuan = false, qbank = false, art = false, ncs, fillsVolume = true, volumeMinutes = ESTIMATE_VOLUME.minutes } = {}, imageAmount = 'section', slideImages = defaultSlideImageCount()) {
     const tabCount = Array.isArray(tabs) ? tabs.length : (Number(tabs) || 0);
     const withNcs = ncs === undefined ? tabCount > 0 : ncs;
-    const volume = fillsVolume && Array.isArray(tabs) && tabs.includes('basicLearn') ? { volume: 1 } : {};
+    const minutes = Math.max(ESTIMATE_VOLUME.minutes, Number(volumeMinutes) || 0);
+    const volume = fillsVolume && Array.isArray(tabs) && tabs.includes('basicLearn') ? { volume: 1, volumeCalls: volumeCallsFor(minutes), volumeMinutes: minutes } : {};
     return { tabs: tabCount, images: tabImageCount(tabs, imageAmount), slideImages: gyosuan ? slideImages : 0, ncs: withNcs ? 1 : 0, gyosuan: gyosuan ? 1 : 0, qbank: qbank ? 1 : 0, art: art ? 1 : 0, ...volume };
 }
 
+// 차시마다 할 일을 더한다. 낭독 목표(volumeMinutes)는 더하지 않고 가장 긴 것을 쓴다(안내 글에 보인다)
 const sumWork = list => list.reduce((total, work) => {
-    Object.entries(work).forEach(([key, value]) => { total[key] = (total[key] || 0) + value; });
+    Object.entries(work).forEach(([key, value]) => { total[key] = key === 'volumeMinutes' ? Math.max(total[key] || 0, value) : (total[key] || 0) + value; });
     return total;
 }, {});
 
-// work: { tabs, images(교안 그림), slideImages(슬라이드 그림), ncs, gyosuan, qbank, art, ocr, volume(기본 학습 분량 채우기) } 개수 →
-// 본문 호출(body), 기다리는 시간으로 센 본문 호출(bodyWait), 짧은 호출(short), 그림 장수(images), 분량 보강의 긴 호출(long, 있을 때만)
+// work: { tabs, images(교안 그림), slideImages(슬라이드 그림), ncs, gyosuan, qbank, art, ocr, volume(기본 학습 분량 채우기 차시 수), volumeCalls(그 긴 호출 수) } 개수 →
+// 본문 호출(body), 기다리는 시간으로 센 본문 호출(bodyWait), 짧은 호출(short), 그림 장수(images), 분량 보강·자동 수정의 긴 호출(long, 있을 때만).
+// volumeCalls가 없으면 차시마다 480분 상한으로 센다
 function estimateCallSplit(work = {}) {
     const rule = ESTIMATE_RULES;
     const tabs = (work.tabs || 0) * rule.tabCalls;
     const others = (work.ncs || 0) * rule.ncsCalls + (work.qbank || 0) * rule.qbankCalls + (work.art || 0) * rule.artCalls + (work.ocr || 0);
-    const long = (work.volume || 0) * rule.volumeCalls;
+    const long = work.volumeCalls ?? (work.volume || 0) * volumeCallsFor();
     return {
         body: tabs + others + (work.gyosuan || 0) * rule.gyosuanCalls,
         bodyWait: tabs + others + (work.gyosuan || 0) * rule.gyosuanWaitCalls,
@@ -154,7 +172,8 @@ function estimateSummary(work, { model = '', effort = 'medium', timings = readAi
     const minutesHigh = Math.max(minutesLow, Math.ceil(minutes * 1.5));
     const tier = modelCostTier(model);
     return {
-        calls: estimateCalls(work, imageSource), images: split.images, slideImages: work.slideImages || 0, volume: work.volume || 0,
+        calls: estimateCalls(work, imageSource), images: split.images, slideImages: work.slideImages || 0,
+        volume: work.volume || 0, volumeCalls: split.long || 0, volumeMinutes: work.volumeMinutes || ESTIMATE_VOLUME.minutes,
         imageSource, exactImages, routed, imageAmount, imageSearch,
         minutesLow, minutesHigh, tier, costLabel: COST_LABEL[tier], measured: body.measured
     };
@@ -197,10 +216,19 @@ function imageBlockNote(summary) {
     return `${head} 그때도 교안 그림은 검색으로 찾고 못 찾은 자리만 남깁니다${summary.slideImages ? '(슬라이드 그림은 만들지 못합니다)' : ''}.`;
 }
 
+// 기본학습 분량 채우기 안내. 낭독 목표는 차시 가운데 가장 긴 것, 긴 호출 수는 차시마다(여럿이면 평균)
+function estimateVolumeNote(summary) {
+    if (!summary.volume) return '';
+    const minutes = summary.volumeMinutes || ESTIMATE_VOLUME.minutes;
+    const chars = (minutes * ESTIMATE_VOLUME.charsPerMinute).toLocaleString('ko-KR');
+    const perLesson = Math.max(1, Math.round((summary.volumeCalls || 0) / summary.volume));
+    return `기본학습은 낭독 ${minutes}분(공백 포함 약 ${chars}자)이 될 때까지 섹션마다 나눠 보강하고 자동 수정해 ${summary.volume > 1 ? '차시마다 ' : ''}긴 호출이 약 ${perLesson}번 늘어납니다.`;
+}
+
 function estimateNote(summary, model = '') {
     return [
         summary.measured ? '시간은 이 브라우저에서 잰 최근 호출 평균으로 셌습니다.' : '시간은 모델과 추론 강도로 어림했습니다.',
-        summary.volume ? `기본 학습은 낭독 ${ESTIMATE_VOLUME.minutes}분(공백 포함 약 ${ESTIMATE_VOLUME.chars.toLocaleString('ko-KR')}자)이 될 때까지 섹션마다 나눠 보강해 차시마다 긴 호출이 약 ${ESTIMATE_RULES.volumeCalls}번 늘어납니다.` : '',
+        estimateVolumeNote(summary),
         summary.tier === 'low' && /gemini/i.test(model) ? '무료 키는 분당 호출 한도가 있어 더 걸릴 수 있습니다.' : '',
         imageBlockNote(summary),
         summary.images > summary.slideImages && !summary.exactImages && summary.imageAmount === 'all' ? "교안 이미지 양이 '모두'라 글이 길면 그림이 더 늘어납니다." : '',
@@ -265,7 +293,7 @@ function confirmWithEstimate(message, work, { title = '시작할까요?', okLabe
 
 if (typeof window !== 'undefined') {
     Object.assign(window, {
-        modelCostTier, lessonWork, tabImageCount, sumWork, estimateCallSplit, estimateCalls, recordAiTiming, readAiTimings, secondsPerCall, secondsPerImage,
+        modelCostTier, lessonWork, volumeCallsFor, tabImageCount, sumWork, estimateCallSplit, estimateCalls, recordAiTiming, readAiTimings, secondsPerCall, secondsPerImage,
         estimateSummary, estimateTimeText, estimateLines, estimateNote, imageBlockNote, estimateImageSource, defaultSlideImageCount,
         estimateBoxHtml, confirmWithEstimate, currentEstimateSettings
     });

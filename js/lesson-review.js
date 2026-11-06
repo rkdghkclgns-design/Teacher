@@ -28,7 +28,9 @@ const subheadingCount = text => (text.match(REVIEW_SUBHEADING) || []).length;
 const keepsSection = (before, after) => after.length >= before.length * REVIEW_FIX_MIN_KEEP
     && subheadingCount(after) >= subheadingCount(before)
     && imageRefs(before).every(ref => after.includes(ref));
-const storedTabMarkdown = (mod, tabId) => mod.tabContents?.[tabId] || (!mod.tabContents || tabId === 'basicLearn' ? mod.content : '') || '';
+// 탭의 저장된 글. 탭이 없는 최종 평가는 본문(content), 탭 글이 없는 옛 차시는 기본학습이 본문이다.
+// 다른 탭에만 글이 있으면 비운 기본학습은 빈 글이다(content는 그 탭들을 합친 글이다, tabs.js legacyLessonBody)
+const storedTabMarkdown = (mod, tabId) => mod.tabContents?.[tabId] || (!mod.tabContents ? mod.content : tabId === 'basicLearn' ? legacyLessonBody(mod) : '') || '';
 const reviewHistory =(mod, note) => [{ at: new Date().toISOString(), note }, ...(mod.history || [])].slice(0, LESSON_HISTORY_LIMIT);
 
 /* ---------- 고칠 섹션 고르기와 병합 ---------- */
@@ -211,13 +213,14 @@ function manualCheckState(record, md) {
 
 /* ---------- 탭 반영 ---------- */
 // 바꾸기 전 내용은 히스토리에 남긴다. AI를 기다리는 동안 탭이 바뀌었으면 낡은 글로 덮어쓰지 않고 false를 돌려준다.
-async function commitTabChange(mod, tabId, before, next, note) {
+// reason: 작업 기록에 보일 까닭(분량 채우기는 '분량 채우기 전')
+async function commitTabChange(mod, tabId, before, next, note, reason = '고치기 전') {
     if (storedTabMarkdown(mod, tabId) !== before) {
         window.showAlert('수정안을 만드는 동안 탭 내용이 바뀌어 반영하지 않았습니다. 다시 실행해 주세요.');
         return false;
     }
     // 탭이 없는 최종 평가(·옛 차시)는 본문 전체를 고치므로 제목에 탭 이름을 붙이지 않는다
-    await archiveContent({ title: mod.tabContents ? `${mod.title} · ${reviewTabLabel(tabId)}` : mod.title, content: before, images: mod.images, tabId, lesson: mod }, '고치기 전');
+    await archiveContent({ title: mod.tabContents ? `${mod.title} · ${reviewTabLabel(tabId)}` : mod.title, content: before, images: mod.images, tabId, lesson: mod }, reason);
     setTabMarkdown(mod, tabId, next);
     mod.history = reviewHistory(mod, note);
     await saveState();

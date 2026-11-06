@@ -235,6 +235,7 @@ async function run(name, fn) {
         check('차시 목차 만들기', () => { local.elements['sidebar-loading'].style.display = 'flex'; }, () => { local.elements['sidebar-loading'].style.display = 'none'; });
         check('기본 학습 분량 채우기', () => { local.isVolumeFilling = () => true; }, () => { local.isVolumeFilling = () => false; });
         check('문제은행 창의 문항 만들기', () => vm.runInContext('_qbank = { moduleId: 1, busy: true }', local), () => vm.runInContext('_qbank = null', local));
+        check('답을 기다리는 AI 호출(창을 닫은 뒤에도 이어지는 삽화·참고 자료 판독·그림 다시 찾기 등, api.js callGemini)', () => { local.aiCallsWaiting = () => true; }, () => { local.aiCallsWaiting = () => false; });
         vm.runInContext('var _backfillRun = { stopped: false }; var _lessonArt = { busy: true };', local); // 기존 내용 보강·삽화 창을 싣고 돌린다
         assert.strictEqual(running(), true, '기존 내용 보강');
         vm.runInContext('_backfillRun = null;', local);

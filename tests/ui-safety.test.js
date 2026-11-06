@@ -98,6 +98,9 @@ function loadSaving({ pendingSoon = false } = {}) {
     vm.runInContext(`const STORAGE_KEY = 'state'; let globalState = { subjects: [] }; let contentHistory = []; let currentSubjectId = null; let courseData = [];
         const _stateTabs = null; let projectFolderHandle = null; let stateLoadFailed = false; function showStateLoadFailedDialog() {}
         let lastBrowserSaveFailed = false;
+        let _stateForeignSaves = 0; let _stateForeignSeen = 0; let _stateOverwriteAsk = null;
+        ${slice('const STATE_OVERWRITE_TEXT', ';\n')}
+        ${slice('function allowStateOverwrite(', '\n}\n')}
         const saveSoonTask = { cancel() {}, pending: () => ${pendingSoon} };
         ${slice('const DBManager = {', '\n};\n')}
         ${slice('const STATE_BLOB_MIN_BYTES', ';\n')}
@@ -447,7 +450,7 @@ test('소스: Esc는 앱 창 틀이 맡고(없는 #custom-modal을 찾던 처리
     const ui = js('ui.js');
     assert.ok(!ui.includes('custom-modal'));
     assert.ok(ui.includes("window.addEventListener('keydown', onAppDialogKey, true);"));
-    assert.ok(ui.includes('• Esc: 열린 창 닫기(취소와 같다)') && !ui.includes('모달 닫기'));
+    assert.ok(ui.includes('• Esc: 열린 창 닫기(취소와 같습니다)') && !ui.includes('모달 닫기'));
     ['window.showAlert', 'window.showConfirm', 'window.showModal', 'window.promptAsync', 'window.showKeyConceptsPrompt'].forEach(name => {
         const start = ui.indexOf(`${name} = function`);
         const body = ui.slice(start, ui.indexOf('\n};', start));
@@ -656,6 +659,51 @@ test('브라우저 저장: 트랜잭션이 끝나야 성공, 쓰는 동안은 �
     assert.strictEqual(await again, true);
     assert.strictEqual(vm.runInContext('isSavePending()', ctx), false, '다시 저장하면 묻지 않는다');
     assert.strictEqual(vm.runInContext('isSavePending()', loadSaving({ pendingSoon: true }).ctx), true, '미뤄 둔 저장도 센다');
+});
+
+test('다른 탭이 저장한 뒤: 이 탭에서 저장하기 전에(오래 걸린 생성이 끝나 저절로 저장할 때도) 앱의 확인 창으로 한 번 묻고, 저장하지 않기면 쓰지 않으며 창을 닫기 전에 묻게 한다', async () => {
+    const { ctx, txs } = loadSaving();
+    const asked = [];
+    let answer = false;
+    ctx.confirmAsync = async (message, opts) => { asked.push({ message, opts }); return answer; };
+    ctx.window.showToast = () => {};
+    vm.runInContext('_stateForeignSaves = 1', ctx);
+    const first = vm.runInContext('saveState()', ctx);
+    const second = vm.runInContext('saveState()', ctx); // 묻는 동안 부른 저장은 같은 물음을 기다린다
+    assert.strictEqual(vm.runInContext('isSavePending()', ctx), true, '묻는 동안은 저장 중');
+    await flush(); await flush();
+    assert.deepStrictEqual([asked.length, txs.length], [1, 0], '묻기 전에 쓰지 않는다');
+    assert.deepStrictEqual([await first, await second], [false, false]);
+    assert.deepStrictEqual([asked.length, txs.length], [1, 0], '한 번만 묻고 쓰지 않는다');
+    assert.deepStrictEqual([asked[0].opts.title, asked[0].opts.okLabel, asked[0].opts.cancelLabel, asked[0].opts.dismissible], ['다른 탭에서 저장한 과정', '이 탭 내용으로 저장', '저장하지 않기', false]);
+    assert.ok(asked[0].message.includes('그 탭에서 바꾼 내용이 사라집니다'), asked[0].message);
+    assert.strictEqual(vm.runInContext('isSavePending()', ctx), true, '저장하지 않았으니 창을 닫기 전에 묻는다');
+    answer = true;
+    const third = vm.runInContext('saveState()', ctx);
+    for (let i = 0; i < 20 && !txs.length; i++) await flush();
+    txs[0].oncomplete();
+    assert.strictEqual(await third, true);
+    const fourth = vm.runInContext('saveState()', ctx);
+    assert.strictEqual(vm.runInContext('DBManager.writing', ctx), 1, '덮어쓰기로 답한 뒤에는 묻지 않고 바로 쓴다');
+    await flush(); await flush();
+    txs[1].oncomplete();
+    assert.strictEqual(await fourth, true);
+    assert.strictEqual(asked.length, 2, '다른 탭이 또 저장할 때까지 묻지 않는다');
+});
+
+test('다른 탭 변경 알림: 다른 탭이 저장하면 세어 두고(1분에 한 번) 알린다', () => {
+    const src = js('state.js').replace(/\r\n/g, '\n');
+    const start = src.indexOf('/* ---------- 다른 탭 변경 알림 ---------- */');
+    const end = src.indexOf('\n}\n', src.indexOf('function allowStateOverwrite(')) + 3;
+    const channels = [];
+    const toasts = [];
+    const ctx = { Date, Promise, BroadcastChannel: function () { channels.push(this); }, window: { showToast: text => toasts.push(text) } };
+    vm.createContext(ctx);
+    vm.runInContext(src.slice(start, end), ctx);
+    channels[0].onmessage();
+    channels[0].onmessage();
+    assert.strictEqual(vm.runInContext('_stateForeignSaves', ctx), 2);
+    assert.deepStrictEqual([toasts.length, toasts[0].includes('저장하기 전에 덮어쓸지 묻습니다')], [1, true], toasts.join('|'));
 });
 
 test('소스: 머리줄 백업 시각은 과정 전체 백업을 받고, 옛 확인 버튼 id·Ctrl+S 글자 판별·원문 칸 따로 저장이 없다', () => {

@@ -7,12 +7,14 @@ const LOCK_TITLE_NOISE = /\(⏱[^)]*\)|[^\s\w가-힣·:()-]/g;
 const lockTitleKey = title => String(title).replace(LOCK_TITLE_NOISE, '').replace(/\s+/g, ' ').trim();
 
 // H2 기준으로 나눈다. 코드 블록 안의 ## 은 제목이 아니다.
+// 펜스는 다른 곳과 같은 규칙으로 따라간다(lesson-lint.js nextCodeFence): 한 줄짜리 ```npm install```은 인라인 코드이고, ```` 블록 안의 ``` 줄은 코드다
 function mdSections(md) {
     const sections = [];
-    let fenced = false;
+    let fence = 0;
     String(md || '').replace(/\r\n/g, '\n').split('\n').forEach(line => {
-        if (/^\s*```/.test(line)) fenced = !fenced;
-        if (!fenced && /^##\s+/.test(line)) sections.push({ title: line.replace(/^##\s+/, '').trim(), lines: [line] });
+        const wasFenced = fence;
+        fence = nextCodeFence(fence, line);
+        if (!wasFenced && !fence && /^##\s+/.test(line)) sections.push({ title: line.replace(/^##\s+/, '').trim(), lines: [line] });
         else if (sections.length) sections.at(-1).lines.push(line);
         else sections.push({ title: '', lines: [line] });
     });

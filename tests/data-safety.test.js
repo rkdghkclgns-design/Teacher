@@ -1009,6 +1009,34 @@ testAsync('백업 ZIP 되살리기: 그림을 뺀 파일이면 확인 창에 지
     assert.strictEqual(huge.seen.alerts[0], huge.W.BACKUP_TOO_BIG_TEXT.openFile);
 });
 
+testAsync('백업 ZIP 되살리기·교과 불러오기: 생성·분량 채우기가 도는 동안에는 열지 않고, 확인 창을 띄운 사이 시작된 생성이 있어도 바꾸지 않는다', async () => {
+    const meta = { format: 'teacher-backup', scope: 'full', imageMode: 'separate', context: { courseTitle: '파일 과정', subjects: [{ id: 's9', title: '파일 교과', lessons: [{ id: 1, title: '1차시', images: {} }] }] } };
+    const withGuard = env => vm.runInContext(stateFn('function stateReplaceBlocked(', '\n}\n'), env.c);
+    const busy = loadZipImport();
+    withGuard(busy);
+    busy.c.isAiWorkRunning = () => true;
+    const before = busy.c.globalState;
+    const event = zipFile(meta);
+    await busy.W.importProjectZip(event);
+    assert.deepStrictEqual([busy.seen.confirms.length, busy.c.globalState === before, busy.c.saves, event.target.value], [0, true, 0, '']);
+    assert.ok(busy.seen.alerts.at(-1).includes('진행 중인 생성이 끝난 뒤'), busy.seen.alerts.at(-1));
+    const late = loadZipImport();
+    withGuard(late);
+    late.c.isAiWorkRunning = () => late.seen.confirms.length > 0; // 확인 창을 띄운 사이 시작된 생성
+    late.seen.answers.push(true);
+    const lateBefore = late.c.globalState;
+    await late.W.importProjectZip(zipFile(meta));
+    assert.deepStrictEqual([late.seen.confirms.length, late.c.globalState === lateBefore, late.c.saves, late.c.archived], [1, true, 0, 0], '안전 백업·기록 남기기도 하지 않는다');
+    // 교과 백업(위쪽 ZIP): 같은 교과를 바꾸는 확인 창을 띄운 사이 시작된 생성
+    const subjects = loadZipImport();
+    withGuard(subjects);
+    subjects.c.isAiWorkRunning = () => subjects.seen.confirms.length > 0;
+    subjects.seen.answers.push(true);
+    const subjectsBefore = subjects.c.globalState.subjects;
+    await subjects.W.importProjectZip(zipFile({ format: 'teacher-backup', scope: 'subjects', context: { subjects: [{ id: 's1', title: '바꿀 교과', lessons: [] }] } }));
+    assert.deepStrictEqual([subjects.seen.confirms.length, subjects.c.globalState.subjects === subjectsBefore, subjects.c.saves], [1, true, 0]);
+});
+
 test("백업 ZIP은 모두 buildBackupZip으로, 불러오기 전 백업은 모두 safetyBackupOrAsk로, '빼기'를 품은 방식은 takeBackupImageMode로만", () => {
     const jsDir = path.join(__dirname, '..', 'js');
     const sources = fs.readdirSync(jsDir).filter(f => f.endsWith('.js') && f !== 'data-safety.js').map(f => [f, fs.readFileSync(path.join(jsDir, f), 'utf8')]);

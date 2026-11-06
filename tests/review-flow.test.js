@@ -1363,6 +1363,21 @@ function generationContext(callGemini, mod) {
         assert.ok(!/\bconfirm\(/.test(call(picture, 'deleteImage').toString()), '앱의 확인 창으로만 묻는다(네이티브 confirm 없음)');
     });
 
+    await run('그림 지우기: 닫지 않은 <img·![·그림 틀이 아주 많은 글도 오래 걸리지 않는다(글 길이만큼만 훑는다)', async () => {
+        const without = call(makeContext(), 'withoutLessonImages');
+        const crafted = {
+            'img': '<img alt="x" '.repeat(30000),
+            'md': '![가나다 '.repeat(25000),
+            'wrapper': '<div class="image-wrapper" '.repeat(12000)
+        };
+        for (const [name, text] of Object.entries(crafted)) {
+            const started = Date.now();
+            assert.strictEqual(without(`![그림](local:img_1)\n\n${text}`, ['local:img_1']), text, name);
+            const took = Date.now() - started;
+            assert.ok(took < 500, `${name}: ${took}ms`);
+        }
+    });
+
     const PICTURE_A = 'data:image/png;base64,QUFB';
     const PICTURE_B = 'data:image/png;base64,QkJC';
     const pictureFrame = (id, caption) => `<div class="image-wrapper"><img src="local:${id}" alt="그림" class="rounded-lg border-2 border-accent/30 shadow-md max-w-full"><span class="absolute bottom-3 left-3 bg-black/80 text-white"><i class="ph-fill ph-sparkle text-accent"></i> AI 생성 이미지</span><button class="image-regenerate-btn px-3 py-1.5" data-lesson-action="regenerate-image" data-keyword="반복문" data-img-id="${id}"><i class="ph-bold ph-arrows-clockwise"></i> 다시 생성</button><div class="image-caption" style="margin-top:8px;text-align:center;">${caption}</div></div>`;
@@ -1614,6 +1629,80 @@ function generationContext(callGemini, mod) {
         });
         withTimeZone('UTC', () => assert.strictEqual(local('2026-11-05T16:30:00.000Z'), '2026-11-05 16:30'));
         [5, '지운 날', undefined, null, {}].forEach(value => assert.strictEqual(local(value), '', String(value)));
+    });
+
+    /* ---------- 5차 교차 검토 ---------- */
+    await run('그림 지우기 저장(format-toolbar.js writeLessonTab): 저장이 오래 걸리는 사이 다른 차시로 옮기면 옛 차시를 그 위에 다시 그리지 않고, 저장하지 못하면 지웠다고 알리지 않는다', async () => {
+        const first = { id: 1, title: '차시 1', tabContents: { basicLearn: '앞 ![그림](local:img_r1) 뒤' }, images: { img_r1: 'data:image/png;base64,QQ==' } };
+        const second = { id: 2, title: '차시 2', tabContents: { basicLearn: '둘째 ![그림](local:img_r1) 끝' }, images: { img_r1: 'data:image/png;base64,QQ==' } };
+        const pctx = pictureContext(first);
+        vm.runInContext(fs.readFileSync(root + 'format-toolbar.js', 'utf8'), pctx); // 실제 writeLessonTab
+        pctx.drawn = [];
+        vm.runInContext('renderEditor = m => window.drawn.push(m.id)', pctx);
+        let release = null;
+        pctx.saveState = () => new Promise(resolve => { release = resolve; });
+        const done = call(pctx, 'deleteImage')('img_r1');
+        for (let i = 0; i < 100 && !release; i++) await new Promise(resolve => setImmediate(resolve));
+        Object.assign(pctx, { currentMod: second, currentEditingModuleId: 2 }); // 저장하는 사이 차시 2를 열었다
+        release(true);
+        await done;
+        assert.deepStrictEqual(plain(pctx.drawn), [], '차시 1을 차시 2 화면 위에 그리지 않는다(다음 지우기가 차시 2의 같은 키 그림을 지우지 않게)');
+        assert.deepStrictEqual([first.tabContents.basicLearn, second.tabContents.basicLearn], ['앞  뒤', '둘째 ![그림](local:img_r1) 끝']);
+        assert.ok(pctx.toasts.includes('그림을 지웠습니다.'), pctx.toasts.join('|'));
+        const failing = pictureContext({ id: 1, title: '차시', tabContents: { basicLearn: '![그림](local:img_1) 글' }, images: { img_1: 'data:image/png;base64,QQ==' } });
+        vm.runInContext(fs.readFileSync(root + 'format-toolbar.js', 'utf8'), failing);
+        failing.saveState = async () => false; // saveState가 저장 실패를 알리고 false를 돌려준다
+        await call(failing, 'deleteImage')('img_1');
+        assert.ok(!failing.toasts.includes('그림을 지웠습니다.'), failing.toasts.join('|'));
+    });
+
+    await run('그림 지우기: 창을 닫아도 이어지는 AI 작업(삽화 등, isAiWorkRunning)이 도는 동안에는 글만 지우고 그림 값은 남긴다', async () => {
+        const mod = { id: 1, title: '차시', tabContents: { basicLearn: '앞 ![그림](local:img_1) 뒤' }, images: { img_1: 'data:image/png;base64,QQ==' } };
+        const pctx = pictureContext(mod);
+        pctx.isAiWorkRunning = () => true;
+        await call(pctx, 'deleteImage')('img_1');
+        assert.deepStrictEqual([mod.tabContents.basicLearn, Object.keys(mod.images)], ['앞  뒤', ['img_1']]);
+    });
+
+    await run('그림 지우기: ~~~ 코드 블록과 인라인 코드 속 같은 그림 주소(코드 예제)는 지우지 않는다', async () => {
+        const without = call(makeContext(), 'withoutLessonImages');
+        assert.strictEqual(without('~~~html\n![예](local:img_1)\n~~~\n\n![진짜](local:img_1)\n', ['local:img_1']), '~~~html\n![예](local:img_1)\n~~~\n');
+        assert.strictEqual(without('HTML로는 `<img src="local:img_1">`처럼 씁니다.\n\n<img src="local:img_1">\n', ['local:img_1']), 'HTML로는 `<img src="local:img_1">`처럼 씁니다.\n');
+        assert.strictEqual(without('``한 쌍 ` 안``은 코드 ![a](local:img_1)\n```js\nx = "![b](local:img_1)"\n```', ['local:img_1']), '``한 쌍 ` 안``은 코드 \n```js\nx = "![b](local:img_1)"\n```');
+    });
+
+    await run('그림 자리: 코드 블록 안의 [IMG] 모양(코드 예제)은 그림 자리로 세지 않고 그 안에 그림 칸을 넣지 않는다. 검색어의 (⏱ N분)은 뗀다', async () => {
+        const tag = '<!-- [IMG: "게임 루프"] -->';
+        const md = `## 1. 첫째 (⏱ 30분)\n\n예제입니다.\n\n\`\`\`html\n${tag}\n\`\`\`\n\n본문입니다.\n\n${tag}\n\n## 2. 둘째 (⏱ 40분)\n\n둘째 글입니다.\n\n<!-- [IMG: "2. 둘째 (⏱ 40분)"] -->`;
+        const tagCtx = makeContext();
+        assert.deepStrictEqual(plain(call(tagCtx, 'pendingImageTags')(md)).map(item => item.keyword), ['게임 루프', '2. 둘째']);
+        const mod = { id: 1, title: '차시', tabContents: { basicLearn: md }, images: {} };
+        const imgCtx = generationContext(async () => reply('{}'), mod);
+        const out = await call(imgCtx, 'realProcessImageTags')(mod, md, { amount: 'all', isStopped: () => false, inject: false, quiet: true });
+        const code = (out.match(/```html\n[\s\S]*?\n```/) || [''])[0];
+        assert.strictEqual(code, `\`\`\`html\n${tag}\n\`\`\``, '코드 예제는 그대로');
+        assert.ok(!out.split(code).join('').includes('<!-- [IMG:'), '글의 그림 자리는 모두 채웠다');
+    });
+
+    await run('최종 평가 다시 만들기: 지금 최종 평가(예전에 탭으로 만든 것도)를 작업 기록에 남기고, 새 본문이 보이며 다음 탭 저장에도 남는다. 다시 만들기 전에 알린다', async () => {
+        const mq = { id: 'mainQuest', title: '👑 최종 평가', description: '설명', status: 'done', content: '옛 탭 본문', tabContents: { basicLearn: '옛 탭 본문', basicPrac: null, advLearn: null, advPrac: null, assessment: null }, images: {} };
+        const qctx = makeContext(async () => reply('## 새 최종 평가\n\n새 과제입니다.'));
+        qctx.subjectForTest = { id: 's1', title: '교과', lessons: [], mainQuest: mq };
+        vm.runInContext("globalState = { subjects: [window.subjectForTest] }; currentSubjectId = 's1'; courseData = [];", qctx);
+        qctx.currentMod = mq;
+        qctx.elements['editor-loading'] = fakeElement();
+        qctx.document.querySelector = () => null;
+        qctx.archivedAll = [];
+        qctx.archiveContents = async (mods, reason) => { qctx.archivedAll.push({ reason, content: mods[0].content, tabs: { ...mods[0].tabContents } }); };
+        qctx.showKeyConceptsPrompt = (label, existing, done, opts) => { qctx.asked = { label, opts }; done([]); };
+        await call(qctx, 'promptAndGenerateMainQuest')();
+        for (let i = 0; i < 50 && mq.content === '옛 탭 본문'; i++) await new Promise(resolve => setImmediate(resolve));
+        assert.ok(qctx.asked.label === '최종 평가 다시 만들기' && qctx.asked.opts.warning.includes('작업 기록에 남아'), JSON.stringify(qctx.asked));
+        assert.deepStrictEqual(plain(qctx.archivedAll), [{ reason: '다시 생성 전', content: '옛 탭 본문', tabs: mq.tabContents ?? { basicLearn: '옛 탭 본문', basicPrac: null, advLearn: null, advPrac: null, assessment: null } }]);
+        assert.strictEqual(mq.tabContents, undefined, '탭이 없는 최종 평가가 된다');
+        assert.deepStrictEqual([mq.content, call(qctx, 'tabSourceFor')(mq, 'basicLearn')], ['## 새 최종 평가\n\n새 과제입니다.', '## 새 최종 평가\n\n새 과제입니다.'], '보이는 글이 새 본문이다');
+        call(qctx, 'setTabMarkdown')(mq, 'basicLearn', `${mq.content} 고침`);
+        assert.strictEqual(mq.content, '## 새 최종 평가\n\n새 과제입니다. 고침', '다음 저장에도 새 본문이 남는다');
     });
 
     console.log('ALL PASSED');

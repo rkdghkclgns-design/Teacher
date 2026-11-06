@@ -25,6 +25,7 @@ const OLD_HTML_PICTURE_CLASS = 'rounded-lg border-2 border-accent/30 shadow-md m
 const OLD_HTML_URL_ATTRS = /^(href|src|xlink:href|action|formaction|poster|background|data)$/i;
 const OLD_HTML_SCRIPT_URL = /^(javascript|vbscript):/i;
 const OLD_HTML_LESSONS_MAX = 2000; // output-import.js OUTPUT_FILE_LESSONS와 같은 상한
+const OLD_HTML_CODE_LANG = /^[A-Za-z0-9#+._-]{1,24}$/; // api.js CODE_BLOCK_LANG과 같은 언어 표기 모양
 
 let oldHtmlLoading = null;
 
@@ -270,13 +271,17 @@ function oldHtmlCodeText(node) {
     }).join('');
 }
 
+// 코드 블록을 감쌀 펜스. 코드 안에서 줄 머리(들여쓰기 포함)에 놓인 가장 긴 ``` 줄보다 하나 길게 쓴다(들여쓴 ``` 줄도 닫는 펜스로 읽히므로).
+// 언어는 앱의 코드 블록과 같은 모양(api.js CODE_BLOCK_LANG)일 때만 적는다(` 가 든 언어는 여는 줄을 펜스가 아니게 만든다)
 function oldHtmlFence(pre) {
     const code = pre.children.length === 1 && pre.firstElementChild.nodeName === 'CODE' && !pre.textContent.replace(pre.firstElementChild.textContent, '').trim()
         ? pre.firstElementChild : null;
     if (!code) return `\n\n${oldHtmlRaw(pre)}\n\n`;
-    const language = ((code.getAttribute('class') || '').match(/language-(\S+)/) || [])[1] || '';
+    const word = ((code.getAttribute('class') || '').match(/language-(\S+)/) || [])[1] || '';
+    const language = OLD_HTML_CODE_LANG.test(word) ? word : '';
     const text = oldHtmlCodeText(code).replace(/\n$/, '');
-    const longest = Math.max(0, ...(text.match(/^`{3,}/gm) || []).map(run => run.length));
+    let longest = 0;
+    for (const run of text.match(/^[ \t]*`{3,}/gm) || []) longest = Math.max(longest, run.trim().length); // 아주 긴 코드도 펼치지 않고 센다
     const fence = '`'.repeat(Math.max(3, longest + 1));
     return `\n\n${fence}${language}\n${text}\n${fence}\n\n`;
 }
@@ -368,9 +373,30 @@ function oldHtmlService(Turndown) {
     return service;
 }
 
-// 탭 하나를 마크다운으로. 남은 표시(코드 속 data URL 등)는 원래 글로 되돌린다
+// 코드 블록(oldHtmlFence가 쓴 ``` 펜스)을 자리표시 줄로 바꿔 둔 글과 되돌리는 함수(data.js stashCodeFences와 같은 펜스 규칙, 코드 글자는 그대로).
+// 줄 정리가 코드의 빈 줄 둘·줄 끝 공백을 건드리지 않게 한다
+function oldHtmlStashCode(md) {
+    const blocks = [];
+    let fence = 0;
+    const lines = String(md).split('\n').flatMap(line => {
+        const was = fence;
+        const [, marks, rest] = line.match(/^\s*(`{3,})(.*)$/) || [];
+        if (marks) fence = !fence ? (rest.includes('`') ? 0 : marks.length) : (marks.length >= fence && !rest.trim() ? 0 : fence);
+        if (!was && !fence) return [line];
+        if (was) {
+            blocks[blocks.length - 1].push(line);
+            return [];
+        }
+        blocks.push([line]);
+        return [`\u0000OLDCODE${blocks.length - 1}\u0000`];
+    });
+    return { text: lines.join('\n'), restore: value => value.replace(/\u0000OLDCODE(\d+)\u0000/g, (whole, i) => (blocks[i] ? blocks[i].join('\n') : whole)) };
+}
+
+// 탭 하나를 마크다운으로. 코드 블록 밖에서만 줄 끝 공백을 떼고 빈 줄을 하나로 줄인다. 남은 표시(코드 속 data URL 등)는 원래 글로 되돌린다
 function oldHtmlMarkdown(service, section, read) {
-    const md = service.turndown(section).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+    const code = oldHtmlStashCode(service.turndown(section));
+    const md = code.restore(code.text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim());
     return read.restore(md);
 }
 

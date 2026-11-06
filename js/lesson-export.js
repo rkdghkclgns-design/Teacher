@@ -72,11 +72,13 @@ function lessonTabSources(mod, tabIds) {
 
 // local:그림 키를 저장된 그림으로 바꾸고, 없는 그림 자리는 비운다(화면 보기와 같은 규칙. 차시 화면도 이 함수로 그린다, api.js)
 // 그림 키는 [\w-]만 쓰므로(data-safety.js SAFE_IMAGE_KEY) 정해 둔 모양 하나로 찾아 키를 목록에서 꺼낸다(그림 키로 정규식을 만들지 않는다).
-// 키 끝까지 읽으므로 img_1이 img_10을 건드리지 않는다. 진짜 그림만 넣고, 찾지 못한 그림 자리(teacher-image:…)·빈 값·목록에 없는 키는 없는 그림 자리로 둔다
+// 키 끝까지 읽으므로 img_1이 img_10을 건드리지 않는다. 진짜 그림만 넣고, 찾지 못한 그림 자리(teacher-image:…)·빈 값·목록에 없는 키는 없는 그림 자리로 둔다.
+// 코드 블록 안은 바꾸지 않는다(코드 예제의 local: 글자와 ToString(local: true) 같은 코드는 그대로). 빈 자리로 둘 괄호는 그림 키 모양((local:img_1))만 본다
 function inlineLessonImages(md, images) {
     const pictures = new Map(Object.entries(images || {}).filter(([, data]) => typeof data === 'string' && EXPORT_PICTURE_RE.test(data)));
-    const filled = String(md || '').replace(/local:([\w-]{1,80})(?![\w-])/g, (whole, id) => (pictures.has(id) ? pictures.get(id) : whole));
-    return filled.replace(/src="local:[^"]+"/g, 'src="" alt="[이미지 생성 누락]"').replace(/\(local:[^)]+\)/g, '()');
+    const code = typeof stashCodeFences === 'function' ? stashCodeFences(String(md || ''), { keepSpaces: true }) : { text: String(md || ''), restore: text => text };
+    const filled = code.text.replace(/local:([\w-]{1,80})(?![\w-])/g, (whole, id) => (pictures.has(id) ? pictures.get(id) : whole));
+    return code.restore(filled.replace(/src="local:[^"]+"/g, 'src="" alt="[이미지 생성 누락]"').replace(/\(local:[\w-]{1,80}\)/g, '()'));
 }
 
 // 다시 불러오기 표시: 화면에 보인 그림 <img>에 그림 키와 차시 번호를 단다. 원본(JSON)에는 그 그림을 다시 넣지 않는다(output-import.js)

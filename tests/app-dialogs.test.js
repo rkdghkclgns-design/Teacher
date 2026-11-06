@@ -81,7 +81,7 @@ function shellOverlay(doc) {
         click() { this.onclick?.(); }
     });
     const overlay = {
-        className: '', innerHTML: '', isConnected: false, onclick: null, dataset: {},
+        className: '', innerHTML: '', isConnected: false, onclick: null, dataset: {}, style: {},
         querySelector(sel) {
             if (!overlay.innerHTML.includes(sel.replace(/^\[|\]$/g, ''))) return null;
             if (!parts.has(sel)) parts.set(sel, part());
@@ -255,13 +255,21 @@ const tabs = extra => ({ basicLearn: '기본 글', basicPrac: '실습 글', advL
         assert.strictEqual(quest.tabContents, undefined, '탭을 만들지 않는다');
     });
 
-    await run('그림 자리 넣기: 비운 기본학습에 다른 탭을 합친 글이 보여도 그 글을 기본학습에 옮기지 않고 그림 자리만 넣는다(탭이 모두 빈 옛 본문은 그 끝에)', async () => {
+    await run('그림 자리 넣기: 빈 탭에는 묻지도 넣지도 않고 먼저 탭을 만들라고 알린다(비운 기본학습에 다른 탭 글이 있어도 그 글을 옮기지 않는다). 탭이 모두 빈 옛 본문은 그 끝에 넣는다', async () => {
         const mod = { id: 1, title: '차시', tabContents: tabs({ basicLearn: null }), content: '실습 글', images: {} };
         const ctx = apiContext(mod);
-        ctx.promptAsync = async () => 'cat';
+        let prompted = 0;
+        ctx.promptAsync = async () => { prompted += 1; return 'cat'; };
         await ctx.insertImageSlot();
-        assert.deepStrictEqual([mod.tabContents.basicLearn, mod.tabContents.basicPrac], ['\n<!-- [IMG: "cat"] -->\n', '실습 글']);
+        assert.deepStrictEqual([mod.tabContents.basicLearn, mod.tabContents.basicPrac, prompted, ctx.saved], [null, '실습 글', 0, 0]);
+        assert.ok(String(ctx.alerts.at(-1)).includes('먼저 탭을 만든 뒤 그림 자리를 넣어 주세요'), String(ctx.alerts.at(-1)));
         assert.strictEqual(mod.content.split('실습 글').length, 2, '합친 본문에 실습 글이 한 번만 든다');
+        const blank = { id: 1, title: '차시', tabContents: tabs({ basicPrac: null }), images: {} };
+        const blankCtx = apiContext(blank);
+        vm.runInContext("currentLessonTab = 'basicPrac'", blankCtx);
+        blankCtx.promptAsync = async () => 'cat';
+        await blankCtx.insertImageSlot();
+        assert.strictEqual(blank.tabContents.basicPrac, null, '빈 실습 탭도 그대로(일괄 생성이 그 탭을 건너뛰지 않게)');
         const legacy = { id: 1, title: '옛 차시', tabContents: tabs({ basicLearn: null, basicPrac: null }), content: '옛 본문', images: {} };
         const legacyCtx = apiContext(legacy);
         legacyCtx.promptAsync = async () => 'cat';
@@ -316,6 +324,92 @@ const tabs = extra => ({ basicLearn: '기본 글', basicPrac: '실습 글', advL
         await ctx.insertImageSlot();
         assert.strictEqual(inserted.length, 1, '다른 차시를 그린 칸에는 넣지 않는다');
         assert.strictEqual(mod.tabContents.basicLearn, '기본 글\n<!-- [IMG: "cat"] -->\n', '그때는 탭 끝에 넣는다');
+    });
+
+    /* ---------- 5차 교차 검토 ---------- */
+    await run('이미지 저장: 현재 탭의 그림은 그림 키 끝까지 보고 센다(img_10만 쓰는 탭에 img_1을 넣지 않는다)', async () => {
+        const mod = { id: 1, title: '차시 1', tabContents: tabs({ basicLearn: '![a](local:img_10)', basicPrac: '![b](local:img_1)' }), images: { img_1: PNG, img_10: PNG } };
+        const ctx = apiContext(mod);
+        let asked = null;
+        ctx.showConfirm = (message, onOk, opts) => { asked = { message, onOk, opts }; };
+        ctx.downloadImagesAsJPG(1);
+        assert.ok(asked && asked.message.includes('현재 탭: 1개') && asked.message.includes('전체 차시: 2개'), asked?.message || '묻지 않았다');
+        asked.onOk();
+        assert.deepStrictEqual(plain(ctx.toasts.at(-1)), ['📸 1개 이미지 다운로드 시작', 'success'], '현재 탭의 그림 하나만 받는다');
+    });
+
+    await run('차시 일괄 삭제: 생성이 도는 동안에는 열지 않고, 앱의 창 틀로 묻고(Esc는 취소) 휴지통으로 옮긴다고 말한다. 창을 띄운 사이 시작된 생성이 있으면 옮기지 않는다', async () => {
+        const lessons = [{ id: 1, title: '차시 1', tabContents: tabs() }, { id: 2, title: '차시 2', tabContents: tabs() }];
+        const ctx = apiContext(lessons[0], { shell: true });
+        Object.assign(ctx, { courseData: lessons, globalState: { subjects: [{ id: 's1', title: '교과', lessons }], lessonTrash: [] }, currentSubjectId: 's1' });
+        ctx.elements['editor-content-area'] = fakeElement();
+        ctx.elements['ai-command-bar'] = fakeElement();
+        vm.runInContext('renderSidebar = () => {}', ctx);
+        let busy = true;
+        ctx.trashRestoreBlocked = () => busy;
+        ctx.deleteAllModules();
+        assert.ok(String(ctx.alerts.at(-1)).includes('진행 중인 생성이 끝난 뒤') && ctx.opened.length === 0, '생성 중에는 창을 열지 않는다');
+        busy = false;
+        ctx.deleteAllModules();
+        const ask = ctx.opened.at(-1);
+        assert.ok(ask.innerHTML.includes('휴지통으로 옮기기') && ask.innerHTML.includes('30일 동안 되살릴 수 있습니다') && !ask.innerHTML.includes('즉시 삭제') && !ask.innerHTML.includes('보관함'), ask.innerHTML);
+        assert.strictEqual(ctx.document.activeElement, ask.querySelector('[data-delete-all="cancel"]'), '취소 버튼에서 시작한다');
+        clock += 600;
+        ctx.listeners.keydown(keyEvent('Escape'));
+        assert.deepStrictEqual([ask.isConnected, ctx.courseData.length], [false, 2], 'Esc는 취소');
+        ctx.deleteAllModules();
+        clock += 600;
+        busy = true; // 창을 띄운 사이 시작된 생성
+        ctx.opened.at(-1).querySelector('[data-delete-all="trash"]').click();
+        assert.deepStrictEqual([ctx.courseData.length, String(ctx.alerts.at(-1)).includes('진행 중인 생성')], [2, true]);
+        busy = false;
+        ctx.deleteAllModules();
+        clock += 600;
+        ctx.opened.at(-1).querySelector('[data-delete-all="trash"]').click();
+        assert.deepStrictEqual([ctx.courseData.length, ctx.globalState.lessonTrash.length], [0, 2]);
+        assert.ok(ctx.toasts.at(-1)[0].includes('2개 차시를 휴지통으로 옮겼습니다'), ctx.toasts.at(-1)[0]);
+    });
+
+    await run('교과 삭제·새 차시 목차: 생성이 도는 동안에는 휴지통으로 옮기지 않고(확인 창을 띄운 사이 시작된 생성도), 목차를 만드는 동안 시작된 생성이 있으면 바꾸지 않는다', async () => {
+        const lessons = [{ id: 1, title: '차시 1', tabContents: tabs() }];
+        const ctx = apiContext(lessons[0], { shell: true });
+        Object.assign(ctx, { courseData: lessons, globalState: { subjects: [{ id: 's1', title: '교과', lessons }], lessonTrash: [], subjectTrash: [] }, currentSubjectId: 's1' });
+        let busy = true;
+        ctx.trashRestoreBlocked = () => busy;
+        ctx.deleteSubject('s1');
+        assert.deepStrictEqual([ctx.globalState.subjects.length, ctx.opened.length], [1, 0]);
+        assert.ok(String(ctx.alerts.at(-1)).includes('진행 중인 생성이 끝난 뒤'));
+        busy = false;
+        ctx.deleteSubject('s1');
+        clock += 600;
+        busy = true;
+        ctx.opened.at(-1).querySelector('[data-confirm-ok]').click();
+        assert.strictEqual(ctx.globalState.subjects.length, 1, '확인 창을 띄운 사이 시작된 생성');
+
+        // 새 차시 목차(handleGenerate)
+        const gen = apiContext(lessons[0]);
+        Object.assign(gen, { courseData: lessons, globalState: { subjects: [{ id: 's1', title: '교과', lessons }], lessonTrash: [] }, currentSubjectId: 's1', currentTopic: '' });
+        ['sidebar-loading', 'generate-btn'].forEach(id => { gen.elements[id] = fakeElement(); });
+        gen.elements['topic-input'] = { ...fakeElement(), value: '게임 기획' };
+        let genBusy = true;
+        let aiCalls = 0;
+        gen.trashRestoreBlocked = () => genBusy;
+        gen.confirmAsync = async () => true;
+        gen.closeLessonEditor = () => { gen.closed = (gen.closed || 0) + 1; };
+        gen.buildTaskContext = () => ({ systemInstruction: '지시', userPrompt: '목차' });
+        gen.fakeGemini = async () => { aiCalls += 1; genBusy = gen.startJobDuringCall; return { candidates: [{ content: { parts: [{ text: '[{"title":"새 차시","description":"설명"}]' }] } }] }; };
+        vm.runInContext('callGemini = (...args) => window.fakeGemini(...args); renderSidebar = () => {};', gen);
+        await gen.handleGenerate();
+        assert.deepStrictEqual([aiCalls, gen.courseData.length, gen.globalState.lessonTrash.length], [0, 1, 0], '생성 중에는 묻지도 부르지도 않는다');
+        genBusy = false;
+        gen.startJobDuringCall = true;
+        await gen.handleGenerate();
+        assert.deepStrictEqual([aiCalls, gen.courseData[0].title, gen.globalState.lessonTrash.length], [1, '차시 1', 0], '목차를 만드는 동안 시작된 생성이 있으면 바꾸지 않는다');
+        assert.ok(String(gen.alerts.at(-1)).includes('다른 생성이 시작되어 반영하지 않았습니다'), String(gen.alerts.at(-1)));
+        genBusy = false;
+        gen.startJobDuringCall = false;
+        await gen.handleGenerate();
+        assert.deepStrictEqual([gen.courseData[0].title, gen.globalState.lessonTrash.length, gen.closed], ['새 차시', 1, 1], '바꾼 뒤 옛 차시의 편집기를 닫는다');
     });
 
     console.log('ALL PASSED');

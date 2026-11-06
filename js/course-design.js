@@ -302,7 +302,7 @@ function lessonGenFieldsHtml(prefix, values = {}) {
                 ${options.map(option => `<option value="${escapeHtml(option)}" ${values[key] === option ? 'selected' : ''}>${escapeHtml(option)}${unit}</option>`).join('')}
             </select>
         </label>`;
-    return `<div class="flex gap-2">${select('objectives', '학습 목표 수', LESSON_OBJECTIVE_COUNTS, '개')}${select('level', '학습자 수준', LESSON_LEVELS)}${select('length', '섹션당 분량(기본 학습 제외)', LESSON_LENGTHS)}</div>`;
+    return `<div class="flex gap-2">${select('objectives', '학습 목표 수', LESSON_OBJECTIVE_COUNTS, '개')}${select('level', '학습자 수준', LESSON_LEVELS)}${select('length', '섹션당 분량(기본학습 제외)', LESSON_LENGTHS)}</div>`;
 }
 
 // 고른 값만 돌려준다. 빈 값을 남기면 차시 저장 때 바뀌지 않은 옵션이 변경 이력에 남는다

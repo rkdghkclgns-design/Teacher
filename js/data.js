@@ -11,15 +11,15 @@ function fenceStateAfter(fence, line) {
 }
 
 // 코드 블록을 자리표시 줄로 바꿔 두고, 되돌리는 함수(restore)를 함께 준다. 닫히지 않은 블록은 글 끝까지 코드다.
-// 코드 안의 특수 공백(U+00A0)은 보통 공백으로 바꾼다. 자리표시 줄은 여는 펜스의 들여쓰기를 따른다
-function stashCodeFences(text) {
+// 코드 안의 특수 공백(U+00A0)은 보통 공백으로 바꾼다(keepSpaces면 그대로 둔다. 저장할 글을 고칠 때). 자리표시 줄은 여는 펜스의 들여쓰기를 따른다
+function stashCodeFences(text, { keepSpaces = false } = {}) {
     const blocks = [];
     let fence = 0;
     const lines = String(text ?? '').split('\n').flatMap(line => {
         const wasFenced = fence;
         fence = fenceStateAfter(fence, line);
         if (!wasFenced && !fence) return [line];
-        const code = line.replace(/\u00A0/g, ' ');
+        const code = keepSpaces ? line : line.replace(/\u00A0/g, ' ');
         if (wasFenced) {
             blocks[blocks.length - 1].push(code);
             return [];
@@ -307,7 +307,9 @@ if (typeof window !== 'undefined') window.convertPipeTableToHtml = convertPipeTa
 
 const SANITIZE_ICON_LEAD = /^[\s\p{Extended_Pictographic}️‍]+$/u; // 줄 머리에 아이콘만 있다(💡·🎮·⚠️·ℹ️ 등)
 
-function sanitizeMarkdownContent(md) {
+// promptLabels: AI 지시의 대괄호 라벨 줄([문서 구조]·[보강 분량] 등)도 지운다. 막 받은 AI 답만 켠다(기본).
+// 저장된 교안을 정리할 때(콘텐츠 정리)는 끈다(강사가 쓴 **[문서 구조]** 같은 줄을 지우지 않게)
+function sanitizeMarkdownContent(md, { promptLabels = true } = {}) {
     if (!md || typeof md !== 'string') return md;
     let t = md.replace(/\r\n/g, '\n');
 
@@ -335,8 +337,8 @@ function sanitizeMarkdownContent(md) {
         /^[ \t>]*#{0,4}[ \t]*\*{0,3}\[?\s*(?:상세\s*교안|현재\s*작업[^\]\n]*|탭\s*범위\s*제한|내부\s*프로세스[^\]\n]*|기본\s*학습)\s*\]?\*{0,3}[ \t]*[:：]?[ \t]*$/gm,
         ''
     );
-    //      새 지시 라벨은 대괄호로 감싼 줄 전체일 때만 지운다. 같은 말로 시작하는 본문 제목은 둔다
-    t = t.replace(/^[ \t>]*#{0,4}[ \t]*\*{0,3}\[\s*(?:코드\s*예제\s*—|보강할\s*섹션|문서\s*구조|보강\s*분량|분량\s*보강\s*규칙|이\s*교안의\s*학습\s*목표|원본\s*문서)[^\]\n]*\]\*{0,3}[ \t]*[:：]?[ \t]*$/gm, '');
+    //      새 지시 라벨은 대괄호로 감싼 줄 전체일 때만 지운다. 같은 말로 시작하는 본문 제목은 둔다(막 받은 AI 답만, promptLabels)
+    if (promptLabels) t = t.replace(/^[ \t>]*#{0,4}[ \t]*\*{0,3}\[\s*(?:코드\s*예제\s*—|보강할\s*섹션|문서\s*구조|보강\s*분량|분량\s*보강\s*규칙|이\s*교안의\s*학습\s*목표|원본\s*문서)[^\]\n]*\]\*{0,3}[ \t]*[:：]?[ \t]*$/gm, '');
 
     // 2-1) 마크다운 표 보호 + 정상화 (다른 단계가 표를 망가뜨리지 않도록)
     //      AI가 표 행을 모두 한 줄에 출력하거나 헤더와 구분선 사이 빈줄을 빼는 경우 복구

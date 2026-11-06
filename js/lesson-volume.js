@@ -201,14 +201,15 @@ function appendToSection(md, index, addition) {
 const volumeTitleKeys = md => mdSections(md).map(section => lockTitleKey(section.title)).join('\n');
 
 // 받은 답을 고른 섹션에 붙인 글. ## 제목의 순서와 이름이 그대로이고 낭독 글자가 800자 넘게 늘었을 때만 받는다
-// (코드 예제를 넣으라고 한 섹션은 예제가 들어왔으면 받는다. 코드는 분량에 들어가지 않는다). 받지 않으면 null
+// (코드 예제를 넣으라고 한 섹션은 예제가 들어왔으면 받는다. 코드는 분량에 들어가지 않는다). 받지 않으면 null.
+// addition: 붙인 소주제(채우는 동안 탭이 바뀌면 지금 글에 다시 붙인다, rebaseVolumeParts)
 function mergeVolumeAddition(md, plan, data) {
     const addition = cleanVolumeAddition(data, { sectionText: plan.text });
     if (!addition) return null;
     const next = appendToSection(md, plan.index, addition);
     if (volumeTitleKeys(next) !== volumeTitleKeys(md)) return null;
     const gain = spokenChars(next) - spokenChars(md);
-    return gain >= VOLUME_STALL_CHARS || (plan.needCode && lessonHasCodeExample(addition)) ? { md: next, gain } : null;
+    return gain >= VOLUME_STALL_CHARS || (plan.needCode && lessonHasCodeExample(addition)) ? { md: next, gain, addition } : null;
 }
 
 /* ---------- (⏱ N분) 다시 매기기 ---------- */
@@ -258,7 +259,7 @@ function volumeJob({ md = '', mod = null, tabId = 'basicLearn', lockedBlocks = [
         isLive: typeof isLive === 'function' ? isLive : () => true,
         onStatus: typeof onStatus === 'function' ? onStatus : () => {},
         onRetry, waitSignal,
-        calls: 0, added: 0, stalls: 0, requested: 0, gained: 0, retried: false, lastFailed: null,
+        calls: 0, added: 0, stalls: 0, requested: 0, gained: 0, retried: false, lastFailed: null, parts: [],
         failures: new Map(), codeTried: new Set(), stopped: false, gone: false, error: null, reason: ''
     };
 }
@@ -319,6 +320,7 @@ function volumeMerge(job, plan, data) {
         return;
     }
     job.md = merged.md;
+    job.parts.push({ key: plan.key, text: merged.addition });
     job.gained += Math.max(0, merged.gain);
     job.added += 1;
     job.stalls = 0;
@@ -380,14 +382,39 @@ function volumeResult(job) {
     const md = job.gone ? job.md : volumeFinalText(job);
     const spoken = spokenChars(md);
     return {
-        md, spoken, minutes: Math.round(spoken / READ_CHARS_PER_MINUTE), targetMinutes: job.targetMinutes, targetChars: job.targetChars,
-        calls: job.calls, added: job.added, short: spoken < job.targetChars, stopped: job.stopped, gone: job.gone, error: job.error, reason: job.reason
+        md, spoken, minutes: readAloudMinutes(md), targetMinutes: job.targetMinutes, targetChars: job.targetChars,
+        calls: job.calls, added: job.added, short: spoken < job.targetChars, stopped: job.stopped, gone: job.gone, error: job.error, reason: job.reason, parts: job.parts
     };
+}
+
+// 채우는 동안 탭이 바뀌었으면(그림을 지우거나 글을 고쳤다) 붙인 소주제를 지금 글(current)의 같은 제목 섹션 끝에 다시 붙이고 (⏱)를 다시 매긴다.
+// 분량 채우기는 섹션 끝에 소주제를 붙이고 시간을 다시 매길 뿐이라 지금 글의 다른 곳은 그대로다. 붙일 섹션이 없어졌으면 null
+function rebaseVolumeParts(current, parts, { targetMinutes, lockedBlocks = [], tabId = 'basicLearn', stopped = false } = {}) {
+    let md = String(current ?? '');
+    for (const part of parts || []) {
+        const index = mdSections(md).findIndex(section => lockTitleKey(section.title) === part.key);
+        if (index < 0) return null;
+        md = appendToSection(md, index, part.text);
+    }
+    const lockedKeys = new Set(lockedBlocks.map(block => lockTitleKey(block.title)));
+    return volumeFinalText({ md, added: (parts || []).length, stopped, targetMinutes, lockedKeys, lockedBlocks, tabId });
+}
+
+// 미리 보기에서 섹션을 골라 반영한 글은 (⏱) 합계가 목표에서 벗어날 수 있어 고른 글로 다시 매긴다(고정 섹션의 라벨은 그대로)
+function retimeVolumeChoice(md, { targetMinutes, lockedBlocks = [] } = {}) {
+    const sum = volumeLabelSum(md);
+    if (sum >= targetMinutes && sum <= targetMinutes + BASIC_LEARN_LABEL_SLACK) return md;
+    try {
+        return retimeSections(md, targetMinutes, new Set(lockedBlocks.map(block => lockTitleKey(block.title))));
+    } catch (err) {
+        console.warn('[분량 채우기] 고른 글의 (⏱) 시간을 다시 매기지 못해 그대로 둡니다:', err);
+        return md;
+    }
 }
 
 // 기본 학습 글(md)을 낭독 목표 분량까지 채운 결과를 돌려준다. 차시(mod)에는 쓰지 않고(부른 쪽이 저장한다) 어떤 실패도 던지지 않는다.
 // 중지·차시가 사라짐(isLive)·한도와 키 문제·호출 상한·잇단 실패·늘릴 섹션 없음에서 멈춘다.
-// 결과: { md, spoken, minutes, targetMinutes, targetChars, calls, added, short, stopped, gone, error, reason }
+// 결과: { md, spoken, minutes, targetMinutes, targetChars, calls, added, short, stopped, gone, error, reason, parts(붙인 소주제 [{ key, text }]) }
 async function ensureSpokenVolume(options = {}) {
     const job = volumeJob(options);
     _volumeRunning += 1;
@@ -404,17 +431,27 @@ async function ensureSpokenVolume(options = {}) {
 window.isVolumeFilling = () => _volumeRunning > 0;
 
 /* ---------- 탭 위 표시와 '분량 채우기' ---------- */
+const VOLUME_UNAPPLIED_REASON = '분량 채우기 결과(반영 안 함)';
+
 function volumeChipButton(mod) {
     return `<button type="button" data-volume-lesson="${escapeHtml(String(mod.id))}" onclick="fillLessonVolume(this.dataset.volumeLesson)" class="px-1.5 py-0.5 rounded bg-amber-500 text-white hover:bg-amber-600 transition-colors" title="모자란 섹션마다 새 소주제를 이어 붙여 목표 분량까지 채웁니다">분량 채우기</button>`;
 }
 
-// 탭 위 '낭독 약 N분 / 목표 480분'. 기본 학습 탭을 볼 때만 보이고(최종 평가와 교수안·슬라이드·문제은행 화면에서는 숨긴다) 모자라면 '분량 채우기'를 붙인다
+// 기본학습 탭에 보이는 글: 저장된 글에서 화면이 숨기는 첫머리(앞 그림·시간표·특징 목록)를 뺀다(lesson-opening.js).
+// 다른 탭에만 글이 있는 차시의 비운 기본학습은 빈 글이다(lesson-review.js storedTabMarkdown)
+function volumeShownText(mod) {
+    const stored = String(storedTabMarkdown(mod, 'basicLearn') || '');
+    return typeof cleanLessonOpening === 'function' ? cleanLessonOpening(stored) : stored;
+}
+
+// 탭 위 '낭독 약 N분 / 목표 480분'. 기본 학습 탭을 볼 때만 보이고(최종 평가와 교수안·슬라이드·문제은행 화면에서는 숨긴다) 모자라면 '분량 채우기'를 붙인다.
+// 분은 내림이라 모자란 글이 목표 시간으로 보이지 않는다(lesson-lint.js readAloudMinutes)
 window.syncVolumeChip = function (mod = getEditingModule()) {
     const chip = document.getElementById('lesson-volume-chip');
     if (!chip) return;
     const panelOpen = typeof _lessonPanel !== 'undefined' && !!_lessonPanel;
     const tab = typeof currentLessonTab !== 'undefined' ? currentLessonTab : '';
-    const md = mod && mod.id !== 'mainQuest' && !panelOpen && tab === 'basicLearn' ? String(storedTabMarkdown(mod, 'basicLearn') || '') : '';
+    const md = mod && mod.id !== 'mainQuest' && !panelOpen && tab === 'basicLearn' ? volumeShownText(mod) : '';
     if (!md.trim()) {
         chip.className = 'hidden';
         chip.innerHTML = '';
@@ -425,7 +462,7 @@ window.syncVolumeChip = function (mod = getEditingModule()) {
     const short = spoken < target * READ_CHARS_PER_MINUTE;
     chip.className = `${VOLUME_CHIP_CLASS} ${short ? VOLUME_CHIP_TONES.short : VOLUME_CHIP_TONES.done}`;
     chip.title = VOLUME_CHIP_TITLE;
-    chip.innerHTML = `<span>낭독 약 ${Math.round(spoken / READ_CHARS_PER_MINUTE)}분 / 목표 ${target}분</span>${short ? volumeChipButton(mod) : ''}`;
+    chip.innerHTML = `<span>낭독 약 ${readAloudMinutes(md)}분 / 목표 ${target}분</span>${short ? volumeChipButton(mod) : ''}`;
 };
 
 // '분량 채우기'가 끝난 뒤 알릴 글. md: 반영할 글
@@ -441,27 +478,57 @@ function volumeSummaryText(volume, md) {
     ].filter(Boolean).join(' ');
 }
 
-// 진행 막대 안에서 채운다. 끝나면 컨벤션 필수 지적을 고쳐 받고, 바뀐 섹션을 골라 반영한다(이전 글은 작업 기록에 남는다). 그림은 만들지 않는다
-async function fillVolumeJob({ id, mod, subj, subjectId, before, snapshot }) {
+// '분량 채우기'가 쓸 AI 호출 수 어림(cost-estimate.js 예고): 모자란 낭독 글자를 호출 하나가 늘리는 글자(5,000자)로 나눈 수(호출 상한까지)와 채운 뒤 자동 수정 횟수
+function volumeCallEstimate(md, targetMinutes) {
+    const targetChars = targetMinutes * READ_CHARS_PER_MINUTE;
+    const cap = Math.min(VOLUME_CALL_LIMIT, Math.ceil(targetChars / VOLUME_CHARS_PER_CALL));
+    const need = Math.max(0, Math.ceil(targetChars * VOLUME_MARGIN) - spokenChars(md));
+    return Math.min(cap, Math.max(1, Math.ceil(need / VOLUME_CHARS_PER_CALL))) + VOLUME_FIX_ROUNDS;
+}
+
+// 반영하지 않은 채운 글을 작업 기록에 남긴다(다시 채우지 않아도 그 글로 되돌릴 수 있게). 남긴 곳을 알리는 글을 돌려준다
+async function keepVolumeText(mod, md) {
+    await archiveContent({ title: mod.tabContents ? `${mod.title} · ${reviewTabLabel('basicLearn')}` : mod.title, content: md, images: mod.images, tabId: 'basicLearn', lesson: mod }, VOLUME_UNAPPLIED_REASON);
+    return `채운 글은 작업 기록에 '${VOLUME_UNAPPLIED_REASON}'으로 남겼습니다.`;
+}
+
+// 진행 막대 안에서 채운다. 늘린 소주제가 있으면 컨벤션 필수 지적을 고쳐 받고, 바뀐 섹션을 골라 반영한다(이전 글은 작업 기록에 '분량 채우기 전'으로 남는다). 그림은 만들지 않는다.
+// 다른 교과로 옮겨도 그 차시에 반영한다. 채우는 동안 기본학습이 바뀌었으면(그림 지우기·두 번 눌러 고치기·원문 칸 등) 늘린 소주제를 지금 글에 이어 붙인다.
+// 반영하지 못하거나 반영하지 않기를 고른 채운 글은 작업 기록에 남긴다
+async function fillVolumeJob({ mod, subj, before, snapshot }) {
     const tabId = 'basicLearn';
+    const targetMinutes = basicLearnTargetMinutes(mod);
     const lockedBlocks = lockedSectionBlocks(mod, tabId);
     const isStopped = () => !!window.isTabGenerationStopped?.();
+    const isLive = () => !subj || typeof lessonStillLive !== 'function' || lessonStillLive(subj, mod);
     const volume = await ensureSpokenVolume({
-        ...snapshot, md: before, mod, tabId, lockedBlocks, targetMinutes: basicLearnTargetMinutes(mod), codeTopic: lessonCodeTopic(mod), fromUpload: !!mod.uploadedMdContent,
-        isStopped, isLive: () => !subj || typeof lessonStillLive !== 'function' || lessonStillLive(subj, mod),
-        onStatus: window.setPipelineStatus, waitSignal: window.aiStopSignal?.() || null
+        ...snapshot, md: before, mod, tabId, lockedBlocks, targetMinutes, codeTopic: lessonCodeTopic(mod), fromUpload: !!mod.uploadedMdContent,
+        isStopped, isLive, onStatus: window.setPipelineStatus, waitSignal: window.aiStopSignal?.() || null
     });
-    if (volume.gone) return window.showAlert('차시가 지워졌거나 불러온 내용으로 바뀌어 분량 채우기를 멈췄습니다.');
-    const fixable = !volume.stopped && !(typeof aiErrorStopsRun === 'function' && aiErrorStopsRun(volume.error));
-    const next = fixable
+    const gone = '차시가 지워졌거나 불러온 내용으로 바뀌어 분량 채우기를';
+    if (volume.gone) return window.showAlert(`${gone} 멈췄습니다.${volume.added ? ` ${await keepVolumeText(mod, volume.md)}` : ''}`);
+    // 늘린 소주제가 없으면 고쳐 받지 않는다(있던 글만 고치는 호출이 된다). 중지·한도·키 문제·다시 보내도 같은 오류로 멈췄을 때도
+    const fixable = volume.added > 0 && !volume.stopped && !isVolumeHalt(volume.error);
+    const filled = fixable
         ? await autoFixGeneratedTab({ tabId, md: volume.md, lockedBlocks, onStatus: window.setPipelineStatus, rounds: VOLUME_FIX_ROUNDS, minSpokenChars: volume.targetChars, isStopped })
         : volume.md;
-    if (currentSubjectId !== subjectId || getEditingModule(id) !== mod) return window.showAlert('다른 교과로 옮겼거나 차시가 바뀌어 분량 채우기를 반영하지 않았습니다. 그 차시로 돌아가 다시 눌러 주세요.');
-    if (next === before) return window.showAlert(volumeSummaryText(volume, next));
+    if (!isLive()) return window.showAlert(`${gone} 반영하지 못했습니다. ${await keepVolumeText(mod, filled)}`);
+    saveOpenEditsFor(mod, tabId); // 열어 둔 원문 칸의 글을 먼저 넣는다(미리 보기의 단추를 누르며 칸을 벗어나 넣으면 반영을 막는다)
+    const current = String(storedTabMarkdown(mod, tabId) || '');
+    let [base, next, rebaseNote] = [before, filled, ''];
+    if (current !== before) {
+        const rebased = rebaseVolumeParts(current, volume.parts, { targetMinutes, lockedBlocks: lockedSectionBlocks(mod, tabId), tabId, stopped: volume.stopped });
+        if (rebased === null) return window.showAlert(`채우는 동안 기본학습의 섹션 제목이 바뀌어 늘린 소주제를 붙일 자리를 찾지 못했습니다. ${await keepVolumeText(mod, filled)}`);
+        [base, next, rebaseNote] = [current, rebased, '채우는 동안 기본학습이 바뀌어, 늘린 소주제를 지금 글에 이어 붙였습니다(자동 수정은 반영하지 않았습니다).'];
+    }
+    if (next === base) return window.showAlert(volumeSummaryText(volume, next));
     window.setPipelineStatus('바뀐 섹션을 골라 반영해 주세요.');
-    const approved = await previewAiChange(before, next, { title: '기본학습 분량 채우기 미리보기', tabId, note: volumeSummaryText(volume, next) });
-    if (approved === null) return;
-    if (!(await commitTabChange(mod, tabId, before, approved, `기본학습 분량 채우기(낭독 약 ${readAloudMinutes(approved)}분)`))) return;
+    const choice = await previewAiChange(base, next, { title: '기본학습 분량 채우기 미리보기', tabId, note: [rebaseNote, volumeSummaryText(volume, next)].filter(Boolean).join(' '), cancelLabel: '반영하지 않기' });
+    if (choice === null || choice === base) return window.showToast?.(`분량 채우기를 반영하지 않았습니다. ${await keepVolumeText(mod, next)}`, 'info');
+    const approved = choice === next ? choice : retimeVolumeChoice(choice, { targetMinutes, lockedBlocks: lockedSectionBlocks(mod, tabId) });
+    saveOpenEditsFor(mod, tabId);
+    if (!isLive() || storedTabMarkdown(mod, tabId) !== base) return window.showAlert(`고르는 동안 기본학습이 바뀌어 반영하지 못했습니다. ${await keepVolumeText(mod, approved)}`);
+    if (!(await commitTabChange(mod, tabId, base, approved, `기본학습 분량 채우기(낭독 약 ${readAloudMinutes(approved)}분)`, '분량 채우기 전'))) return;
     window.notifyLessonJobDone(volumeSummaryText(volume, approved), spokenChars(approved) >= volume.targetChars ? 'success' : 'warning');
 }
 
@@ -473,11 +540,13 @@ window.fillLessonVolume = async function (id) {
     saveOpenEditsFor(mod, 'basicLearn');
     const current = String(storedTabMarkdown(mod, 'basicLearn') || '');
     if (!current.trim()) return window.showAlert('먼저 기본학습 탭을 생성해 주세요.');
-    const message = `기본학습은 지금 낭독 약 ${readAloudMinutes(current)}분입니다. 목표 ${basicLearnTargetMinutes(mod)}분에 못 미친 섹션마다 새 소주제를 이어 붙입니다. 있던 글은 바꾸지 않고, 끝나면 바뀐 섹션을 골라 반영합니다.`;
-    if (!(await confirmWithEstimate(message, { volume: 1 }, { title: '기본학습 분량 채우기', okLabel: '분량 채우기' }))) return;
+    const target = basicLearnTargetMinutes(mod);
+    const message = `기본학습은 지금 낭독 약 ${readAloudMinutes(volumeShownText(mod))}분입니다. 목표 ${target}분이 될 때까지 모자란 내용 섹션 끝에 새 소주제를 이어 붙이고, 각 ## 제목의 시간(⏱)을 낭독 길이에 맞춰 다시 매깁니다. 컨벤션 필수 지적이 남은 섹션은 AI가 고쳐 쓸 수 있습니다. 끝나면 바뀐 섹션을 골라 반영하고, 채우기 전 글은 작업 기록에 남습니다.`;
+    const work = { volume: 1, volumeCalls: volumeCallEstimate(current, target), volumeMinutes: target };
+    if (!(await confirmWithEstimate(message, work, { title: '기본학습 분량 채우기', okLabel: '분량 채우기' }))) return;
     if (getEditingModule(id) !== mod) return;
     saveOpenEditsFor(mod, 'basicLearn'); // 묻는 동안 고친 글도 넣고 시작한다
-    const subjectId = currentSubjectId;
-    const job = { id, mod, subjectId, subj: globalState.subjects.find(item => item.id === subjectId), before: String(storedTabMarkdown(mod, 'basicLearn') || ''), snapshot: volumeSnapshot(mod) };
+    const subj = globalState.subjects.find(item => item.id === currentSubjectId);
+    const job = { mod, subj, before: String(storedTabMarkdown(mod, 'basicLearn') || ''), snapshot: volumeSnapshot(mod) };
     await window.runLessonJob(mod.id, { label: '기본학습 분량 채우기', current: 'basicLearn', alerts: true }, () => fillVolumeJob(job));
 };

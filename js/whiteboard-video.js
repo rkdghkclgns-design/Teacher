@@ -209,18 +209,38 @@ window.whiteboardInbox = {
 
 let whiteboardCollecting = null;
 
-// 돌아온 영상을 요청한 그림 자리에 붙인다. 차시를 못 찾으면(아직 불러오는 중 등) 받은편지함에 남겨 다음에 다시 본다
+// 영상을 붙일 그림이 차시 글(합친 본문·탭·교수안·편성안)에 아직 있는지: local:키(local:img_1과 local:img_10을 가른다)나 그 그림 값(data URL)을 바로 쓴 자리.
+// 영상을 기다리는 동안 그 그림을 지웠으면 없다
+function whiteboardPictureInLesson(mod, imgId) {
+    const ref = `local:${imgId}`;
+    const value = typeof mod.images?.[imgId] === 'string' && /^data:image\//.test(mod.images[imgId]) ? mod.images[imgId] : '';
+    const texts = [mod.content, ...Object.values(mod.tabContents || {}), mod.gyosuan?.docMd, mod.gyosuan?.deckMd].filter(text => typeof text === 'string');
+    const usesKey = text => {
+        for (let at = text.indexOf(ref); at !== -1; at = text.indexOf(ref, at + 1)) if (!/[\w-]/.test(text.charAt(at + ref.length))) return true;
+        return false;
+    };
+    return texts.some(text => usesKey(text) || (!!value && text.includes(value)));
+}
+
+// 돌아온 영상을 요청한 그림 자리에 붙인다. 차시를 못 찾으면(아직 불러오는 중 등) 받은편지함에 남겨 다음에 다시 본다.
+// 그 그림을 그사이 지웠으면 붙이지 않고(보이지 않는 영상이 파일을 붙잡지 않게) 받은편지함에서 지운 뒤 알린다
 async function collectWhiteboardVideosOnce(now = Date.now()) {
     if (!globalState?.subjects?.length) return [];
     const records = await window.whiteboardInbox.read();
     const requests = readWhiteboardRequests(now);
     const placed = [];
     const replaced = [];
+    const dropped = [];
     for (const record of records || []) {
         const req = requests[record.requestId];
         const mod = req && findWhiteboardLesson(req);
         if (!mod) {
             if (!req && now - (record.createdAt || 0) > WB_REQUEST_MAX_AGE_MS) await window.whiteboardInbox.remove(record.requestId);
+            continue;
+        }
+        if (!whiteboardPictureInLesson(mod, req.imgId)) {
+            await window.whiteboardInbox.remove(record.requestId);
+            dropped.push(req.label);
             continue;
         }
         const previous = mod.whiteboardVideos?.[req.imgId];
@@ -233,11 +253,20 @@ async function collectWhiteboardVideosOnce(now = Date.now()) {
         await window.whiteboardInbox.remove(record.requestId);
         placed.push({ mod, label: req.label });
     }
+    if (dropped.length) window.showToast?.(`${dropped.map(label => `'${label}'`).join(', ')} 그림은 판서 영상을 기다리는 동안 지워져 돌아온 영상을 붙이지 않았습니다. 그림을 다시 넣은 뒤 판서 영상을 다시 만들어 주세요.`, 'warning');
     if (!placed.length) return placed;
     const saved = await saveState();
-    // 예전 영상 파일은 저장한 뒤에, 다른 차시(휴지통의 사본 등)가 쓰지 않을 때만 지운다(저장하지 못하면 저장된 작업이 아직 그 영상을 가리킨다)
+    // 예전 영상 파일은 저장한 뒤에, 다른 차시(휴지통의 사본 등)가 쓰지 않을 때만 지운다(저장하지 못하면 저장된 작업이 아직 그 영상을 가리킨다).
+    // 지우지 못해도 새 영상은 붙였으므로 화면과 알림은 그대로 한다(남은 파일은 저장된 작업을 열 때 정리한다)
     if (saved !== false) {
-        for (const id of replaced) if (!whiteboardVideoInUse(id)) await DBManager.deleteItem(WB_VIDEO_KEY(id));
+        for (const id of replaced) {
+            if (whiteboardVideoInUse(id)) continue;
+            try {
+                await DBManager.deleteItem(WB_VIDEO_KEY(id));
+            } catch (e) {
+                console.warn('[판서 영상] 바뀐 예전 영상 파일을 지우지 못해 남겨 둡니다(나중에 정리합니다):', e);
+            }
+        }
     }
     const showing = typeof getEditingModule === 'function' ? getEditingModule() : null;
     if (showing && placed.some(item => item.mod === showing)) window.applyWhiteboardVideos(showing);
@@ -411,6 +440,7 @@ async function mountWhiteboardVideo(img, holder, imgId, video) {
     player.preload = 'metadata';
     player.className = 'w-full rounded-lg bg-black';
     player.dataset.wbVideo = video.id;
+    player.dataset.wbImage = imgId; // 내보낸 HTML을 다시 불러올 때 같은 그림 값을 가진 다른 키가 아니라 이 그림 자리에 붙인다(output-import.js)
     player.setAttribute('aria-label', `판서 영상: ${video.title || ''}`);
     img.style.display = 'none'; // .markdown-body img { display: block }이 hidden 클래스보다 앞선다
     img.dataset.wbPoster = 'true';

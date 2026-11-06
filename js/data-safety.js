@@ -1021,6 +1021,8 @@ async function importSubjectsBackup(meta) {
     const lostImages = noImages ? countBackupImages(currentSnapshot().subjects.filter(subject => replacedIds.has(String(subject.id)))) : 0;
     const ok = await confirmAsync(describeSubjectImport(plan, { noImages, lostImages }), { okLabel: '백업 받고 불러오기', tone: noImages ? 'danger' : 'primary', title: '교과 불러오기' });
     if (!ok) return;
+    if (typeof stateReplaceBlocked === 'function' && stateReplaceBlocked()) return; // 확인 창을 띄운 사이 시작된 생성(바꾸는 교과의 차시를 만드는 중일 수 있다)
+    if (typeof allowStateOverwrite === 'function' && !(await allowStateOverwrite())) return; // 다른 탭이 저장한 뒤면 바꾸기 전에 묻는다(state.js)
     const openReplaced = plan.replaced.some(subject => String(subject.id) === String(currentSubjectId));
     if (openReplaced) window.saveRawContent?.(); // 고치던 원문은 바뀌기 전 교과(휴지통으로 갈 쪽)에 먼저 넣는다
     if (!(await safetyBackupOrAsk('불러오기전'))) return; // 받지 못하면 까닭을 알리고 백업 없이 계속할지 묻는다

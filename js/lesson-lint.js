@@ -163,8 +163,26 @@ function basicLearnTargetMinutes(mod) {
     return Math.max(BASIC_LEARN_MIN_MINUTES, own);
 }
 
+// open(전역 정규식)이 찾은 자리부터 그 뒤 첫 close(전역 정규식)까지를 빈칸 하나로 바꾼다. 닫지 않은 자리가 나오면 거기서 멈춘다(뒤의 자리도 닫을 곳이 없다).
+// 정규식 하나([\s\S]*?)로 찾으면 닫지 않은 자리마다 글 끝까지 다시 읽어, 남이 준 긴 글에서 화면이 멈춘다
+function spokenWithoutSpans(text, open, close) {
+    let out = '';
+    let from = 0;
+    open.lastIndex = 0;
+    for (let start = open.exec(text); start; start = open.exec(text)) {
+        close.lastIndex = start.index + start[0].length;
+        const end = close.exec(text);
+        if (!end) break;
+        out += `${text.slice(from, start.index)} `;
+        from = end.index + end[0].length;
+        open.lastIndex = from;
+    }
+    return out + text.slice(from);
+}
+
 // 강사가 소리 내어 읽는 글만 남긴다. 코드 블록(mermaid·실행 결과 포함, 닫지 않은 블록은 끝까지)·표·그림·HTML·서식 기호·(⏱ N분)은 빼고,
-// 제목·학습 목표·개요·체크리스트의 글과 인라인 코드의 글(문장 안에서 읽는다)은 남긴다
+// 제목·학습 목표·개요·체크리스트의 글과 인라인 코드의 글(문장 안에서 읽는다)은 남긴다.
+// 그림·링크·태그 모양은 다음 여는 글자([·(·<)에서 멈춰, 닫지 않은 기호가 아주 많은 글도 길이에 비례해 센다
 function spokenText(md) {
     let fence = 0;
     const prose = String(md ?? '').replace(/\r\n/g, '\n').split('\n').filter(line => {
@@ -172,15 +190,13 @@ function spokenText(md) {
         fence = nextCodeFence(fence, line);
         return !wasFenced && !fence && !SPOKEN_SKIP_LINE.test(line);
     }).join('\n');
-    return prose
-        .replace(/<!--[\s\S]*?-->/g, ' ')
-        .replace(/<table\b[\s\S]*?<\/table>/gi, ' ')
-        .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
-        .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    return spokenWithoutSpans(spokenWithoutSpans(prose, /<!--/g, /-->/g), /<table\b/gi, /<\/table>/gi)
+        .replace(/!\[[^\[\]]*\]\([^()]*\)/g, ' ')
+        .replace(/\[([^\[\]]*)\]\([^()]*\)/g, '$1')
         .replace(/https?:\/\/\S+/g, ' ')
-        .replace(/<[^>]+>/g, ' ')
+        .replace(/<[^<>]+>/g, ' ')
         .replace(/&(?:#\d+|#x[\da-f]+|[a-z]+);/gi, ' ')
-        .replace(/\(⏱[^)]*\)/g, ' ')
+        .replace(/\(⏱[^()]*\)/g, ' ')
         .replace(/^[ \t]*(?:[-*_][ \t]*){3,}$/gm, ' ')
         .replace(/^[ \t]*(?:#{1,6}[ \t]+|>[ \t]?|[-*+][ \t]+|\d+[.)][ \t]+)+/gm, '')
         .replace(/\*+|__|~~|`/g, '')
@@ -189,13 +205,13 @@ function spokenText(md) {
         .trim();
 }
 
-// 낭독 글자 수(공백 포함)와 낭독 시간(분)
+// 낭독 글자 수(공백 포함)와 낭독 시간(분). 분은 내림이다(목표에 못 미친 글이 반올림으로 목표 시간처럼 보이지 않게)
 function spokenChars(md) {
     return spokenText(md).length;
 }
 
 function readAloudMinutes(md) {
-    return Math.round(spokenChars(md) / READ_CHARS_PER_MINUTE);
+    return Math.floor(spokenChars(md) / READ_CHARS_PER_MINUTE);
 }
 
 // 체크리스트의 "다시 보기"로 목표와 내용 섹션의 대응을 확인한다. 제목 앞 이모지나 시간 표기는 달라도 같은 섹션으로 본다.

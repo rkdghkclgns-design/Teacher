@@ -123,15 +123,15 @@ window.downloadLessonMaterial = function (scope = 'current') {
     const subject = globalState.subjects.find(item => item.id === currentSubjectId);
     if (scope === 'course') {
         const md = materialCourseMd();
-        return md ? downloadMd(md, `${globalState.courseTitle || '과정'}_교육자료`) : window.showAlert('내려받을 교안이 없습니다. 먼저 기본 학습 탭을 생성해주세요.');
+        return md ? downloadMd(md, `${globalState.courseTitle || '과정'}_교육자료`) : window.showAlert('내려받을 교안이 없습니다. 먼저 기본학습 탭을 생성해주세요.');
     }
     if (!subject) return window.showAlert('교과를 먼저 선택해주세요.');
     if (scope === 'subject') {
         const lessons = materialLessons(subject);
-        if (!lessons.length) return window.showAlert('내려받을 교안이 없습니다. 먼저 기본 학습 탭을 생성해주세요.');
+        if (!lessons.length) return window.showAlert('내려받을 교안이 없습니다. 먼저 기본학습 탭을 생성해주세요.');
         return downloadMd(materialDocMd(subject, lessons, globalState.subjects), `${subject.title}_교육자료`);
     }
     const mod = getEditingModule();
-    if (!mod?.tabContents?.basicLearn) return window.showAlert('내려받을 교안이 없습니다. 먼저 기본 학습 탭을 생성해주세요.');
+    if (!mod?.tabContents?.basicLearn) return window.showAlert('내려받을 교안이 없습니다. 먼저 기본학습 탭을 생성해주세요.');
     return downloadMd(materialDocMd(subject, [mod], [subject], [mod]), `${lessonFileBase(mod, subject)}_교육자료`);
 };

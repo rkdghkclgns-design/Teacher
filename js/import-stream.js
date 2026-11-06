@@ -58,7 +58,7 @@ function streamHeadAt(bytes, at) {
 }
 
 function streamTooLong() {
-    return new Error(`글이 너무 많은 파일입니다(그림·영상을 뺀 글만 ${(STREAM_TEXT_MAX / 1e6).toFixed(0)}백만 자가 넘습니다). 파일을 나눠 내보낸 뒤 불러오세요`);
+    return new Error(`글이 너무 많은 파일입니다(그림·영상을 뺀 글만 ${STREAM_TEXT_MAX.toLocaleString('ko-KR')}자가 넘습니다). 파일을 나눠 내보낸 뒤 불러오세요`);
 }
 
 // 바이트 조각을 차례로 받아 표시를 넣은 글과 떼어 낸 data URL 표를 만든다

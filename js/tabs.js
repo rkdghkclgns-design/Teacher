@@ -134,16 +134,21 @@ function latestTabMarkdown(mod, tabId, fallback) {
     return (mod.tabContents ? mod.tabContents[tabId] : mod.content) ?? fallback;
 }
 
+// 탭 글이 하나도 없는 차시(탭으로 나뉘기 전 옛 차시, 탭이 없는 최종 평가)의 본문(content). 이 본문은 기본학습 글이다.
+// 다른 탭에 글이 있으면 content는 그 탭들을 합친 글이라 기본학습이 아니다(비운 기본학습에 다른 탭 글을 보이거나, 고쳐서 옮겨 넣지 않게)
+function legacyLessonBody(mod) {
+    if (!mod?.content) return '';
+    return LESSON_TABS.some(tab => mod.tabContents?.[tab.id]) ? '' : mod.content;
+}
+
 function getActiveTabContent(mod) {
     if (!mod) return '';
     if (mod.tabContents && mod.tabContents[currentLessonTab]) {
         return cleanLessonOpening(mod.tabContents[currentLessonTab]);
     }
-    // 폴백: 기존 content 필드 사용
-    if (currentLessonTab === 'basicLearn' && mod.content) {
-        return cleanLessonOpening(mod.content);
-    }
-    return '';
+    // 폴백: 탭 글이 없는 옛 차시의 본문(content)은 기본학습에 보인다
+    const body = currentLessonTab === 'basicLearn' ? legacyLessonBody(mod) : '';
+    return body ? cleanLessonOpening(body) : '';
 }
 
 // 화면에 보이는 탭의 저장된 원문(첫머리 정리 전). getActiveTabContent는 화면에 그릴 정리본이다.
@@ -152,12 +157,12 @@ function getActiveTabSource(mod) {
     return tabSourceFor(mod, currentLessonTab);
 }
 
-// 정한 탭의 저장된 원문. 원문 칸(#raw-view)은 이 글로 채운다. 탭이 없는 최종 평가와 비운 기본학습은 기본학습 칸에만 본문(content)을 보인다
+// 정한 탭의 저장된 원문. 원문 칸(#raw-view)은 이 글로 채운다. 탭이 없는 최종 평가와 탭 글이 없는 옛 차시는 기본학습 칸에만 본문(content)을 보인다.
+// 다른 탭에만 글이 있는 차시의 비운 기본학습은 빈 글이다(legacyLessonBody)
 function tabSourceFor(mod, tabId) {
     if (!mod) return '';
     if (mod.tabContents && mod.tabContents[tabId]) return mod.tabContents[tabId];
-    if (tabId === 'basicLearn' && mod.content) return mod.content;
-    return '';
+    return tabId === 'basicLearn' ? legacyLessonBody(mod) : '';
 }
 
 // mod.content는 탭을 합친 글이기도 하다. 탭이 하나라도 있으면 옛 단일 본문이 아니므로 기본 학습으로 옮기지 않는다.
@@ -287,11 +292,17 @@ function tabDoneText({ label, stoppedInChunks, received, archivePartial, volume,
     return `${label} 탭이 생성되었습니다.`;
 }
 
-// 저장한 기본 학습의 낭독 분량. 분량 채우기를 하지 않은 탭은 null
+// 저장한 기본 학습의 낭독 분량. 분량 채우기를 하지 않은 탭은 null. 분은 내림이다(lesson-lint.js readAloudMinutes)
 function tabVolumeInfo(volume, md) {
     if (!volume) return null;
     const spoken = spokenChars(md);
-    return { minutes: Math.round(spoken / READ_CHARS_PER_MINUTE), targetMinutes: volume.targetMinutes, short: spoken < volume.targetChars };
+    return { minutes: readAloudMinutes(md), targetMinutes: volume.targetMinutes, short: spoken < volume.targetChars };
+}
+
+// 분량을 채운 기본 학습을 차시에 넣지 못했을 때(차시가 지워졌거나 불러온 내용으로 바뀜) 작업 기록에 남긴다. 알림에 붙일 글을 돌려준다
+async function keepFilledTab(mod, volume, md) {
+    if (!volume || typeof keepVolumeText !== 'function' || !String(md || '').trim()) return '';
+    return ` ${await keepVolumeText(mod, md)}`;
 }
 
 // opts.quiet: 알림 없이 결과만 돌려준다 / opts.onStatus: 진행 문구를 받는다 (일괄 생성용)
@@ -458,16 +469,21 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             targetMinutes: baseArgs.targetMinutes, codeTopic: baseArgs.codeTopic, isStopped: () => _tabGenStop,
             isLive: () => !subj || typeof lessonStillLive !== 'function' || lessonStillLive(subj, mod), onStatus: setLoadingText, onRetry, waitSignal: stopSignal
         }) : null;
-        if (volume?.gone) { // 채우는 동안 차시를 지웠거나 백업·PC 폴더를 불러왔다. 그 차시에 쓰지 않는다
-            const goneText = `차시가 지워졌거나 불러온 내용으로 바뀌어 ${tabMeta.label} 만들기를 멈췄습니다.`;
+        // 채우는 동안이나 채운 뒤(고치기·미리 보기·그림)에 차시를 지웠거나 백업·PC 폴더를 불러왔다. 그 차시에 쓰지 않고 채운 글은 작업 기록에 남긴다
+        const lessonGone = async md => {
+            const goneText = `차시가 지워졌거나 불러온 내용으로 바뀌어 ${tabMeta.label} 만들기를 멈췄습니다.${await keepFilledTab(mod, volume, md)}`;
             if (!_suppressTabAlert && !opts.quiet) window.showAlert(goneText); // 탭 모두 다시 만들기는 끝에 한 번만 알린다
             return { ok: false, error: goneText };
-        }
+        };
+        const lessonHere = () => !volume || !subj || typeof lessonStillLive !== 'function' || lessonStillLive(subj, mod);
+        if (volume?.gone) return lessonGone(volume.added ? volume.md : '');
         if (volume) resultText = volume.md;
         const stoppedEarly = stoppedInChunks || !!volume?.stopped;
-        const volumeHalt = !!volume && typeof aiErrorStopsRun === 'function' && aiErrorStopsRun(volume.error); // 하루 한도·키 문제: 고치기·그림도 같은 까닭으로 실패한다
+        const volumeHalt = !!volume && typeof aiErrorStopsRun === 'function' && aiErrorStopsRun(volume.error); // 하루 한도·키 문제: 일괄 생성도 멈춘다
+        // 하루 한도·키 문제나 다시 보내도 같은 오류(noRetry, lesson-volume.js isVolumeHalt)로 분량 채우기가 멈췄으면 고치기·그림도 같은 까닭으로 실패하므로 하지 않는다
+        const volumeQuit = volumeHalt || (!!volume && typeof isVolumeHalt === 'function' && isVolumeHalt(volume.error));
         // 끝까지 받지 못한 글은 체크리스트 누락 같은 지적이 당연히 나오므로 자동 수정하지 않는다
-        if (typeof autoFixGeneratedTab === 'function' && !partialDueToError && !_tabGenStop && !volumeHalt) {
+        if (typeof autoFixGeneratedTab === 'function' && !partialDueToError && !_tabGenStop && !volumeQuit) {
             showTabGenStop(false);
             const floor = volume ? { rounds: VOLUME_FIX_ROUNDS, minSpokenChars: volume.targetChars, isStopped: () => _tabGenStop } : {}; // 채운 분량 아래로 줄이지 않는다
             resultText = await autoFixGeneratedTab({ tabId, md: resultText, lockedBlocks, onStatus: setLoadingText, onRetry, ...floor });
@@ -481,13 +497,21 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             document.getElementById('editor-loading').style.display = 'none';
             const truncated = stoppedInChunks || partialDueToError; // 분량 채우기를 멈춘 글은 섹션이 다 있어 마지막 섹션도 고른다
             const stoppedNote = volume?.stopped ? `분량 채우기를 중간에 멈춘 글입니다(낭독 약 ${readAloudMinutes(resultText)}분/목표 ${volume.targetMinutes}분).` : '';
+            const generated = resultText;
             resultText = await previewAiChange(previous, resultText, {
-                title: `${tabMeta.label} 재생성 미리보기`, tabId, truncated, rewrite: true,
+                title: `${tabMeta.label} 재생성 미리보기`, tabId, truncated, rewrite: true, cancelLabel: volume ? '반영하지 않기' : '취소',
                 note: truncated ? '끝까지 받지 못한 글입니다. 마지막 섹션은 기본으로 고르지 않았습니다.' : stoppedNote || '새 글에 없는 이전 섹션은 기본으로 지웁니다. 이전 글은 작업 기록에 남습니다.'
             });
-            if (resultText === null || resultText.trim() === previous.trim()) return { ok: true, cancelled: true };
+            if (resultText === null || resultText.trim() === previous.trim()) {
+                // 분량을 채우느라 오래 걸린 기본학습은 반영하지 않아도 작업 기록에 남긴다(다시 만들지 않아도 그 글로 되돌릴 수 있게)
+                if (volume && typeof keepVolumeText === 'function') window.showToast?.(`${tabMeta.label} 다시 만들기를 반영하지 않았습니다. ${await keepVolumeText(mod, generated)}`, 'info');
+                return { ok: true, cancelled: true };
+            }
+            // 섹션을 골라 반영하면 (⏱) 합계가 목표에서 벗어날 수 있어 고른 글로 다시 매긴다(lesson-volume.js)
+            if (volume && resultText !== generated && typeof retimeVolumeChoice === 'function') resultText = retimeVolumeChoice(resultText, { targetMinutes: volume.targetMinutes, lockedBlocks });
             if (!opts.background) document.getElementById('editor-loading').style.display = 'flex'; // 막지 않는 작업은 진행 막대가 이어서 보인다
         }
+        if (!lessonHere()) return lessonGone(resultText);
         // 끝까지 받지 못한 글, 미리보기로 고른 글, 전체 탭 재생성이 기존 탭을 덮으므로 기존 내용을 히스토리에 남긴다
         const archivePartial = !!previous && (stoppedEarly || partialDueToError || previewed || _suppressTabAlert);
         if (archivePartial) await archiveContent({ title: `${mod.title} · ${tabMeta.label}`, content: previous, images: mod.images, tabId, lesson: mod }, '다시 생성 전');
@@ -504,7 +528,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
 
         // 이미지 태그 자동 처리 (딥리서치 파이프라인 활용). 중단하면 이미지 생성 비용도 쓰지 않고 태그만 남긴다. 한도·키 문제로 멈췄을 때도 부르지 않는다.
         // 분량을 채운 글은 초안에 넣은 그림 자리만 채운다(inject: false)
-        if (typeof processImageTags === 'function' && !_tabGenStop && !volumeHalt) {
+        if (typeof processImageTags === 'function' && !_tabGenStop && !volumeQuit) {
             setLoadingText(`🖼️ ${tabMeta.label} 이미지와 서식을 정리하고 있습니다...`);
             try {
                 const processed = restoreLockedSections(await processImageTags(mod, resultText, { onStatus: setLoadingText, latest: () => latestTabMarkdown(mod, tabId, resultText), inject: !volume }), lockedBlocks);
@@ -516,6 +540,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
                 console.warn('[TabGen] 이미지 처리 경고:', imgErr.message);
             }
         }
+        if (!lessonHere()) return lessonGone(mod.tabContents[tabId]); // 그림을 그리는 동안 차시가 바뀌었다(그 차시는 이제 저장된 작업에 없다)
 
         await saveState();
         renderSidebar();
@@ -596,7 +621,7 @@ async function generateAllTabs(moduleId) {
     });
     if (outcome?.busy) return;
     if (moved) return window.showAlert('다른 교과로 옮겼거나 차시가 바뀌어 교안 탭 다시 만들기를 멈췄습니다. 그 전에 다시 만든 탭은 저장했고 이전 글은 작업 기록에 있습니다. 남은 탭은 그 차시로 돌아가 탭마다 \'이 탭 생성\'으로 다시 만드세요.');
-    const shortNote = short.length ? ` ${short.join(', ')}은 기본 학습 분량이 목표에 못 미칩니다. 탭 위 '분량 채우기'로 이어서 늘릴 수 있습니다.` : '';
+    const shortNote = short.length ? ` ${short.join(', ')}은 목표 분량에 못 미칩니다. 탭 위 '분량 채우기'로 이어서 늘릴 수 있습니다.` : '';
     if (halted !== null) return window.showAlert(`${halted}\n그 전에 만든 탭은 저장했습니다. 남은 탭은 한도가 풀린 뒤 탭마다 '이 탭 생성'으로 만드세요.${shortNote}`);
     if (_tabGenStop) return window.showAlert(`전체 탭 생성을 중단했습니다. 받은 내용까지 저장했습니다.${shortNote}`);
     if (failed.length) return window.showAlert(`${failed.join(', ')} 탭을 만들지 못했습니다. 그 탭에서 다시 생성해 주세요.${shortNote}`);
