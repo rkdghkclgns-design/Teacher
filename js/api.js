@@ -2699,7 +2699,13 @@ window.deleteModule = function (id) {
 
     if (id === 'mainQuest') return;
 
+    // 생성이 도는 동안에는 차시를 휴지통으로 옮기지 않는다(만드는 중인 차시를 옮기면 만들던 탭이 휴지통 속 차시에 쓰여 화면에서 사라진다, course-meta.js trashRestoreBlocked)
+    const busy = () => typeof trashRestoreBlocked === 'function' && trashRestoreBlocked();
+    if (busy()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
+
     showConfirm('이 차시를 휴지통으로 옮길까요?\n30일 안에 차시 목록 위 휴지통에서 되살릴 수 있습니다.', () => {
+
+        if (busy()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.'); // 확인 창을 띄운 사이 시작된 생성
 
         const mod = getEditingModule(id);
 

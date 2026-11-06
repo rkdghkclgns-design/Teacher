@@ -828,6 +828,7 @@ function toggleExportDropdown(event) {
     if (!menu) return;
     const wasHidden = menu.classList.contains('hidden');
     if (wasHidden) window.renderBackupImageMode?.();
+    if (wasHidden) window.renderUnreadCopies?.(); // 따로 옮겨 둔 읽지 못한 저장본 사본(있을 때만 보인다, state.js)
     menu.classList.toggle('hidden');
     menu.classList.toggle('flex');
     // 형식 선택 섹션 리셋

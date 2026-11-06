@@ -777,7 +777,8 @@ function stateLoadFailedText({ folder = true, download = false } = {}) {
         '  브라우저 설정에서 이 사이트의 쿠키·사이트 데이터를 막았다면 먼저 허용해 주세요.',
         folder ? '· 과정 전체 백업 ZIP이나 저장해 둔 PC 폴더가 있으면 그것으로 되살릴 수 있습니다.' : '· 과정 전체 백업 ZIP이 있으면 그것으로 되살릴 수 있습니다.',
         download ? '· 읽지 못한 저장본 내려받기: 읽지 못한 저장본을 고치지 않은 그대로 파일로 받아 둡니다. 이 앱의 백업 ZIP처럼 바로 되살리지는 못합니다.' : null,
-        '· 새로 시작: 읽지 못한 저장본 대신 예시 과정으로 처음부터 시작합니다.'
+        '· 새로 시작: 읽지 못한 저장본 대신 예시 과정으로 처음부터 시작합니다.',
+        "  되살리거나 새로 시작하면 읽지 못한 저장본은 이 브라우저에 사본으로 남겨 두어, 나중에 '내보내기·백업' 메뉴에서 파일로 받을 수 있습니다."
     ].filter(line => line !== null).join('\n');
 }
 
@@ -845,8 +846,20 @@ function onStateLoadDialogClick(event) {
     else if (action === 'fresh') startFreshAfterUnreadState();
 }
 
-// 읽지 못한 저장본을 고치지 않은 그대로 파일로 내려받는다. 저장소에서 다시 읽고(검사하다 바뀐 값이 아니게), 못 읽으면 처음 읽은 것을 쓴다.
-// 조각으로 만들어(data-safety.js jsonTextParts) 그림이 많은 저장본도 글 길이 한도에 걸리지 않게 한다. 예전 localStorage 저장본(글자)과 JSON 파일로 저장한 큰 작업은 그 파일 그대로
+// 저장본 값을 고치지 않은 그대로 파일(baseName.json·.txt)로 내려받는다. 파일로 만들지 못하면 던진다.
+// 조각으로 만들어(data-safety.js jsonTextParts) 그림이 많은 저장본도 글 길이 한도에 걸리지 않게 한다. 예전 localStorage 저장본(글자)은 .txt, JSON 파일로 저장한 큰 작업은 그 파일 그대로
+function downloadRecordFile(record, baseName) {
+    const isText = typeof record === 'string';
+    const blob = isStoredBlob(record) ? record : new Blob(isText ? [record] : jsonTextParts(record), { type: isText ? 'text/plain;charset=utf-8' : 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${baseName}.${isText ? 'txt' : 'json'}`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+// 읽지 못한 저장본을 고치지 않은 그대로 파일로 내려받는다. 저장소에서 다시 읽고(검사하다 바뀐 값이 아니게), 못 읽으면 처음 읽은 것을 쓴다
 async function downloadUnreadRecord() {
     let record;
     try {
@@ -857,19 +870,67 @@ async function downloadUnreadRecord() {
     if (record === undefined) record = unreadRecord;
     if (record === undefined) return window.showAlert('내려받을 저장본을 찾지 못했습니다.');
     try {
-        const isText = typeof record === 'string';
-        const blob = isStoredBlob(record) ? record : new Blob(isText ? [record] : jsonTextParts(record), { type: isText ? 'text/plain;charset=utf-8' : 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `교안_읽지못한저장본_${backupStamp()}.${isText ? 'txt' : 'json'}`;
-        link.click();
-        setTimeout(() => URL.revokeObjectURL(url), 60000);
+        downloadRecordFile(record, `교안_읽지못한저장본_${backupStamp()}`);
         window.showToast?.('읽지 못한 저장본을 파일로 내려받습니다.', 'success');
     } catch (err) {
         console.error('[저장된 작업] 읽지 못한 저장본을 파일로 만들지 못했습니다:', err);
         window.showAlert(`읽지 못한 저장본을 파일로 만들지 못했습니다(${err?.message || '알 수 없는 오류'}).`);
     }
+}
+
+/* ---------- 따로 옮겨 둔 사본: 내보내기·백업 메뉴에서 보고 내려받기 ---------- */
+// 따로 옮겨 둔 사본 [{ key, at }](새것부터, data-safety.js unreadCopyKeys). 시각으로 읽을 수 없는 이름은 뺀다. 저장소를 읽지 못하면 빈 목록
+async function listUnreadCopies() {
+    try {
+        return unreadCopyKeys(await DBManager.keys(), unreadCopyPrefix()).filter(copy => Number.isFinite(new Date(copy.at).getTime()));
+    } catch (err) {
+        console.warn('[저장된 작업] 따로 옮겨 둔 사본 목록을 읽지 못했습니다:', err);
+        return [];
+    }
+}
+
+// 사본 하나를 고치지 않은 그대로 파일로 내려받는다. 누른 때 목록을 다시 읽어 그 안의 이름만 받는다
+// (그사이 정리된 사본이면 알리고, 사본이 아닌 이름(지금 저장본·폴더 연결·판서 영상)은 읽지 않는다). 사본은 JSON 파일(큰 작업)이나 예전 글자일 수도 있다
+async function downloadUnreadCopy(key) {
+    const copy = (await listUnreadCopies()).find(item => item.key === key);
+    const gone = '그 사본을 찾지 못했습니다. 이미 정리되었을 수 있습니다. 내보내기·백업 메뉴를 다시 열어 확인해 주세요.';
+    if (!copy) return window.showAlert(gone);
+    let record;
+    try {
+        record = await DBManager.getItem(copy.key);
+    } catch (err) {
+        console.error('[저장된 작업] 따로 옮겨 둔 사본을 읽지 못했습니다:', err);
+        return window.showAlert(`그 사본을 읽지 못했습니다(${err?.message || '알 수 없는 오류'}).`);
+    }
+    if (record == null) return window.showAlert(gone);
+    try {
+        downloadRecordFile(record, `교안_읽지못한저장본_사본_${backupStamp(new Date(copy.at))}`);
+        window.showToast?.('따로 옮겨 둔 사본을 파일로 내려받습니다.', 'success');
+    } catch (err) {
+        console.error('[저장된 작업] 따로 옮겨 둔 사본을 파일로 만들지 못했습니다:', err);
+        window.showAlert(`그 사본을 파일로 만들지 못했습니다(${err?.message || '알 수 없는 오류'}).`);
+    }
+}
+
+// 내보내기·백업 메뉴의 사본 칸을 그린다(메뉴를 열 때마다, ui.js toggleExportDropdown). 사본이 없거나 목록을 읽지 못하면 칸을 숨긴다.
+// 버튼에는 옮긴 시각만 보이고, 이름은 data 속성에 이스케이프해 넣는다(누를 때 downloadUnreadCopy가 다시 확인한다)
+async function renderUnreadCopies() {
+    const section = document.getElementById('unread-copies-section');
+    const list = document.getElementById('unread-copies-list');
+    if (!section || !list) return;
+    const copies = await listUnreadCopies();
+    const when = at => (typeof localTimeText === 'function' ? localTimeText(new Date(at).toISOString()) : new Date(at).toLocaleString());
+    list.innerHTML = copies.map(copy => `<button type="button" data-unread-copy="${escapeHtml(copy.key)}" title="고치지 않은 그대로 파일로 받습니다. 앱에서 바로 되살리지는 못합니다"
+                    class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
+                    <i class="ph-bold ph-file-arrow-down text-amber-300 text-sm"></i> ${escapeHtml(`${when(copy.at)}에 남긴 사본`)}
+                </button>`).join('');
+    list.onclick = event => {
+        const button = event.target?.closest?.('[data-unread-copy]');
+        if (!button) return;
+        downloadUnreadCopy(button.dataset.unreadCopy);
+        window.toggleExportDropdown?.(); // 닫기(다른 메뉴 항목과 같다)
+    };
+    section.hidden = !copies.length;
 }
 
 // 저장본을 다시 읽어 보니 이제 열 수 있을 때(잠깐 생긴 문제였거나 다른 창이 저장했다) 알리는 말. 지금 열 수 있는 작업을 덮지 않고 '다시 읽기'로 열게 한다.
@@ -879,11 +940,13 @@ const unreadNowLoadsText = action => `저장된 작업을 다시 읽어 보니 �
 // 새로 시작: 읽지 못한 저장본 대신 예시 과정으로 연다(그 저장본은 setAsideUnreadState가 한 벌 옮겨 둔다)
 async function startFreshAfterUnreadState() {
     const keep = unreadRecord !== undefined ? "\n먼저 '읽지 못한 저장본 내려받기'로 그 저장본을 파일로 받아 둘 수 있습니다." : '';
+    // 읽지 못한 저장본은 지우지 않고 사본으로 옮겨 둔다(setAsideUnreadState). 그 사본을 내려받는 곳을 알린다(앱에서 다시 열지는 못한다)
     const ok = await confirmAsync(
-        '읽지 못한 저장본을 지우고 예시 과정으로 새로 시작합니다. 되돌릴 수 없습니다.\n'
+        '읽지 못한 저장본 대신 예시 과정으로 새로 시작합니다.\n'
+        + "읽지 못한 저장본은 이 브라우저에 사본으로 한 벌 옮겨 두고(새것 셋까지), 나중에 '내보내기·백업' 메뉴의 '읽지 못한 저장본 사본'에서 파일로 받을 수 있습니다. 앱에서 바로 다시 열지는 못합니다.\n"
         + 'PC 폴더 자동 저장도 끕니다. 폴더에 저장해 둔 작업은 그대로 남습니다.\n\n'
         + `백업 ZIP이나 PC 폴더가 있으면 먼저 그것으로 되살려 보세요.${keep}`,
-        { okLabel: '지우고 새로 시작', title: '새로 시작' }
+        { okLabel: '새로 시작', title: '새로 시작', tone: 'danger' }
     );
     if (!ok || !stateLoadFailed) return; // 두 번 눌러 확인 창이 둘 떴어도 한 번만 한다
     // 잠깐 생긴 문제였으면(이제 읽히거나 다른 창이 저장했으면) 지금 열 수 있는 작업을 예시 과정으로 덮지 않는다. 다시 읽기로 연다

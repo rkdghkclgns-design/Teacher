@@ -188,6 +188,82 @@ test('사본 정리는 이 창에서 방금 옮긴 사본을 지우지 않는다
     assert.deepStrictEqual(db.get(copyKey), { state: 'x' }, '방금 옮긴 사본은 남는다');
 });
 
+test('따로 옮겨 둔 사본: 내보내기·백업 메뉴에 새것부터 보이고(없거나 목록을 읽지 못하면 숨김), 누른 때 다시 확인한 사본만 고치지 않은 그대로 내려받는다', async () => {
+    const blobs = [];
+    const objects = [];
+    class FakeBlob { constructor(parts, opts) { this.parts = parts; this.opts = opts; blobs.push(this); } }
+    const extra = { Blob: FakeBlob, URL: { createObjectURL: blob => { objects.push(blob); return 'blob:1'; }, revokeObjectURL() {} } };
+    const dom = makeDom();
+    const [section, list] = ['div', 'div'].map(tag => dom.body.appendChild(dom.make(tag)));
+    section.id = 'unread-copies-section';
+    section.hidden = true;
+    list.id = 'unread-copies-list';
+    const jsonCopy = { state: 'x', note: '<b>원본 "따옴표"</b>' };
+    const fileCopy = new FakeBlob(['{"state":'], { type: 'application/json' }); // 큰 작업은 JSON 파일(Blob)로 저장되므로 그 사본도 파일이다
+    blobs.length = 0;
+    const [older, newer, newest] = [Date.UTC(2026, 10, 4, 1, 0), Date.UTC(2026, 10, 5, 2, 30), Date.UTC(2026, 10, 6, 3, 45)];
+    const db = new Map([['k', { state: '지금' }], ['projectFolderHandle', { name: '폴더' }], ['wbvideo:wb_1', '영상'], ['k:읽지못함:메모', '메모'],
+        [`k:읽지못함:${newer}`, jsonCopy], [`k:읽지못함:${newest}`, fileCopy], [`k:읽지못함:${older}`, '{not json'], ['k:읽지못함:9999999999999999', '시각 밖']]);
+    const app = makeApp({ db, document: dom.document, extra });
+    vm.runInContext('(() => { const get = DBManager.getItem; DBManager.getItem = async key => { __log.reads = [...(__log.reads || []), key]; return get(key); }; })();', app.ctx);
+    await app.ctx.renderUnreadCopies();
+    assert.strictEqual(section.hidden, false);
+    const shown = [...list.innerHTML.matchAll(/data-unread-copy="([^"]+)"/g)].map(match => match[1]);
+    assert.deepStrictEqual(shown, [`k:읽지못함:${newest}`, `k:읽지못함:${newer}`, `k:읽지못함:${older}`], '사본만 새것부터(시각으로 읽을 수 없는 이름은 뺀다)');
+    assert.ok(!list.innerHTML.includes('<b>') && list.innerHTML.includes('에 남긴 사본'), list.innerHTML);
+    assert.deepStrictEqual(app.log.reads || [], [], '목록을 그릴 때는 사본을 읽지 않는다');
+    // 버튼을 누르면 그 사본을 받고 메뉴를 닫는다
+    let closed = 0;
+    app.ctx.window.toggleExportDropdown = () => { closed += 1; };
+    list.onclick({ target: { closest: () => ({ dataset: { unreadCopy: `k:읽지못함:${newer}` } }) } });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const link = () => dom.created.filter(el => el.tagName === 'a').at(-1);
+    assert.strictEqual(closed, 1);
+    assert.ok(/^교안_읽지못한저장본_사본_\d{8}-\d{4}\.json$/.test(link().download) && link().clicks === 1, link().download);
+    assert.strictEqual(link().download, `교안_읽지못한저장본_사본_${vm.runInContext('backupStamp', app.ctx)(new Date(newer))}.json`, '옮긴 시각으로 이름을 짓는다');
+    assert.strictEqual(blobs.at(-1).parts.join(''), JSON.stringify(jsonCopy), '고치지 않은 그대로');
+    await app.ctx.downloadUnreadCopy(`k:읽지못함:${newest}`);
+    assert.strictEqual(objects.at(-1), fileCopy, 'JSON 파일 사본은 그 파일 그대로');
+    assert.ok(link().download.endsWith('.json'));
+    await app.ctx.downloadUnreadCopy(`k:읽지못함:${older}`);
+    assert.deepStrictEqual(plain(blobs.at(-1).parts), ['{not json']);
+    assert.ok(link().download.endsWith('.txt'), '예전 글자 저장본의 사본은 .txt');
+    // 사본이 아닌 이름(지금 저장본·폴더 연결·판서 영상), 목록에 없는 이름은 읽지 않고 알린다
+    app.log.reads = [];
+    for (const key of ['k', 'projectFolderHandle', 'wbvideo:wb_1', 'k:읽지못함:메모', 'k:읽지못함:9999999999999999', 'k:읽지못함:123', undefined]) await app.ctx.downloadUnreadCopy(key);
+    assert.deepStrictEqual(app.log.reads, []);
+    assert.ok(app.log.alerts.length === 7 && app.log.alerts.every(text => text.startsWith('그 사본을 찾지 못했습니다')), app.log.alerts.join('\n'));
+    // 메뉴를 연 뒤 정리된 사본을 눌러도 멈추지 않고 알린다
+    db.delete(`k:읽지못함:${newer}`);
+    await app.ctx.downloadUnreadCopy(`k:읽지못함:${newer}`);
+    assert.strictEqual(app.log.alerts.length, 8);
+    // 사본이 없거나 목록을 읽지 못하면 칸을 숨긴다
+    [...db.keys()].filter(key => /^k:읽지못함:\d+$/.test(key)).forEach(key => db.delete(key));
+    await app.ctx.renderUnreadCopies();
+    assert.deepStrictEqual([section.hidden, list.innerHTML], [true, '']);
+    db.set(`k:읽지못함:${newer}`, jsonCopy);
+    vm.runInContext('DBManager.keys = async () => { throw new Error("목록 읽기 실패"); };', app.ctx);
+    await app.ctx.renderUnreadCopies();
+    assert.strictEqual(section.hidden, true);
+});
+
+test("새로 시작 확인 창과 막는 창의 글: 읽지 못한 저장본을 사본으로 남기고 '내보내기·백업'에서 받을 수 있다고 알린다(지운다고 하지 않는다)", async () => {
+    const app = makeApp({ db: new Map([['k', { state: 'x' }]]) });
+    await app.ctx.restoreState();
+    app.ctx.__fail.cancel = true;
+    await app.ctx.startFreshAfterUnreadState();
+    const text = app.log.confirms[0];
+    assert.ok(text.includes("'내보내기·백업' 메뉴의 '읽지 못한 저장본 사본'") && !text.includes('지우고') && !text.includes('되돌릴 수 없습니다'), text);
+    assert.ok(text.includes("'읽지 못한 저장본 내려받기'"), '읽어 온 저장본이 있으면 먼저 받아 둘 수 있다고 그대로 알린다');
+    assert.strictEqual(app.get().stateLoadFailed, true, '취소하면 그대로');
+    const dialog = vm.runInContext('stateLoadFailedText', app.ctx)({ folder: true, download: true });
+    assert.ok(dialog.includes("'내보내기·백업' 메뉴에서 파일로 받을 수 있습니다") && !dialog.includes('읽지 못한 기록'), dialog);
+    // 메뉴의 칸은 처음에 숨겨 두고, 메뉴를 열 때마다 다시 그린다
+    const html = fs.readFileSync(path.join(root, '..', 'index.html'), 'utf8');
+    assert.ok(html.includes('<div id="unread-copies-section" hidden>') && html.includes('<div id="unread-copies-list"'));
+    assert.ok(/if \(wasHidden\) window\.renderUnreadCopies\?\.\(\);/.test(fs.readFileSync(path.join(root, 'ui.js'), 'utf8')));
+});
+
 /* ---------- 백업 ZIP ---------- */
 const zipOf = files => ({ loadAsync: async () => ({ files: Object.fromEntries(Object.entries(files).map(([name, text]) => [name, { dir: false, async: async kind => (kind === 'base64' ? Buffer.from(text).toString('base64') : text) }])) }) });
 function backupFiles({ titles = ['C++ 기초', '1) 개요'], subjectTitle = '프로그래밍', context, md } = {}) {

@@ -155,9 +155,10 @@ function addToLessonTrash(trash, entries, now = Date.now(), limit = LESSON_TRASH
 const lessonTrashCapText = (count, fresh = 0) => `휴지통에는 지운 차시를 ${LESSON_TRASH_LIMIT}개까지 둡니다. 넘친 ${count}개${fresh ? `(방금 지운 차시 ${fresh}개 포함)` : ''}를 완전히 지웠습니다.`;
 
 // reason: 휴지통 목록에 보일 까닭. kind: LESSON_TRASH_REWRITE면 개수 상한에서 뺀다
-function moveLessonsToTrash(lessons, subjectId = currentSubjectId, { reason = '', kind = '' } = {}) {
+// batch: 한 번의 일괄 다시 만들기가 넣은 사본끼리 같은 이름(휴지통의 '모두 복원'이 함께 되살린다)
+function moveLessonsToTrash(lessons, subjectId = currentSubjectId, { reason = '', kind = '', batch = '' } = {}) {
     const at = new Date().toISOString();
-    const entries = lessons.map(lesson => ({ lesson, subjectId, at, ...(reason ? { reason } : {}), ...(kind ? { kind } : {}) }));
+    const entries = lessons.map(lesson => ({ lesson, subjectId, at, ...(reason ? { reason } : {}), ...(kind ? { kind } : {}), ...(batch ? { batch } : {}) }));
     const { trash, dropped, droppedNew } = addToLessonTrash(globalState.lessonTrash, entries);
     globalState.lessonTrash = trash;
     if (dropped) window.showToast?.(lessonTrashCapText(dropped, droppedNew), 'warning');
@@ -169,12 +170,23 @@ const copyLessonTree = value => (Array.isArray(value) ? value.map(copyLessonTree
         : value);
 
 // 다시 만들기 전 사본: 차시를 통째로(탭·옛 본문·교수안과 슬라이드 화면 편집·그림·삽화·판서 영상 연결·차시 정보) 복사해 휴지통에 넣는다.
-// 넣은 사본을 돌려준다(다시 만들지 못해 되돌리면 그 사본을 휴지통에서 뺀다, course-flow.js)
-function trashLessonCopy(mod, subjectId = currentSubjectId) {
+// 넣은 사본을 돌려준다(다시 만들지 못해 되돌리면 그 사본을 휴지통에서 뺀다, course-flow.js). batch: 그 일괄 실행의 이름(없으면 붙이지 않는다)
+function trashLessonCopy(mod, subjectId = currentSubjectId, batch = '') {
     const copy = copyLessonTree(mod);
-    moveLessonsToTrash([copy], subjectId, { reason: '다시 만들기 전', kind: LESSON_TRASH_REWRITE });
+    moveLessonsToTrash([copy], subjectId, { reason: '다시 만들기 전', kind: LESSON_TRASH_REWRITE, batch });
     return copy;
 }
+
+// 생성(진행 막대의 작업·전체 탭 생성·교수안·남은 차시 일괄 생성·기존 내용 보강·기본 학습 분량 채우기)이 도는 동안에는 되살리지 않는다.
+// 만드는 중인 차시를 지웠다가 되살리면 만들던 탭이 버려진 차시에 쓰여 사라지거나, 되살린 내용이 일괄 생성이 되돌린 내용과 겹친다.
+// 다른 파일의 표시는 그 파일이 없어도(테스트 등) 멈추지 않게 typeof로 읽는다
+function trashRestoreBlocked() {
+    return (typeof generationBusy === 'function' && !!generationBusy())
+        || (typeof _lessonRun !== 'undefined' && !!_lessonRun)
+        || (typeof _backfillRun !== 'undefined' && !!_backfillRun)
+        || !!window.isVolumeFilling?.();
+}
+const TRASH_RESTORE_BUSY_TEXT = '진행 중인 생성이 끝난 뒤 다시 시도해주세요.';
 
 // 목록을 그릴 때마다 지난 항목을 비운다. 다음 저장에 함께 반영된다.
 function renderLessonTrashButton() {
@@ -215,7 +227,8 @@ const trashSubjectLessonCount = entry => (Array.isArray(entry?.subject?.lessons)
 
 // 휴지통 창에 지금 그려 둔 항목(교과·차시 항목 객체). 버튼의 data-index는 이 목록의 자리다.
 // 복원·완전 삭제는 그린 항목 그대로 찾는다(앞 줄을 되살려 목록이 당겨진 뒤, 다시 그리기 전에 누른 버튼이 다음 항목을 가리키지 않게)
-let _trashRows = { subjects: [], lessons: [] };
+// batches: '모두 복원' 머리줄을 단 사본 묶음(그 버튼의 data-index는 이 목록의 자리)
+let _trashRows = { subjects: [], lessons: [], batches: [] };
 
 function renderSubjectTrashRows() {
     const entries = typeof liveSubjectTrash === 'function' ? liveSubjectTrash() : [];
@@ -228,13 +241,47 @@ function renderSubjectTrashRows() {
             </div>`).join('');
 }
 
+// 한 번의 일괄 다시 만들기가 넣은 사본 묶음(같은 batch의 다시 만들기 전 사본, 목록 순서). 둘 이상인 묶음만 돌려준다.
+// batch는 남이 준 백업에서 왔을 수 있어 글자일 때만 견주고 화면에는 넣지 않는다
+function lessonTrashBatches(entries) {
+    const groups = new Map();
+    entries.forEach(entry => {
+        if (entry?.kind !== LESSON_TRASH_REWRITE || typeof entry.batch !== 'string' || !entry.batch) return;
+        groups.set(entry.batch, [...(groups.get(entry.batch) || []), entry]);
+    });
+    return [...groups.values()].filter(group => group.length >= 2);
+}
+
+// 오래된 것부터. 지운 날짜가 같으면 목록 뒤쪽이 먼저 넣은 것이다(새 항목은 앞에 들어온다)
+function oldestTrashFirst(entries) {
+    const time = entry => Date.parse(entry.at) || 0;
+    return entries.map((entry, index) => ({ entry, index }))
+        .sort((a, b) => (time(a.entry) - time(b.entry)) || (b.index - a.index))
+        .map(item => item.entry);
+}
+
+// 묶음 머리줄: 사본 수, 그 실행이 첫 사본을 넣은 시각, '모두 복원'
+function trashBatchHeadHtml(group, index) {
+    const when = localTimeText(oldestTrashFirst(group)[0].at);
+    return `
+            <div class="flex items-center gap-2 px-2 pt-1 text-[0.6875rem] text-textMuted">
+                <span class="flex-1 min-w-0">일괄 다시 만들기 전 사본 ${group.length}개${when ? ` · ${escapeHtml(when)}` : ''}</span>
+                <button data-trash-action="restore-batch" data-index="${index}" class="px-2 py-1 font-bold bg-accent text-white rounded" title="이 일괄 실행이 넣은 사본을 오래된 것부터 모두 되살립니다">모두 복원</button>
+            </div>`;
+}
+
 function renderTrashRows() {
     const subjectRows = renderSubjectTrashRows();
-    _trashRows = { ..._trashRows, lessons: [...(globalState.lessonTrash || [])] };
-    const rows = (globalState.lessonTrash || []).map((entry, index) => {
+    const entries = [...(globalState.lessonTrash || [])];
+    const batches = lessonTrashBatches(entries);
+    _trashRows = { ..._trashRows, lessons: entries, batches };
+    // 묶음의 첫 줄(가장 새것) 위에 머리줄을 단다. 차시 줄의 data-index는 그대로 휴지통 목록의 자리다
+    const heads = new Map(batches.map((group, index) => [entries.indexOf(group[0]), index]));
+    const rows = entries.map((entry, index) => {
         const subject = globalState.subjects.find(item => item.id === entry.subjectId);
+        const head = heads.has(index) ? trashBatchHeadHtml(batches[heads.get(index)], heads.get(index)) : '';
         // 까닭('다시 만들기 전')이 붙으면 부제가 길어지므로 잘라 내지 않고 줄을 바꿔 남은 기간까지 보인다
-        return `
+        return `${head}
             <div class="flex items-center gap-2 p-2 rounded-lg bg-white/5 text-xs text-textLight">
                 <span class="flex-1 min-w-0 truncate">${escapeHtml(entry.lesson.title)}<span class="block text-[0.6875rem] text-textMuted whitespace-normal break-keep">${escapeHtml(subject?.title || '삭제된 교과')} · ${escapeHtml(localTimeText(entry.at))}${entry.reason ? ` · ${escapeHtml(entry.reason)}` : ''} · 남은 기간 ${trashDaysLeft(entry)}일</span></span>
                 <button data-trash-action="restore" data-index="${index}" class="px-2 py-1 font-bold bg-accent text-white rounded">복원</button>
@@ -276,6 +323,30 @@ async function refreshTrash() {
     if (rows) rows.innerHTML = renderTrashRows();
 }
 
+// 한 실행의 다시 만들기 전 사본을 모두 되살린다. 그린 묶음 가운데 아직 휴지통에 있는 것만 되살린다(그사이 되살리거나 지운 항목은 건너뛴다).
+// 먼저 묻고(같은 묶음은 같은 글이라 두 번 눌러도 확인 창이 겹치지 않는다), 오래된 것부터 되살려 맨 아래로 가는 사본도 실행 순서대로 서게 한다. 알림은 한 번만 한다
+function restoreTrashBatch(group) {
+    const left = () => (group || []).filter(entry => (globalState.lessonTrash || []).includes(entry));
+    const count = left().length;
+    if (!count) return;
+    if (trashRestoreBlocked()) return window.showAlert(TRASH_RESTORE_BUSY_TEXT);
+    const message = `다시 만들기 전 사본 ${count}개를 모두 되살립니다.\n다시 만든 차시는 그대로 두고, 사본마다 그 차시 바로 아래에 이전 차시가 따로 생깁니다(그 차시가 없으면 목록 맨 아래).`;
+    return window.showConfirm(message, () => {
+        if (trashRestoreBlocked()) return window.showAlert(TRASH_RESTORE_BUSY_TEXT); // 확인 창을 띄운 사이 시작된 생성
+        const entries = oldestTrashFirst(left());
+        if (!entries.length) return;
+        let restored = 0;
+        for (const entry of entries) {
+            const at = globalState.lessonTrash.indexOf(entry);
+            if (at >= 0 && restoreLesson(at)) restored += 1;
+        }
+        if (!restored) return window.showAlert('복원할 교과를 찾지 못했습니다.');
+        const missed = entries.length - restored;
+        window.showToast?.(`다시 만들기 전 사본 ${restored}개를 복원했습니다.${missed ? ` ${missed}개는 복원할 교과를 찾지 못해 휴지통에 그대로 두었습니다.` : ''}`, missed ? 'warning' : 'success');
+        return refreshTrash();
+    }, { okLabel: '모두 복원', title: '사본 모두 복원', tone: 'primary' });
+}
+
 async function onTrashClick(event) {
     const action = event.target.dataset?.trashAction;
     if (!action) return;
@@ -292,6 +363,7 @@ async function onTrashClick(event) {
     if (action === 'restore-subject') {
         const at = liveSubjectTrash().indexOf(_trashRows.subjects[index]);
         if (at < 0) return;
+        if (trashRestoreBlocked()) return window.showAlert(TRASH_RESTORE_BUSY_TEXT);
         const subject = restoreSubject(at);
         if (!subject) return window.showAlert('복원할 교과를 찾지 못했습니다.');
         window.showToast?.(`'${subject.title}' 교과를 복원했습니다.`, 'success');
@@ -305,9 +377,11 @@ async function onTrashClick(event) {
             return refreshTrash();
         }, { okLabel: '영구 삭제', title: '교과 영구 삭제' });
     }
+    if (action === 'restore-batch') return restoreTrashBatch(_trashRows.batches?.[index]);
     const entry = _trashRows.lessons[index];
     if (!entry || !(globalState.lessonTrash || []).includes(entry)) return;
     if (action === 'restore') {
+        if (trashRestoreBlocked()) return window.showAlert(TRASH_RESTORE_BUSY_TEXT);
         if (!restoreLesson(globalState.lessonTrash.indexOf(entry))) return window.showAlert('복원할 교과를 찾지 못했습니다.');
         window.showToast?.(`'${entry.lesson.title}' 차시를 복원했습니다.`, 'success');
     }

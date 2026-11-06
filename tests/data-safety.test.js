@@ -1335,6 +1335,57 @@ test('되돌리기의 그림: 찾지 못한 그림 자리·빈 값은 차시의 
     assert.strictEqual(regenerated.images.img_1, REAL, '둘 다 진짜 그림이면 예전처럼 기록의 그림(그때 그림)으로 되돌린다');
 });
 
+test('되돌리기의 그림: 다시 찾은 새 그림을 되돌리는 탭 밖(다른 탭·교수안·슬라이드·삽화·판서 영상)에서도 쓰면 기록의 옛 그림으로 바꾸지 않는다', () => {
+    const OLD = `data:image/png;base64,${'O'.repeat(80)}`;
+    const NEW = `data:image/png;base64,${'N'.repeat(80)}`;
+    const tabs = (extra = {}) => ({ basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null, ...extra });
+    const record = { tabId: 'basicLearn', content: '예전 글 ![](local:img_1)', images: { img_1: OLD } };
+    // 기본실습과 교수안도 img_1(기본학습에서 다시 찾은 새 그림)을 쓴다. 합친 글(content)은 탭을 이은 글이다
+    const shared = { id: 1, images: { img_1: NEW }, content: '지금 글 ![](local:img_1)\n\n---\n\n실습 ![](local:img_1)', tabContents: tabs({ basicLearn: '지금 글 ![](local:img_1)', basicPrac: '실습 ![](local:img_1)' }), gyosuan: { docMd: '교수안 ![](local:img_1)' } };
+    assert.deepStrictEqual(plainJson(ctx.historyImagePlan(shared, record)), { images: {}, kept: ['img_1'] });
+    ctx.applyHistoryEntry(shared, record);
+    assert.strictEqual(shared.images.img_1, NEW, '다른 탭·교수안의 새 그림이 옛 그림으로 바뀌지 않는다');
+    assert.strictEqual(shared.tabContents.basicLearn, record.content, '글은 기록대로 되돌린다(글은 고치지 않는다)');
+    assert.strictEqual(shared.tabContents.basicPrac, '실습 ![](local:img_1)');
+    // 합친 글은 그 탭의 글도 담고 있어 밖으로 세지 않는다(탭이 있으면)
+    const joined = { id: 2, images: { img_1: NEW }, content: '글 ![](local:img_1)', tabContents: tabs({ basicLearn: '글 ![](local:img_1)' }) };
+    ctx.applyHistoryEntry(joined, record);
+    assert.strictEqual(joined.images.img_1, OLD, '그 탭만 쓰는 그림은 예전처럼 기록의 그림으로');
+    // 밖은 local: 뒤 id 그대로 견준다: 다른 탭이 img_10만 쓰면 img_1은 밖에서 쓰지 않는 것이다
+    const near = { id: 3, images: { img_1: NEW, img_10: NEW }, tabContents: tabs({ basicLearn: '글 ![](local:img_1)', basicPrac: '![](local:img_10) <img src="local:img_1x">' }) };
+    ctx.applyHistoryEntry(near, record);
+    assert.strictEqual(near.images.img_1, OLD);
+    // 슬라이드 화면 편집본·차시별 덱·삽화·판서 영상이 가리켜도 밖이다
+    [{ gyosuan: { deckHtml: '<img src="local:img_1">' } }, { gyosuan: { sessionDecks: { 1: '<!-- [IMG: "local:img_1"] -->' } } }, { gyosuan: { deckMd: '![](local:img_1)' } },
+        { illustrations: [{ id: 'i1', imgId: 'img_1' }] }, { whiteboardVideos: { img_1: { id: 'wb_1' } } }].forEach(extra => {
+        const lesson = { id: 4, images: { img_1: NEW }, tabContents: tabs({ basicLearn: '글 ![](local:img_1)' }), ...extra };
+        ctx.applyHistoryEntry(lesson, record);
+        assert.strictEqual(lesson.images.img_1, NEW, JSON.stringify(extra));
+    });
+    // 탭이 모두 빈 옛 본문: 다른 탭을 되돌리면 본문이 기본학습으로 옮겨져 밖이 되고, 기본학습을 되돌리면 그 본문이 곧 되돌리는 탭이다
+    const legacyOther = { id: 5, images: { img_1: NEW }, content: '옛 본문 ![](local:img_1)', tabContents: tabs() };
+    ctx.applyHistoryEntry(legacyOther, { tabId: 'basicPrac', content: '실습 ![](local:img_1)', images: { img_1: OLD } });
+    assert.deepStrictEqual([legacyOther.images.img_1, legacyOther.tabContents.basicLearn], [NEW, '옛 본문 ![](local:img_1)']);
+    const legacySame = { id: 6, images: { img_1: NEW }, content: '옛 본문 ![](local:img_1)', tabContents: tabs() };
+    ctx.applyHistoryEntry(legacySame, record);
+    assert.strictEqual(legacySame.images.img_1, OLD);
+    // 탭이 없는 최종 평가는 본문 전체가 되돌리는 쪽이다. 교수안이 쓰면 밖이다
+    const quest = { id: 'mainQuest', images: { img_1: NEW, img_2: NEW }, content: '과제 ![](local:img_1) ![](local:img_2)', gyosuan: { docMd: '![](local:img_2)' } };
+    ctx.applyHistoryEntry(quest, { tabId: 'assessment', content: '예전 과제 ![](local:img_1) ![](local:img_2)', images: { img_1: OLD, img_2: OLD } });
+    assert.deepStrictEqual([quest.images.img_1, quest.images.img_2], [OLD, NEW]);
+    // 차시 기록(5개 탭)은 5개 탭과 합친 글을 모두 바꾸므로, 교수안처럼 그 밖에서 쓰는 키만 지금 그림으로 둔다
+    const whole = { id: 7, images: { img_1: NEW, img_2: NEW }, content: '![](local:img_1)', tabContents: tabs({ basicLearn: '![](local:img_1) ![](local:img_2)', basicPrac: '![](local:img_1)' }), gyosuan: { docMd: '![](local:img_2)' } };
+    ctx.applyHistoryEntry(whole, { content: '예전', tabContents: { basicLearn: '![](local:img_1) ![](local:img_2)' }, images: { img_1: OLD, img_2: OLD } });
+    assert.deepStrictEqual([whole.images.img_1, whole.images.img_2], [OLD, NEW]);
+    // 같은 그림이거나, 차시 쪽이 그림 자리·없는 그림이면 밖에서 써도 기록의 그림을 넣는다(빠진 그림은 채운다)
+    const ref = `teacher-image:${'c'.repeat(18)}`;
+    const holes = { id: 8, images: { img_1: ref, img_3: OLD }, tabContents: tabs({ basicLearn: '글', basicPrac: '![](local:img_1) ![](local:img_2) ![](local:img_3)' }) };
+    const plan = ctx.historyImagePlan(holes, { tabId: 'basicLearn', content: '예전', images: { img_1: OLD, img_2: OLD, img_3: OLD } });
+    assert.deepStrictEqual(plainJson(plan), { images: { img_1: OLD, img_2: OLD, img_3: OLD }, kept: [] });
+    assert.strictEqual(ctx.window.historyKeptImagesNote(0), '');
+    assert.ok(ctx.window.historyKeptImagesNote(2).includes('그림 2장은 지금 그림 그대로 두었습니다'));
+});
+
 test('탭의 지금 글과 되돌리기 전에 남길 내용', () => {
     const tabs = (extra = {}) => ({ basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null, ...extra });
     assert.strictEqual(ctx.historyPartText({ content: '옛 본문', tabContents: tabs() }, 'basicLearn'), '옛 본문');
@@ -1602,6 +1653,26 @@ testAsync('탭 하나 되돌리기: 글이 같아도 차시가 잃은 그림을 
     assert.strictEqual(asked.length, 1, '기록 쪽이 그림 자리뿐이면 되돌려도 바뀌는 것이 없어 묻지 않는다');
     assert.deepStrictEqual(notes.at(-1), ['지금 내용이 이 기록과 같습니다.', 'info']);
     assert.strictEqual(inA.images.img_1, REAL, '진짜 그림이 그대로 남는다');
+});
+
+testAsync('탭 하나 되돌리기: 다른 탭도 쓰는 키의 새 그림은 지금 그림으로 두고 끝 알림에 그 수를 적으며, 글이 같고 그 그림만 다르면 같다고 알린다', async () => {
+    const { asked, archived, notes, inA } = historyRestoreSetup();
+    const OLD = `data:image/png;base64,${'O'.repeat(80)}`;
+    const NEW = `data:image/png;base64,${'N'.repeat(80)}`;
+    inA.tabContents = { ...inA.tabContents, basicPrac: '실습 ![](local:img_1)', assessment: '지금 평가 ![](local:img_1)' };
+    inA.images = { img_1: NEW, img_2: NEW };
+    ctx.contentHistory = [
+        { id: 5, title: '7차시 · 학습이해도', date: '어제', lessonId: 7, subjectId: 's1', tabId: 'assessment', content: '예전 평가 ![](local:img_1) ![](local:img_2)', images: { img_1: OLD, img_2: OLD } },
+        { id: 6, title: '7차시 · 학습이해도', date: '그제', lessonId: 7, subjectId: 's1', tabId: 'assessment', content: '지금 평가 ![](local:img_1)', images: { img_1: OLD } }
+    ];
+    await ctx.restoreHistoryItem(6);
+    assert.strictEqual(asked.length, 0, '넣을 그림이 없고 글이 같으면 묻지 않는다');
+    assert.deepStrictEqual(notes.at(-1), ['지금 내용이 이 기록과 같습니다.', 'info']);
+    await ctx.restoreHistoryItem(5);
+    assert.strictEqual(inA.tabContents.assessment, '예전 평가 ![](local:img_1) ![](local:img_2)');
+    assert.deepStrictEqual([inA.images.img_1, inA.images.img_2], [NEW, OLD], '기본실습이 쓰는 img_1은 새 그림 그대로, 이 탭만 쓰는 img_2는 기록의 그림');
+    assert.strictEqual(archived[0].items[0].images.img_1, NEW, "'되돌리기 전' 기록에는 지금 그림이 남는다");
+    assert.deepStrictEqual(notes.at(-1), ["'7차시' 차시(A 교과)의 학습이해도 탭을 되돌렸습니다. 다른 탭·교수안 등에서도 쓰는 그림 1장은 지금 그림 그대로 두었습니다.", 'success']);
 });
 
 testAsync('최종 평가 기록 되돌리기: 그때 열려 있던 탭과 상관없이 본문을 되돌리고, 탭 이름을 말하지 않는다', async () => {
@@ -1890,6 +1961,14 @@ test('읽지 못한 저장본 사본은 새것 셋만 남긴다(이 모양이 �
     assert.deepStrictEqual(plain6(W6.staleUnreadCopies(keys, prefix, 3)), [`${prefix}100`]);
     assert.deepStrictEqual(plain6(W6.staleUnreadCopies(keys, prefix, 1)), [`${prefix}300`, `${prefix}200`, `${prefix}100`]);
     assert.deepStrictEqual(plain6(W6.staleUnreadCopies(null, prefix, 3)), []);
+});
+
+test('읽지 못한 저장본 사본 목록: <앞이름><숫자> 이름만 새것부터 고른다(지금 저장본·폴더 연결·판서 영상·비슷한 이름은 고르지 않는다)', () => {
+    const prefix = 'k:읽지못함:';
+    const keys = [`${prefix}100`, 'k', 'projectFolderHandle', 'wbvideo:wb_1', `${prefix}메모`, `${prefix}300`, 5, `${prefix}12a`, prefix, `x${prefix}250`, `${prefix}200`, `${prefix}-1`, `${prefix}${'9'.repeat(17)}`, `${prefix}1.5`];
+    assert.deepStrictEqual(plain6(W6.unreadCopyKeys(keys, prefix)), [{ key: `${prefix}300`, at: 300 }, { key: `${prefix}200`, at: 200 }, { key: `${prefix}100`, at: 100 }]);
+    assert.deepStrictEqual(plain6(W6.unreadCopyKeys(undefined, prefix)), []);
+    assert.deepStrictEqual(plain6(W6.staleUnreadCopies(keys, prefix, 2)), [`${prefix}100`], '정리도 같은 목록을 쓴다');
 });
 
 test("'저장해 둔 폴더 열기' 확인 창: 읽지 못한 저장본 대신 열 때는 백업을 받지 않는다고 말한다", () => {

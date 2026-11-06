@@ -876,6 +876,11 @@
                     class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">
                     <i class="ph-bold ph-arrow-counter-clockwise text-amber-300 text-sm"></i> 백업 ZIP으로 되살리기
                 </button>
+                <!-- 읽지 못한 저장본을 새로 시작·되살리기 직전에 옮겨 둔 사본(있을 때만 보인다. state.js renderUnreadCopies) -->
+                <div id="unread-copies-section" hidden>
+                    <div class="px-3 pt-1.5 pb-0.5 text-[0.6875rem] text-white/50" title="저장된 작업을 읽지 못해 새로 시작하거나 백업으로 되살리기 직전에 이 브라우저에 옮겨 둔 사본입니다(새것 셋까지). 고치지 않은 그대로 파일로 받으며, 앱에서 바로 되살리지는 못합니다">읽지 못한 저장본 사본</div>
+                    <div id="unread-copies-list" class="flex flex-col"></div>
+                </div>
                 <input type="file" id="import-output-input" accept=".html,.htm,.md,.markdown,.txt" multiple class="hidden" onchange="importOutputFiles(event)">
                 <button onclick="document.getElementById('import-output-input').click(); toggleExportDropdown();" title="이 앱에서 내보낸 교안 HTML·MD와 교수안 HTML을 고칠 수 있는 차시로 되살립니다. 교수안까지 되살리려면 교수안 화면에서 받은 HTML을 고르세요. 편집 중이면 그 교과에, 아니면 새 교과에 넣습니다"
                     class="flex items-center gap-2 w-full px-3 py-2 text-left text-[0.7rem] font-medium text-white/90 hover:bg-white/10 transition-colors">

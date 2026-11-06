@@ -667,6 +667,67 @@ async function run(name, fn) {
         assert.deepStrictEqual(plain(local.globalState.subjectTrash.map(entry => entry.subject.title)), ['지운 교과 B']);
     });
 
+    await run("휴지통 '모두 복원': 한 번의 일괄 다시 만들기가 넣은 사본이 둘 이상이면 머리줄을 달고, 묻고 나서 오래된 것부터 함께 되살리며 알림은 한 번", async () => {
+        const local = makeContext(noAi);
+        vm.runInContext(fs.readFileSync(root + 'data-safety.js', 'utf8'), local); // 되살릴 때 쓰는 검사와 새 id(cleanTrashLesson, renumberLessons)
+        const rebuilt = id => ({ id, title: `${id}차시`, tabContents: { basicLearn: '새 글' }, images: {} });
+        local.globalState.subjects = [{ id: 's1', title: '교과', lessons: [rebuilt(1), rebuilt(2), rebuilt(3)] }];
+        vm.runInContext('courseData = globalState.subjects[0].lessons', local);
+        const ago = minutes => new Date(Date.now() - minutes * 60000).toISOString();
+        const copy = (id, batch, minutes, subjectId = 's1') => ({ lesson: { id, title: `${id}차시`, tabContents: { basicLearn: '옛 글' }, images: {} }, subjectId, at: ago(minutes), reason: '다시 만들기 전', kind: 'rewrite', ...(batch === undefined ? {} : { batch }) });
+        // 실행 A는 1·2·3차시 순서로 넣었다(새 항목이 앞). 실행 B는 사본 하나, 실행 C는 지운 교과의 사본 둘(지금 교과의 맨 아래로 간다). 이름이 글이 아니거나 없는 사본은 묶지 않는다
+        const [a3, a2, a1] = [copy(3, 'run_a', 1), copy(2, 'run_a', 2), copy(1, 'run_a', 3)];
+        const b1 = copy(1, 'run_b', 10);
+        const [c2, c1] = [copy(32, 'run_c', 11, 'gone'), copy(31, 'run_c', 12, 'gone')];
+        const deleted = { lesson: { id: 9, title: '지운 차시' }, subjectId: 's1', at: ago(5), batch: 'run_a' }; // 다시 만들기 전 사본이 아니면 같은 이름이어도 묶지 않는다
+        const odd = [copy(2, { x: 1 }, 20), copy(3, { x: 1 }, 21), copy(2, undefined, 22), copy(3, undefined, 23)];
+        local.globalState.lessonTrash = [a3, a2, deleted, a1, b1, c2, c1, ...odd];
+        const toasts = [];
+        const alerts = [];
+        local.showToast = (message, type) => toasts.push([message, type]);
+        local.showAlert = message => alerts.push(message);
+        const confirms = [];
+        local.showConfirm = (message, onOk, opts) => confirms.push({ message, onOk, opts });
+        const html = vm.runInContext('renderTrashRows', local)();
+        assert.strictEqual((html.match(/data-trash-action="restore-batch"/g) || []).length, 2, '사본이 둘 이상인 실행(A·C)만 머리줄을 단다');
+        assert.ok(html.indexOf('data-trash-action="restore-batch" data-index="0"') < html.indexOf('data-trash-action="restore" data-index="0"'), '묶음의 첫 줄 위에 단다');
+        assert.ok(html.includes('일괄 다시 만들기 전 사본 3개') && html.includes('일괄 다시 만들기 전 사본 2개'), html.slice(0, 400));
+        assert.ok(html.includes('data-trash-action="restore" data-index="10"') && html.includes('data-trash-action="purge" data-index="3"'), '머리줄이 줄의 data-index를 밀지 않는다');
+        assert.ok(!html.includes('run_a') && !html.includes('[object Object]'), '실행 이름은 화면에 넣지 않는다');
+        const click = (action, index) => vm.runInContext('onTrashClick', local)({ target: { dataset: { trashAction: action, index: String(index) } } });
+        await click('restore-batch', 0);
+        await click('restore-batch', 0); // 확인 창을 띄운 채 또 누른다
+        assert.strictEqual(confirms.length, 2);
+        assert.strictEqual(confirms[1].message, confirms[0].message, '같은 묶음은 같은 글이라 확인 창이 겹치지 않는다(ui.js showConfirm)');
+        assert.deepStrictEqual(plain([confirms[0].opts.okLabel, confirms[0].opts.tone, confirms[0].opts.title]), ['모두 복원', 'primary', '사본 모두 복원']);
+        assert.ok(confirms[0].message.startsWith('다시 만들기 전 사본 3개를 모두 되살립니다.') && confirms[0].message.includes('다시 만든 차시는 그대로'), confirms[0].message);
+        assert.strictEqual(local.globalState.lessonTrash.length, 11, '묻기만 하고 아직 되살리지 않는다');
+        await click('restore', 1); // 확인하기 전에 2차시 사본 하나를 따로 되살렸다
+        toasts.length = 0;
+        await confirms[0].onOk();
+        const titles = () => plain(vm.runInContext('courseData', local)).map(item => item.title);
+        assert.deepStrictEqual(titles(), ['1차시', '1차시 (복원)', '2차시', '2차시 (복원)', '3차시', '3차시 (복원)'], '사본마다 다시 만든 차시 바로 아래');
+        assert.deepStrictEqual(local.globalState.lessonTrash, [deleted, b1, c2, c1, ...odd], '이미 되살린 사본은 건너뛰고 다른 항목은 남긴다');
+        assert.deepStrictEqual(toasts, [['다시 만들기 전 사본 2개를 복원했습니다.', 'success']], '알림은 한 번');
+        await confirms[1].onOk(); // 늦게 누른 둘째 확인도 아무것도 하지 않는다
+        await click('restore-batch', 0); // 다시 그리기 전에 같은 머리줄을 또 누른다
+        assert.deepStrictEqual([confirms.length, toasts.length, local.globalState.lessonTrash.length], [2, 1, 8], '다 되살린 묶음은 묻지 않는다');
+        // 실행 C: 그 교과가 없어 지금 교과 맨 아래로 간다. 오래된 것부터라 실행 순서대로 선다
+        vm.runInContext('renderTrashRows', local)();
+        await click('restore-batch', 0);
+        await confirms.at(-1).onOk();
+        assert.deepStrictEqual(titles().slice(-2), ['31차시', '32차시']);
+        assert.deepStrictEqual(local.globalState.lessonTrash, [deleted, b1, ...odd]);
+        // 되살릴 교과가 하나도 없으면 휴지통에 그대로 두고 알린다
+        local.globalState.lessonTrash = [copy(41, 'run_d', 1, 'gone'), copy(42, 'run_d', 2, 'gone')];
+        vm.runInContext('currentSubjectId = "none"', local);
+        vm.runInContext('renderTrashRows', local)();
+        await click('restore-batch', 0);
+        await confirms.at(-1).onOk();
+        assert.deepStrictEqual([local.globalState.lessonTrash.length, alerts.at(-1)], [2, '복원할 교과를 찾지 못했습니다.']);
+        vm.runInContext('currentSubjectId = "s1"', local);
+    });
+
     await run('휴지통 창: 교과 항목의 차시 수는 목록이 배열일 때만 센다(남이 준 백업의 { length: HTML }을 화면에 넣지 않는다)', async () => {
         const local = makeContext(noAi);
         vm.runInContext(fs.readFileSync(root + 'data-safety.js', 'utf8'), local);

@@ -630,6 +630,87 @@ async function run(name, fn) {
         assert.deepStrictEqual(plain(other.lessons).map(item => item.id), [5]);
     });
 
+    await run('휴지통 되살리기·작업 기록 되돌리기·차시 삭제: 생성(진행 막대의 작업·전체 탭 생성·일괄 생성·기존 내용 보강·분량 채우기)이 도는 동안에는 하지 않고, 끝나면 한다', async () => {
+        const local = makeContext();
+        // 교과 휴지통·작업 기록 되돌리기(data-safety.js)와 기존 내용 보강의 실행 표시(course-backfill.js)를 함께 올린다
+        ['data-safety.js', 'course-backfill.js'].forEach(file => vm.runInContext(fs.readFileSync(root + file, 'utf8'), local));
+        const api = fs.readFileSync(root + 'api.js', 'utf8').replace(/\r\n/g, '\n');
+        const from = api.indexOf('window.deleteModule = function (id) {');
+        vm.runInContext(api.slice(from, api.indexOf('\n}\n', from) + 2), local); // 차시 삭제(휴지통으로 옮기기)만 떼어 돌린다
+        const live = lesson(1, { ...emptyTabs(), basicLearn: '지금 글' });
+        const subject = { id: 's1', title: '교과', lessons: [live] };
+        local.globalState.subjects = [subject];
+        local.currentSubjectId = 's1';
+        local.courseData = subject.lessons;
+        local.document.querySelector = () => null;
+        local.applyLessonFilter = () => {}; // 차시 카드 거르기(course-list.js)는 이 테스트에 없다
+        const confirms = [];
+        local.showConfirm = (message, onOk) => { confirms.push(message); onOk(); };
+        const at = minutes => new Date(Date.now() - minutes * 60000).toISOString();
+        const copy = (id, minutes) => ({ lesson: lesson(id, { ...emptyTabs(), basicLearn: '옛 글' }), subjectId: 's1', at: at(minutes), reason: '다시 만들기 전', kind: 'rewrite', batch: 'run_1' });
+        const resetTrash = () => {
+            local.globalState.lessonTrash = [{ lesson: lesson(5, { ...emptyTabs(), basicLearn: '지운 글' }), subjectId: 's1', at: at(0) }, copy(22, 1), copy(21, 2)];
+            local.globalState.subjectTrash = [{ subject: { id: 'x1', title: '지운 교과', lessons: [] }, at: at(0) }];
+            vm.runInContext('renderTrashRows', local)();
+        };
+        local.contentHistory = [{ id: 5, title: '차시 1 · 기본 학습', date: '어제', lessonId: 1, subjectId: 's1', tabId: 'basicLearn', content: '예전 글', images: {} }];
+        const click = (action, index) => vm.runInContext('onTrashClick', local)({ target: { dataset: { trashAction: action, index: String(index) } } });
+        const tryAll = async () => {
+            await click('restore', 0);
+            await click('restore-batch', 0);
+            await click('restore-subject', 0);
+            await local.restoreHistoryItem(5);
+            local.deleteModule(1);
+        };
+        const unchanged = name => {
+            assert.deepStrictEqual([local.globalState.lessonTrash.length, local.globalState.subjectTrash.length, local.globalState.subjects.length], [3, 1, 1], name);
+            assert.deepStrictEqual(plain(local.courseData).map(item => item.id), [1], `${name}: 차시 목록은 그대로`);
+            assert.strictEqual(live.tabContents.basicLearn, '지금 글', `${name}: 작업 기록으로 되돌리지 않는다`);
+        };
+        const BUSY = '진행 중인 생성이 끝난 뒤 다시 시도해주세요.';
+        const busyStates = [
+            ['진행 막대의 작업', () => local.beginLessonPipeline(7, { kind: 'job' }), () => local.finishLessonPipeline({ quiet: true })],
+            ['전체 탭 생성(로딩 화면)', () => { local.elements['editor-loading'].style.display = 'flex'; }, () => { local.elements['editor-loading'].style.display = 'none'; }],
+            ['남은 차시 일괄 생성', () => vm.runInContext('_lessonRun = { stopped: false }', local), () => vm.runInContext('_lessonRun = null', local)],
+            ['기존 내용 보강', () => vm.runInContext('_backfillRun = { stopped: false }', local), () => vm.runInContext('_backfillRun = null', local)],
+            ['기본 학습 분량 채우기', () => { local.isVolumeFilling = () => true; }, () => { delete local.isVolumeFilling; }]
+        ];
+        for (const [name, begin, end] of busyStates) {
+            resetTrash();
+            begin();
+            local.alerts.length = 0;
+            confirms.length = 0;
+            await tryAll();
+            assert.deepStrictEqual(plain(local.alerts), Array(5).fill(BUSY), name);
+            assert.strictEqual(confirms.length, 0, `${name}: 묻지도 않는다`);
+            unchanged(name);
+            end();
+        }
+        // 확인 창을 띄운 사이 생성이 시작되면 확인을 눌러도 하지 않는다
+        resetTrash();
+        local.alerts.length = 0;
+        local.showConfirm = (message, onOk) => { confirms.push(message); local.beginLessonPipeline(7, { kind: 'job' }); onOk(); };
+        await click('restore-batch', 0);
+        local.finishLessonPipeline({ quiet: true });
+        await local.restoreHistoryItem(5);
+        local.finishLessonPipeline({ quiet: true });
+        local.deleteModule(1);
+        local.finishLessonPipeline({ quiet: true });
+        assert.deepStrictEqual([confirms.length, ...plain(local.alerts)], [3, BUSY, BUSY, BUSY]);
+        unchanged('확인 창을 띄운 사이');
+        // 생성이 끝나면 모두 한다(사본 묶음은 오래된 것부터)
+        resetTrash();
+        local.alerts.length = 0;
+        confirms.length = 0;
+        local.showConfirm = (message, onOk) => { confirms.push(message); onOk(); };
+        await tryAll();
+        assert.deepStrictEqual(plain(local.alerts), []);
+        assert.strictEqual(confirms.length, 3, '모두 복원·되돌리기·삭제는 묻는다');
+        assert.deepStrictEqual(plain(local.courseData).map(item => item.id), [5, 21, 22], '되살린 차시가 생기고 지운 차시는 빠진다');
+        assert.strictEqual(live.tabContents.basicLearn, '예전 글', '작업 기록으로 되돌렸다');
+        assert.deepStrictEqual([local.globalState.lessonTrash.length, local.globalState.lessonTrash[0].lesson, local.globalState.subjects.length], [1, live, 2]);
+    });
+
     await run('묶음 내려받기: 차시 순서대로 한 파일, 머리말 제거, 없는 차시 안내', async () => {
         const doc = title => `---\n교과목: 교과\n주제: ${title}\nstatus: 초안(AI 생성)\n---\n\n# 교수안 - ${title}\n\n## 진행\n`;
         const deck = title => `---\n교과목: 교과\n---\n\n# 슬라이드 편성안 - ${title}\n\n## 슬라이드 편성\n`;
@@ -718,6 +799,34 @@ async function run(name, fn) {
         assert.strictEqual(first.lessons[1].tabContents.basicLearn, '새 글', '빈 차시도 만든다');
         assert.deepStrictEqual(plain(local.archived), [], '작업 기록 칸을 쓰지 않는다');
         assert.ok(local.elements['lesson-run-body'].innerHTML.includes('차시 2개의 이전 내용은 휴지통에 있습니다'));
+    });
+
+    await run("덮어쓰기 실행: 한 실행이 넣은 사본은 모두 같은 실행 이름(batch)을 갖고, 다음 실행은 다른 이름을 쓴다(휴지통의 '모두 복원')", async () => {
+        const local = makeContext();
+        const full = id => lesson(id, Object.fromEntries(TAB_IDS.map(tab => [tab, `${tab} 글`])), { status: 'done' });
+        const first = { id: 's1', title: '교과 1', lessons: [full(1), full(2), lesson(3)] };
+        const second = { id: 's2', title: '교과 2', lessons: [full(1)] };
+        local.globalState.subjects = [first, second];
+        local.currentSubjectId = 's1';
+        local.courseData = first.lessons;
+        ['lesson-run-body', 'lesson-run-footer', 'lesson-run-status'].forEach(id => { local.elements[id] = { innerHTML: '', textContent: '' }; });
+        local.elements['lesson-run-overwrite'] = { checked: true };
+        local.confirmAsync = async () => true;
+        local.fillMissingTabs = async id => { local.courseData.find(mod => mod.id === id).tabContents = { basicLearn: '새 글' }; return { ok: true }; };
+        local.runLessonExtras = async () => {};
+        await vm.runInContext('startLessonRun', local)('course');
+        const once = plain(local.globalState.lessonTrash.map(entry => entry.batch));
+        assert.strictEqual(once.length, 3, '내용이 있던 차시마다 사본 하나(두 교과 모두)');
+        assert.ok(typeof once[0] === 'string' && once[0].startsWith('run_') && once.every(batch => batch === once[0]), JSON.stringify(once));
+        local.currentSubjectId = 's1'; // 앞 실행이 교과 2로 옮겨 갔다
+        local.courseData = first.lessons;
+        await vm.runInContext('startLessonRun', local)('subject');
+        const again = local.globalState.lessonTrash.slice(0, 3).map(entry => entry.batch);
+        assert.ok(again.every(batch => batch === again[0]) && again[0] !== once[0], '다음 실행은 다른 이름');
+        assert.deepStrictEqual(plain(local.globalState.lessonTrash.slice(3).map(entry => entry.batch)), once, '앞 실행의 사본은 그대로');
+        // 예전처럼 실행 이름 없이 부르면(다른 곳의 다시 만들기) 이름을 붙이지 않는다
+        await vm.runInContext('clearLessonForRewrite', local)(lesson(9, { ...emptyTabs(), basicLearn: '글' }), false, 's1');
+        assert.ok(!('batch' in local.globalState.lessonTrash[0]));
     });
 
     await run('덮어쓰기 확인 글: 교수안까지면 슬라이드 화면 편집이 휴지통 사본에만 남는다고 알리고, 브라우저 기본 확인 창을 쓰지 않는다', async () => {

@@ -212,12 +212,42 @@ const historyImages = entry => Object.fromEntries(Object.entries(isObject(entry.
 // 진짜 그림(data:image)인지. 아니면 찾지 못한 그림 자리(teacher-image 참조)나 빈 값이다(화면에는 빈 그림으로 보인다)
 const isPictureData = data => typeof data === 'string' && data.startsWith('data:image/');
 
-// 그 차시에 돌려놓을 기록의 그림. 기록 쪽 값이 찾지 못한 그림 자리·빈 값이면 차시의 진짜 그림을 덮지 않는다
-// (다른 탭이 그 그림을 쓰고 있을 수 있고, 탭 하나 기록의 '되돌리기 전' 기록에는 그 탭 글이 쓰는 그림만 남는다). 차시 쪽이 그림 자리면 기록의 그림으로 채운다
-function historyImagesFor(lesson, entry) {
-    const current = isObject(lesson.images) ? lesson.images : {};
-    return Object.fromEntries(Object.entries(historyImages(entry)).filter(([id, data]) => isPictureData(data) || !isPictureData(current[id])));
+// 되돌리는 쪽 밖에서 쓰는 그림 키. 되돌리는 쪽은 탭 하나 기록(part)이면 그 탭, 차시 기록이면 5개 탭과 합친 글이다.
+// 밖: 다른 탭 글, 교수안·편성안·슬라이드 화면 편집본, 삽화·판서 영상이 가리키는 키(tabs.js unusedLessonImageIds와 같은 곳). 글은 local: 뒤 id 그대로 견준다(img_10은 img_1이 아니다).
+// 합친 글(content)은 탭이 있으면 탭을 이은 글이라 밖으로 세지 않는다. 탭이 모두 빈 옛 본문은 다른 탭을 되돌리면 기본학습으로 옮겨지므로 밖이다
+function historyOutsideImageKeys(lesson, part) {
+    const tabs = isObject(lesson.tabContents) ? lesson.tabContents : null;
+    const gyosuan = isObject(lesson.gyosuan) ? lesson.gyosuan : {};
+    const legacy = !!tabs && !historyTabIds().some(id => tabs[id]);
+    const texts = [
+        ...(part && tabs ? Object.keys(tabs).filter(id => id !== part).map(id => tabs[id]) : []),
+        ...(part && legacy && part !== 'basicLearn' ? [lesson.content] : []),
+        gyosuan.docMd, gyosuan.deckMd, gyosuan.deckHtml, ...(isObject(gyosuan.sessionDecks) ? Object.values(gyosuan.sessionDecks) : [])
+    ].filter(text => typeof text === 'string' && text.includes(LOCAL_IMAGE_REF));
+    const pinned = [...(Array.isArray(lesson.illustrations) ? lesson.illustrations.map(item => item?.imgId) : []), ...(isObject(lesson.whiteboardVideos) ? Object.keys(lesson.whiteboardVideos) : [])];
+    return new Set([...texts.flatMap(localImageRuns), ...pinned.filter(id => id != null && id !== '').map(String)]);
 }
+
+// 그 차시에 돌려놓을 기록의 그림(images)과, 기록에 진짜 그림이 있지만 넣지 않고 지금 그림으로 두는 키(kept).
+// 기록 쪽 값이 찾지 못한 그림 자리·빈 값이면 차시의 진짜 그림을 덮지 않는다(다른 탭이 그 그림을 쓰고 있을 수 있고, 탭 하나 기록의 '되돌리기 전' 기록에는 그 탭 글이 쓰는 그림만 남는다).
+// 차시 쪽이 그림 자리면 기록의 그림으로 채운다. 그 키에 지금 다른 진짜 그림이 있고(다시 찾기·삽화 다시 그리기는 같은 키에 새 그림을 넣는다) 되돌리는 쪽 밖에서도 그 키를 쓰면
+// 기록의 그림을 넣지 않는다(다른 탭·교수안의 새 그림이 옛 그림으로 바뀌지 않게. 기록의 그림은 작업 기록에 그대로 남는다). part를 주지 않으면 그 기록의 탭(historyPart)
+function historyImagePlan(lesson, entry, part = historyPart(entry)) {
+    const current = isObject(lesson.images) ? lesson.images : {};
+    const pairs = Object.entries(historyImages(entry));
+    const differs = ([id, data]) => isPictureData(data) && isPictureData(current[id]) && current[id] !== data;
+    const outside = pairs.some(differs) ? historyOutsideImageKeys(lesson, part) : new Set();
+    const kept = pairs.filter(pair => differs(pair) && outside.has(pair[0])).map(([id]) => id);
+    const images = Object.fromEntries(pairs.filter(([id, data]) => (isPictureData(data) ? !kept.includes(id) : !isPictureData(current[id]))));
+    return { images, kept };
+}
+
+function historyImagesFor(lesson, entry, part) {
+    return historyImagePlan(lesson, entry, part).images;
+}
+
+// 되돌린 뒤 알림에 붙이는 말: 밖에서도 써서 지금 그림으로 둔 그림 수
+const historyKeptImagesNote = count => (count > 0 ? ` 다른 탭·교수안 등에서도 쓰는 그림 ${count}장은 지금 그림 그대로 두었습니다.` : '');
 
 // 그 차시(또는 최종 평가) 객체가 든 교과 id. 지금 연 교과는 openLessons(courseData)가 최신이다. 못 찾으면 null
 function lessonOwnerId(lesson, subjects, openSubjectId, openLessons) {
@@ -355,18 +385,19 @@ function historyCurrentItem(lesson, part) {
 }
 
 // 이 기록을 그 탭에 돌려놓아도 바뀌는 것이 없는지: 탭 글이 같고, 넣을 그림도 차시에 이미 같은 값으로 있다
-// (글은 같아도 차시가 잃은 그림·찾지 못한 그림 자리를 기록이 갖고 있으면 되돌려야 그림이 돌아온다)
+// (글은 같아도 차시가 잃은 그림·찾지 못한 그림 자리를 기록이 갖고 있으면 되돌려야 그림이 돌아온다. 밖에서도 써서 넣지 않는 그림은 견주지 않는다)
 function historyMatchesNow(lesson, entry, part) {
     if (historyPartText(lesson, part) !== stateText(entry.content)) return false;
     const current = isObject(lesson.images) ? lesson.images : {};
-    return Object.entries(historyImagesFor(lesson, entry)).every(([id, data]) => current[id] === data);
+    return Object.entries(historyImagesFor(lesson, entry, part)).every(([id, data]) => current[id] === data);
 }
 
 // 기록 한 칸을 그 차시에 돌려놓는다(화면이 같은 차시 객체를 쓰므로 그 자리에서 바꾼다). 탭 하나 기록은 그 탭만 고칠 때와 같은 setTabMarkdown으로,
-// 차시 기록은 5개 탭을 모두 바꾼다. 그림은 더하거나 바꾸기만 하고 지우지 않는다. 찾지 못한 그림 자리가 차시의 진짜 그림을 덮지 않는다(historyImagesFor)
+// 차시 기록은 5개 탭을 모두 바꾼다. 그림은 더하거나 바꾸기만 하고 지우지 않는다. 찾지 못한 그림 자리가 차시의 진짜 그림을 덮지 않고,
+// 되돌리는 쪽 밖에서도 쓰는 키의 새 그림도 덮지 않는다(historyImagePlan. 글을 바꾸기 전 차시로 가린다)
 function applyHistoryEntry(lesson, entry) {
     const part = historyPart(entry);
-    lesson.images = { ...(lesson.images || {}), ...historyImagesFor(lesson, entry) };
+    lesson.images = { ...(lesson.images || {}), ...historyImagesFor(lesson, entry, part) };
     if (part) {
         setTabMarkdown(lesson, part, stateText(entry.content));
     } else {
@@ -1331,13 +1362,17 @@ function jsonTextParts(value, size = 1 << 20) {
     return parts;
 }
 
-// 따로 옮겨 둔 사본 이름(prefix + 옮긴 시각 ms) 가운데 지울 것: 새것부터 keep개를 남긴 나머지. 이 모양이 아닌 이름은 건드리지 않는다
-function staleUnreadCopies(keys, prefix, keep) {
-    const at = key => Number(key.slice(prefix.length));
+// 저장소 이름 가운데 따로 옮겨 둔 사본(prefix + 옮긴 시각 ms)만 [{ key, at }]로, 새것부터. 이 모양이 아닌 이름(지금 저장본·폴더 연결·판서 영상 등)은 고르지 않는다
+function unreadCopyKeys(keys, prefix) {
     return (Array.isArray(keys) ? keys : [])
         .filter(key => typeof key === 'string' && key.startsWith(prefix) && /^\d{1,16}$/.test(key.slice(prefix.length)))
-        .sort((a, b) => at(b) - at(a))
-        .slice(Math.max(0, keep));
+        .map(key => ({ key, at: Number(key.slice(prefix.length)) }))
+        .sort((a, b) => b.at - a.at);
+}
+
+// 따로 옮겨 둔 사본 가운데 지울 것: 새것부터 keep개를 남긴 나머지. 이 모양이 아닌 이름은 건드리지 않는다
+function staleUnreadCopies(keys, prefix, keep) {
+    return unreadCopyKeys(keys, prefix).slice(Math.max(0, keep)).map(copy => copy.key);
 }
 
 // 차시 id는 화면 코드에 따옴표 없이 들어가므로 숫자여야 한다. 예전 형식에서 차시 목록에 든 최종 평가('mainQuest')는 그대로 둔다
@@ -1476,6 +1511,9 @@ function historyMergeNote({ droppedIncoming = 0, droppedCurrent = 0, keptIn = ''
 /* ---------- 작업 기록 되돌리기 ---------- */
 // 탭 하나 기록은 그 차시의 그 탭만, 차시 기록은 5개 탭을 바꾼다. 그 차시가 없으면 지금 연 교과에 새 차시로 되살린다
 async function restoreHistoryItem(id) {
+    // 생성이 도는 동안에는 되돌리지 않는다(만들던 탭이 되돌린 글을 덮거나, 지웠다 되살린 차시에 쓰여 사라진다. course-meta.js trashRestoreBlocked)
+    const busy = () => typeof trashRestoreBlocked === 'function' && trashRestoreBlocked();
+    if (busy()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
     const entry = contentHistory.find(item => item.id === id);
     if (!entry) return window.showAlert('해당 작업 기록을 찾을 수 없습니다.');
     const target = historyRestoreTarget(entry, currentSnapshot().subjects);
@@ -1484,9 +1522,13 @@ async function restoreHistoryItem(id) {
     if (target.mode === 'replace' && target.part && historyMatchesNow(target.lesson, entry, target.part)) {
         return window.showToast?.('지금 내용이 이 기록과 같습니다.', 'info'); // 쓸데없는 '되돌리기 전' 기록을 만들지 않는다(글이 같아도 그림이 다르면 되돌린다)
     }
-    const { text, okLabel, done } = historyRestoreMessage(entry, target, openSubject);
+    const { text, okLabel, done: restoredText } = historyRestoreMessage(entry, target, openSubject);
     const ok = await confirmAsync(text, { okLabel, tone: 'primary', title: '작업 기록 되돌리기' });
     if (!ok) return;
+    if (busy()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.'); // 확인 창을 띄운 사이 시작된 생성
+    // 되돌리는 쪽 밖에서도 써서 지금 그림으로 두는 그림 수를 끝 알림에 붙인다(applyHistoryEntry가 같은 규칙으로 고른다)
+    const keptCount = target.mode === 'replace' ? historyImagePlan(target.lesson, entry, target.part).kept.length : 0;
+    const done = `${restoredText}${historyKeptImagesNote(keptCount)}`;
     let mod;
     if (target.mode === 'replace') {
         await archiveContents([historyCurrentItem(target.lesson, target.part)], '되돌리기 전');
@@ -1521,6 +1563,7 @@ if (typeof window !== 'undefined') {
         historyPart, historyPartName, referencedImages, historyImages, lessonOwnerId, freshHistoryIds, historySizeBytes, slimHistoryEntry, tidyStoredHistory,
         historyPartText, historyCurrentItem, applyHistoryEntry, historyRestoreMessage, historyRowLabels, showRestoredHistory,
         historyImagesFor, historyMatchesNow, isPictureData,
+        historyImagePlan, historyOutsideImageKeys, historyKeptImagesNote, unreadCopyKeys,
         cleanTrashLesson, backupImageMode, setBackupImageMode, renderBackupImageMode, backupImageKey, detachBackupImages,
         attachBackupImages, backupImageFile, backupImageFromFile, writeBackupData, isBackupImageName, base64ByteLength,
         storedBackupImageMode, takeBackupImageMode, folderImageMode, clearBackupImagesDrop, switchBackupImagesToSeparate,

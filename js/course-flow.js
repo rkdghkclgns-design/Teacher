@@ -83,9 +83,10 @@ const lessonHasRewriteContent = lesson => lessonHasContent(lesson) || !!lesson.g
 // 사본은 옛 단일 본문을 탭으로 옮기기 전 모양 그대로다. 고정 섹션은 비우면 찾을 수 없으므로 먼저 챙겨 돌려준다.
 // 교수안까지 다시 만들면 그림도 덜어 내되, 다시 넣을 고정 섹션의 그림과 남는 삽화·판서 영상이 쓰는 그림은 남긴다(카드의 다시 생성과 같은 규칙, tabs.js dropUnusedLessonImages).
 // before: 비운 칸의 지우기 전 값(탭을 하나도 만들지 못하면 되돌린다, undoEmptyRewrite) / copy: 휴지통에 넣은 사본(되돌리면 뺀다)
-async function clearLessonForRewrite(mod, withGyosuan, subjectId) {
+// batch: 이 일괄 실행의 이름. 사본에 붙여 휴지통의 '모두 복원'이 한 실행의 사본을 함께 되살린다(course-meta.js)
+async function clearLessonForRewrite(mod, withGyosuan, subjectId, batch = '') {
     const trashed = lessonHasRewriteContent(mod);
-    const copy = trashed ? trashLessonCopy(mod, subjectId) : null;
+    const copy = trashed ? trashLessonCopy(mod, subjectId, batch) : null;
     migrateMonolithicContent(mod);
     const lockedByTab = Object.fromEntries(LESSON_TABS.map(tab => [tab.id, lockedSectionBlocks(mod, tab.id)]));
     const redraw = globalState.courseDesign?.autoArt ? { illustrations: [], artAutoDone: false } : {};
@@ -127,7 +128,7 @@ async function attemptLesson(item, run) {
     const key = `${item.subject.id}:${item.lessonId}`; // 차시 id는 교과 안에서만 겹치지 않으므로 교과 id와 함께 센다
     let cleared = null;
     if (run.overwrite && !run.cleared.has(key)) { // 재시도는 먼저 만든 탭을 지우지 않는다
-        cleared = await clearLessonForRewrite(mod, run.withGyosuan, item.subject.id);
+        cleared = await clearLessonForRewrite(mod, run.withGyosuan, item.subject.id, run.batch);
         run.cleared.set(key, cleared.lockedByTab);
         run.restored?.delete(key);
         if (cleared.trashed) run.trashed = (run.trashed || 0) + 1;
@@ -369,7 +370,9 @@ async function startLessonRun(scope, button = null) {
     }
     if (_lessonRun) return;
     saveCourseDesignField({ genOptions: readLessonGenFields('run'), runGyosuan: withGyosuan, autoArt: art });
-    const run = { stopped: false, withGyosuan, overwrite, cleared: new Map(), trashed: 0, restored: new Set() };
+    // 이 실행이 휴지통에 넣는 사본에 붙이는 이름(휴지통의 '모두 복원'). 앱 밖(테스트 등)에서는 시각과 난수로 만든다
+    const batch = typeof generateUniqueId === 'function' ? generateUniqueId('run_') : `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const run = { stopped: false, withGyosuan, overwrite, cleared: new Map(), trashed: 0, restored: new Set(), batch };
     _lessonRun = run;
     setLessonRunButtons(RUN_BUTTONS.stop);
     const ownsImageRun = !!window.beginImageRun?.(); // 그림 모델이 막히면 이 실행이 끝날 때까지 다시 부르지 않는다(api.js)
