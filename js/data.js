@@ -86,9 +86,8 @@ function extractText(data, { unwrap = false } = {}) {
         // 6. **볼드** 마크다운 깨짐 방지 — 붙어있는 특수문자(', ", ·) 앞뒤 공백 보정
         text = text.replace(/\*\*\s*'([^']+)'\s*\*\*/g, '**$1**');
 
-        // 6.1. 표 셀 내부 **볼드** 파싱 보장 — 파이프 뒤 **에 공백 추가
-        text = text.replace(/\|\s*\*\*/g, '| **');
-        text = text.replace(/\*\*\s*\|/g, '** |');
+        // 6.1. 표 셀 내부 **볼드** 파싱 보장 — 파이프 뒤 **에 공백 추가. 표 줄(|로 시작)에서만 고친다(**|| (또는)** 같은 볼드는 그대로 둔다)
+        text = text.replace(/^[ \t]*\|.*$/gm, row => row.replace(/\|\s*\*\*/g, '| **').replace(/\*\*\s*\|/g, '** |'));
 
         // ================================================================
         // 7. 넘버링/이모지/하위항목 정규화 (최우선 규칙)
@@ -306,6 +305,8 @@ function convertPipeTableToHtml(pipeText) {
 }
 if (typeof window !== 'undefined') window.convertPipeTableToHtml = convertPipeTableToHtml;
 
+const SANITIZE_ICON_LEAD = /^[\s\p{Extended_Pictographic}️‍]+$/u; // 줄 머리에 아이콘만 있다(💡·🎮·⚠️·ℹ️ 등)
+
 function sanitizeMarkdownContent(md) {
     if (!md || typeof md !== 'string') return md;
     let t = md.replace(/\r\n/g, '\n');
@@ -408,7 +409,11 @@ function sanitizeMarkdownContent(md) {
     }).join('\n');
 
     // 4) 인라인 **소제목:** 에 앞뒤 빈 줄 추가 (리스트 사이에 끼어있으면 줄바꿈 확보)
-    t = t.replace(/([^\n])\n?(\s*\*{2,3}[^*\n]{2,60}\*{2,3}\s*[:：])/g, '$1\n\n$2');
+    //    줄 머리의 아이콘(🎮 **실무 예시**: …)은 소제목과 한 줄에 둔다. 떼면 아이콘만 남은 문단이 생긴다
+    t = t.replace(/([^\n])\n?(\s*\*{2,3}[^*\n]{2,60}\*{2,3}\s*[:：])/g, (whole, prev, label, at, all) => {
+        const lead = all.slice(all.lastIndexOf('\n', at) + 1, at + 1);
+        return !whole.includes('\n') && SANITIZE_ICON_LEAD.test(lead) ? whole : `${prev}\n\n${label}`;
+    });
     t = t.replace(/(\*{2,3}[^*\n]{2,60}\*{2,3}\s*[:：][^\n]*)(?=\n\S)/g, '$1\n');
 
     // 4-1) 줄이 나뉜 제목 복구: "##"만 있는 줄 다음에 제목이 오면 잇는다 (예: "##" 다음 줄 "✅ 학습 후 체크리스트")

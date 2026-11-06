@@ -262,6 +262,32 @@ async function run(name, fn) {
         assert.strictEqual(clean('<!-- CONTINUE -->'), '');
     });
 
+    /* ---------- 실제 응답으로 확인한 것 ---------- */
+    await run('실제 응답: 하는 일을 말하는 정리 섹션(기획 문서로 정리)은 늘리고, 요약·정리·마무리 섹션은 늘리지 않는다', () => {
+        const ctx = genContext();
+        const open = title => call(ctx, 'isVolumeContentSection')({ title, text: `## ${title}\n\n본문입니다.` });
+        const titles = ['8. 핵심 정리 (⏱ 10분)', '요약 및 정리', '🏁 마무리', '8. 분석 결과를 기획 문서로 정리 (⏱ 55분)', '코어 루프를 표에 정리'];
+        assert.deepStrictEqual(titles.map(open), [false, false, false, true, true]);
+    });
+
+    await run("실제 응답: '문 앞에서'처럼 장소를 말하는 앞에서는 다른 차시 지칭으로 보지 않는다", () => {
+        const ctx = genContext();
+        const refers = text => call(ctx, 'lintLessonMarkdown')(`## 본문\n\n${text}\n`, 'basicLearn').some(issue => issue.msg === '다른 차시를 지칭하지 않습니다.');
+        assert.deepStrictEqual(['열쇠가 있는지에 따라 문 앞에서 다른 메시지를 출력합니다.', '보스 앞에서 체력을 확인합니다.'].map(refers), [false, false]);
+        assert.deepStrictEqual(['앞에서 다룹니다.', '여러분은 앞에서 배운 내용을 씁니다.', '이 값은 바로 앞에서 본 변수입니다.', '앞서 다룬 내용입니다.'].map(refers), [true, true, true, true]);
+    });
+
+    await run('실제 응답: 볼드 안의 || 와 줄 머리 아이콘 뒤의 **소제목**: 을 떼지 않는다. 표 줄의 볼드와 다른 소제목은 그대로 고친다', () => {
+        const ctx = genContext();
+        const extract = text => call(ctx, 'extractText')(reply(text));
+        assert.strictEqual(extract('- **|| (또는, OR)**\n  - 한쪽이 true이면 true입니다.'), '- **|| (또는, OR)**\n  - 한쪽이 true이면 true입니다.');
+        assert.strictEqual(extract('|**합계**|3시간|'), '| **합계** |3시간|', '표 줄은 파이프 옆 볼드를 띄운다');
+        const sanitize = call(ctx, 'sanitizeMarkdownContent');
+        assert.ok(sanitize('<br>\n\n🎮 **실무 예시**: 『하데스』는 죽어도 강해집니다.').includes('🎮 **실무 예시**: 『하데스』는'), '아이콘과 소제목을 한 줄에 둔다');
+        assert.ok(sanitize('⚠️ **주의**: 경계값을 봅니다.').startsWith('⚠️ **주의**: 경계값'));
+        assert.ok(sanitize('설명입니다.\n**핵심 포인트**: 내용입니다.').includes('설명입니다.\n\n**핵심 포인트**: 내용입니다.'), '글 뒤의 소제목은 빈 줄로 띄운다');
+    });
+
     await run('이어 붙이기: 섹션 끝의 <br> 간격 앞에 붙이고 다른 섹션은 그대로 둔다', () => {
         const ctx = genContext();
         const md = '## 1. 가 (⏱ 30분)\n\n본문입니다.\n\n<br>\n\n## 2. 나 (⏱ 30분)\n\n둘째입니다.';

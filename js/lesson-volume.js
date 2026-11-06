@@ -29,8 +29,9 @@ const VOLUME_DEFAULT_GOAL = Math.ceil(BASIC_LEARN_MIN_MINUTES * READ_CHARS_PER_M
 const VOLUME_TIME_LABEL = /\(\s*⏱[^)]*\)|⏱\S*\s*(?:약\s*)?\d+\s*분/;
 const VOLUME_IMAGE_TAG = /<!--\s*\[IMG:[\s\S]*?-->/g;
 const VOLUME_QUEST_HEADING = /^#\s.*일일\s*퀘스트/; // 교안 전체 생성이 본문 뒤에 붙이는 '# ⚔️ 일일 퀘스트 (실습 과제)'
-// 늘리지 않는 섹션: 실습·심화·일일 퀘스트·과제·평가로 시작하거나, 루브릭·채점이 들거나, 요약·정리·마무리로 끝나는 제목
-const VOLUME_SKIP_TITLE = new RegExp(`${LESSON_HEADING_PREFIX}(?:실습|심화|일일\\s*퀘스트|과제|평가)|루브릭|채점|(?:요약|정리|마무리)$`);
+// 늘리지 않는 섹션: 실습·심화·일일 퀘스트·과제·평가로 시작하거나, 루브릭·채점이 들거나, 요약·정리·마무리로 끝나는 제목.
+// '기획 문서로 정리'처럼 을·를·로·에 뒤의 정리는 하는 일을 말하는 내용 섹션이므로 늘린다
+const VOLUME_SKIP_TITLE = new RegExp(`${LESSON_HEADING_PREFIX}(?:실습|심화|일일\\s*퀘스트|과제|평가)|루브릭|채점|(?<![을를로에]\\s?)(?:요약|정리|마무리)$`);
 const VOLUME_CHIP_TITLE = `강사가 소리 내어 읽는 시간을 1분에 ${READ_CHARS_PER_MINUTE}자(공백 포함)로 셌습니다. 코드·표·그림·다이어그램·서식 기호는 세지 않습니다.`;
 const VOLUME_CHIP_CLASS = 'ml-2 shrink-0 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[0.6875rem] font-bold whitespace-nowrap';
 const VOLUME_CHIP_TONES = { short: 'bg-amber-50 text-amber-700 border-amber-300', done: 'bg-emerald-50 text-emerald-700 border-emerald-300' };
