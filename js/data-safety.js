@@ -1520,7 +1520,9 @@ async function restoreHistoryItem(id) {
     const openSubject = globalState.subjects.find(subject => String(subject.id) === String(currentSubjectId)) || null;
     if (target.mode !== 'replace' && !openSubject) return window.showAlert('되살릴 교과를 먼저 여세요(교과 편집기에서 다시 누르세요).');
     if (target.mode === 'replace' && target.part && historyMatchesNow(target.lesson, entry, target.part)) {
-        return window.showToast?.('지금 내용이 이 기록과 같습니다.', 'info'); // 쓸데없는 '되돌리기 전' 기록을 만들지 않는다(글이 같아도 그림이 다르면 되돌린다)
+        // 쓸데없는 '되돌리기 전' 기록을 만들지 않는다(글이 같아도 그림이 다르면 되돌린다). 밖에서도 써서 지금 그림으로 두는 그림만 다르면 그 수도 알린다
+        const sameKept = historyImagePlan(target.lesson, entry, target.part).kept.length;
+        return window.showToast?.(`지금 내용이 이 기록과 같습니다.${historyKeptImagesNote(sameKept)}`, 'info');
     }
     const { text, okLabel, done: restoredText } = historyRestoreMessage(entry, target, openSubject);
     const ok = await confirmAsync(text, { okLabel, tone: 'primary', title: '작업 기록 되돌리기' });
@@ -1532,6 +1534,7 @@ async function restoreHistoryItem(id) {
     let mod;
     if (target.mode === 'replace') {
         await archiveContents([historyCurrentItem(target.lesson, target.part)], '되돌리기 전');
+        if (busy()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.'); // 기록을 남겨 저장하는 사이 시작된 생성(지금 내용은 기록에 남았다)
         mod = applyHistoryEntry(target.lesson, entry);
     } else {
         mod = lessonFromHistory(entry, renumberLessons([{}], courseData.map(lesson => lesson.id))[0].id); // 그 교과 차시와 겹치지 않는 숫자 id

@@ -1655,7 +1655,7 @@ testAsync('탭 하나 되돌리기: 글이 같아도 차시가 잃은 그림을 
     assert.strictEqual(inA.images.img_1, REAL, '진짜 그림이 그대로 남는다');
 });
 
-testAsync('탭 하나 되돌리기: 다른 탭도 쓰는 키의 새 그림은 지금 그림으로 두고 끝 알림에 그 수를 적으며, 글이 같고 그 그림만 다르면 같다고 알린다', async () => {
+testAsync('탭 하나 되돌리기: 다른 탭도 쓰는 키의 새 그림은 지금 그림으로 두고 끝 알림에 그 수를 적으며, 글이 같고 그 그림만 다르면 같다고 알리며 그 그림 수도 적는다', async () => {
     const { asked, archived, notes, inA } = historyRestoreSetup();
     const OLD = `data:image/png;base64,${'O'.repeat(80)}`;
     const NEW = `data:image/png;base64,${'N'.repeat(80)}`;
@@ -1667,7 +1667,7 @@ testAsync('탭 하나 되돌리기: 다른 탭도 쓰는 키의 새 그림은 �
     ];
     await ctx.restoreHistoryItem(6);
     assert.strictEqual(asked.length, 0, '넣을 그림이 없고 글이 같으면 묻지 않는다');
-    assert.deepStrictEqual(notes.at(-1), ['지금 내용이 이 기록과 같습니다.', 'info']);
+    assert.deepStrictEqual(notes.at(-1), ['지금 내용이 이 기록과 같습니다. 다른 탭·교수안 등에서도 쓰는 그림 1장은 지금 그림 그대로 두었습니다.', 'info'], '그림이 다른데 같다고만 하지 않는다');
     await ctx.restoreHistoryItem(5);
     assert.strictEqual(inA.tabContents.assessment, '예전 평가 ![](local:img_1) ![](local:img_2)');
     assert.deepStrictEqual([inA.images.img_1, inA.images.img_2], [NEW, OLD], '기본실습이 쓰는 img_1은 새 그림 그대로, 이 탭만 쓰는 img_2는 기록의 그림');

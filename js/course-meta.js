@@ -330,7 +330,9 @@ function restoreTrashBatch(group) {
     const count = left().length;
     if (!count) return;
     if (trashRestoreBlocked()) return window.showAlert(TRASH_RESTORE_BUSY_TEXT);
-    const message = `다시 만들기 전 사본 ${count}개를 모두 되살립니다.\n다시 만든 차시는 그대로 두고, 사본마다 그 차시 바로 아래에 이전 차시가 따로 생깁니다(그 차시가 없으면 목록 맨 아래).`;
+    // 머리줄과 같은 실행 시각도 적는다(사본 수가 같은 다른 실행의 확인 창과 글이 같으면 그 창이 뜨지 않는다, ui.js showConfirm)
+    const when = localTimeText(oldestTrashFirst(group)[0].at);
+    const message = `다시 만들기 전 사본 ${count}개${when ? `(${when} 실행)` : ''}를 모두 되살립니다.\n다시 만든 차시는 그대로 두고, 사본마다 그 차시 바로 아래에 이전 차시가 따로 생깁니다(그 차시가 없으면 목록 맨 아래).`;
     return window.showConfirm(message, () => {
         if (trashRestoreBlocked()) return window.showAlert(TRASH_RESTORE_BUSY_TEXT); // 확인 창을 띄운 사이 시작된 생성
         const entries = oldestTrashFirst(left());

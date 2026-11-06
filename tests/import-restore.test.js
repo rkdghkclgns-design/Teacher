@@ -255,9 +255,12 @@ test("새로 시작 확인 창과 막는 창의 글: 읽지 못한 저장본을 
     const text = app.log.confirms[0];
     assert.ok(text.includes("'내보내기·백업' 메뉴의 '읽지 못한 저장본 사본'") && !text.includes('지우고') && !text.includes('되돌릴 수 없습니다'), text);
     assert.ok(text.includes("'읽지 못한 저장본 내려받기'"), '읽어 온 저장본이 있으면 먼저 받아 둘 수 있다고 그대로 알린다');
+    // 사본은 옮겨 두지 못해도 새로 시작하므로(setAsideUnreadState) 꼭 생긴다고 하지 않는다
+    assert.ok(text.includes('옮기지 못하면 사본 없이 새로 시작합니다'), text);
     assert.strictEqual(app.get().stateLoadFailed, true, '취소하면 그대로');
     const dialog = vm.runInContext('stateLoadFailedText', app.ctx)({ folder: true, download: true });
     assert.ok(dialog.includes("'내보내기·백업' 메뉴에서 파일로 받을 수 있습니다") && !dialog.includes('읽지 못한 기록'), dialog);
+    assert.ok(dialog.includes('옮기지 못할 수 있습니다'), dialog);
     // 메뉴의 칸은 처음에 숨겨 두고, 메뉴를 열 때마다 다시 그린다
     const html = fs.readFileSync(path.join(root, '..', 'index.html'), 'utf8');
     assert.ok(html.includes('<div id="unread-copies-section" hidden>') && html.includes('<div id="unread-copies-list"'));

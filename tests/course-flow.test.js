@@ -698,6 +698,17 @@ async function run(name, fn) {
         local.finishLessonPipeline({ quiet: true });
         assert.deepStrictEqual([confirms.length, ...plain(local.alerts)], [3, BUSY, BUSY, BUSY]);
         unchanged('확인 창을 띄운 사이');
+        // 작업 기록 되돌리기가 '되돌리기 전' 기록을 남겨 저장하는 사이 시작된 생성도 다시 보고 되돌리지 않는다
+        resetTrash();
+        local.alerts.length = 0;
+        local.showConfirm = (message, onOk) => onOk();
+        const archive = local.archiveContents;
+        local.archiveContents = async items => { await archive(items); local.beginLessonPipeline(7, { kind: 'job' }); };
+        await local.restoreHistoryItem(5);
+        local.finishLessonPipeline({ quiet: true });
+        local.archiveContents = archive;
+        assert.deepStrictEqual(plain(local.alerts), [BUSY]);
+        unchanged('기록을 남기는 사이');
         // 생성이 끝나면 모두 한다(사본 묶음은 오래된 것부터)
         resetTrash();
         local.alerts.length = 0;

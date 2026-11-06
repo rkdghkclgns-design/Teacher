@@ -700,7 +700,8 @@ async function run(name, fn) {
         assert.strictEqual(confirms.length, 2);
         assert.strictEqual(confirms[1].message, confirms[0].message, '같은 묶음은 같은 글이라 확인 창이 겹치지 않는다(ui.js showConfirm)');
         assert.deepStrictEqual(plain([confirms[0].opts.okLabel, confirms[0].opts.tone, confirms[0].opts.title]), ['모두 복원', 'primary', '사본 모두 복원']);
-        assert.ok(confirms[0].message.startsWith('다시 만들기 전 사본 3개를 모두 되살립니다.') && confirms[0].message.includes('다시 만든 차시는 그대로'), confirms[0].message);
+        const runAt = vm.runInContext('localTimeText', local)(a1.at); // 머리줄과 같은 실행 시각(그 실행이 첫 사본을 넣은 때)
+        assert.ok(confirms[0].message.startsWith(`다시 만들기 전 사본 3개(${runAt} 실행)를 모두 되살립니다.`) && confirms[0].message.includes('다시 만든 차시는 그대로'), confirms[0].message);
         assert.strictEqual(local.globalState.lessonTrash.length, 11, '묻기만 하고 아직 되살리지 않는다');
         await click('restore', 1); // 확인하기 전에 2차시 사본 하나를 따로 되살렸다
         toasts.length = 0;
@@ -726,6 +727,12 @@ async function run(name, fn) {
         await confirms.at(-1).onOk();
         assert.deepStrictEqual([local.globalState.lessonTrash.length, alerts.at(-1)], [2, '복원할 교과를 찾지 못했습니다.']);
         vm.runInContext('currentSubjectId = "s1"', local);
+        // 사본 수가 같은 두 실행도 확인 글이 다르다(실행 시각). 한 실행의 확인 창이 떠 있어도 다른 실행의 확인 창이 막히지 않는다
+        local.globalState.lessonTrash = [copy(51, 'run_e', 1), copy(52, 'run_e', 2), copy(61, 'run_f', 70), copy(62, 'run_f', 71)];
+        vm.runInContext('renderTrashRows', local)();
+        await click('restore-batch', 0);
+        await click('restore-batch', 1);
+        assert.notStrictEqual(confirms.at(-1).message, confirms.at(-2).message, confirms.at(-1).message);
     });
 
     await run('휴지통 창: 교과 항목의 차시 수는 목록이 배열일 때만 센다(남이 준 백업의 { length: HTML }을 화면에 넣지 않는다)', async () => {
