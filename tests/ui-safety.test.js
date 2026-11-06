@@ -56,7 +56,7 @@ function loadUi() {
     return { ctx, storage, seen };
 }
 
-// state.js의 저장 부분만 떼어 가짜 IndexedDB로 돌린다. 떼어 낸 함수가 쓰는 이름은 여기서 둔다(묶음 3·6이 넣은 이름 포함)
+// state.js의 저장 부분만 떼어 가짜 IndexedDB로 돌린다. 떼어 낸 함수가 쓰는 이름은 여기서 둔다(묶음 3·6이 넣은 이름 포함, 큰 작업을 JSON 파일로 쓰는 writeBrowserState도)
 function loadSaving({ pendingSoon = false } = {}) {
     const src = js('state.js').replace(/\r\n/g, '\n');
     const slice = (head, tail) => { const start = src.indexOf(head); const end = src.indexOf(tail, start); assert.ok(start >= 0 && end > start, head); return src.slice(start, end + tail.length); };
@@ -74,6 +74,11 @@ function loadSaving({ pendingSoon = false } = {}) {
         let lastBrowserSaveFailed = false;
         const saveSoonTask = { cancel() {}, pending: () => ${pendingSoon} };
         ${slice('const DBManager = {', '\n};\n')}
+        ${slice('const STATE_BLOB_MIN_BYTES', ';\n')}
+        ${slice('function storedSizeEstimate(', '\n}\n')}
+        ${slice('const isValueTooLarge', ';\n')}
+        ${slice('let browserStateAsFile', ';\n')}
+        ${slice('async function writeBrowserState(', '\n}\n')}
         ${slice('async function saveState(', '\n}\n')}
         ${slice('function isSavePending(', '\n}\n')}`, ctx);
     return { ctx, txs, alerts };

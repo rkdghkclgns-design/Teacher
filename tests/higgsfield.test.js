@@ -120,6 +120,7 @@ async function run(name, fn) {
         const bare = new Blob(['x'], { type: 'image/webp' });
         assert.strictEqual(asBlob(bare, IMAGE), bare, '형식만 있으면 그대로');
         assert.strictEqual(asBlob(new Blob(['x'], { type: 'text/plain; charset=utf-8' }), 'https://cdn.test/a.webp?x=1').type, 'image/webp', '그림 형식이 아니면 주소의 확장자로');
+        assert.strictEqual(asBlob(new Blob(['x'], { type: 'application/octet-stream' }), 'https://cdn.test/b.avif').type, 'image/avif', 'AVIF 주소도 그림으로 받는다');
         assert.strictEqual(asBlob(new Blob(['x'], { type: '' }), 'https://cdn.test/a.txt'), null);
     });
 

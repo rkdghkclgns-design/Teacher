@@ -1,35 +1,65 @@
 // 내보낸 교안 다시 불러오기 테스트 (실행: node tests/output-import.test.js)
 // HTML에 담은 원본과 MD의 탭 표시를 읽어 고칠 수 있는 차시로 되살리는지, 남이 준 파일을 걸러 받는지 DOM 없이 확인한다
+// 큰 파일 조각 읽기(import-stream.js), 숨은 원본이 없는 예전 HTML 되살리기(output-old-html.js), 판서 영상 되살리기도 본다.
+// 예전 HTML 시험은 화면과 같은 Turndown과 그 HTML 파서(domino)를 쓴다. 처음 한 번: npm install --no-save marked@15.0.12 turndown@7.2.4
+// (npm은 앞서 --no-save로 넣은 다른 꾸러미를 지우므로 lesson-format.test.js의 marked와 함께 넣는다)
 const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
 const assert = require('assert');
+
+let TurndownService = null;
+let domino = null;
+try {
+    TurndownService = require('turndown');
+    domino = require('@mixmark-io/domino');
+} catch (err) {
+    console.log('FAIL - turndown이 없습니다. 먼저 실행: npm install --no-save marked@15.0.12 turndown@7.2.4');
+}
+// 브라우저 DOMParser 대신(예전 HTML 시험에서만 잠깐 넣는다)
+const DominoParser = function () {
+    this.parseFromString = html => domino.createDocument(String(html), true);
+};
 
 const LESSON_TABS = [
     { id: 'basicLearn', label: '기본학습' }, { id: 'basicPrac', label: '기본실습' }, { id: 'advLearn', label: '심화학습' },
     { id: 'advPrac', label: '심화실습' }, { id: 'assessment', label: '학습이해도' }
 ];
 const alerts = [];
-const ctx = { console, window: { showAlert: message => alerts.push(message) }, JSON, Date, Object, LESSON_TABS, location: { hash: '' }, encodeURIComponent, decodeURIComponent };
+const ctx = {
+    console, window: { showAlert: message => alerts.push(message) }, JSON, Date, Object, LESSON_TABS, location: { hash: '' }, encodeURIComponent, decodeURIComponent,
+    TextDecoder, TextEncoder, Uint8Array, Blob, atob, btoa, setTimeout, crypto: require('crypto').webcrypto
+};
 vm.createContext(ctx);
-// 실제 data.js의 stripInstructorCallouts(읽기용 원본에서 예전 강사 안내를 뺀다)
-const dataSource = fs.readFileSync(path.join(__dirname, '..', 'js', 'data.js'), 'utf8').replace(/\r\n/g, '\n');
-const calloutStart = dataSource.indexOf('function stripInstructorCallouts(');
-vm.runInContext(dataSource.slice(calloutStart, dataSource.indexOf('\n}\n', calloutStart) + 2), ctx);
-vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'output-import.js'), 'utf8'), ctx);
-vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'lesson-export.js'), 'utf8'), ctx); // 내보낼 때 다는 표시(markShownImages)와의 왕복
+const jsSource = file => fs.readFileSync(path.join(__dirname, '..', 'js', file), 'utf8').replace(/\r\n/g, '\n');
+const runSlice = (file, start) => {
+    const source = jsSource(file);
+    const at = source.indexOf(start);
+    vm.runInContext(source.slice(at, source.indexOf('\n}\n', at) + 2), ctx);
+};
+// 실제 data.js의 stripInstructorCallouts(읽기용 원본에서 예전 강사 안내를 뺀다)와 api.js의 그림 칸(예전 HTML의 그림 칸을 앱의 그림 칸으로 다시 쓴다)
+runSlice('data.js', 'function stripInstructorCallouts(');
+runSlice('api.js', 'function imageWrapperHtml(');
+runSlice('ui.js', 'function escapeHtml(');
+['import-stream.js', 'output-import.js', 'lesson-export.js', 'output-old-html.js'].forEach(file => vm.runInContext(jsSource(file), ctx)); // lesson-export.js: 내보낼 때 다는 표시(markShownImages)와의 왕복
+// 예전(af5287a) 교수안 HTML의 교수안 그림을 되찾는 데 쓰는 실제 파서와 교수안 그리기
+['kbuilder/parser.js', 'kbuilder/render-doc.js'].forEach(file => vm.runInContext(jsSource(file), ctx));
 const {
     lessonSourcePayload, lessonSourceScript, lessonMarkdownExport, parseOutputHtml, parseOutputMarkdown, normalizeImportedLesson,
-    readShownImages, mergeTabFiles, dedupeImported, describeOutputImport, missingImageCount, outputFileProblem, readOutputText, markShownImages
+    readShownImages, mergeTabFiles, dedupeImported, describeOutputImport, missingImageCount, outputFileProblem, readOutputText, markShownImages,
+    streamScanner, readFileSkeleton, readOutputFile, outputTags
 } = { ...ctx, ...ctx.window };
 const plain = value => JSON.parse(JSON.stringify(value));
 
-let failed = 0;
-let count = 0;
+let failed = TurndownService ? 0 : 1;
+let count = TurndownService ? 0 : 1;
 const test = (name, fn) => {
     count++;
     try { fn(); console.log(`ok - ${name}`); } catch (e) { failed++; console.log(`FAIL - ${name}\n  ${e.message}`); }
 };
+// 기다리는 시험은 모아 두었다가 끝에서 차례로 돌린다
+const pending = [];
+const testAsync = (name, fn) => pending.push([name, fn]);
 
 const PNG = 'data:image/png;base64,iVBORw0KGgo=';
 const PNG_B = 'data:image/png;base64,QkJC';
@@ -262,8 +292,8 @@ test('확인 창 글: 제목·탭별 글자 수·그림, 숨은 원본, MD 그�
     assert.ok(text.includes('· 교수안은 들어 있지 않습니다. 교수안까지 되살리려면 교수안 화면의 HTML 버튼으로 받은 파일을 고르세요.'));
     assert.ok(!text.includes('에만 담깁니다'), '예전 파일에도 교수안이 들어 있을 수 있어 "그 파일에만 담긴다"고 하지 않는다');
     // 돌아오지 않는 것은 다 적을 수 없으므로 되살리는 것을 적고, 나머지는 예를 든다(차시 정보·검수 기록도 돌아오지 않는다)
-    assert.ok(text.includes('· 되살리는 것은 파일에 담긴 차시 제목·설명·시간, 탭 글, 그림, 교수안뿐입니다.'));
-    assert.ok(['차시 정보의 나머지 칸', '섹션 고정', '수동 검수 기록', '슬라이드 화면 편집', '참고 이미지', '삽화 목록', 'NCS', '판서 영상'].every(word => text.includes(word)));
+    assert.ok(text.includes('· 되살리는 것은 파일에 담긴 차시 제목·설명·시간, 탭 글, 그림, 판서 영상, 교수안뿐입니다.'), '파일 안의 판서 영상은 되살린다');
+    assert.ok(['차시 정보의 나머지 칸', '섹션 고정', '수동 검수 기록', '슬라이드 화면 편집', '참고 이미지', '삽화 목록', 'NCS'].every(word => text.includes(word)));
     assert.ok(text.includes("같은 것은 돌아오지 않습니다. 모두 되살리려면 '백업 ZIP으로 되살리기'를 쓰세요."));
     assert.ok(text.includes('· 여러 파일에 같은 차시가 있어 겹친 1개는 빼고 한 번만 넣습니다.'), '찾은 차시 수와 헷갈리지 않게 뺀 수라고 말한다');
     assert.ok(text.includes('건너뛰는 파일 4개') && text.includes('· a.zip: x') && text.includes('· 외 1개') && !text.includes('d.zip'));
@@ -271,10 +301,10 @@ test('확인 창 글: 제목·탭별 글자 수·그림, 숨은 원본, MD 그�
     assert.ok(one.includes('· G\n   교수안') && !one.includes('교수안은 들어 있지 않습니다') && !one.includes('건너뛰는') && !one.includes('MD 파일'));
 });
 
-test('읽지 못하는 파일은 까닭과 쓸 메뉴를 알린다: ZIP, 다른 형식, 80MB 넘음, 원본 없는 HTML, 잘린 원본, 빈 원본, 슬라이드 HTML, 교수안 MD', () => {
+test('읽지 못하는 파일은 까닭과 쓸 메뉴를 알린다: ZIP, 다른 형식, 원본 없는 HTML, 잘린 원본, 빈 원본, 슬라이드 HTML, 교수안 MD(크기로는 거르지 않는다)', () => {
     assert.match(outputFileProblem({ name: '백업.zip', size: 10 }), /백업 ZIP으로 되살리기/);
     assert.match(outputFileProblem({ name: '그림.png', size: 10 }), /HTML이나 MD/);
-    assert.match(outputFileProblem({ name: '교과.html', size: 80 * 1024 * 1024 + 1 }), /80MB.*MD/);
+    assert.strictEqual(outputFileProblem({ name: '교과.html', size: 900 * 1024 * 1024 }), null, '큰 파일도 조각으로 읽는다');
     assert.strictEqual(outputFileProblem({ name: '교과.HTML', size: 10 }), null);
     assert.throws(() => readOutputText('교안.html', '<html><body>x</body></html>'), /백업 ZIP으로 되살리기/);
     assert.throws(() => readOutputText('교안.html', '<main>x</main><script type="application/json" id="teacher-source">{"format":"teacher-'), /잘렸거나 깨져/);
@@ -287,11 +317,10 @@ test('읽지 못하는 파일은 까닭과 쓸 메뉴를 알린다: ZIP, 다른 
     assert.strictEqual(readOutputText('01_교수안.md', lessonMarkdownExport({ title: '교수안' }, [{ id: 'basicLearn', label: '기본학습', md: '## 진행' }])).length, 1, '차시·탭 표시가 있는 MD는 교안이다');
 });
 
-test('내보낸 HTML이 80MB를 넘을 때만 다시 불러오기 안내를 띄운다', () => {
-    assert.strictEqual(ctx.window.noteReimportSize(10), false);
-    assert.strictEqual(alerts.length, 0);
-    assert.strictEqual(ctx.window.noteReimportSize(80 * 1024 * 1024 + 1), true);
-    assert.ok(alerts[0].includes('80MB') && alerts[0].includes('교과 백업 ZIP 받기'));
+test('큰 HTML을 내보내도 다시 불러올 수 없다는 안내를 띄우지 않는다(큰 파일도 되살린다)', () => {
+    assert.strictEqual(ctx.window.noteReimportSize, undefined);
+    const js = fs.readdirSync(path.join(__dirname, '..', 'js')).filter(file => file.endsWith('.js')).map(jsSource).join('\n');
+    assert.ok(!js.includes('noteReimportSize') && !js.includes('OUTPUT_FILE_MAX'), '부르는 곳도 상한도 없다');
 });
 
 test('내보낼 때 단 표시(markShownImages) → 원본 → 다시 불러오기 왕복', () => {
@@ -420,5 +449,13 @@ test('확인 창: 받은 파일의 차시 제목은 한 줄로 모아 확인 창
     assert.ok(lines.some(line => line.startsWith('· 차시 · 차시 정보·NCS·판서')), '제목은 한 줄로 보인다');
 });
 
-console.log(`\n${count - failed}/${count} passed`);
-if (failed) process.exit(1);
+require('./output-import-cases.js')({ ctx, test, testAsync, alerts, TurndownService, DominoParser, PNG, PNG_B, plain });
+
+(async () => {
+    for (const [name, fn] of pending) {
+        count++;
+        try { await fn(); console.log(`ok - ${name}`); } catch (e) { failed++; console.log(`FAIL - ${name}\n  ${e.stack || e.message}`); }
+    }
+    console.log(`\n${count - failed}/${count} passed`);
+    if (failed) process.exit(1);
+})();

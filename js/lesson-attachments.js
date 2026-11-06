@@ -29,11 +29,11 @@ function renderLessonAttachments() {
 
 async function readAttachment(file, moduleId) {
     try {
-        const text = String(await extractTextFromFile(file)).trim();
+        const text = String(await extractTextFromFile(file, { maxChars: ATTACH_MAX_CHARS })).trim(); // 붙일 만큼만 읽는다(큰 파일도)
         if (!text) throw new Error('읽을 글자가 없습니다.');
         return { moduleId, name: file.name, text: text.slice(0, ATTACH_MAX_CHARS) };
     } catch (err) {
-        console.error('[참고 파일] 읽기 실패:', file.name, err);
+        console.warn('[참고 파일] 읽지 못해 붙이지 않습니다:', file.name, err); // 까닭은 바로 알림으로 보인다
         window.showAlert(`${file.name}을 읽지 못했습니다: ${err.message}`);
         return null;
     }

@@ -460,7 +460,7 @@ const BACKUP_NO_IMAGES_TAG = '_그림없음'; // 그림을 뺀 백업 파일 이
 const BACKUP_IMAGE_REF = 'teacher-image:';
 const BACKUP_IMAGE_DIR = '그림';
 const BACKUP_DATA_URL = /^data:(image\/[\w.+-]+);base64,([A-Za-z0-9+/=]+)$/;
-const BACKUP_IMAGE_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/svg+xml': 'svg' };
+const BACKUP_IMAGE_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/avif': 'avif', 'image/svg+xml': 'svg' };
 const BACKUP_IMAGE_MIN = 64; // 이보다 짧은 글은 그림으로 보지 않는다
 // '그림' 파일을 찾지 못한 그림은 이 참조를 그대로 둔다(빈 글로 바꾸지 않는다). 화면과 내보내기에서는 빈 그림으로 보이고
 // (lesson-sanitize.js가 모르는 주소를 지운다), 다음 저장도 참조를 그대로 써서 그림 파일을 채운 뒤 다시 열면 돌아온다
@@ -548,6 +548,17 @@ function isBackupTooBig(err) {
     return err instanceof RangeError || /Invalid string length|allocation failed|Invalid (typed )?array length/i.test(message);
 }
 
+// 일부러 멈춘 불러오기(백업이 아닌 ZIP, 되살릴 교과 없음 등). 까닭은 알림으로 보이므로 콘솔에는 경고로만 남긴다(logImportFailure)
+function importStop(message) {
+    return Object.assign(new Error(message), { expected: true });
+}
+
+// 불러오기 실패를 콘솔에 남긴다. 일부러 멈춘 것·권한 거절·크기 한도는 경고로(까닭만), 그 밖(코드 오류 등)은 오류로(스택까지)
+function logImportFailure(label, err) {
+    if (err?.expected || err?.name === 'NotAllowedError' || isBackupTooBig(err)) console.warn(label, err?.message ?? err);
+    else console.error(label, err);
+}
+
 // 백업 ZIP 파일 이름. 그림을 뺀 파일은 끝에 _그림없음을 붙인다(받은 사람도, 나중의 나도 알아보게)
 const backupFileName = (base, mode) => `${base}${mode === 'none' ? BACKUP_NO_IMAGES_TAG : ''}.zip`;
 
@@ -583,7 +594,7 @@ function backupImageKey(text) {
 const isBackupImage = text => typeof text === 'string' && text.length >= BACKUP_IMAGE_MIN && BACKUP_DATA_URL.test(text);
 
 // '그림/' 안에서 백업이 쓴 그림 파일만 고른다(backupImageKey 이름 + 그림 확장자). '그림'이라는 교과 폴더의 MD 등은 건너뛴다
-const BACKUP_IMAGE_NAME = /^[0-9a-f]{17,24}\.(png|jpg|gif|webp|svg)$/;
+const BACKUP_IMAGE_NAME = /^[0-9a-f]{17,24}\.(png|jpg|gif|webp|avif|svg)$/; // BACKUP_IMAGE_EXT의 확장자와 함께 고친다(빠지면 그 형식의 그림 파일을 건너뛰어 빈 그림이 된다)
 const isBackupImageName = name => BACKUP_IMAGE_NAME.test(String(name));
 
 // base64 글자 수로 그 파일의 바이트 수를 센다(디코딩하지 않고)
@@ -710,20 +721,23 @@ function backupImageFromFile(name, base64) {
 
 // 확장자가 없는 형식은 .png로 쓴다(backupImageFile). 그 가운데 'image/png'와 이름 길이가 같은 형식은 키로 가린다
 const BACKUP_IMAGE_PNG_ALIKE = ['image/jpg', 'image/bmp'];
+// 확장자를 정하기 전(예전 백업·폴더)에 .png로 쓴 형식. 키로 가려 원래 글 그대로 돌려준다
+const BACKUP_IMAGE_OLD_PNG = ['image/avif'];
 // 키로 가리지 못하는(이름을 모르는) 형식 이름의 길이. 'image/png'(9자)보다 길다
 const BACKUP_IMAGE_TYPE_LENGTH = { min: 10, max: 32 };
 
 // '그림' 폴더에서 읽은 그림 파일(base64) 하나를 그림 글로 되돌린다. 내용이 이름(키: 원래 글의 해시 + 글 길이)과 맞을 때만 돌려주고 아니면 null.
 // 복사가 끊겨 짧아졌거나 크기는 그대로인데 뒤가 빈 파일을 그림으로 받으면, 다음 저장이 망가진 그림을 새 이름으로 써서 폴더 저장본이 원래 그림을 더는 가리키지 않는다.
-// .png 파일은 확장자가 없는 형식일 수도 있어 image/jpg·image/bmp로도 키를 맞춰 보고(맞으면 원래 글 그대로), 이름 길이가 다른 형식이면
-// 원래 글 길이와의 차이가 형식 이름 길이로 맞을 때만 image/png로 받는다. 원래 글에 '=' 채움이 없었을 수도 있어 그것도 맞춰 본다
+// .png 파일은 확장자가 없는 형식이거나 예전에 .png로 쓴 avif일 수도 있어 image/jpg·image/bmp·image/avif로도 키를 맞춰 보고(맞으면 원래 글 그대로),
+// 그래도 맞지 않으면 원래 글 길이와의 차이가 형식 이름 길이로 맞을 때만 image/png로 받는다(heic 등). 원래 글에 '=' 채움이 없었을 수도 있어 그것도 맞춰 본다.
+// ZIP 되살리기(state.js importProjectZip)와 PC 폴더 열기가 함께 쓴다
 function backupImageFromKeyedFile(key, name, base64) {
     const text = String(base64);
     const { dataUrl } = backupImageFromFile(name, text);
     const type = dataUrl.slice('data:'.length, dataUrl.indexOf(';'));
     const asPng = type === 'image/png';
     const bodies = [...new Set([text, text.replace(/=+$/, '')])];
-    for (const candidateType of asPng ? [type, ...BACKUP_IMAGE_PNG_ALIKE] : [type]) {
+    for (const candidateType of asPng ? [type, ...BACKUP_IMAGE_PNG_ALIKE, ...BACKUP_IMAGE_OLD_PNG] : [type]) {
         for (const body of bodies) {
             const candidate = `data:${candidateType};base64,${body}`;
             if (backupImageKey(candidate) === key) return candidate;
@@ -1510,7 +1524,7 @@ if (typeof window !== 'undefined') {
         cleanTrashLesson, backupImageMode, setBackupImageMode, renderBackupImageMode, backupImageKey, detachBackupImages,
         attachBackupImages, backupImageFile, backupImageFromFile, writeBackupData, isBackupImageName, base64ByteLength,
         storedBackupImageMode, takeBackupImageMode, folderImageMode, clearBackupImagesDrop, switchBackupImagesToSeparate,
-        isBackupTooBig, backupFileName, withSeparateFallback, buildBackupZip, notifyBackupFallback, finishBackupDownload,
+        isBackupTooBig, importStop, logImportFailure, backupFileName, withSeparateFallback, buildBackupZip, notifyBackupFallback, finishBackupDownload,
         safetyBackupOrAsk, countBackupImages, currentImageCount, noImagesImportNote,
         BACKUP_IMAGE_LABEL, BACKUP_NO_IMAGES_TAG, BACKUP_TOO_BIG_TEXT, BACKUP_FALLBACK_TEXT,
         isBackupImageRef, backupImageInfo, backupImageRefs, backupImageFileNames, folderImageModeOf, folderCopyName,

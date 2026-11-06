@@ -645,6 +645,144 @@ test('ZIP·PC 폴더: 읽지 못한 창에서 되살리기 직전에 저장본�
     assert.strictEqual(app.get().projectFolderHandle, null);
 });
 
+// 콘솔에 남긴 것을 모은다(makeApp은 extra를 맨 뒤에 펼친다)
+const consoleSpy = () => {
+    const log = { warn: [], error: [] };
+    return { log, console: { log() {}, info() {}, warn: (...args) => log.warn.push(args), error: (...args) => log.error.push(args) } };
+};
+
+test('콘솔 기록: 일부러 멈춘 되살리기(save_data.yaml 없음, 되살릴 교과 없음, ZIP이 아닌 파일, 폴더 권한 거절)는 경고로만, 코드 오류는 오류로 남긴다', async () => {
+    const cases = [
+        ['save_data.yaml 없음', app => importZip(app, { 'x/안내.md': '# 안내' }), '되살릴 수 있는 백업 파일이 아닙니다'],
+        ['되살릴 교과 없음', app => importZip(app, backupFiles({ context: { subjects: 'x' } })), '이 파일에는 되살릴 교과가 없습니다'],
+        ['ZIP이 아닌 파일', async app => {
+            app.ctx.JSZip = { loadAsync: async () => { throw new Error("Can't find end of central directory : is this a zip file ?"); } };
+            await app.ctx.importProjectZip({ target: { files: [{ name: 'b.zip' }], value: 'x' } });
+        }, "백업 파일을 되살리지 못했습니다: Can't find end of central directory"],
+        ['폴더 권한 거절', async app => {
+            app.ctx.window.showDirectoryPicker = async () => { throw Object.assign(new Error('권한을 주지 않았습니다'), { name: 'NotAllowedError' }); };
+            await app.ctx.loadFromProjectFolder();
+        }, '권한을 주지 않았습니다']
+    ];
+    for (const [name, act, alert] of cases) {
+        const spy = consoleSpy();
+        const app = makeApp({ extra: { console: spy.console } });
+        app.ctx.__set({ globalState: app.ctx.sanitizeState(mine()) });
+        await act(app);
+        assert.deepStrictEqual([spy.log.warn.length, spy.log.error.length], [1, 0], name);
+        assert.ok(app.log.alerts.at(-1).includes(alert), `${name}: ${app.log.alerts.at(-1)}`);
+    }
+    const spy = consoleSpy();
+    const app = makeApp({ extra: { console: spy.console } });
+    app.ctx.__set({ globalState: app.ctx.sanitizeState(mine()) });
+    app.ctx.applyBackupMarkdown = () => { throw new TypeError('x is not a function'); };
+    await importZip(app, backupFiles());
+    assert.deepStrictEqual([spy.log.warn.length, spy.log.error.length], [0, 1], '코드 오류는 오류로');
+    assert.ok(spy.log.error[0][1] instanceof Error, '스택이 남게 오류 그대로');
+});
+
+test('ZIP: 그림을 따로 담은 백업의 AVIF 그림은 형식 그대로, 예전에 .png로 쓴 AVIF도 원래 글로 되살린다', async () => {
+    const app = makeApp();
+    app.ctx.__set({ globalState: app.ctx.sanitizeState(mine()) });
+    const avif = 'data:image/avif;base64,' + 'AAAAHGZ0eXBhdmlm'.repeat(15);
+    const oldAvif = 'data:image/avif;base64,' + 'AAAAHGZ0eXBhdmlmb2xk'.repeat(12);
+    const key = app.ctx.backupImageKey(avif);
+    const oldKey = app.ctx.backupImageKey(oldAvif);
+    const meta = { project: '받은 과정', subject: '교과', imageMode: 'separate', context: { courseTitle: '받은 과정', subjects: [{ id: 'subject_9', title: '교과', lessons: [{ id: 1, title: '차시', images: { a: `teacher-image:${key}`, b: `teacher-image:${oldKey}` } }] }] } };
+    const entries = { 'p/save_data.yaml': { text: JSON.stringify(meta) }, [`p/그림/${key}.avif`]: { base64: avif.split(',')[1] }, [`p/그림/${oldKey}.png`]: { base64: oldAvif.split(',')[1] } };
+    app.ctx.JSZip = { loadAsync: async () => ({ files: Object.fromEntries(Object.entries(entries).map(([name, value]) => [name, { dir: false, async: async kind => (kind === 'base64' ? value.base64 : value.text) }])) }) };
+    await app.ctx.importProjectZip({ target: { files: [{ name: 'b.zip' }], value: 'x' } });
+    assert.deepStrictEqual(plain(app.get().globalState.subjects[0].lessons[0].images), { a: avif, b: oldAvif });
+});
+
+/* ---------- 아주 큰 작업: JSON 파일(Blob)로 저장하고 그대로 되살린다 ---------- */
+// 크롬은 IndexedDB 값 하나를 127MiB까지만 받아(큰 교안 HTML을 불러온 교과) 큰 작업은 JSON 파일로 저장한다(state.js writeBrowserState).
+// 512자가 넘는 그림 글(조각 읽기가 떼어 두는 크기)과 한글·이모지·글 속 U+FEFF가 든 작업으로 본다
+const bigPicture = 'data:image/jpeg;base64,' + Buffer.from('JPEG-PICTURE-'.repeat(200)).toString('base64');
+const bigWork = () => ({
+    state: { courseTitle: '큰 과정 😀', subjects: [{ id: 'subject_1', title: '교과', lessons: [{ id: 1, title: '차시', tabContents: { basicLearn: '본문 ![](local:img_1)\uFEFF끝' }, images: { img_1: bigPicture } }] }] },
+    history: [{ id: 3, title: '기록', content: '옛 글 ![](local:img_1)', images: { img_1: bigPicture } }]
+});
+// 조각 읽기(import-stream.js)도 싣는다. 없으면 파일 전체를 글 하나로 읽는다
+const withStream = app => {
+    vm.runInContext(fs.readFileSync(path.join(root, 'import-stream.js'), 'utf8'), app.ctx, { filename: 'import-stream.js' });
+    return app;
+};
+
+test('저장 크기 어림: 그림 글은 한 글자 1바이트, 다른 글은 2바이트로 넉넉히 세고 같은 객체는 한 번만 센다(돌아가는 참조에도 멈추지 않는다)', () => {
+    const app = makeApp();
+    const shared = { a: 'data:x' };
+    const loop = { s: 'ab', shared, again: shared };
+    loop.self = loop;
+    assert.strictEqual(app.ctx.storedSizeEstimate(loop), 48 + 6 + 6 + 4, '키 넷(2바이트 + 4) · 같은 객체 한 번 · 그림 글 1바이트 · 글 2바이트');
+    assert.strictEqual(app.ctx.storedSizeEstimate({ n: 5, b: true, u: undefined }), 18 + 27);
+});
+
+test('큰 작업: 어림이 크면 JSON 파일(Blob)로 저장하고, 시작할 때 그 파일을 그대로 되살린다(조각 읽기로도, 글 하나로 읽어도)', async () => {
+    const app = withStream(makeApp({ extra: { Blob } }));
+    const work = bigWork();
+    await app.ctx.writeBrowserState(work, { blobMin: 10 });
+    const saved = app.ctx.__db.get('k');
+    assert.ok(saved instanceof Blob && saved.type === 'application/json', '값이 아니라 JSON 파일');
+    assert.deepStrictEqual(JSON.parse(await saved.text()), plain(work));
+    await app.ctx.writeBrowserState(work);
+    assert.ok(!(app.ctx.__db.get('k') instanceof Blob), '작은 작업은 예전처럼 값 그대로');
+    for (const reader of [withStream(makeApp({ db: new Map([['k', saved]]), extra: { Blob } })), makeApp({ db: new Map([['k', saved]]), extra: { Blob } })]) {
+        assert.strictEqual(await reader.ctx.restoreState(), 'ok');
+        const { globalState, contentHistory, stateLoadFailed } = reader.get();
+        const lesson = globalState.subjects[0].lessons[0];
+        assert.deepStrictEqual([stateLoadFailed, globalState.courseTitle, lesson.tabContents.basicLearn, lesson.images.img_1, contentHistory[0].images.img_1],
+            [false, '큰 과정 😀', '본문 ![](local:img_1)\uFEFF끝', bigPicture, bigPicture]);
+        assert.strictEqual(reader.log.writes.length, 0, '열기만 하고 쓰지 않는다');
+        assert.strictEqual(await reader.ctx.storedRecordStatus(), 'loads', '읽지 못한 창의 다시 읽어 보기도 JSON 파일을 푼다');
+    }
+});
+
+test('큰 작업: 브라우저가 값이 너무 크다고 거절하면 같은 작업을 JSON 파일로 다시 저장해 저장했다고 알리고, 그 창에서는 처음부터 JSON 파일로 쓴다(다른 까닭의 실패는 그대로 실패)', async () => {
+    // 값(Blob이 아닌 것)을 넣으면 rejectWith로 거절하는 저장소
+    const rejecting = rejectWith => {
+        const app = withStream(makeApp({ extra: { Blob } }));
+        app.ctx.__set({ globalState: app.ctx.sanitizeState(bigWork().state) });
+        app.ctx.__reject = { message: rejectWith, tries: 0 };
+        vm.runInContext(`(() => {
+            const write = DBManager.setItem;
+            DBManager.setItem = async (key, value) => {
+                if (key === 'k' && !(value instanceof Blob)) {
+                    __reject.tries += 1;
+                    throw Object.assign(new Error(__reject.message), { name: 'DataError' });
+                }
+                return write(key, value);
+            };
+        })();`, app.ctx);
+        return app;
+    };
+    const app = rejecting("Failed to execute 'put' on 'IDBObjectStore': The serialized keys and/or value are too large (size=163040138 bytes, max=133169152 bytes).");
+    assert.strictEqual(await app.ctx.saveState(), true);
+    const saved = app.ctx.__db.get('k');
+    assert.ok(saved instanceof Blob);
+    assert.strictEqual(JSON.parse(await saved.text()).state.subjects[0].lessons[0].images.img_1, bigPicture);
+    assert.deepStrictEqual(app.log.alerts, [], '알릴 실패가 없다');
+    assert.strictEqual(await app.ctx.saveState(), true);
+    assert.strictEqual(app.ctx.__reject.tries, 1, '다음 저장은 값으로 바꿔 보지 않고 바로 JSON 파일로 쓴다');
+    const quota = rejecting('QuotaExceededError');
+    assert.strictEqual(await quota.ctx.saveState(), false, '저장 공간이 모자란 것은 JSON 파일로 바꿔도 소용없다');
+    assert.deepStrictEqual([quota.log.alerts.length, quota.ctx.__db.has('k')], [1, false]);
+});
+
+test('큰 작업: 풀지 못한 JSON 파일 저장본은 덮어쓰지 않고 막으며, 내려받기는 그 파일을 고치지 않고 그대로 준다', async () => {
+    const broken = new Blob(['{"state":{"subjects":['], { type: 'application/json' });
+    const dom = makeDom();
+    const objects = [];
+    const app = withStream(makeApp({ db: new Map([['k', broken]]), document: dom.document, realDialog: true,
+        extra: { Blob, URL: { createObjectURL: blob => { objects.push(blob); return 'blob:1'; }, revokeObjectURL() {} } } }));
+    assert.strictEqual(await app.ctx.restoreState(), 'failed');
+    assert.deepStrictEqual([app.get().stateLoadFailed, app.get().unreadRecord === broken, app.log.writes.length], [true, true, 0]);
+    assert.strictEqual(await app.ctx.storedRecordStatus(), 'unread');
+    await app.ctx.downloadUnreadRecord();
+    assert.strictEqual(objects[0], broken, '저장소에 든 그 파일 그대로');
+    assert.ok(dom.created.find(el => el.tagName === 'a').download.endsWith('.json'));
+});
+
 (async () => {
     let failed = 0;
     for (const [name, fn] of tests) {

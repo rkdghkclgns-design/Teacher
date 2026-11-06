@@ -9,7 +9,8 @@ const root = path.join(__dirname, '..', 'js') + path.sep;
 const FILES = [
     'filename-convention.js',
     'kbuilder/parser.js', 'kbuilder/render-doc.js', 'kbuilder/render-deck.js', 'kbuilder/ref-images.js', 'kbuilder/import-html.js', 'kbuilder/auto-images.js',
-    'kbuilder/export.js', 'kbuilder/sample-data.js', 'course-ncs.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'gyosuan.js', 'gyosuan-view.js', 'gyosuan-images.js', 'gyosuan-io.js'
+    'kbuilder/export.js', 'kbuilder/sample-data.js', 'course-ncs.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'gyosuan.js', 'gyosuan-view.js', 'gyosuan-images.js',
+    'import-stream.js', 'gyosuan-io.js'
 ];
 const PNG = 'data:image/png;base64,iVBORw0KGgo=';
 const SVG = 'data:image/svg+xml;base64,PHN2Zz4=';
@@ -20,7 +21,8 @@ function makeContext(options = {}) {
     const channels = [];
     const ctx = {
         console: { log() {}, warn() {}, error() {} },
-        setTimeout, clearTimeout, Promise, URL, encodeURIComponent, Blob,
+        setTimeout, clearTimeout, Promise, URL, encodeURIComponent, Blob, TextDecoder,
+        isBackupTooBig: err => err instanceof RangeError,
         LESSON_TABS: ['basicLearn', 'basicPrac', 'advLearn', 'advPrac', 'assessment'].map(id => ({ id })),
         TEXT_MODEL: 'claude-opus-5-5',
         CONTEXT_CORE: { personas: { instructor: '당신은 게임 기획 전문 강사입니다.' } },
@@ -711,6 +713,51 @@ const draftLesson = () => ({ id: 'm1', title: '재미', hours: 1, tabContents: {
         const bare = plain(imported(base, { html: '<x>', source: null }, null));
         assert.strictEqual(bare.docMd, '옛', '소스가 없는 파일은 MD를 건드리지 않는다');
         assert.strictEqual(bare.sourceKey, 'k');
+    });
+
+    // 브라우저 File처럼 조각으로만 읽히는 가짜 파일. size를 주면 그만큼 크다고 알린다(뒤는 빈 조각)
+    const sliceFile = (name, text, size) => {
+        const bytes = Buffer.from(text, 'utf8');
+        return {
+            name, size: size ?? bytes.length, slices: 0,
+            slice(from, to) { this.slices += 1; return { arrayBuffer: async () => bytes.subarray(Math.min(from, bytes.length), Math.min(to, bytes.length)) }; },
+            text: async () => { throw new Error('file.text()를 부르면 안 됩니다'); }
+        };
+    };
+    const BIG_PNG = `data:image/png;base64,${Buffer.from('BIG-PNG-'.repeat(300)).toString('base64')}`;
+
+    await run('큰 파일: 64MB가 넘는 완성 MD도 조각으로 읽고(file.text()를 부르지 않는다) 박힌 그림까지 원래 글 그대로 돌려준다', async () => {
+        const ctx = makeContext();
+        const md = `## 진행\n\n![그림](${BIG_PNG})\n\n한글 끝`;
+        const file = sliceFile('06_교수안.md', md, 100 * 1024 * 1024);
+        assert.strictEqual(await call(ctx, 'readGyosuanFile')(file), md);
+        assert.strictEqual(file.slices, 25, '4MB씩');
+        const converted = call(ctx, 'convertedGyosuan')(undefined, call(ctx, 'sortGyosuanFiles')([{ name: file.name, text: md }]));
+        assert.ok(converted.docMd.includes('local:img_') && Object.values(converted.images).includes(BIG_PNG), '박힌 그림은 그림 목록으로 옮긴다');
+    });
+
+    await run('큰 슬라이드 HTML: 그림을 떼어 둔 글로 읽고 슬라이드 HTML과 내장 원본(편성안·참고 이미지)에 그림을 되돌린다', async () => {
+        const ctx = makeContext();
+        const source = JSON.stringify({ doc: DOC, deck: `${DECK}\n![이미지](${BIG_PNG})`, source: '', refs: [{ name: '참고', url: BIG_PNG }], session: null });
+        const html = `<div class="deck-stage-inner"><section class="slide"><img src="${BIG_PNG}"></section></div><script type="application/json" id="kb-source">${source}</script>`;
+        const read = await ctx.readFileSkeleton(sliceFile('슬라이드.html', html));
+        let seen = '';
+        ctx.KBuilder.readExportedHtml = text => {
+            seen = text;
+            return { html: text.match(/<section class="slide">[\s\S]*?<\/section>/)[0], theme: 'maple', source: { doc: '', deck: '', source: '', refs: [], session: null } };
+        };
+        ctx.DOMParser = function () { this.parseFromString = text => ({ getElementById: () => ({ textContent: text.match(/id="kb-source">([\s\S]*?)<\/script>/)[1] }) }); };
+        const imported = call(ctx, 'readExportedGyosuanHtml')(read);
+        assert.ok(!seen.includes(BIG_PNG), '파서에는 그림을 뗀 글만 넘긴다');
+        assert.strictEqual(imported.html, `<section class="slide"><img src="${BIG_PNG}"></section>`);
+        assert.ok(imported.source.deck.includes(BIG_PNG) && imported.source.refs[0].url === BIG_PNG && imported.source.doc === DOC);
+        const warned = [];
+        ctx.console = { log() {}, warn: (...args) => warned.push(args), error: () => { throw new Error('오류로 남기면 안 됨'); } };
+        ctx.KBuilder.readExportedHtml = () => { throw new Error('지원하지 않는 HTML입니다.'); };
+        ctx.getEditingModule = () => ({ id: 'm1', title: '차시' });
+        const result = await ctx.importGyosuanHtml('m1', read.text, null, read);
+        assert.deepStrictEqual(plain(result), { ok: false, error: '지원하지 않는 HTML입니다.' });
+        assert.strictEqual(warned.length, 1, '일부러 받지 않는 파일은 경고로만');
     });
 
     await run('화면 편집만 있는 덱도 슬라이드로 친다', async () => {

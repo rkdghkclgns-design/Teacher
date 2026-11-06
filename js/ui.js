@@ -1195,7 +1195,8 @@ window.syncBatchCount = function (val) {
 };
 
 // 참고 파일의 글자를 뽑는다: 차시 첨부(lesson-attachments.js)와 참고자료 탭(api.js importReferenceFiles)이 쓴다
-async function extractTextFromFile(file) {
+// maxChars: 쓸 글자 수. 글 파일은 그만큼 앞부분만 읽고, PDF·PPTX는 그만큼 모이면 멈춘다(큰 파일도 다 읽지 않는다)
+async function extractTextFromFile(file, { maxChars = Infinity } = {}) {
 
     const lower = file.name.toLowerCase();
 
@@ -1205,7 +1206,7 @@ async function extractTextFromFile(file) {
 
     if (lower.endsWith('.md') || lower.endsWith('.txt')) {
 
-        return decodeTextBuffer(await file.arrayBuffer());
+        return decodeTextBuffer(await readTextPrefix(file, maxChars));
 
     }
 
@@ -1235,6 +1236,8 @@ async function extractTextFromFile(file) {
             const txt = content.items.map((it) => it.str).join(' ');
 
             if (txt.trim()) pageTexts.push(`[p.${p}] ${txt}`);
+
+            if (pageTexts.reduce((sum, text) => sum + text.length, 0) >= maxChars) break; // 쓸 만큼 모였다
 
         }
 
@@ -1291,6 +1294,7 @@ async function extractTextFromFile(file) {
 
             const notes = await pptxSlideNotes(zip, slideFiles[i]);
             if (text.trim() || notes) parts.push(`[Slide ${i + 1}] ${text}${notes ? `\n[노트] ${notes}` : ''}`);
+            if (parts.reduce((sum, part) => sum + part.length, 0) >= maxChars) break; // 쓸 만큼 모였다
 
         }
 
@@ -1320,13 +1324,13 @@ async function extractTextFromFile(file) {
 
     if (lower.endsWith('.ppt')) {
 
-        throw new Error('레거시 .ppt 형식은 지원되지 않습니다. .pptx로 저장 후 업로드하세요.');
+        throw importStop('레거시 .ppt 형식은 지원되지 않습니다. .pptx로 저장 후 업로드하세요.');
 
     }
 
 
 
-    throw new Error('지원하지 않는 파일 형식입니다.');
+    throw importStop('지원하지 않는 파일 형식입니다.');
 
 }
 

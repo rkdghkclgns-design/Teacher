@@ -295,7 +295,7 @@ window.downloadGyosuanHtml = async function (moduleId) {
     // 바꿀 글을 함수로 넘긴다. 글자로 넘기면 교안 속 $$·$'·$& 가 치환 패턴으로 읽혀 원본이 깨진다
     const source = lessonSourceScript(lessonSourcePayload([mod], { withGyosuan: true, shown: [shown] }));
     const withSource = doc.replace('</body>', () => `${source}</body>`);
-    window.noteReimportSize?.(downloadTextFile(withSource, `${lessonFileBase(mod)}_교수안.html`, 'text/html;charset=utf-8'));
+    downloadTextFile(withSource, `${lessonFileBase(mod)}_교수안.html`, 'text/html;charset=utf-8');
 };
 
 // 새 창 없이 인쇄 창을 연다(lesson-export.js). 인쇄 창에서 'PDF로 저장'을 고른다

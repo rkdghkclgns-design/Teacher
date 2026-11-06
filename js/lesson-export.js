@@ -173,7 +173,7 @@ async function lessonExportBody(mod, tabIds, opts = {}) {
 }
 
 /* ---------- 내려받기·인쇄 ---------- */
-// 내려받은 파일 크기(바이트)를 돌려준다(다시 불러오기 상한 안내, output-import.js noteReimportSize)
+// 내려받은 파일 크기(바이트)를 돌려준다
 function downloadTextFile(text, fileName, type) {
     const blob = new Blob([text], { type });
     const url = URL.createObjectURL(blob);
@@ -223,9 +223,9 @@ window.exportLessonDocument = async function (mod, format, tabIds) {
         if (format === 'pdf') return await printHtmlDocument(lessonHtmlDocument(mod.title || '교안', body.html));
         // 읽기용 HTML: 원본에는 탭 글과 화면에 없는 그림만 담는다(교수안은 넣지 않는다). '내보낸 교안 다시 불러오기'로 고칠 수 있다
         const source = lessonSourceScript(lessonSourcePayload([mod], { tabIds, shown: [shown] }));
-        const size = downloadTextFile(lessonHtmlDocument(mod.title || '교안', body.html, '', source), lessonFileName(mod, 'html'), 'text/html;charset=utf-8');
+        // 큰 파일도 '내보낸 교안 다시 불러오기'가 조각으로 읽어 되살리므로 크기 안내는 하지 않는다(import-stream.js)
+        downloadTextFile(lessonHtmlDocument(mod.title || '교안', body.html, '', source), lessonFileName(mod, 'html'), 'text/html;charset=utf-8');
         if (body.videos) window.showToast?.(`판서 영상 ${body.videos}개를 HTML 파일 안에 넣었습니다(파일이 커질 수 있습니다).`, 'info');
-        window.noteReimportSize?.(size);
     } catch (err) {
         console.error('[내보내기] 차시 문서 실패:', err);
         window.showAlert(`내보내기 중 오류가 났습니다: ${err.message}`);
@@ -249,8 +249,7 @@ window.exportSubjectDocument = async function (subj, format) {
         if (format === 'pdf') return await printHtmlDocument(lessonHtmlDocument(subj.title || '교과', articles.join('\n')));
         // 읽기용: 교수안은 원본에 넣지 않는다. 보이는 그림은 차시 번호와 함께 표시해 원본에 다시 담지 않는다
         const source = lessonSourceScript(lessonSourcePayload(lessons, { shown }));
-        const size = downloadTextFile(lessonHtmlDocument(subj.title || '교과', articles.join('\n'), '', source), `${safeFileName(subj.title || '교과')}_교안.html`, 'text/html;charset=utf-8');
-        window.noteReimportSize?.(size);
+        downloadTextFile(lessonHtmlDocument(subj.title || '교과', articles.join('\n'), '', source), `${safeFileName(subj.title || '교과')}_교안.html`, 'text/html;charset=utf-8');
     } catch (err) {
         console.error('[내보내기] 교과 문서 실패:', err);
         window.showAlert(`내보내기 중 오류가 났습니다: ${err.message}`);

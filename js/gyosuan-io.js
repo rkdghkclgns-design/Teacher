@@ -1,7 +1,6 @@
 // gyosuan-io.js - 완성 MD 변환, 내보낸 HTML 불러오기, 참고 이미지, 출력 형식 샘플
 // develocket-slide(assets/main.js·ref-images.js @3a7303f)의 동작을 차시 단위 저장에 맞춰 옮겼다.
 
-const GYOSUAN_FILE_MAX_BYTES = 64 * 1024 * 1024;
 const GYOSUAN_MD_ACCEPT = '.md,.markdown,.txt';
 
 function pickGyosuanFiles(accept, multiple = false) {
@@ -16,9 +15,36 @@ function pickGyosuanFiles(accept, multiple = false) {
     });
 }
 
-function readGyosuanFile(file) {
-    if (file.size > GYOSUAN_FILE_MAX_BYTES) return Promise.reject(new Error(`${file.name}: 파일이 너무 큽니다.`));
-    return file.text();
+// 파일을 조각으로 읽는다(크기 상한 없음, import-stream.js). 큰 파일은 읽는 동안 화면 왼쪽 아래에 읽은 MB를 보인다
+async function readGyosuanSkeleton(file) {
+    const progress = showReadProgress(file);
+    try {
+        return await readFileSkeleton(file, { onProgress: progress.update });
+    } finally {
+        progress.close();
+    }
+}
+
+const gyosuanTooBig = name => new Error(`${name}: 파일이 너무 커서 이 브라우저에서 한 번에 다룰 수 없습니다.`);
+
+// MD 글 전체. 떼어 둔 그림(data URL)은 글에 되돌린다(완성 MD 변환이 그림을 그림 목록으로 옮긴다, adoptInlineImages)
+async function readGyosuanFile(file) {
+    const read = await readGyosuanSkeleton(file);
+    try {
+        return read.restore(read.text);
+    } catch (err) {
+        throw isBackupTooBig(err) ? gyosuanTooBig(file.name) : err;
+    }
+}
+
+// 그림을 떼어 둔 글로 내보낸 슬라이드 HTML을 읽고, 슬라이드 HTML과 내장 원본(교수안·편성안·참고 이미지)에 그림을 되돌린다.
+// 수백 MB 파일도 DOMParser가 그림까지 여러 번 다시 읽지 않는다
+function readExportedGyosuanHtml(read) {
+    const K = window.KBuilder;
+    const imported = K.readExportedHtml(read.text);
+    if (!read.count) return imported;
+    const sourceText = imported.source ? new DOMParser().parseFromString(read.text, 'text/html').getElementById('kb-source')?.textContent : null;
+    return { ...imported, html: read.restore(imported.html), source: sourceText == null ? imported.source : K.readEmbeddedSource(read.restore(sourceText)) };
 }
 
 /* ---------- 이미지 ---------- */
@@ -132,11 +158,19 @@ function rememberImportedTheme(theme) {
 }
 
 // 스튜디오와 강사뷰가 함께 쓴다. session: 지금 연 차시 덱 번호, 없으면 null
-window.importGyosuanHtml = async function (moduleId, text, session = null) {
+// read: 조각으로 읽은 파일(importGyosuanHtmlFile). 있으면 그림을 떼어 둔 글로 읽는다(readExportedGyosuanHtml)
+window.importGyosuanHtml = async function (moduleId, text, session = null, read = null) {
     const mod = getEditingModule(moduleId);
     if (!mod) return { ok: false, error: '교안을 먼저 선택해주세요.' };
+    let imported;
     try {
-        const imported = window.KBuilder.readExportedHtml(text);
+        imported = read ? readExportedGyosuanHtml(read) : window.KBuilder.readExportedHtml(text);
+    } catch (err) {
+        // 슬라이드 HTML이 아닌 파일처럼 일부러 받지 않는 파일이다(까닭은 창에 보인다)
+        console.warn('[슬라이드] 불러올 수 없는 HTML입니다:', err?.message || err);
+        return { ok: false, error: isBackupTooBig(err) ? gyosuanTooBig('HTML').message : err?.message || 'HTML을 불러오지 못했습니다.' };
+    }
+    try {
         const target = importTarget(imported, session, mod.gyosuan?.docMd ? gyosuanSessionList(mod).length : 0);
         if (target.error) return { ok: false, error: target.error };
         if (gyosuanHasDeck(mod) && !confirm('불러온 파일로 이 슬라이드를 바꿉니다. 지금 슬라이드 내용은 사라집니다. 계속할까요?')) return { ok: false };
@@ -156,7 +190,8 @@ window.importGyosuanHtmlFile = async function (moduleId) {
     const [file] = await pickGyosuanFiles('.html,.htm');
     if (!file) return;
     try {
-        const result = await window.importGyosuanHtml(moduleId, await readGyosuanFile(file));
+        const read = await readGyosuanSkeleton(file);
+        const result = await window.importGyosuanHtml(moduleId, read.text, null, read);
         if (result.error) return window.showAlert(result.error);
         if (result.ok) window.openSlideStudio(moduleId);
     } catch (err) {

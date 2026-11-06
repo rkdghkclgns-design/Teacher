@@ -16,7 +16,7 @@ const HIGGSFIELD_POLL_RETRIES = 3; // 상태 조회가 연결 오류로 연달�
 const HIGGSFIELD_STOPPED = { failed: '생성에 실패했습니다', nsfw: '부적절한 내용으로 판단해 거절했습니다', canceled: '요청이 취소되었습니다' };
 const HIGGSFIELD_PROBE_ID = '00000000-0000-0000-0000-000000000000'; // 연결 확인용. 없는 요청이라 비용이 들지 않는다
 const HIGGSFIELD_RELAY_FILE = './relay/higgsfield-relay.mjs';
-const HIGGSFIELD_IMAGE_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp' };
+const HIGGSFIELD_IMAGE_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', avif: 'image/avif' };
 
 let higgsfieldKey = '';
 let higgsfieldRelayUrl = '';

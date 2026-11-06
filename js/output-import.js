@@ -4,21 +4,24 @@
 // 진짜 그림(data:image)만 담는다. 찾지 못한 그림 자리(teacher-image:…)·빈 값은 담지 않아, 다시 불러오면 빈 그림 자리로 센다.
 // MD 내보내기에는 차시·탭 표시(<!-- teacher-lesson / teacher-tab -->)를 넣는다(lesson-export.js, ui.js, gyosuan-view.js).
 // 불러오는 파일은 남이 준 것일 수 있어 글은 문자열만, 그림 키는 [\w-]만, 그림은 data:image만 받고 id는 새로 준다. 테스트: tests/output-import.test.js
+// 파일은 크기와 상관없이 조각으로 읽고 data URL을 따로 떼어 둔 글로 원본을 찾는다(import-stream.js). 숨은 원본이 없는 예전 HTML은 화면 글을 마크다운으로 바꾼다(output-old-html.js).
+// 판서 영상(<video data-wb-video>)은 표지 그림 자리에 다시 붙인다(넣을 때 영상 파일을 whiteboard-video.js와 같은 자리에 저장한다).
 
 const OUTPUT_FORMAT = 'teacher-lesson-export';
 const OUTPUT_VERSION = 2; // 1: 그림을 모두 원본에 담음(af5287a). 2: 화면에 보인 그림은 원본에 null로 적고 그 <img>에서 읽는다
-const OUTPUT_FILE_MB = 80;
-const OUTPUT_FILE_MAX = OUTPUT_FILE_MB * 1024 * 1024; // 그림이 든 교과 HTML도 받되, 브라우저가 멈출 만큼 큰 파일은 받지 않는다
+const OUTPUT_BIG_FILE = 80 * 1024 * 1024; // 예전에 받지 않던 크기. 이보다 큰 파일도 조각으로 읽고, 확인 창에 큰 파일이라고 알린다
 // 숨은 원본의 여는 태그와 닫는 태그. 정규식 대신 글자로 찾는다(닫지 않은 여는 태그가 아주 많은 파일에서도 한 번만 훑는다). 원본 JSON 안의 '<'는 이스케이프해 담는다(lessonSourceScript)
 const OUTPUT_SOURCE_OPEN = '<script type="application/json" id="teacher-source">';
 const OUTPUT_SOURCE_CLOSE = '</script>';
 const OUTPUT_TAB_RE = /<!--\s*teacher-tab:\s*([A-Za-z]+)\s*-->/g; // /g라서 .test()에 쓰지 않는다(lastIndex가 움직인다)
 const OUTPUT_TAB_MARK = /<!--\s*teacher-tab:/; // 탭 표시가 있는지만 볼 때
 const OUTPUT_LESSON_RE = /<!--\s*teacher-lesson:\s*title=([^\s]*)\s*-->/;
-const OUTPUT_IMAGE_RE = /^data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/;
+const OUTPUT_IMAGE_RE = /^data:image\/(png|jpe?g|gif|webp|avif|svg\+xml);base64,[A-Za-z0-9+/=]+$/;
+const OUTPUT_VIDEO_RE = /^data:video\/(mp4|webm|ogg);base64,[A-Za-z0-9+/=]+$/; // 판서 영상(whiteboard-video.js whiteboardHtmlForExport가 파일 안에 넣는다)
+const OUTPUT_VIDEO_EXT = { mp4: 'mp4', webm: 'webm', ogg: 'ogv' };
+const OUTPUT_VIDEO_TITLE = 200; // whiteboard-video.js WB_LABEL_MAX와 같은 길이
 const OUTPUT_PICTURE_RE = /^data:image\//; // 담을 그림인지(진짜 그림). data-safety.js보다 먼저 실리므로 따로 둔다
 const OUTPUT_IMAGE_KEY_RE = /^[\w-]{1,80}$/; // lesson-export.js EXPORT_IMAGE_KEY_RE, data-safety.js SAFE_IMAGE_KEY와 같은 규칙
-const OUTPUT_IMG_TAG_RE = /<img\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi; // 따옴표 안의 >에서 끊기지 않는다
 const OUTPUT_IMG_ATTR_RE = /\s([^\s=>"'\/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"']+)))?/g;
 const OUTPUT_NUMBER_HEAD = /^\d+[_.\s-]*/; // ZIP 파일 이름·머리의 01_ 같은 번호
 const OUTPUT_HTML_NAME = /\.html?$/i;
@@ -31,6 +34,8 @@ const OUTPUT_CONFIRM_TITLE = 40; // 확인 창에 보일 제목 글자 수
 const OUTPUT_CONFIRM_FAILED = 3; // 확인 창·알림에 까닭을 보일 건너뛴 파일 수
 const OUTPUT_DEDUPE_SCAN = 20; // 탭 글이 같은 차시끼리 견줄 때 앞에서부터 살피는 수(남이 만든 파일에 같은 차시가 아주 많아도 멈추지 않게)
 const OUTPUT_FILE_LESSONS = 2000; // 한 파일에서 받는 차시 수. 남이 만든 아주 긴 목록으로 확인 창 앞에서 멈추지 않게 한다(교과 HTML 하나에는 넉넉하다)
+const OUTPUT_IMPORT_LESSONS = OUTPUT_FILE_LESSONS; // 한 번에 불러오는 차시 수(고른 파일을 모두 합쳐). 넘으면 아무것도 넣지 않고 나눠 불러오라고 알린다
+const OUTPUT_NOTE_KEYS = ['old', 'diagrams', 'videosLost', 'unlabeled', 'unknownTabs', 'oversized']; // 확인 창이 세는 것(output-old-html.js)
 
 const outputText = value => (typeof value === 'string' ? value : '');
 
@@ -116,25 +121,108 @@ function outputImgAttributes(tag) {
     return attrs;
 }
 
-// 화면 그림 가운데 다시 불러오기 표시가 있는 것: Map('차시 번호/키' → 그림). 검사를 통과한 것만, 같은 자리는 처음 것만 쓴다
-// 브라우저는 DOMParser로 읽는다(스크립트가 돌지 않고 그림도 내려받지 않는다). DOMParser가 없으면(node 테스트) 태그를 직접 읽는다
-function readShownImages(html) {
-    const found = new Map();
-    const add = (lesson, key, src) => {
-        if (!/^\d{1,4}$/.test(String(lesson)) || !OUTPUT_IMAGE_KEY_RE.test(String(key)) || typeof src !== 'string' || !OUTPUT_IMAGE_RE.test(src)) return;
-        const at = `${Number(lesson)}/${key}`;
-        if (!found.has(at)) found.set(at, src);
-    };
-    if (typeof DOMParser === 'function') {
-        const doc = new DOMParser().parseFromString(html, 'text/html');
-        doc.querySelectorAll('img[data-teacher-image]').forEach(img => add(img.getAttribute('data-teacher-lesson') ?? '0', img.getAttribute('data-teacher-image'), img.getAttribute('src')));
-        return found;
-    }
-    for (const [tag] of html.matchAll(OUTPUT_IMG_TAG_RE)) {
-        const attrs = outputImgAttributes(tag);
-        if (attrs.has('data-teacher-image')) add(attrs.get('data-teacher-lesson') ?? '0', attrs.get('data-teacher-image'), attrs.get('src'));
+// 여는 태그(img, video …)마다 속성 Map. 따옴표 안의 >에서 끊기지 않고, 닫히지 않은 태그를 만나면 거기서 멈춘다(한 번만 훑는다).
+// from·to: 이 글자 범위에서 시작하는 태그만. DOMParser가 없을 때(node 테스트) 쓴다
+function outputTags(html, name, from = 0, to = html.length) {
+    const found = [];
+    const start = new RegExp(`<${name}\\b`, 'gi');
+    start.lastIndex = from;
+    for (let match = start.exec(html); match && match.index < to; match = start.exec(html)) {
+        let end = match.index + match[0].length;
+        let quote = '';
+        for (; end < html.length; end++) {
+            const ch = html[end];
+            if (quote) {
+                if (ch === quote) quote = '';
+            } else if (ch === '"' || ch === "'") {
+                quote = ch;
+            } else if (ch === '>') {
+                break;
+            }
+        }
+        if (end >= html.length) break;
+        found.push(outputImgAttributes(html.slice(match.index, end + 1)));
+        start.lastIndex = end + 1;
     }
     return found;
+}
+
+// 파일 HTML을 한 번만 파싱한다(스크립트가 돌지 않고 그림도 내려받지 않는다). DOMParser가 없으면 null
+function outputDomOnce(html) {
+    let doc;
+    return () => {
+        if (doc === undefined) doc = typeof DOMParser === 'function' ? new DOMParser().parseFromString(html, 'text/html') : null;
+        return doc;
+    };
+}
+
+// 화면 그림 가운데 다시 불러오기 표시가 있는 것: Map('차시 번호/키' → 그림). 검사를 통과한 것만, 같은 자리는 처음 것만 쓴다
+// read: 조각으로 읽은 파일(떼어 둔 data URL을 되돌린다, import-stream.js). dom: outputDomOnce
+function readShownImages(html, read = streamPlain(html), dom = outputDomOnce(html)) {
+    const found = new Map();
+    const add = (lesson, key, src) => {
+        const data = read.dataOf(src);
+        if (!/^\d{1,4}$/.test(String(lesson)) || !OUTPUT_IMAGE_KEY_RE.test(String(key)) || typeof data !== 'string' || !OUTPUT_IMAGE_RE.test(data)) return;
+        const at = `${Number(lesson)}/${key}`;
+        if (!found.has(at)) found.set(at, data);
+    };
+    const doc = dom();
+    if (doc) {
+        Array.from(doc.querySelectorAll('img[data-teacher-image]')).forEach(img => add(img.getAttribute('data-teacher-lesson') ?? '0', img.getAttribute('data-teacher-image'), img.getAttribute('src')));
+        return found;
+    }
+    outputTags(html, 'img').forEach(attrs => {
+        if (attrs.has('data-teacher-image')) add(attrs.get('data-teacher-lesson') ?? '0', attrs.get('data-teacher-image'), attrs.get('src'));
+    });
+    return found;
+}
+
+// 판서 영상 [{ src, poster, title }]. 영상·표지 그림은 data URL로 되돌린 값
+function outputVideosOf(html, read, dom) {
+    if (!html.includes('<video')) return [];
+    const doc = dom();
+    const tags = doc
+        ? Array.from(doc.querySelectorAll('video[data-wb-video]'), video => ({ src: video.getAttribute('src'), poster: video.getAttribute('poster'), label: video.getAttribute('aria-label') }))
+        : outputTags(html, 'video').filter(attrs => attrs.has('data-wb-video')).map(attrs => ({ src: attrs.get('src'), poster: attrs.get('poster'), label: attrs.get('aria-label') }));
+    return tags.map(tag => ({
+        src: read.dataOf(tag.src || ''),
+        poster: read.dataOf(tag.poster || ''),
+        title: String(tag.label || '').replace(/^판서 영상:\s*/, '').trim().slice(0, OUTPUT_VIDEO_TITLE)
+    }));
+}
+
+// 원본을 담은 HTML의 판서 영상을 그 표지 그림과 같은 그림 키에 붙인다(내보낼 때 표지 <img>는 빠지고 그림은 원본에 남는다).
+// 맞는 그림 키를 찾지 못한 영상은 첫 차시의 importNotes.videosLost로 센다
+function withOutputVideos(lessons, html, read, dom) {
+    const videos = outputVideosOf(html, read, dom);
+    if (!videos.length) return lessons;
+    const placed = lessons.map(lesson => (lesson && typeof lesson === 'object' ? { ...lesson, videos: [] } : lesson));
+    let lost = 0;
+    videos.forEach(video => {
+        const owner = OUTPUT_VIDEO_RE.test(video.src) && OUTPUT_IMAGE_RE.test(video.poster) ? placed.find(lesson => lesson?.videos
+            && Object.entries(lesson.images || {}).some(([key, data]) => data === video.poster && !lesson.videos.some(item => item.key === key))) : null;
+        if (!owner) {
+            lost += 1;
+            return;
+        }
+        const [key] = Object.entries(owner.images).find(([itemKey, data]) => data === video.poster && !owner.videos.some(item => item.key === itemKey));
+        owner.videos.push({ key, data: video.src, title: video.title });
+    });
+    const first = placed.findIndex(lesson => lesson && typeof lesson === 'object');
+    if (lost && first >= 0) placed[first] = { ...placed[first], importNotes: { ...placed[first].importNotes, videosLost: lost } };
+    return placed;
+}
+
+// 원본 JSON의 글·그림 값 속 표시를 원래 data URL로 되돌린다. 원본에 적힌 영상·확인 창 칸은 받지 않는다(화면에서 읽는다)
+function outputRestoredLesson(lesson, read) {
+    const { videos, importNotes, ...rest } = lesson;
+    if (!read.count) return rest;
+    const text = value => (typeof value === 'string' ? read.restore(value) : value);
+    const values = map => (map && typeof map === 'object' && !Array.isArray(map) ? Object.fromEntries(Object.entries(map).map(([key, value]) => [key, text(value)])) : map);
+    const gyosuan = rest.gyosuan && typeof rest.gyosuan === 'object'
+        ? { ...rest.gyosuan, docMd: text(rest.gyosuan.docMd), deckMd: text(rest.gyosuan.deckMd), images: values(rest.gyosuan.images) }
+        : rest.gyosuan;
+    return { ...rest, title: text(rest.title), description: text(rest.description), tabContents: values(rest.tabContents), images: values(rest.images), gyosuan };
 }
 
 const outputHasShownImage = images => !!images && typeof images === 'object' && Object.values(images).some(data => data === null);
@@ -156,7 +244,8 @@ function outputSourceText(html) {
     return end < 0 ? null : html.slice(from, end);
 }
 
-function parseOutputHtml(text) {
+// read: 조각으로 읽은 파일(import-stream.js). 글로 받으면 떼어 둔 것이 없는 것으로 본다
+function parseOutputHtml(text, read = streamPlain(text)) {
     const html = String(text || '');
     const source = outputSourceText(html);
     if (source === null) return null;
@@ -169,14 +258,20 @@ function parseOutputHtml(text) {
     }
     if (!data || data.format !== OUTPUT_FORMAT || !Array.isArray(data.lessons)) return null;
     const isObject = value => !!value && typeof value === 'object';
-    // 예전(version 1) 파일처럼 그림이 모두 원본에 들어 있으면 화면은 읽지 않는다
-    if (!data.lessons.some(lesson => isObject(lesson) && (outputHasShownImage(lesson.images) || outputHasShownImage(lesson.gyosuan?.images)))) return data.lessons;
-    const shown = readShownImages(html);
-    return data.lessons.map((lesson, index) => {
+    const dom = outputDomOnce(html);
+    const lessons = data.lessons.map(lesson => (isObject(lesson) ? outputRestoredLesson(lesson, read) : lesson));
+    // 예전(version 1) 파일처럼 그림이 모두 원본에 들어 있으면 화면 그림은 읽지 않는다. 교수안 그림이 원본에 없던 version 1 교수안 HTML은 화면 교수안에서 되찾는다
+    if (!lessons.some(lesson => isObject(lesson) && (outputHasShownImage(lesson.images) || outputHasShownImage(lesson.gyosuan?.images)))) {
+        const filled = data.version === 1 && lessons.length === 1 ? [withOldGyosuanImages(lessons[0], html, read, dom)] : lessons;
+        return withOutputVideos(filled, html, read, dom);
+    }
+    const shown = readShownImages(html, read, dom);
+    const filled = lessons.map((lesson, index) => {
         if (!isObject(lesson)) return lesson;
         const gyosuan = isObject(lesson.gyosuan) ? { ...lesson.gyosuan, images: fillShownImages(lesson.gyosuan.images, index, shown) } : lesson.gyosuan;
         return { ...lesson, images: fillShownImages(lesson.images, index, shown), gyosuan };
     });
+    return withOutputVideos(filled, html, read, dom);
 }
 
 // 탭 id·이름. 앞 번호(ZIP의 01_기본학습)와 띄어쓰기는 보지 않는다
@@ -272,6 +367,22 @@ function mergeTabFiles(items) {
 const outputValidImages = raw => Object.fromEntries(Object.entries(raw && typeof raw === 'object' ? raw : {})
     .filter(([key, data]) => OUTPUT_IMAGE_KEY_RE.test(key) && typeof data === 'string' && OUTPUT_IMAGE_RE.test(data)));
 
+// 판서 영상: 그림이 있는 그림 키마다 하나, 영상은 data:video만, 제목은 글자만
+function outputValidVideos(list, images) {
+    const seen = new Set();
+    return (Array.isArray(list) ? list : [])
+        .filter(video => video && typeof video === 'object' && OUTPUT_IMAGE_KEY_RE.test(String(video.key)) && typeof images[video.key] === 'string'
+            && typeof video.data === 'string' && OUTPUT_VIDEO_RE.test(video.data) && !seen.has(String(video.key)) && seen.add(String(video.key)))
+        .map(video => ({ key: String(video.key), data: video.data, title: outputText(video.title).slice(0, OUTPUT_VIDEO_TITLE) }));
+}
+
+// 확인 창이 세는 수(예전 형식, 그림으로 넣은 다이어그램 등). 0보다 큰 정수만
+function outputImportNotes(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const notes = Object.fromEntries(OUTPUT_NOTE_KEYS.map(key => [key, Math.floor(Number(raw[key]) || 0)]).filter(([, count]) => count > 0));
+    return Object.keys(notes).length ? notes : null;
+}
+
 function normalizeImportedLesson(raw, id) {
     const source = raw && typeof raw === 'object' ? raw : {};
     const tabs = source.tabContents && typeof source.tabContents === 'object' ? source.tabContents : {};
@@ -281,6 +392,8 @@ function normalizeImportedLesson(raw, id) {
     const docMd = outputText(gyosuanSource?.docMd);
     const content = LESSON_TABS.map(tab => tabContents[tab.id] || '').filter(Boolean).join(OUTPUT_TAB_SEPARATOR);
     const hours = Number(source.hours);
+    const videos = outputValidVideos(source.videos, images);
+    const notes = outputImportNotes(source.importNotes);
     return {
         id,
         title: outputText(source.title).trim().slice(0, 300) || '불러온 차시',
@@ -292,7 +405,10 @@ function normalizeImportedLesson(raw, id) {
         images,
         ...(docMd ? { gyosuan: { docMd, deckMd: outputText(gyosuanSource.deckMd), images: outputValidImages(gyosuanSource.images), updatedAt: new Date().toISOString() } } : {}),
         uploadedMdName: null,
-        uploadedMdContent: null
+        uploadedMdContent: null,
+        // 넣기 전에 떼는 칸: 저장할 판서 영상(importOutputFiles가 영상 파일로 저장한다)과 확인 창에 셀 것
+        ...(videos.length ? { videos } : {}),
+        ...(notes ? { importNotes: notes } : {})
     };
 }
 
@@ -331,10 +447,12 @@ function outputAbsorbLesson(keep, drop) {
     const other = drop.lesson;
     const title = outputTitleRank(drop) > outputTitleRank(keep) ? { title: other.title } : {};
     const gyosuan = lesson.gyosuan && other.gyosuan ? { gyosuan: { ...lesson.gyosuan, images: { ...other.gyosuan.images, ...lesson.gyosuan.images } } } : {};
+    const kept = lesson.videos || [];
+    const videos = [...kept, ...(other.videos || []).filter(video => !kept.some(item => item.key === video.key))];
     return {
         ...keep,
         titleRank: Math.max(outputTitleRank(keep), outputTitleRank(drop)),
-        lesson: { ...lesson, ...title, images: { ...other.images, ...lesson.images }, ...gyosuan }
+        lesson: { ...lesson, ...title, images: { ...other.images, ...lesson.images }, ...gyosuan, ...(videos.length ? { videos } : {}) }
     };
 }
 
@@ -383,37 +501,68 @@ const outputShortTitle = title => {
 const outputFailedLines = failed => [...failed.slice(0, OUTPUT_CONFIRM_FAILED).map(line => `· ${line}`),
     ...(failed.length > OUTPUT_CONFIRM_FAILED ? [`· 외 ${failed.length - OUTPUT_CONFIRM_FAILED}개`] : [])];
 
-// 차시 한 줄: 제목, 다음 줄에 탭별 글자 수·그림 장수·교수안
+// 차시 한 줄: 제목, 다음 줄에 탭별 글자 수·그림 장수·판서 영상·교수안
 function outputLessonLine(lesson) {
     const tabs = LESSON_TABS.filter(tab => lesson.tabContents[tab.id]).map(tab => `${tab.label} ${outputCount(lesson.tabContents[tab.id].length)}자`);
     const images = outputImageKeys(lesson).length;
-    const parts = [...tabs, ...(images ? [`그림 ${images}장`] : []), ...(lesson.gyosuan ? ['교수안'] : [])];
+    const videos = (lesson.videos || []).length;
+    const parts = [...tabs, ...(images ? [`그림 ${images}장`] : []), ...(videos ? [`판서 영상 ${videos}개`] : []), ...(lesson.gyosuan ? ['교수안'] : [])];
     return `· ${outputShortTitle(lesson.title)}\n   ${parts.join(' · ') || '글 없음'}`;
 }
 
-// 불러오기 확인 창 글. items: [{ lesson(검사를 거친 차시), from: 'html' | 'md' }], failed: ['파일 이름: 까닭']
-function describeOutputImport(items, { fileCount, where, dropped = 0, failed = [] }) {
+// 차시마다 센 것(importNotes)의 합
+const outputNoteSum = (lessons, key) => lessons.reduce((sum, lesson) => sum + (lesson.importNotes?.[key] || 0), 0);
+const outputMb = bytes => outputCount(Math.round(Number(bytes) / (1024 * 1024)));
+
+// 예전 형식 HTML(숨은 원본 없음)·판서 영상·다이어그램·너무 큰 그림처럼 무엇이 돌아오고 무엇이 돌아오지 않는지
+function outputRestoreNotes(lessons) {
+    const oldCount = lessons.filter(lesson => lesson.importNotes?.old).length;
+    const videos = lessons.reduce((sum, lesson) => sum + (lesson.videos || []).length, 0);
+    const lost = outputNoteSum(lessons, 'videosLost');
+    const diagrams = outputNoteSum(lessons, 'diagrams');
+    const unlabeled = outputNoteSum(lessons, 'unlabeled');
+    const unknownTabs = outputNoteSum(lessons, 'unknownTabs');
+    const oversized = outputNoteSum(lessons, 'oversized');
+    return [
+        oldCount && `· 숨은 원본이 없는 예전 HTML(차시 ${oldCount}개)은 화면에 보이는 글을 교안 글로 바꿔 되살립니다. 표·색 글씨·그림 칸처럼 마크다운으로 같게 그릴 수 없는 부분은 HTML 그대로 넣습니다. 차시 설명·시간은 파일에 없어 비워 둡니다.`,
+        unlabeled && `· 탭 이름이 없는 글 ${unlabeled}곳은 기본학습 탭(차 있으면 다음 빈 탭)에 넣습니다.`,
+        unknownTabs && `· 이름을 모르는 탭 ${unknownTabs}개는 빈 탭에 넣습니다.`,
+        diagrams && `· 다이어그램 ${diagrams}개는 파일에 원본 코드가 없어 그림으로 넣습니다. 고치려면 다이어그램을 다시 만들어야 합니다.`,
+        videos && `· 판서 영상 ${videos}개는 그 그림 자리에 되살립니다.`,
+        lost && `· 판서 영상 ${lost}개는 영상이나 표지 그림이 파일에 없어 되살리지 못합니다(표지 그림이 있으면 그림으로 남습니다).`,
+        oversized && `· 너무 큰 그림·영상 ${oversized}개(하나에 ${outputMb(STREAM_DATA_MAX)}MB 넘음)는 넣지 않습니다.`
+    ].filter(Boolean);
+}
+
+// 불러오기 확인 창 글. items: [{ lesson(검사를 거친 차시), from: 'html' | 'md' }], failed: ['파일 이름: 까닭'], bigFile: 가장 큰 큰 파일의 바이트(없으면 0)
+// 넣은 뒤 작업이 아주 커져도 브라우저에 저장한다(state.js writeBrowserState가 JSON 파일로 저장한다)
+function describeOutputImport(items, { fileCount, where, dropped = 0, failed = [], bigFile = 0 }) {
     const lessons = items.map(item => item.lesson);
     const list = lessons.slice(0, OUTPUT_CONFIRM_LESSONS).map(outputLessonLine);
-    if (lessons.length > OUTPUT_CONFIRM_LESSONS) list.push(`· 외 차시 ${lessons.length - OUTPUT_CONFIRM_LESSONS}개`);
+    if (lessons.length > OUTPUT_CONFIRM_LESSONS) list.push(`· 외 차시 ${outputCount(lessons.length - OUTPUT_CONFIRM_LESSONS)}개`);
     const missing = from => items.filter(item => item.from === from).reduce((sum, item) => sum + missingImageCount(item.lesson), 0);
     const mdMissing = missing('md');
     const htmlMissing = missing('html');
     const notes = [
-        items.some(item => item.from === 'html') && '· HTML은 파일 안에 숨겨 둔 원본(내보낼 때의 글)으로 되살립니다. 다른 프로그램에서 HTML을 고쳤다면 고친 글은 들어오지 않습니다.',
+        bigFile && `· 큰 파일(${outputMb(bigFile)}MB)도 조각으로 나눠 읽었습니다. 넣은 뒤 저장하는 데 시간이 조금 걸릴 수 있습니다.`,
+        items.some(item => item.from === 'html' && !item.lesson.importNotes?.old) && '· HTML은 파일 안에 숨겨 둔 원본(내보낼 때의 글)으로 되살립니다. 다른 프로그램에서 HTML을 고쳤다면 고친 글은 들어오지 않습니다.',
+        ...outputRestoreNotes(lessons),
         items.some(item => item.from === 'md') && `· MD 파일에는 그림이 담기지 않습니다.${mdMissing ? ` 그림 자리 ${mdMissing}곳은 빈칸이 됩니다. 그림까지 옮기려면 HTML이나 백업 ZIP을 쓰세요.` : ''}`,
         htmlMissing && `· 그림 ${htmlMissing}곳은 파일에서 찾지 못해 빈칸이 됩니다.`,
         !lessons.some(lesson => lesson.gyosuan) && '· 교수안은 들어 있지 않습니다. 교수안까지 되살리려면 교수안 화면의 HTML 버튼으로 받은 파일을 고르세요.',
-        "· 되살리는 것은 파일에 담긴 차시 제목·설명·시간, 탭 글, 그림, 교수안뿐입니다. 차시 정보의 나머지 칸, 섹션 고정, 수동 검수 기록, 슬라이드 화면 편집, 참고 이미지, 삽화 목록, NCS, 판서 영상 같은 것은 돌아오지 않습니다. 모두 되살리려면 '백업 ZIP으로 되살리기'를 쓰세요.",
+        "· 되살리는 것은 파일에 담긴 차시 제목·설명·시간, 탭 글, 그림, 판서 영상, 교수안뿐입니다. 차시 정보의 나머지 칸, 섹션 고정, 수동 검수 기록, 슬라이드 화면 편집, 참고 이미지, 삽화 목록, NCS 같은 것은 돌아오지 않습니다. 모두 되살리려면 '백업 ZIP으로 되살리기'를 쓰세요.",
         dropped && `· 여러 파일에 같은 차시가 있어 겹친 ${dropped}개는 빼고 한 번만 넣습니다.`
     ].filter(Boolean);
     const skipped = failed.length ? ['', `건너뛰는 파일 ${failed.length}개`, ...outputFailedLines(failed)] : [];
-    return [`파일 ${fileCount}개에서 차시 ${lessons.length}개를 찾았습니다.`, `${where} 새 차시로 넣습니다. 지금 있는 차시는 그대로 둡니다.`,
+    return [`파일 ${fileCount}개에서 차시 ${outputCount(lessons.length)}개를 찾았습니다.`, `${where} 새 차시로 넣습니다. 지금 있는 차시는 그대로 둡니다.`,
         '', ...list, '', ...notes, ...skipped].join('\n');
 }
 
 /* ---------- 화면: 내보내기·백업 → 내보낸 교안 다시 불러오기 ---------- */
 const onEditorScreen = () => /^#editor/.test(location.hash) && !!globalState.subjects.find(s => s.id === currentSubjectId);
+// 저장된 작업을 읽지 못한 동안 고르면 보이는 말(불러온 차시를 저장할 수 없다. 백업 ZIP 되살리기와 같은 규칙)
+const OUTPUT_UNREAD_TEXT = '저장된 작업을 읽지 못한 동안에는 내보낸 교안을 불러오지 않습니다(불러온 차시를 저장할 수 없습니다).\n'
+    + "먼저 막는 창에서 다시 읽거나 백업 ZIP·저장해 둔 폴더로 되살린 뒤 불러오세요. 없으면 '새로 시작'을 누른 뒤 불러오세요.";
 
 // 편집 중인 교과가 있으면 거기에, 아니면 새 교과를 만들어 넣는다
 function outputImportTarget() {
@@ -423,27 +572,33 @@ function outputImportTarget() {
     return { subject, isNew: true };
 }
 
-// 원본을 읽지 못한 HTML의 까닭과 쓸 메뉴
+// 원본을 읽지 못한 HTML의 까닭과 쓸 메뉴(이 앱이 원본 없이 내보낸 교안 HTML은 화면 글로 되살리므로 여기 오지 않는다)
 function outputHtmlMissingReason(text) {
     if (/id=["']kb-source["']/.test(text)) return "슬라이드 HTML입니다. 그 차시의 교수안 화면에서 '내보낸 HTML 불러오기'로 넣으세요";
     if (text.includes('id="teacher-source"')) return '파일 안의 원본이 잘렸거나 깨져 읽지 못했습니다. 이 앱에서 다시 내보내 주세요';
-    return "되살릴 원본이 없는 HTML입니다(이 앱의 예전 버전에서 내보냈거나 다른 프로그램의 파일). 백업 ZIP에서 꺼낸 파일이면 그 ZIP을 '백업 ZIP으로 되살리기'로 여세요";
+    return "되살릴 원본이 없는 HTML입니다(다른 프로그램의 파일이거나 예전 교수안 HTML). 백업 ZIP에서 꺼낸 파일이면 그 ZIP을 '백업 ZIP으로 되살리기'로 여세요";
 }
 
-// 고른 파일을 읽기 전에 거른다. 문제가 있으면 까닭(글)을, 없으면 null
+// 고른 파일을 읽기 전에 거른다. 문제가 있으면 까닭(글)을, 없으면 null. 크기는 보지 않는다(조각으로 읽는다, import-stream.js)
 function outputFileProblem(file) {
     const name = String(file?.name || '');
     if (/\.zip$/i.test(name)) return "ZIP 파일은 '백업 ZIP으로 되살리기'로 여세요";
     if (!OUTPUT_HTML_NAME.test(name) && !OUTPUT_MD_NAME.test(name)) return 'HTML이나 MD 파일만 불러올 수 있습니다';
-    if (file.size > OUTPUT_FILE_MAX) return `파일이 너무 큽니다(${OUTPUT_FILE_MB}MB 넘음). 그림이 많은 교과는 '백업 ZIP으로 되살리기'를 쓰거나, 그림 없이 옮기려면 MD로 내보내 불러오세요`;
     return null;
+}
+
+// MD 결과의 글 속 표시를 원래 data URL로 되돌린다(MD의 그림은 글에 그대로 둔다)
+function outputRestoredMarkdown(raw, read) {
+    if (!read.count) return raw;
+    return { ...raw, title: read.restore(raw.title), tabContents: Object.fromEntries(Object.entries(raw.tabContents).map(([id, md]) => [id, read.restore(md)])) };
 }
 
 // 파일 글 → [{ raw, from, tabFile, titleRank }]. 되살릴 수 없으면 까닭을 담아 던진다
 // titleRank(겹친 차시를 견줄 때 쓴다): 2 = 파일 안에 적힌 제목(HTML 원본, MD 차시 표시), 1 = 파일 이름에서 딴 제목, 0 = 없음
-function readOutputText(name, text) {
+// read: 조각으로 읽은 파일(import-stream.js). 글로 받으면 떼어 둔 것이 없는 것으로 본다
+function readOutputText(name, text, read = streamPlain(text)) {
     if (OUTPUT_HTML_NAME.test(name)) {
-        const lessons = parseOutputHtml(text);
+        const lessons = parseOutputHtml(text, read);
         if (!lessons) throw new Error(outputHtmlMissingReason(String(text || '')));
         if (!lessons.length) throw new Error('들어 있는 차시가 없습니다');
         if (lessons.length > OUTPUT_FILE_LESSONS) throw new Error(`차시가 너무 많은 파일입니다(${outputCount(OUTPUT_FILE_LESSONS)}개 넘음). '백업 ZIP으로 되살리기'를 쓰세요`);
@@ -454,17 +609,73 @@ function readOutputText(name, text) {
             ? "여러 차시의 교수안을 모은 읽기용 MD라 되살릴 수 없습니다. 모두 되살리려면 '백업 ZIP으로 되살리기'를 쓰세요"
             : "교수안·편성안 MD입니다. 그 차시의 교수안 화면에서 '완성 MD 불러오기'로 넣으세요");
     }
-    const lessons = parseOutputMarkdown(text, name);
+    const lessons = parseOutputMarkdown(text, name).map(raw => outputRestoredMarkdown(raw, read));
     if (lessons.every(raw => !Object.keys(raw.tabContents).length)) throw new Error('불러올 교안 글이 없습니다');
     const tabFile = outputTabFileOf(text, name);
     const marked = !!outputMarkTitle(text).trim();
     return lessons.map(raw => ({ raw, from: 'md', tabFile, titleRank: marked ? 2 : raw.title.trim() ? 1 : 0 }));
 }
 
-async function readOutputFile(file) {
+// 파일 하나를 조각으로 읽는다(크기 상한 없음). 숨은 원본이 없는 이 앱의 예전 교안 HTML은 화면 글을 마크다운으로 바꾼다(output-old-html.js)
+// progress: showReadProgress(import-stream.js). 너무 커서 넣지 못한 그림·영상 수는 그 파일의 첫 차시에 적는다
+async function readOutputFile(file, progress = null) {
     const problem = outputFileProblem(file);
     if (problem) throw new Error(problem);
-    return readOutputText(file.name, await file.text());
+    const read = await readFileSkeleton(file, { onProgress: progress?.update });
+    const old = OUTPUT_HTML_NAME.test(file.name) && !read.text.includes(OUTPUT_SOURCE_OPEN) && isOldOutputHtml(read.text);
+    const items = old ? await readOldOutputHtml(file.name, read, progress) : readOutputText(file.name, read.text, read);
+    if (!read.oversized || !items.length || !items[0].raw || typeof items[0].raw !== 'object') return items;
+    const [first, ...rest] = items;
+    return [{ ...first, raw: { ...first.raw, importNotes: { ...first.raw.importNotes, oversized: read.oversized } } }, ...rest];
+}
+
+// 고른 파일을 차례로 읽는다 → { found, failed, bigFile, overCap }. 차시가 모두 합쳐 상한을 넘으면 더 읽지 않고 overCap에 그 파일 이름을 담는다
+// (그때는 아무것도 넣지 않는다. 일부만 들어가 차시 순서가 비거나 ZIP의 탭 MD가 갈리지 않게)
+async function readOutputFiles(files) {
+    const found = [];
+    const failed = [];
+    let bigFile = 0;
+    for (const [index, file] of files.entries()) {
+        const progress = showReadProgress(file);
+        try {
+            const items = await readOutputFile(file, progress);
+            if (found.length + items.length > OUTPUT_IMPORT_LESSONS) return { found, failed, bigFile, overCap: file.name };
+            found.push(...items.map(item => ({ ...item, file: index })));
+            if (file.size > OUTPUT_BIG_FILE) bigFile = Math.max(bigFile, file.size);
+        } catch (err) {
+            console.warn('[불러오기] 건너뛴 파일:', file.name, err); // 일부러 건너뛰는 파일이다. 까닭은 확인 창·알림에 보인다
+            failed.push(`${file.name}: ${err.message}`);
+        } finally {
+            progress.close();
+        }
+    }
+    return { found, failed, bigFile, overCap: '' };
+}
+
+// 판서 영상을 whiteboard-video.js와 같은 모양으로 넣는다: 영상 파일은 DBManager의 WB_VIDEO_KEY(새 영상 id), 차시에는 whiteboardVideos[그림 키].
+// 영상 id는 새로 만든다(이 브라우저의 다른 차시 영상 파일을 덮지 않게). 넣기 전에 뗄 칸(videos, importNotes)은 차시에 남기지 않는다
+async function storeOutputVideos(lessons) {
+    const stored = [];
+    let failed = 0;
+    const placed = [];
+    for (const lesson of lessons) {
+        const { videos = [], importNotes, ...rest } = lesson;
+        const whiteboardVideos = {};
+        for (const video of videos) {
+            const id = newWhiteboardRequestId();
+            try {
+                await DBManager.setItem(WB_VIDEO_KEY(id), dataUrlBlob(video.data));
+                stored.push(id);
+                const type = video.data.slice('data:video/'.length, video.data.indexOf(';'));
+                whiteboardVideos[video.key] = { id, title: video.title || rest.title, ext: OUTPUT_VIDEO_EXT[type] || 'mp4', at: Date.now() };
+            } catch (err) {
+                console.warn('[불러오기] 판서 영상을 저장하지 못했습니다:', err);
+                failed += 1;
+            }
+        }
+        placed.push(Object.keys(whiteboardVideos).length ? { ...rest, whiteboardVideos } : rest);
+    }
+    return { lessons: placed, stored, failed };
 }
 
 window.importOutputFiles = async function (event) {
@@ -472,15 +683,10 @@ window.importOutputFiles = async function (event) {
     const files = Array.from(input.files || []);
     input.value = ''; // 같은 파일을 다시 고를 수 있게
     if (!files.length) return;
-    const found = [];
-    const failed = [];
-    for (const [index, file] of files.entries()) {
-        try {
-            found.push(...(await readOutputFile(file)).map(item => ({ ...item, file: index })));
-        } catch (err) {
-            console.error('[불러오기] 파일 실패:', file.name, err);
-            failed.push(`${file.name}: ${err.message}`);
-        }
+    if (typeof isStateLoadFailed === 'function' && isStateLoadFailed()) return window.showAlert(OUTPUT_UNREAD_TEXT);
+    const { found, failed, bigFile, overCap } = await readOutputFiles(files);
+    if (overCap) {
+        return window.showAlert(`고른 파일의 차시가 모두 합쳐 ${outputCount(OUTPUT_IMPORT_LESSONS)}개를 넘습니다('${overCap}'에서 넘음). 아무것도 넣지 않았습니다. 파일을 나눠 불러오세요.`);
     }
     // ZIP의 탭 MD는 한 차시로 묶고, 검사한 뒤 다른 파일에서 온 같은 차시는 한 번만 넣는다
     const prepared = mergeTabFiles(found)
@@ -490,12 +696,13 @@ window.importOutputFiles = async function (event) {
     if (!kept.length) return window.showAlert(['불러올 교안을 찾지 못했습니다.', ...outputFailedLines(failed)].join('\n'));
     const { subject, isNew } = outputImportTarget();
     const where = isNew ? `새 교과 '${subject.title}'를 만들어` : `'${subject.title}' 교과에`;
-    const ok = await confirmAsync(describeOutputImport(kept, { fileCount: files.length, where, dropped, failed }), { okLabel: '불러오기', tone: 'primary', title: '내보낸 교안 다시 불러오기' });
+    const ok = await confirmAsync(describeOutputImport(kept, { fileCount: files.length, where, dropped, failed, bigFile }), { okLabel: '불러오기', tone: 'primary', title: '내보낸 교안 다시 불러오기' });
     if (!ok) return;
     window.saveRawContent?.(); // 고치던 원문을 먼저 저장한다
     const existing = isNew ? [] : (subject.id === currentSubjectId ? courseData : subject.lessons || []);
     const ids = renumberLessons(kept.map(() => ({})), existing.map(lesson => lesson.id)).map(lesson => lesson.id);
-    const lessons = kept.map((item, i) => ({ ...item.lesson, id: ids[i] }));
+    const { lessons, stored, failed: lostVideos } = await storeOutputVideos(kept.map((item, i) => ({ ...item.lesson, id: ids[i] })));
+    const before = { subjects: globalState.subjects, courseData, lessons: subject.lessons };
     if (isNew) {
         globalState.subjects = [...globalState.subjects, { ...subject, lessons }];
     } else if (subject.id === currentSubjectId) {
@@ -503,9 +710,23 @@ window.importOutputFiles = async function (event) {
     } else {
         subject.lessons = [...existing, ...lessons];
     }
-    await saveState();
+    // 브라우저에 저장하지 못하면 넣기 전으로 돌리고 방금 저장한 영상 파일도 지운다. 이어진 PC 폴더에는 브라우저에 저장한 뒤에만 쓴다(백업 ZIP 되살리기와 같은 규칙)
+    const saved = (await saveState({ folder: false })) !== false;
+    if (!saved) {
+        globalState.subjects = before.subjects;
+        courseData = before.courseData;
+        subject.lessons = before.lessons;
+        await Promise.all(stored.map(id => DBManager.deleteItem(WB_VIDEO_KEY(id)).catch(err => console.warn('[불러오기] 영상 파일을 지우지 못했습니다:', err))));
+        const resaved = (await saveState()) !== false;
+        if (!isNew) renderSidebar();
+        return window.showAlert('불러온 차시를 브라우저에 저장하지 못해 넣지 않았습니다. 화면은 불러오기 전으로 돌려 두었습니다.\n'
+            + '브라우저 저장 공간이 모자라거나 이 사이트의 저장을 막았을 수 있습니다. 확인한 뒤 다시 불러와 주세요.'
+            + (resaved ? '' : '\n불러오기 전 작업도 다시 저장하지 못했습니다. 브라우저 저장 공간을 확인한 뒤 Ctrl+S로 다시 저장해 주세요.'));
+    }
+    if (typeof projectFolderHandle !== 'undefined' && projectFolderHandle) syncToLinkedFolder().catch(err => console.warn('폴더 동기화 경고:', err.message));
     // 건너뛴 파일과 까닭은 확인 창에서 이미 보였다
     window.showToast?.(`차시 ${lessons.length}개를 불러왔습니다. 바로 고칠 수 있습니다.`, 'success');
+    if (lostVideos) window.showAlert(`판서 영상 ${lostVideos}개는 이 브라우저에 저장하지 못해 넣지 않았습니다. 그 자리는 표지 그림으로 보입니다.`);
     if (isNew) location.hash = `#editor/${subject.id}/${lessons[0].id}`;
     else {
         renderSidebar();
@@ -513,16 +734,10 @@ window.importOutputFiles = async function (event) {
     }
 };
 
-// 앱이 만든 HTML이 다시 불러오기 상한을 넘으면 내려받은 뒤 알린다(읽고 나눠 주는 데는 그대로 쓴다)
-window.noteReimportSize = function (bytes) {
-    if (!(bytes > OUTPUT_FILE_MAX)) return false;
-    window.showAlert?.(`이 HTML은 ${OUTPUT_FILE_MB}MB가 넘어 '내보낸 교안 다시 불러오기'로는 되살릴 수 없습니다. 읽고 나눠 주는 데는 그대로 쓰면 됩니다. 되살릴 수 있게 하려면 '교과 백업 ZIP 받기'로 백업도 받아 두세요.`);
-    return true;
-};
-
 if (typeof window !== 'undefined') {
     Object.assign(window, {
         lessonSourcePayload, lessonSourceScript, lessonMarkdownExport, parseOutputHtml, parseOutputMarkdown, normalizeImportedLesson, lessonSourceTabs,
-        readShownImages, mergeTabFiles, dedupeImported, describeOutputImport, missingImageCount, outputFileProblem, readOutputText, isGyosuanMdFile
+        readShownImages, mergeTabFiles, dedupeImported, describeOutputImport, missingImageCount, outputFileProblem, readOutputText, isGyosuanMdFile,
+        readOutputFile, readOutputFiles, storeOutputVideos, outputTags
     });
 }

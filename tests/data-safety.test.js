@@ -560,6 +560,25 @@ testAsync('크기 한도 오류만 골라낸다', () => {
     assert.ok(!W.isBackupTooBig(null));
 });
 
+testAsync('불러오기 실패 기록: 일부러 멈춘 것·권한 거절·크기 한도는 경고로(까닭만), 그 밖(코드 오류)은 오류로 남긴다', () => {
+    const { W, c } = loadSafety();
+    const logs = [];
+    c.console = { warn: (...args) => logs.push(['warn', ...args]), error: (...args) => logs.push(['error', ...args]) };
+    const stop = W.importStop('백업 파일이 아닙니다');
+    assert.ok(stop instanceof vm.runInContext('Error', c) && stop.expected === true && stop.message === '백업 파일이 아닙니다');
+    W.logImportFailure('불러오기:', stop);
+    W.logImportFailure('불러오기:', Object.assign(new Error('거절'), { name: 'NotAllowedError' }));
+    W.logImportFailure('불러오기:', new RangeError('Invalid string length'));
+    const bug = new TypeError('x is not a function');
+    W.logImportFailure('불러오기:', bug);
+    W.logImportFailure('불러오기:', '글자로 던진 것');
+    assert.deepStrictEqual(logs.map(([level, label, detail]) => [level, label, typeof detail === 'string' ? detail : detail?.message]), [
+        ['warn', '불러오기:', '백업 파일이 아닙니다'], ['warn', '불러오기:', '거절'], ['warn', '불러오기:', 'Invalid string length'],
+        ['error', '불러오기:', 'x is not a function'], ['error', '불러오기:', '글자로 던진 것']
+    ]);
+    assert.strictEqual(logs[3][2], bug, '코드 오류는 스택이 남게 오류 그대로');
+});
+
 testAsync("'함께'가 크기 한도에 걸리면 '따로·가볍게'로 다시 만들고 기억한 방식도 바꾼다(PC 폴더가 이어져 있으면 그 말도 한다)", async () => {
     const { W, c, storage, seen } = loadSafety();
     FakeZip.maxText = 1000;
@@ -1050,6 +1069,7 @@ test('저장본이 가리키는 그림 키를 한 번씩 모으고, 그림 폴�
     assert.deepStrictEqual([...refs].sort(), [k1, k2]);
     const byKey = W.backupImageFileNames([`${k1}.png`, `${k1}.jpg`, `${k2}.webp`, '01_개념.md', 'img_1.png', 'readme.txt']);
     assert.deepStrictEqual(JSON.parse(JSON.stringify([...byKey.entries()])), [[k1, `${k1}.png`], [k2, `${k2}.webp`]]);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify([...W.backupImageFileNames([`${k2}.avif`]).entries()])), [[k2, `${k2}.avif`]], '.avif 그림 파일도 맞춘다');
 });
 
 test('그림 이름표를 기억하면 같은 그림을 다시 해시하지 않고, 결과는 그대로다', () => {
@@ -1116,21 +1136,26 @@ test('그림 파일은 내용이 이름(키)과 맞을 때만 받는다: 짧아�
     const jpg = 'data:image/jpeg;base64,' + '/9j/4AAQSkZJRg'.repeat(20);
     const bmp = 'data:image/bmp;base64,' + 'Qk02AAAAAAAAADYAAAAoAAAA'.repeat(10);
     const avif = 'data:image/avif;base64,' + 'AAAAHGZ0eXBhdmlm'.repeat(15);
+    const heic = 'data:image/heic;base64,' + 'AAAAGGZ0eXBoZWlj'.repeat(15);
     const unpadded = png + 'AQ';
     assert.strictEqual(read(png), png);
     assert.strictEqual(read(jpg), jpg);
-    assert.ok(W.backupImageFile('k', bmp).name.endsWith('.png') && W.backupImageFile('k', avif).name.endsWith('.png'), '확장자가 없는 형식은 .png로 쓴다');
+    assert.ok(W.backupImageFile('k', bmp).name.endsWith('.png') && W.backupImageFile('k', heic).name.endsWith('.png'), '확장자가 없는 형식은 .png로 쓴다');
+    assert.ok(W.backupImageFile('k', avif).name.endsWith('.avif') && W.isBackupImageName(`${'a'.repeat(18)}.avif`), 'AVIF(Higgsfield)는 .avif로 쓰고 그림 파일로 알아본다');
+    assert.strictEqual(read(avif), avif, 'AVIF는 형식 그대로 돌아온다');
+    const avifKey = W.backupImageKey(avif);
+    assert.strictEqual(W.backupImageFromKeyedFile(avifKey, `${avifKey}.png`, fromFile(avif)), avif, '예전에 .png로 쓴 AVIF도 키로 가려 원래 글 그대로');
     assert.strictEqual(read(bmp), bmp, "'image/png'와 이름 길이가 같은 형식은 키로 가려 원래 글 그대로");
-    assert.strictEqual(read(avif), 'data:image/png;base64,' + body(avif), '이름 길이가 다른 형식은 글 길이로 보고 받는다');
+    assert.strictEqual(read(heic), 'data:image/png;base64,' + body(heic), '이름 길이가 다른 모르는 형식은 글 길이로 보고 받는다');
     assert.ok(fromFile(unpadded).endsWith('AQ=='));
     assert.strictEqual(read(unpadded), unpadded, '= 채움이 없던 글은 원래 글 그대로');
-    [png, jpg, bmp, avif].forEach(dataUrl => assert.strictEqual(read(dataUrl, fromFile(dataUrl).slice(0, 40)), null, `짧아진 파일 ${dataUrl.slice(0, 16)}`));
+    [png, jpg, bmp, avif, heic].forEach(dataUrl => assert.strictEqual(read(dataUrl, fromFile(dataUrl).slice(0, 40)), null, `짧아진 파일 ${dataUrl.slice(0, 16)}`));
     const hollow = dataUrl => {
         const bytes = Buffer.from(body(dataUrl), 'base64');
         bytes.fill(0, 30);
         return bytes.toString('base64');
     };
-    [png, jpg, bmp].forEach(dataUrl => assert.strictEqual(read(dataUrl, hollow(dataUrl)), null, `크기는 같고 뒤가 빈 파일 ${dataUrl.slice(0, 16)}`));
+    [png, jpg, bmp, avif].forEach(dataUrl => assert.strictEqual(read(dataUrl, hollow(dataUrl)), null, `크기는 같고 뒤가 빈 파일 ${dataUrl.slice(0, 16)}`));
 });
 
 test('폴더 열기 마침 알림: 넣지 못한 폴더의 작업 기록이 그대로 남는 파일(열기 전에 남긴 사본) 이름을 알린다', () => {

@@ -1,5 +1,6 @@
 // 드래그 서식 막대가 원문 마크다운을 고치는 규칙 테스트 (실행: node tests/lesson-format.test.js)
-// 화면과 같은 marked로 토큰을 만든다. 처음 한 번: npm install --no-save marked@15.0.12
+// 화면과 같은 marked로 토큰을 만든다. 처음 한 번: npm install --no-save marked@15.0.12 turndown@7.2.4
+// (turndown은 output-import.test.js가 쓴다. npm은 앞서 --no-save로 넣은 다른 꾸러미를 지우므로 함께 넣는다)
 const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
@@ -9,7 +10,7 @@ let marked;
 try {
     ({ marked } = require('marked'));
 } catch (err) {
-    console.log('FAIL - marked가 없습니다. 먼저 실행: npm install --no-save marked@15.0.12');
+    console.log('FAIL - marked가 없습니다. 먼저 실행: npm install --no-save marked@15.0.12 turndown@7.2.4');
     process.exit(1);
 }
 

@@ -2393,14 +2393,22 @@ function updateReferenceStatus() {
 
 // 참고 파일의 글자를 뽑아 참고 텍스트 칸 끝에 붙인다(예전 일괄 생성 창의 파일 올리기를 옮겼다).
 // 그림과 스캔 PDF는 AI가 글자를 옮겨 적는다(course-refs.js). 칸은 목차에 앞 4,000자, 교안에 앞 8,000자가 쓰인다
-const REFERENCE_FILE_MAX_BYTES = 20 * 1024 * 1024;
+// 큰 파일도 받는다: 글 파일(MD·TXT)은 크기와 상관없이 넣을 만큼 앞부분만 읽고, PDF·PPTX는 넣을 만큼 모이면 멈추고, 큰 그림은 줄여 보낸다.
+// PDF·PPTX·DOCX는 파일 전체를 메모리에 올려 읽으므로 상한을 둔다. 칸에는 파일마다 앞 REFERENCE_KEEP_CHARS자까지만 넣는다(칸이 느려지지 않게)
+const REFERENCE_FILE_MAX_BYTES = 512 * 1024 * 1024;
+const REFERENCE_IMAGE_MAX_BYTES = 64 * 1024 * 1024; // 그림은 줄이려고 화소로 풀어야 해서 따로 둔다
 const REFERENCE_SENT_CHARS = 8000;
+const REFERENCE_KEEP_CHARS = 100000;
 
 async function readReferenceFile(file) {
-    if (file.size > REFERENCE_FILE_MAX_BYTES) throw new Error('20MB가 넘습니다');
-    const text = String(await extractTextFromFile(file)).trim();
-    if (!text) throw new Error('읽을 글자가 없습니다');
-    return `[${file.name}]\n${text}`;
+    const lower = String(file.name || '').toLowerCase();
+    const textFile = lower.endsWith('.md') || lower.endsWith('.txt');
+    const max = REF_IMAGE_EXTENSIONS.some(extension => lower.endsWith(extension)) ? REFERENCE_IMAGE_MAX_BYTES : REFERENCE_FILE_MAX_BYTES;
+    if (!textFile && file.size > max) throw importStop(`${Math.round(max / (1024 * 1024))}MB가 넘습니다`);
+    const text = String(await extractTextFromFile(file, { maxChars: REFERENCE_KEEP_CHARS })).trim();
+    if (!text) throw importStop('읽을 글자가 없습니다');
+    const kept = text.length > REFERENCE_KEEP_CHARS ? `${text.slice(0, REFERENCE_KEEP_CHARS)}\n...(파일이 길어 앞 ${REFERENCE_KEEP_CHARS.toLocaleString()}자만 넣었습니다)` : text;
+    return `[${file.name}]\n${kept}`;
 }
 
 async function importReferenceFiles(event) {
@@ -2422,7 +2430,7 @@ async function importReferenceFiles(event) {
         try {
             added.push(await readReferenceFile(file));
         } catch (err) {
-            console.error('[참고 파일] 읽기 실패:', file.name, err);
+            logImportFailure(`[참고 파일] 읽지 못해 건너뜁니다(${file.name}):`, err); // 지원하지 않는 형식·글 없음은 경고로, 그 밖은 오류로
             failed.push(`${file.name}: ${err.message}`);
         }
     }

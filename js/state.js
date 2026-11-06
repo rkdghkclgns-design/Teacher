@@ -464,6 +464,54 @@ if (typeof window.addEventListener === 'function') window.addEventListener('page
 // 창을 닫기 전에 묻고(isSavePending), 폴더 저장본에 '브라우저가 뒤처짐'을 적어 새로고침 뒤 옛 브라우저 저장본이 폴더를 덮지 않게 한다(rememberFolderSaveStamp)
 let lastBrowserSaveFailed = false;
 
+// 크롬은 IndexedDB 값 하나를 127MiB까지만 받는다. 작업 전체를 값 하나로 저장하므로 그림이 아주 많으면(큰 교안 HTML을 불러온 교과 등) 저장하지 못한다.
+// 그만큼 클 수 있는 작업은 JSON 파일(Blob)로 저장한다. Blob은 그 한도에 세지 않고 따로 저장된다. 읽는 쪽은 둘 다 읽는다(readStoredState)
+const STATE_BLOB_MIN_BYTES = 100 * 1024 * 1024;
+
+// 값 하나로 저장할 때의 크기 어림(바이트). 그림 글(data:)은 한 글자 1바이트, 다른 글은 2바이트로 넉넉히 센다. 같은 객체는 한 번만 센다(값 저장도 한 번만 쓴다)
+function storedSizeEstimate(value) {
+    let bytes = 0;
+    const seen = new WeakSet();
+    const stack = [value];
+    while (stack.length) {
+        const node = stack.pop();
+        if (typeof node === 'string') {
+            bytes += node.startsWith('data:') ? node.length : node.length * 2;
+        } else if (node && typeof node === 'object') {
+            if (seen.has(node)) continue;
+            seen.add(node);
+            for (const key of Object.keys(node)) {
+                bytes += key.length * 2 + 4;
+                stack.push(node[key]);
+            }
+        } else {
+            bytes += 9;
+        }
+    }
+    return bytes;
+}
+
+// 작업 전체를 JSON 파일 하나로. 조각으로 만들어(data-safety.js jsonTextParts) 글 길이 한도에 걸리지 않게 한다
+const stateJsonBlob = stateData => new Blob(jsonTextParts(stateData), { type: 'application/json' });
+// 브라우저가 값이 너무 크다고 거절했는지(크롬: The serialized keys and/or value are too large)
+const isValueTooLarge = err => /too large/i.test(String(err?.message || ''));
+// 한 번 거절되면 이 창에서는 처음부터 JSON 파일로 쓴다(값으로 바꾸다 거절되는 데 드는 시간을 저장마다 다시 쓰지 않게)
+let browserStateAsFile = false;
+
+// 작업 전체를 브라우저 저장소에 쓴다. 클 수 있으면 JSON 파일로, 아니면 값 그대로(예전과 같다). 값이 너무 크다고 거절되면 JSON 파일로 다시 쓴다.
+// blobMin: JSON 파일로 쓸 어림 크기(테스트가 바꾼다)
+async function writeBrowserState(stateData, { blobMin = STATE_BLOB_MIN_BYTES } = {}) {
+    if (browserStateAsFile || storedSizeEstimate(stateData) > blobMin) return DBManager.setItem(STORAGE_KEY, stateJsonBlob(stateData));
+    try {
+        return await DBManager.setItem(STORAGE_KEY, stateData);
+    } catch (err) {
+        if (!isValueTooLarge(err)) throw err;
+        console.warn('[저장] 작업이 커서 브라우저가 값으로 받지 않아 JSON 파일로 저장합니다:', err.message);
+        browserStateAsFile = true;
+        return DBManager.setItem(STORAGE_KEY, stateJsonBlob(stateData));
+    }
+}
+
 // 브라우저 저장소(IndexedDB)에 쓴다. 끝까지 썼으면 true, 실패하면 알린 뒤 false(읽지 못한 동안은 쓰지 않고 false). 던지지 않는다.
 // PC 폴더 저장은 기다리지 않는다(실패는 띠로 알린다)
 // folder: false면 이어진 PC 폴더에는 쓰지 않는다(백업 ZIP 되살리기는 브라우저에 저장한 뒤에야 폴더에 쓴다. 저장하지 못해 되돌린 상태가 폴더에 남지 않게)
@@ -483,9 +531,9 @@ async function saveState({ folder = true } = {}) {
             }
         }
 
-        // 1. IndexedDB에 무제한 비동기 저장 시도
+        // 1. IndexedDB에 저장한다. 아주 큰 작업은 JSON 파일로(writeBrowserState)
         const stateData = { state: globalState, history: contentHistory };
-        await DBManager.setItem(STORAGE_KEY, stateData);
+        await writeBrowserState(stateData);
         savedInBrowser = true;
         _stateTabs?.postMessage('saved');
 
@@ -513,11 +561,33 @@ function isStateLoadFailed() {
     return stateLoadFailed;
 }
 
+const isStoredBlob = value => typeof Blob !== 'undefined' && value instanceof Blob;
+
+// 저장본 값 → 작업 객체. JSON 파일(Blob)로 저장한 큰 작업(writeBrowserState)은 그림 글을 떼어 둔 조각 읽기로 푼다(import-stream.js. 파일 전체를 글 하나로 만들지 않는다).
+// 그렇게 풀지 못하면(너무 큰 그림 등) 파일을 글 하나로 읽어 푼다. 그래도 못 풀면 그 파일을 오류의 record에 담아 던진다(막는 창에서 내려받는다). 파일이 아니면 그대로
+async function storedRecordData(record) {
+    if (!isStoredBlob(record)) return record;
+    try {
+        let read = null;
+        if (typeof readFileSkeleton === 'function') {
+            try {
+                read = await readFileSkeleton(record);
+            } catch (err) {
+                console.warn('[저장된 작업] 조각으로 읽지 못해 파일 전체로 읽습니다:', err.message);
+            }
+        }
+        if (read && !read.oversized) return JSON.parse(read.text, (key, value) => (read.hasToken(value) ? read.restore(read.dataOf(value)) : value));
+        return JSON.parse(await record.text());
+    } catch (err) {
+        throw Object.assign(new Error(`저장본 파일을 풀지 못했습니다: ${err.message}`), { record });
+    }
+}
+
 // IndexedDB를 먼저 읽고, 비어 있으면 예전 localStorage 저장본을 옮긴다. 읽지 못하면 던진다(아무것도 지우지 않는다).
 // fromDb: IndexedDB에서 읽었는지(그때만 남은 예전 저장본을 지운다). 예전 저장본을 풀지 못하면 그 글을 오류의 record에 담아 던진다(막는 창에서 내려받는다)
 async function readStoredState() {
     const data = await DBManager.getItem(STORAGE_KEY);
-    if (data != null) return { data, fromDb: true };
+    if (data != null) return { data: await storedRecordData(data), fromDb: true };
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { data: null, fromDb: false };
     let legacy;
@@ -613,7 +683,7 @@ async function storedRecordStatus() {
     }
     if (record === undefined) return 'none';
     try {
-        const data = typeof record === 'string' ? JSON.parse(record) : record;
+        const data = typeof record === 'string' ? JSON.parse(record) : await storedRecordData(record);
         return isObject(data) && isObject(data.state) && sanitizeState(data.state) ? 'loads' : 'unread';
     } catch (err) {
         return 'unread';
@@ -776,7 +846,7 @@ function onStateLoadDialogClick(event) {
 }
 
 // 읽지 못한 저장본을 고치지 않은 그대로 파일로 내려받는다. 저장소에서 다시 읽고(검사하다 바뀐 값이 아니게), 못 읽으면 처음 읽은 것을 쓴다.
-// 조각으로 만들어(data-safety.js jsonTextParts) 그림이 많은 저장본도 글 길이 한도에 걸리지 않게 한다. 예전 localStorage 저장본(글자)은 그 글 그대로
+// 조각으로 만들어(data-safety.js jsonTextParts) 그림이 많은 저장본도 글 길이 한도에 걸리지 않게 한다. 예전 localStorage 저장본(글자)과 JSON 파일로 저장한 큰 작업은 그 파일 그대로
 async function downloadUnreadRecord() {
     let record;
     try {
@@ -788,7 +858,7 @@ async function downloadUnreadRecord() {
     if (record === undefined) return window.showAlert('내려받을 저장본을 찾지 못했습니다.');
     try {
         const isText = typeof record === 'string';
-        const blob = new Blob(isText ? [record] : jsonTextParts(record), { type: isText ? 'text/plain;charset=utf-8' : 'application/json' });
+        const blob = isStoredBlob(record) ? record : new Blob(isText ? [record] : jsonTextParts(record), { type: isText ? 'text/plain;charset=utf-8' : 'application/json' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
@@ -1741,7 +1811,12 @@ window.importProjectZip = async function (event) {
     }
 
     try {
-        const zip = await JSZip.loadAsync(file);
+        let zip;
+        try {
+            zip = await JSZip.loadAsync(file);
+        } catch (err) {
+            throw isBackupTooBig(err) ? err : importStop(err?.message || 'ZIP 파일을 열지 못했습니다'); // ZIP이 아니거나 망가진 파일: 일부러 멈춘 것으로 본다
+        }
         let metaObj = null;
         let imageMap = new Map(); // fileName -> base64
         let mdFiles = [];
@@ -1757,8 +1832,11 @@ window.importProjectZip = async function (event) {
                 const yamlText = await zipEntry.async("string");
                 metaObj = safeJSONParse(yamlText); // yaml이라 썼지만 이전 단계에서 편의상 JSON 직렬화함
             } else if (/(^|\/)그림\/[^/]+$/.test(relativePath) && isBackupImageName(relativePath.split('/').pop())) {
-                const image = backupImageFromFile(relativePath.split('/').pop(), await zipEntry.async('base64'));
-                backupImages[image.key] = image.dataUrl;
+                // 내용이 이름(키)과 맞으면 원래 그림 글 그대로(예전에 .png로 쓴 avif도). 맞지 않으면 예전처럼 확장자로 받는다
+                const name = relativePath.split('/').pop();
+                const base64 = await zipEntry.async('base64');
+                const key = name.replace(/\.[^.]+$/, '');
+                backupImages[key] = backupImageFromKeyedFile(key, name, base64) || backupImageFromFile(name, base64).dataUrl;
             } else if (relativePath.includes('첨부파일/')) {
                 const binaryData = await zipEntry.async("base64");
                 const ext = relativePath.split('.').pop().toLowerCase();
@@ -1775,7 +1853,7 @@ window.importProjectZip = async function (event) {
         }
 
         if (!metaObj || typeof metaObj !== 'object' || Array.isArray(metaObj)) {
-            throw new Error("되살릴 수 있는 백업 파일이 아닙니다(save_data.yaml이 없거나 읽을 수 없습니다). 내보내기·백업에서 받은 백업 ZIP을 골라 주세요.");
+            throw importStop("되살릴 수 있는 백업 파일이 아닙니다(save_data.yaml이 없거나 읽을 수 없습니다). 내보내기·백업에서 받은 백업 ZIP을 골라 주세요.");
         }
         if (metaObj.imageMode === 'separate') metaObj = attachBackupImages(metaObj, backupImages);
 
@@ -1790,7 +1868,7 @@ window.importProjectZip = async function (event) {
             // 단일 차시(exportCurrentModule) 복원 모드: 현재 교과에 새 모듈로 종속시킴
             if (isStateLoadFailed()) return window.showAlert(UNREAD_PARTIAL_BACKUP_TEXT); // 읽지 못한 동안은 과정 전체로만 되살린다
             const subj = globalState.subjects.find(s => s.id === currentSubjectId);
-            if (!subj) throw new Error("현재 선택된 교과가 없습니다. 교과를 먼저 생성해주세요.");
+            if (!subj) throw importStop("현재 선택된 교과가 없습니다. 교과를 먼저 생성해주세요.");
 
             const newMod = {
                 id: renumberLessons([{}], (subj.lessons || []).map(lesson => lesson.id))[0].id,
@@ -1822,7 +1900,7 @@ window.importProjectZip = async function (event) {
             // 1. 새 상태를 지역 변수에서 다 만들고 검사한다. 여기서 멈추면 지금 작업은 그대로다.
             //    차시 MD는 내보낸 교과(metaObj.subject)의 차시 가운데 제목이 꼭 같은 것에만 맞춘다(data-safety.js applyBackupMarkdown)
             const nextState = sanitizeState(metaObj.context);
-            if (!nextState?.subjects.length) throw new Error('이 파일에는 되살릴 교과가 없습니다.');
+            if (!nextState?.subjects.length) throw importStop('이 파일에는 되살릴 교과가 없습니다.');
             applyBackupMarkdown(nextState.subjects.find(s => s.title === stateText(metaObj.subject)), mdFiles, imageMap);
 
             // 2. 바꾸기 전에 묻고, 지금 상태를 백업 파일로 내려받는다. 그림을 뺀 파일('빼기')이면 확인 창에 알린다.
@@ -1873,7 +1951,7 @@ window.importProjectZip = async function (event) {
         }
 
     } catch (e) {
-        console.error("ZIP 불러오기 오류:", e);
+        logImportFailure('ZIP 불러오기 오류:', e); // 일부러 멈춘 것(백업이 아닌 ZIP 등)은 경고로, 그 밖은 오류로
         window.showAlert(isBackupTooBig(e) ? BACKUP_TOO_BIG_TEXT.openFile : `백업 파일을 되살리지 못했습니다: ${e.message}`);
     } finally {
         event.target.value = ''; // 재업로드를 위해 인풋 리셋
@@ -2251,7 +2329,7 @@ window.loadFromProjectFolder = async function () {
             + historyMergeNote(extras.historyDropped, '폴더')); // 작업 기록을 다 넣지 못했으면 몇 개인지, 그 기록이 어디에 남는지 덧붙인다
     } catch (e) {
         if (e.name === 'AbortError') return;
-        console.error('폴더 불러오기 오류:', e);
+        logImportFailure('폴더 불러오기 오류:', e); // 권한 거절·크기 한도는 경고로, 그 밖은 오류로
         window.showAlert(isBackupTooBig(e) ? BACKUP_TOO_BIG_TEXT.openFolder : '폴더 불러오기 중 오류가 발생했습니다: ' + e.message);
     }
 }
