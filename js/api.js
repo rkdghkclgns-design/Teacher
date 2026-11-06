@@ -3296,11 +3296,20 @@ function pendingRawEdit() {
 
 const RAW_UNSAVED_REASON = '넣지 못한 원문';
 
+// 이 탭에는 저장된 글이 없고 다른 탭에만 글이 있다. 그때 기본학습 칸은 다른 탭을 합친 본문을 보인다(tabs.js tabSourceFor)
+function rawTabOnlyShowsOthers(mod, tabId) {
+    const tabs = mod.tabContents;
+    return !!tabs && !tabs[tabId] && LESSON_TABS.some(tab => tabs[tab.id]);
+}
+
 // 칸을 채운 저장된 글(storedFrom)이 지금 탭과 다르면 그사이 다른 기능이 탭을 바꿨다. 예전 칸은 견줄 글이 없어 넣는다.
-// 탭을 바꾸며 칸도 지금 글로 맞춘 기능(칸의 기준 lastSaved가 지금 글)이면 바뀐 것으로 보지 않는다
-function rawBoxIsStale(rawView, stored) {
+// 탭을 바꾸며 칸도 지금 글로 맞춘 기능(칸의 기준 lastSaved가 지금 글)이면 바뀐 것으로 보지 않는다.
+// 이 탭은 비고 다른 탭에만 글이 있으면 덮을 글이 없어 바뀐 것으로 보지 않는다(비운 기본학습이 보이는 합친 본문은 다른 탭만 바뀌어도 달라진다)
+function rawBoxIsStale({ mod, tabId, rawView }) {
+    const stored = tabSourceFor(mod, tabId);
     if (typeof rawView.storedFrom !== 'string' || rawView.storedFrom === stored) return false;
-    return !(typeof rawView.lastSaved === 'string' && rawView.lastSaved === stored);
+    if (typeof rawView.lastSaved === 'string' && rawView.lastSaved === stored) return false;
+    return !rawTabOnlyShowsOthers(mod, tabId);
 }
 
 // 칸을 그린(넣은) 뒤 다른 기능(탭 생성·그림 넣기·작업 기록 되돌리기 등)이 그 탭을 바꿨다. 칸의 옛 글로 덮지 않는다.
@@ -3324,7 +3333,7 @@ window.saveRawContent = function () {
     const edit = pendingRawEdit();
     if (!edit) return;
     const { mod, tabId, rawView, value } = edit;
-    if (rawBoxIsStale(rawView, tabSourceFor(mod, tabId))) return keepStoredRawTab(edit); // 칸의 옛 글로 바뀐 탭을 덮지 않는다
+    if (rawBoxIsStale(edit)) return keepStoredRawTab(edit); // 칸의 옛 글로 바뀐 탭을 덮지 않는다
     setTabMarkdown(mod, tabId, value);
     rawView.lastSaved = value; // 넣은 글이 이 칸의 새 기준이다(손대지 않으면 다시 넣지 않는다)
     rawView.storedFrom = tabSourceFor(mod, tabId);

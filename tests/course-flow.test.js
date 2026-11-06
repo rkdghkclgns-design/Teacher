@@ -239,6 +239,11 @@ async function run(name, fn) {
         assert.strictEqual(running(), true, '삽화 창에서 그리는 중');
         vm.runInContext('_lessonArt = { busy: false };', local);
         assert.strictEqual(running(), false);
+        assert.strictEqual(vm.runInContext("typeof _review === 'undefined'", local), true, '컨벤션 검수 파일을 싣지 않아도 멈추지 않는다');
+        vm.runInContext('var _review = { moduleId: 1, tabId: "basicLearn", busy: true };', local); // 컨벤션 검수 창에서 AI 수정 제안을 받는 중
+        assert.strictEqual(running(), true, '컨벤션 검수의 AI 수정 제안');
+        vm.runInContext('_review = { moduleId: 1, tabId: "basicLearn", busy: false };', local);
+        assert.strictEqual(running(), false, '수정 제안이 끝났거나 창을 닫았다');
     });
 
     await run('일괄 실행: 일부 누락 표시는 재시도 뒤에도 남음', async () => {

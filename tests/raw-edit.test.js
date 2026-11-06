@@ -240,6 +240,40 @@ async function run(name, fn) {
         assert.deepStrictEqual(ctx.archived, []);
     });
 
+    await run('원문 칸: 비어 있는 기본학습(다른 탭에만 글이 있는 차시)은 다른 탭이 그사이 바뀌어도 바뀐 것으로 보지 않고 쓴 글을 기본학습에 넣는다', async () => {
+        const ctx = makeContext();
+        const { L1 } = twoSubjects(ctx);
+        Object.assign(L1, { tabContents: tabsOf(), content: null, gyosuan: { docMd: '# 교수안' } }); // 교수안만 있는 차시
+        const raw = openRaw(ctx, L1, 'basicLearn');
+        assert.deepStrictEqual([raw.value, raw.storedFrom], ['', '']);
+        raw.value = '## 1. 손으로 쓴 기본\n\n강사가 쓴 기본 학습입니다.';
+        call(ctx, 'setTabMarkdown')(L1, 'basicPrac', '## 1. 실습\n\nAI가 만든 실습입니다.'); // 그사이 다른 탭 만들기가 끝났다
+        call(ctx, 'saveRawContent')();
+        assert.strictEqual(L1.tabContents.basicLearn, '## 1. 손으로 쓴 기본\n\n강사가 쓴 기본 학습입니다.');
+        assert.strictEqual(L1.tabContents.basicPrac, '## 1. 실습\n\nAI가 만든 실습입니다.');
+        assert.strictEqual(raw.value, L1.tabContents.basicLearn, '칸을 다른 탭의 글로 바꾸지 않는다');
+        // 비워 넣은 기본학습도 같다(칸의 기준은 다른 탭을 합친 글이 된다). 다른 탭이 바뀐 뒤 새로 쓴 글도 넣는다
+        raw.value = '';
+        call(ctx, 'saveRawContent')();
+        assert.strictEqual(L1.tabContents.basicLearn, '');
+        call(ctx, 'setTabMarkdown')(L1, 'advLearn', '## 1. 심화\n\n새 심화입니다.');
+        raw.value = '## 1. 다시 쓴 기본\n\n새로 씁니다.';
+        call(ctx, 'saveRawContent')();
+        assert.strictEqual(L1.tabContents.basicLearn, '## 1. 다시 쓴 기본\n\n새로 씁니다.');
+        assert.deepStrictEqual(ctx.archived, []);
+        assert.ok(!ctx.toasts.some(toast => toast.kind === 'warning'), JSON.stringify(ctx.toasts));
+        // 그사이 기본학습을 만들었으면 바뀐 것이다: 만든 글을 지키고 쓴 글은 작업 기록에 남긴다
+        const other = makeContext();
+        const { L1: lesson } = twoSubjects(other);
+        Object.assign(lesson, { tabContents: tabsOf({ basicPrac: '## 1. 실습\n\n실습입니다.' }), content: '## 1. 실습\n\n실습입니다.' });
+        const box = openRaw(other, lesson, 'basicLearn');
+        box.value = '## 1. 손으로 쓴 기본\n\n쓰던 글입니다.';
+        call(other, 'setTabMarkdown')(lesson, 'basicLearn', '## 1. 만든 기본\n\nAI가 만든 기본 학습입니다.');
+        call(other, 'saveRawContent')();
+        assert.strictEqual(lesson.tabContents.basicLearn, '## 1. 만든 기본\n\nAI가 만든 기본 학습입니다.');
+        assert.deepStrictEqual(other.archived.map(item => [item.reason, item.content]), [['넣지 못한 원문', '## 1. 손으로 쓴 기본\n\n쓰던 글입니다.']]);
+    });
+
     await run('탭 생성의 그림 단계: 옛 글을 보이던 원문 칸에 그사이 쓴 글이 새로 만든 탭을 덮지 않고 작업 기록에 남는다', async () => {
         const fresh = '## 1. 실습\n\nAI가 새로 쓴 실습입니다.';
         const ctx = makeContext({ callGemini: async (model, payload) => reply(String(payload.contents[0].parts[0].text).includes('[작업]') ? '' : fresh) });
