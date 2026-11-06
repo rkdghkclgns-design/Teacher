@@ -901,17 +901,48 @@ function generationContext(callGemini, mod) {
         assert.strictEqual(other.tabContents.basicLearn, '다른 원문');
     });
 
+    // 그림 지우기 흉내: 보고 있는 차시·탭을 정하고, 묻는 창의 답(answer, 함수면 기다리는 동안 한 일)과 탭 저장(writeLessonTab)을 남긴다.
+    // 네이티브 confirm은 두지 않는다(남아 있으면 부르다 실패한다)
+    function pictureContext(mod, { answer = true, tabId = 'basicLearn' } = {}) {
+        const ctx = makeContext();
+        ctx.currentMod = mod;
+        ctx.currentEditingModuleId = mod.id;
+        vm.runInContext(`currentLessonTab = '${tabId}'`, ctx);
+        ctx.asked = [];
+        ctx.confirmAsync = async (message, opts) => {
+            ctx.asked.push({ message, opts });
+            return typeof answer === 'function' ? answer(ctx) : answer;
+        };
+        ctx.written = [];
+        ctx.writeLessonTab = async (m, tab, md) => {
+            call(ctx, 'setTabMarkdown')(m, tab, md);
+            ctx.written.push({ tab, md });
+            await ctx.saveState();
+        };
+        return ctx;
+    }
+
     await run('저장: 이미지 삭제 후 숨겨진 편집기가 참조를 되살리지 않는다', async () => {
         const mod = { id: 1, title: '차시', tabContents: { basicLearn: '앞 ![그림](local:img_1) 뒤' }, images: { img_1: 'a' } };
-        const aiCtx = makeContext();
-        aiCtx.currentMod = mod;
-        aiCtx.confirm = () => true;
+        const aiCtx = pictureContext(mod);
         const raw = fakeElement();
         raw.value = mod.tabContents.basicLearn;
         raw.dataset = { moduleId: '1', tabId: 'basicLearn' };
         aiCtx.elements['raw-view'] = raw;
-        call(aiCtx, 'deleteImage')('img_1', null);
+        await call(aiCtx, 'deleteImage')('img_1');
         assert.ok(!raw.value.includes('local:img_1'));
+        assert.strictEqual(raw.storedFrom, '앞  뒤', '칸을 맞춘 저장된 글(storedFrom)을 남긴다');
+        assert.strictEqual(raw.lastSaved, raw.value);
+        // 다른 차시를 그린 원문 칸에는 쓰지 않는다
+        const next = { id: 1, title: '차시', tabContents: { basicLearn: '앞 ![그림](local:img_1) 뒤' }, images: { img_1: 'a' } };
+        const other = pictureContext(next);
+        const otherRaw = fakeElement();
+        otherRaw.value = '다른 차시 원문';
+        otherRaw.dataset = { moduleId: '2', tabId: 'basicLearn' };
+        other.elements['raw-view'] = otherRaw;
+        await call(other, 'deleteImage')('img_1');
+        assert.strictEqual(next.tabContents.basicLearn, '앞  뒤');
+        assert.deepStrictEqual([otherRaw.value, otherRaw.storedFrom], ['다른 차시 원문', undefined]);
     });
 
     await run('저장: 메인 퀘스트와 탭이 비어 있는 옛 차시', async () => {
@@ -1208,6 +1239,23 @@ function generationContext(callGemini, mod) {
         assert.ok(!text.includes('" onerror="'), '명령 글이 속성을 깨지 않는다');
     });
 
+    await run('AI 명령줄: 그림 설명(캡션)도 자른 뒤 이스케이프한다(태그로 읽히거나 역슬래시가 붙지 않는다)', async () => {
+        const L = commandLessons();
+        const ctx = commandContext(L, { mode: 'image' });
+        ctx.elements['ai-command-input'].value = `'반복문' a<b & "c"`;
+        ctx.generateImageAPI = async () => 'data:image/png;base64,QUJD';
+        await ctx.executeAICommand();
+        const text = L[0].tabContents.basicLearn;
+        assert.ok(text.includes(`'반복문' a&lt;b &amp; &quot;c&quot;</div></div>`), text);
+        assert.ok(!text.includes("\\'"), '따옴표 앞에 역슬래시를 넣지 않는다');
+        const cut = commandLessons();
+        const long = commandContext(cut, { mode: 'image' });
+        long.elements['ai-command-input'].value = `${'ㄱ'.repeat(79)}"`;
+        long.generateImageAPI = async () => 'data:image/png;base64,QUJD';
+        await long.executeAICommand();
+        assert.ok(cut[0].tabContents.basicLearn.includes(`${'ㄱ'.repeat(79)}&quot;</div></div>`), '80자로 자른 뒤 이스케이프해 &quot;가 반만 남지 않는다');
+    });
+
     await run('AI 명령줄: 시작한 차시가 지워졌으면 알린다', async () => {
         const L = commandLessons();
         const ctx = commandContext(L, { onCall: c => { vm.runInContext('courseData = courseData.filter(m => m.id !== 1)', c); c.currentEditingModuleId = 2; } });
@@ -1294,20 +1342,236 @@ function generationContext(callGemini, mod) {
 
     await run('그림 지우기: 주소가 꼭 같은 마크다운 그림만 지우고, 그림 키·data URL로 정규식을 만들지 않는다', async () => {
         const ctx = makeContext();
-        const without = call(ctx, 'withoutMdImages');
+        const without = call(ctx, 'withoutLessonImages');
         const png = 'data:image/png;base64,QUJD';
         const md = `앞 ![a](local:img_1) ![b](local:img_10) ![c](${png}) ![d](local:img_1x) 뒤`;
         assert.strictEqual(without(md, ['local:img_1', png]), '앞  ![b](local:img_10)  ![d](local:img_1x) 뒤', 'img_1을 지울 때 img_10은 남는다');
         const plus = 'data:image/png;base64,iV+B/OR+w==';
         assert.strictEqual(without(`![a](${plus}) ![b](data:image/png;base64,iVVB/OR+w==) 글`, [plus]), ' ![b](data:image/png;base64,iVVB/OR+w==) 글', '+ / = 가 든 그림 주소도 글자 그대로 견준다');
-        assert.ok(!/new RegExp/.test(without.toString()), '데이터로 정규식을 만들지 않는다');
+        ['withoutLessonImages', 'removeLessonImages', 'mapPictureProse', 'tidyPictureGaps', 'lessonImageTargets'].forEach(name => {
+            assert.ok(!/new RegExp/.test(call(ctx, name).toString()), `${name}: 데이터로 정규식을 만들지 않는다`);
+        });
         const mod = { id: 1, title: '차시', tabContents: { basicLearn: '앞 ![그림](local:img_1) 가운데 ![다른](local:img_10) 뒤' }, images: { img_1: 'a', img_10: 'b' } };
         mod.content = mod.tabContents.basicLearn;
-        ctx.currentMod = mod;
-        ctx.confirm = () => true;
-        call(ctx, 'deleteImage')('img_1', null);
+        const picture = pictureContext(mod);
+        await call(picture, 'deleteImage')('img_1');
         assert.strictEqual(mod.tabContents.basicLearn, '앞  가운데 ![다른](local:img_10) 뒤');
+        assert.strictEqual(mod.content, mod.tabContents.basicLearn, '합친 본문도 맞춘다');
         assert.deepStrictEqual(Object.keys(mod.images), ['img_10']);
+        assert.deepStrictEqual([picture.written.length, picture.saved], [1, 1]);
+        assert.ok(picture.toasts.includes('그림을 지웠습니다.'), picture.toasts.join('|'));
+        assert.ok(!/\bconfirm\(/.test(call(picture, 'deleteImage').toString()), '앱의 확인 창으로만 묻는다(네이티브 confirm 없음)');
+    });
+
+    const PICTURE_A = 'data:image/png;base64,QUFB';
+    const PICTURE_B = 'data:image/png;base64,QkJC';
+    const pictureFrame = (id, caption) => `<div class="image-wrapper"><img src="local:${id}" alt="그림" class="rounded-lg border-2 border-accent/30 shadow-md max-w-full"><span class="absolute bottom-3 left-3 bg-black/80 text-white"><i class="ph-fill ph-sparkle text-accent"></i> AI 생성 이미지</span><button class="image-regenerate-btn px-3 py-1.5" data-lesson-action="regenerate-image" data-keyword="반복문" data-img-id="${id}"><i class="ph-bold ph-arrows-clockwise"></i> 다시 생성</button><div class="image-caption" style="margin-top:8px;text-align:center;">${caption}</div></div>`;
+
+    await run('그림 지우기: 그림 틀(AI 표시·다시 생성 버튼·설명)과 붙여 넣은 맨 <img>를 통째로 지우고 img_10 틀은 남긴다', async () => {
+        const kept = pictureFrame('img_10', '남는 그림');
+        const md = `## 반복문\n\n앞 글\n\n${pictureFrame('img_1', "\\'반복문\\' a<b 비교")}\n\n${kept}\n\n<img src="local:img_1" alt="inserted image" style="max-width:100%; border-radius:8px;">\n\n<div class="image-wrapper"><img src="local:img_1" alt="삽화" class="rounded-lg"></div>\n\n뒤 글`;
+        const mod = { id: 1, title: '차시', tabContents: { basicLearn: md }, images: { img_1: PICTURE_A, img_10: PICTURE_B } };
+        const ctx = pictureContext(mod);
+        await call(ctx, 'deleteImage')('img_1');
+        const text = mod.tabContents.basicLearn;
+        assert.strictEqual(text, `## 반복문\n\n앞 글\n\n${kept}\n\n뒤 글`, '그림만 있던 줄과 남는 빈 줄을 함께 뺀다');
+        assert.strictEqual((text.match(/<div/g) || []).length, (text.match(/<\/div>/g) || []).length, '떨어진 </div>가 없다');
+        assert.deepStrictEqual(Object.keys(mod.images), ['img_10']);
+        const { message, opts } = ctx.asked[0];
+        assert.ok(message.includes('이 탭에 같은 그림이 3곳 있어 모두 지웁니다.'), message);
+        assert.deepStrictEqual([opts.title, opts.okLabel, opts.tone], ['그림 지우기', '지우기', 'danger']);
+        // 글 사이에 넣은 그림은 그 자리만 비우고, 모양이 다른 옛 틀은 맨 <img>만 지운다(블록을 넘어 지우지 않는다)
+        const without = call(ctx, 'withoutLessonImages');
+        assert.strictEqual(without('앞 글\n<img alt="x" src="local:img_1">\n뒤 글', ['local:img_1']), '앞 글\n뒤 글');
+        const odd = '<div class="image-wrapper"><span>머리</span><img src="local:img_1"><div class="image-caption">설명</div></div>\n\n다음 문단';
+        assert.strictEqual(without(odd, ['local:img_1']), '<div class="image-wrapper"><span>머리</span><div class="image-caption">설명</div></div>\n\n다음 문단');
+        const open = '<div class="image-wrapper"><img src="local:img_1">\n\n긴 문단은 남는다</div>';
+        assert.strictEqual(without(open, ['local:img_1']), '<div class="image-wrapper">\n\n긴 문단은 남는다</div>', '빈 줄을 넘어 지우지 않는다');
+        // 그림 값을 주소로 바로 쓴 틀도 보기 화면 버튼이 넘긴 키로 지운다
+        const inline = { id: 1, title: '차시', tabContents: { basicLearn: `앞\n\n<div class="image-wrapper"><img src="${PICTURE_A}" alt="x"></div>\n\n뒤` }, images: { img_1: PICTURE_A } };
+        await call(pictureContext(inline), 'deleteImage')('img_1');
+        assert.deepStrictEqual([inline.tabContents.basicLearn, Object.keys(inline.images).length], ['앞\n\n뒤', 0]);
+    });
+
+    await run('그림 지우기: 코드 블록 안의 그림 예제는 그림이 아니라 건드리지 않는다', async () => {
+        const url = 'https://example.com/cat.png';
+        const md = `HTML 예제:\n\n\`\`\`html\n<img src="${url}">\n![고양이](${url})\n\`\`\`\n\n<img src="${url}">\n\n끝`;
+        const mod = { id: 1, title: '차시', tabContents: { basicLearn: md }, images: {} };
+        const ctx = pictureContext(mod);
+        await call(ctx, 'deleteImage')(encodeURIComponent(url));
+        assert.strictEqual(mod.tabContents.basicLearn, `HTML 예제:\n\n\`\`\`html\n<img src="${url}">\n![고양이](${url})\n\`\`\`\n\n끝`);
+        assert.ok(!ctx.asked[0].message.includes('곳 있어'), '코드 속 예제는 세지 않는다');
+    });
+
+    await run('그림 지우기: 다른 탭·교수안·삽화가 쓰는 그림은 값을 남기고 이 탭에서만 뺀다', async () => {
+        const tabs = () => ({ basicLearn: '앞 ![그림](local:img_1) 뒤', basicPrac: '실습 글' });
+        const cases = [
+            ['다른 탭', { tabContents: { ...tabs(), basicPrac: '실습 ![그림](local:img_1)' } }, true],
+            ['교수안', { tabContents: tabs(), gyosuan: { docMd: '교수안 ![그림](local:img_1)' } }, true],
+            ['슬라이드', { tabContents: tabs(), gyosuan: { deckMd: '슬라이드 ![그림](local:img_1)' } }, true],
+            ['삽화', { tabContents: tabs(), illustrations: [{ id: 'art1', imgId: 'img_1', svg: '<svg/>' }] }, false]
+        ];
+        for (const [name, extra, shared] of cases) {
+            const mod = { id: 1, title: '차시', images: { img_1: PICTURE_A }, ...extra };
+            const ctx = pictureContext(mod);
+            await call(ctx, 'deleteImage')(encodeURIComponent(PICTURE_A));
+            assert.strictEqual(mod.tabContents.basicLearn, '앞  뒤', name);
+            assert.strictEqual(mod.images.img_1, PICTURE_A, `${name}: 그림 값을 남긴다`);
+            assert.strictEqual(ctx.asked[0].message.includes('그곳의 그림은 그대로 둡니다'), shared, name);
+        }
+    });
+
+    await run('그림 지우기: 확인 창에서 취소하면 글·그림·저장이 그대로다', async () => {
+        const mod = { id: 1, title: '차시', tabContents: { basicLearn: pictureFrame('img_1', '설명') }, images: { img_1: PICTURE_A }, whiteboardVideos: { img_1: { id: 'wb_video000001' } } };
+        const before = JSON.stringify(mod);
+        const ctx = pictureContext(mod, { answer: false });
+        await call(ctx, 'deleteImage')('img_1');
+        assert.strictEqual(JSON.stringify(mod), before);
+        assert.deepStrictEqual([ctx.saved, ctx.written.length, ctx.toasts.length], [undefined, 0, 0]);
+        assert.ok(ctx.asked[0].message.includes('영상 연결도 풉니다'), ctx.asked[0].message);
+    });
+
+    await run('그림 지우기: 빈 주소(찾지 못한 그림 자리)와 참조 값으로는 다른 그림을 고르지 않는다', async () => {
+        const ref = 'teacher-image:0123456789abcdef1a';
+        const mod = { id: 1, title: '차시', tabContents: { basicLearn: '![](local:gone) 앞 ![그림](local:img_2) 뒤 ![참조](local:img_ref)' }, images: { img_1: '', img_2: PICTURE_A, img_ref: ref } };
+        const before = JSON.stringify(mod);
+        const ctx = pictureContext(mod);
+        await call(ctx, 'deleteImage')(''); // ![]() 자리의 옛 버튼
+        await call(ctx, 'deleteImage')(encodeURIComponent(ref));
+        assert.strictEqual(JSON.stringify(mod), before, '아무것도 바꾸지 않는다');
+        assert.deepStrictEqual([ctx.asked.length, ctx.saved], [0, undefined], '묻지도 저장하지도 않는다');
+        assert.ok(ctx.toasts.every(text => text.includes('찾지 못해 지우지 않았습니다')) && ctx.toasts.length === 2, ctx.toasts.join('|'));
+        const targets = (images, id) => plain(call(ctx, 'lessonImageTargets')({ images }, id));
+        assert.deepStrictEqual(targets(mod.images, ''), { keys: [], refs: [] });
+        assert.deepStrictEqual(targets({ a1: PICTURE_A, a2: PICTURE_A, b: PICTURE_B, c: '' }, encodeURIComponent(PICTURE_A)), { keys: ['a1', 'a2'], refs: ['local:a1', 'local:a2', PICTURE_A] }, '같은 그림 값의 키는 모두');
+        assert.deepStrictEqual(targets({ a1: PICTURE_A, a2: PICTURE_A }, 'a2'), { keys: ['a2'], refs: ['local:a2', PICTURE_A] }, '키를 받으면 그 키만(그 그림 값을 주소로 바로 쓴 자리도)');
+        assert.deepStrictEqual(targets({ a3: '' }, 'local:a3'), { keys: ['a3'], refs: ['local:a3'] });
+        assert.strictEqual(call(ctx, 'mdImageDeleteButton')('', ''), '', '빈 주소의 마크다운 그림에는 삭제 버튼을 달지 않는다');
+        assert.ok(call(ctx, 'mdImageDeleteButton')(PICTURE_A, 'x%22y').includes('data-lesson-action="delete-image" data-img-id="x%22y"'));
+    });
+
+    await run('그림 지우기: 묻는 동안 다른 차시나 탭으로 옮기면 지우지 않는다', async () => {
+        const moves = [c => { vm.runInContext("currentLessonTab = 'basicPrac'", c); }, c => { c.currentEditingModuleId = 2; }, c => { vm.runInContext("_lessonPanel = 'gyosuan'", c); }];
+        for (const move of moves) {
+            const mod = { id: 1, title: '차시', tabContents: { basicLearn: '앞 ![그림](local:img_1) 뒤', basicPrac: '실습' }, images: { img_1: PICTURE_A } };
+            const before = JSON.stringify(mod);
+            const ctx = pictureContext(mod, { answer: c => { move(c); return true; } });
+            await call(ctx, 'deleteImage')('img_1');
+            assert.strictEqual(JSON.stringify(mod), before);
+            assert.deepStrictEqual(ctx.toasts, ['다른 차시나 탭으로 옮겨 그림을 지우지 않았습니다.']);
+        }
+        // 기다리는 동안 그 그림이 이미 빠졌으면 성공이라고 하지 않는다
+        const mod = { id: 1, title: '차시', tabContents: { basicLearn: '앞 ![그림](local:img_1) 뒤' }, images: { img_1: PICTURE_A } };
+        const gone = pictureContext(mod, { answer: () => { mod.tabContents = { basicLearn: '다른 글' }; return true; } });
+        await call(gone, 'deleteImage')('img_1');
+        assert.deepStrictEqual([mod.tabContents.basicLearn, gone.written.length], ['다른 글', 0]);
+        assert.ok(!gone.toasts.includes('그림을 지웠습니다.'), gone.toasts.join('|'));
+    });
+
+    await run('그림 지우기: AI 작업이 도는 동안에는 글에서만 빼고 그림 값과 판서 영상 연결은 남긴다', async () => {
+        const mod = { id: 1, title: '차시', tabContents: { basicLearn: '앞 ![그림](local:img_1) 뒤' }, images: { img_1: PICTURE_A }, whiteboardVideos: { img_1: { id: 'wb_video000001' } } };
+        const ctx = pictureContext(mod);
+        ctx.isVolumeFilling = () => true; // 기본학습 분량 채우기(고정 섹션을 쥐고 있다)
+        await call(ctx, 'deleteImage')('img_1');
+        assert.strictEqual(mod.tabContents.basicLearn, '앞  뒤');
+        assert.deepStrictEqual([mod.images.img_1, mod.whiteboardVideos.img_1.id], [PICTURE_A, 'wb_video000001']);
+        assert.ok(!ctx.asked[0].message.includes('영상 연결'), '남길 영상 연결을 푼다고 말하지 않는다');
+        const pipeline = { id: 1, title: '차시', tabContents: { basicLearn: '![그림](local:img_1)' }, images: { img_1: PICTURE_A } };
+        const busy = pictureContext(pipeline);
+        busy.isLessonPipelineRunning = () => true;
+        await call(busy, 'deleteImage')('img_1');
+        assert.strictEqual(pipeline.images.img_1, PICTURE_A, '진행 막대의 작업');
+    });
+
+    await run('그림 지우기: 판서 영상은 연결만 풀고 영상 파일은 지우지 않는다(다른 탭이 그 그림을 쓰면 연결도 둔다)', async () => {
+        const video = { id: 'wb_video000001', title: '판서', ext: 'mp4', at: 1 };
+        const mod = { id: 1, title: '차시', tabContents: { basicLearn: `앞\n\n${pictureFrame('img_1', '설명')}\n\n뒤` }, images: { img_1: PICTURE_A }, whiteboardVideos: { img_1: video, img_9: { id: 'wb_video000009' } } };
+        const ctx = pictureContext(mod);
+        vm.runInContext(fs.readFileSync(root + 'whiteboard-video.js', 'utf8'), ctx);
+        const deleted = [];
+        ctx.DBManager = { deleteItem: async key => { deleted.push(key); }, setItem: async () => {}, getItem: async () => null };
+        await call(ctx, 'deleteImage')('img_1');
+        assert.deepStrictEqual(Object.keys(mod.whiteboardVideos), ['img_9']);
+        assert.ok(!('img_1' in mod.images));
+        assert.deepStrictEqual(deleted, [], '영상 파일은 저장된 작업을 열 때 정리한다');
+        assert.ok(ctx.asked[0].message.includes('영상 연결도 풉니다'));
+        const shared = { id: 1, title: '차시', tabContents: { basicLearn: '앞 ![그림](local:img_1) 뒤', advLearn: '![그림](local:img_1)' }, images: { img_1: PICTURE_A }, whiteboardVideos: { img_1: { ...video } } };
+        const other = pictureContext(shared);
+        vm.runInContext(fs.readFileSync(root + 'whiteboard-video.js', 'utf8'), other);
+        await call(other, 'deleteImage')('img_1');
+        assert.deepStrictEqual([shared.whiteboardVideos.img_1.id, shared.images.img_1], [video.id, PICTURE_A]);
+        assert.ok(!other.asked[0].message.includes('영상 연결'), other.asked[0].message);
+    });
+
+    await run('보기 화면: 그림 틀·붙여 넣은 그림에 삭제 버튼을 하나씩 달고, 마크다운 그림·빈 주소·링크 안 그림은 건너뛴다', async () => {
+        const make = (tag, { cls = '', attrs = {}, children = [] } = {}) => {
+            const el = {
+                tagName: tag.toUpperCase(), className: cls, attrs: { ...attrs }, dataset: {}, children: [], parentElement: null,
+                classList: { add: (...names) => { el.className = [...new Set([...el.className.split(' ').filter(Boolean), ...names])].join(' '); } },
+                getAttribute: name => (name in el.attrs ? el.attrs[name] : null),
+                appendChild(child) {
+                    if (child.parentElement) child.parentElement.children.splice(child.parentElement.children.indexOf(child), 1);
+                    child.parentElement = el;
+                    el.children.push(child);
+                    return child;
+                },
+                replaceWith(other) {
+                    const list = el.parentElement.children;
+                    list[list.indexOf(el)] = other;
+                    other.parentElement = el.parentElement;
+                    el.parentElement = null;
+                },
+                matches: selector => selector.split(',').map(part => part.trim()).some(part => {
+                    if (part.startsWith('.')) return el.className.split(' ').includes(part.slice(1));
+                    if (part === '[data-img-id]') return 'data-img-id' in el.attrs || el.dataset.imgId !== undefined;
+                    if (part.startsWith('[')) return part.slice(1, -1) in el.attrs;
+                    return el.tagName === part.toUpperCase();
+                }),
+                closest(selector) {
+                    for (let node = el; node; node = node.parentElement) if (node.matches(selector)) return node;
+                    return null;
+                },
+                all: () => el.children.flatMap(child => [child, ...child.all()]),
+                querySelector: selector => el.all().find(node => node.matches(selector)) || null,
+                querySelectorAll: selector => el.all().filter(node => node.matches(selector))
+            };
+            // data-* 속성은 브라우저처럼 dataset에도 보인다
+            Object.entries(attrs).filter(([name]) => name.startsWith('data-')).forEach(([name, value]) => {
+                el.dataset[name.slice(5).replace(/-([a-z])/g, (whole, ch) => ch.toUpperCase())] = value;
+            });
+            children.forEach(child => el.appendChild(child));
+            return el;
+        };
+        const img = src => make('img', { attrs: { src } });
+        const PICTURE_C = 'data:image/png;base64,Q0ND';
+        const PICTURE_D = 'data:image/png;base64,RERE';
+        const web = 'https://example.com/a.png';
+        const view = make('div', { children: [
+            make('div', { cls: 'image-wrapper', children: [img(PICTURE_A), make('button', { attrs: { 'data-img-id': 'img_1' } })] }),
+            make('div', { attrs: { 'data-imgid': 'x' }, children: [img(PICTURE_B)] }),
+            img(PICTURE_C),
+            make('div', { cls: 'image-wrapper', children: [img('')] }),
+            make('a', { attrs: { href: web }, children: [img(web)] }),
+            make('p', { children: [img(web)] }),
+            make('div', { cls: 'image-wrapper', children: [img(PICTURE_D), make('button', { attrs: { 'data-img-id': 'd2' } })] }),
+            img(PICTURE_D)
+        ] });
+        const ctx = makeContext();
+        ctx.document.createElement = tag => make(tag);
+        const mod = { id: 1, images: { img_1: PICTURE_A, img_2: PICTURE_B, d1: PICTURE_D, d2: PICTURE_D } };
+        const blocks = view.children.length;
+        call(ctx, 'addImageDeleteButtons')(view, mod);
+        const buttons = view.querySelectorAll('button').filter(button => button.dataset.lessonAction === 'delete-image');
+        assert.deepStrictEqual(buttons.map(button => button.dataset.imgId), ['img_1', encodeURIComponent(PICTURE_C), encodeURIComponent(web), 'd2', encodeURIComponent(PICTURE_D)],
+            '키를 하나로 알면 키를, 모르거나 여럿이면 그림 주소를 넘긴다');
+        assert.strictEqual(view.children.length, blocks, '화면 블록 수는 그대로다');
+        assert.ok(view.children[0].className.includes('relative') && view.children[0].className.includes('group'));
+        assert.strictEqual(view.children[2].tagName, 'SPAN', '틀 없는 그림은 칸으로 감싼다');
+        assert.ok(buttons.every(button => button.className.includes('left-2') && button.title === '그림 지우기'), '왼쪽 위(다시 찾기는 오른쪽 위)');
+        assert.strictEqual(view.children[1].querySelectorAll('button').length, 0, '마크다운 그림은 렌더러가 단다');
+        assert.strictEqual(view.children[4].querySelectorAll('button').length, 0, '링크 안 그림');
+        assert.strictEqual(view.children[3].querySelectorAll('button').length, 0, '빈 주소');
+        call(ctx, 'addImageDeleteButtons')(null, mod);
     });
 
     await run('원문 칸 미리 보기: 그림 키 모양 하나로 진짜 그림만 넣는다(img_1이 img_10 안에서 바뀌지 않는다)', async () => {

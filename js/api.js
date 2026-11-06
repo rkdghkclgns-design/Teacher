@@ -492,16 +492,22 @@ if (typeof marked !== 'undefined') {
             return `
                 <div class="relative group my-6 flex justify-center" data-imgid="${imgIdToPass}">
                     <img src="${href}" alt="${text}" title="${title}" class="rounded-xl shadow-lg max-w-full h-auto max-h-[450px] object-contain transition-transform duration-500 group-hover:scale-[1.01]">
-                    <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
-                        <button data-lesson-action="delete-image" data-img-id="${escapeHtml(imgIdToPass)}" class="px-3 py-1.5 bg-red-500/80 hover:bg-red-600 text-white text-xs font-bold rounded-lg shadow-lg flex items-center gap-1 backdrop-blur-sm">
-                            <i class="ph-bold ph-trash"></i> 삭제
-                        </button>
-                    </div>
+                    ${mdImageDeleteButton(href, imgIdToPass)}
                 </div>
             `;
         }
     };
     marked.use({ renderer });
+}
+
+// 마크다운 그림의 삭제 버튼(오른쪽 위). 빈 주소(찾지 못한 그림 자리 ![]())에는 달지 않는다. 어느 그림인지 알 수 없어 엉뚱한 그림을 지운다
+function mdImageDeleteButton(href, imgId) {
+    if (!href) return '';
+    return `<div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
+                        <button data-lesson-action="delete-image" data-img-id="${escapeHtml(imgId)}" class="px-3 py-1.5 bg-red-500/80 hover:bg-red-600 text-white text-xs font-bold rounded-lg shadow-lg flex items-center gap-1 backdrop-blur-sm">
+                            <i class="ph-bold ph-trash"></i> 삭제
+                        </button>
+                    </div>`;
 }
 
 // ------------------------------------------------------------------------
@@ -3136,6 +3142,7 @@ window.toggleEditorMode = function (mode) {
 
                 // 교안 렌더 단일 파이프라인 (collapse→marked→reParse→마침표줄바꿈→postprocess)
                 renderView.innerHTML = renderLessonHTML(renderText);
+                addImageDeleteButtons(renderView, mod); // 그림 틀·붙여 넣은 그림에도 삭제 버튼(마크다운 그림은 렌더러가 단다)
                 window.applyWhiteboardVideos?.(mod); // 판서 영상으로 바꾼 그림은 영상으로, 나머지 그림에는 바꾸기 버튼
 
                 // Mermaid 다이어그램 렌더링 (근본적 수정)
@@ -3457,7 +3464,8 @@ async function runAICommand() {
             const b64 = await generateImageAPI(command);
             if (!b64) return window.showAlert('이미지 생성에 실패했습니다.'); // 그림을 못 만들었으면 완료라고 하지 않는다
             const imgId = 'img_' + Date.now() + Math.floor(Math.random() * 1000);
-            const safeCmd = String(command).replace(/'/g, "\\'").replace(/"/g, '&quot;').slice(0, 80);
+            // 그림 설명은 자른 뒤에 이스케이프한다(&quot; 같은 표시가 반만 남지 않게. 그림 넣기와 같은 규칙)
+            const safeCmd = escapeHtml(String(command).slice(0, 80));
             const imgTag = `\n<div class="image-wrapper"><img src="local:${imgId}" alt="${escapeHtml(command)}" class="rounded-lg border-2 border-accent/30 shadow-md max-w-full"><span class="absolute bottom-3 left-3 bg-black/80 text-white text-[0.6875rem] px-2 py-1 rounded border border-white/20 flex items-center gap-1 pointer-events-none"><i class="ph-fill ph-sparkle text-accent"></i> AI 생성 이미지</span><button class="image-regenerate-btn px-3 py-1.5 text-xs text-white font-bold rounded flex items-center gap-1 border border-accent/50 hover:bg-accent transition-colors" data-lesson-action="regenerate-image" data-keyword="${escapeHtml(command)}" data-img-id="${imgId}"><i class="ph-bold ph-arrows-clockwise"></i> 다시 생성</button><div class="image-caption" style="margin-top:8px;text-align:center;font-size:0.85rem;color:#6b7280;font-style:italic;font-weight:500;letter-spacing:-0.01em;line-height:1.4;max-width:100%;">${safeCmd}</div></div>\n`;
             result = { kind: 'image', target, baseText, pos, imgId, b64, imgTag };
         }
@@ -3573,61 +3581,235 @@ async function deliverAiCommandResult(result) {
     return applyAiCommandResult(result);
 }
 
-// 화면에는 이미지가 data URL로 풀려 있으므로 저장된 키를 되찾는다
+/* ---------- 그림 지우기 (보기 화면의 삭제 버튼) ---------- */
+// 지울 그림: 저장된 그림 키(keys)와 원문에서 찾을 그림 주소(refs). 키(img_1이나 local:img_1)를 받으면 그 키만 고른다
+// (그 키의 그림 값을 주소로 바로 쓴 자리도 찾는다). 마크다운 그림 버튼은 화면에 풀린 data URL을 넘기므로 그 값으로 키를 되찾는다.
+// 값으로 찾는 것은 진짜 그림(data:image/)일 때만이고 같은 값의 키는 모두 고른다. 찾지 못한 그림 자리(teacher-image:…)·빈 값은
+// 여러 키가 같은 값일 수 있어 값으로 찾지 않는다(엉뚱한 그림을 지운다)
 function lessonImageTargets(mod, imgId) {
-    const images = mod.images || {};
-    let source = imgId;
+    const images = mod?.images && typeof mod.images === 'object' ? mod.images : {};
+    const has = key => Object.prototype.hasOwnProperty.call(images, key);
+    const isPicture = value => typeof value === 'string' && /^data:image\//.test(value);
+    const given = String(imgId ?? '');
+    let source = given;
     try {
-        source = decodeURIComponent(imgId);
+        source = decodeURIComponent(given);
     } catch (err) {
-        console.warn('[이미지 삭제] 주소를 읽지 못해 그대로 씁니다:', err.message);
+        console.warn('[그림 지우기] 주소를 읽지 못해 그대로 씁니다:', err.message);
     }
-    const key = images[imgId] ? imgId : Object.keys(images).find(id => images[id] === source);
-    return { key, refs: [key && `local:${key}`, source].filter(Boolean) };
+    const named = has(given) ? given : (source.startsWith('local:') ? source.slice('local:'.length) : '');
+    if (named) {
+        const value = has(named) ? images[named] : '';
+        return { keys: has(named) ? [named] : [], refs: [`local:${named}`, ...(isPicture(value) ? [value] : [])] };
+    }
+    if (!source) return { keys: [], refs: [] };
+    const keys = isPicture(source) ? Object.keys(images).filter(key => images[key] === source) : [];
+    return { keys, refs: [...keys.map(key => `local:${key}`), source] };
 }
 
-// 마크다운 그림 ![설명](주소) 하나. 정해 둔 이 모양으로만 찾는다(그림 키나 data URL로 정규식을 만들지 않는다)
+// 원문의 그림 자리 세 모양. 정해 둔 모양으로만 찾고 주소는 글자 그대로 견준다(그림 키나 data URL로 정규식을 만들지 않는다).
+// 그림 틀: <div class="image-wrapper"><img src="…"> 뒤의 AI 표시(span)·다시 찾기 버튼·그림 설명(image-caption)과 닫는 </div>까지.
+// 그 사이 글에 '<'가 있어도 되지만 안쪽 <div나 빈 줄에서 멈춘다(모양이 다른 옛 틀은 맨 <img>만 지운다. 블록을 넘어 지우지 않는다)
+const IMAGE_WRAPPER_BLOCK = /<div class="image-wrapper(?:\s[^"]*)?"[^>]*>(?:(?!\n[ \t]*\n)\s)*<img\b[^>]*?\ssrc="([^"]*)"[^>]*>(?:(?!<div|<\/div>|\n[ \t]*\n)[\s\S])*(?:<div class="image-caption"[^>]*>(?:(?!<div|<\/div>|\n[ \t]*\n)[\s\S])*<\/div>(?:(?!<div|<\/div>|\n[ \t]*\n)[\s\S])*)?<\/div>/g;
+// 붙여 넣은 맨 그림 <img src="…">(src 앞에 다른 속성이 있어도 된다)
+const HTML_IMAGE_TAG = /<img\b[^>]*?\ssrc="([^"]*)"[^>]*>/g;
+// 마크다운 그림 ![설명](주소)
 const MD_IMAGE_TAG = /!\[[^\]]*\]\(([^)\s]*)\)/g;
+const LESSON_IMAGE_SHAPES = [IMAGE_WRAPPER_BLOCK, HTML_IMAGE_TAG, MD_IMAGE_TAG];
+const PICTURE_GAP = '\u0000그림\u0000'; // 지운 자리 표시(줄 정리에만 쓰고 남기지 않는다)
 
-// 주소가 refs 가운데 하나와 꼭 같은 마크다운 그림만 지운다(local:img_1을 지울 때 local:img_10은 남는다)
-function withoutMdImages(md, refs) {
-    const targets = new Set(refs);
-    return String(md ?? '').replace(MD_IMAGE_TAG, (whole, url) => (targets.has(url) ? '' : whole));
+// 코드 블록(``` 펜스) 밖의 글 덩어리에만 change를 부른다. 코드 예제 속 <img>·![]()는 그림이 아니다. 줄 나눔은 그대로 둔다
+function mapPictureProse(md, change) {
+    const out = [];
+    let prose = [];
+    let fence = 0;
+    const flush = () => {
+        if (prose.length) out.push(change(prose.join('\n')));
+        prose = [];
+    };
+    md.split('\n').forEach(line => {
+        const next = fenceStateAfter(fence, line);
+        if (fence || next) {
+            flush();
+            out.push(line);
+        } else {
+            prose.push(line);
+        }
+        fence = next;
+    });
+    flush();
+    return out.join('\n');
 }
 
-// v7.2: 이미지 삭제 — 보기모드에서 이미지 제거
-window.deleteImage = function (imgId, btnEl) {
-    if (!confirm('이 이미지를 삭제하시겠습니까?')) return;
+// 지운 자리 정리: 그림만 있던 줄은 빼고, 앞뒤가 모두 빈 줄이면 빈 줄 하나만 남긴다. 글 사이에 있던 그림은 그 자리만 비운다
+function tidyPictureGaps(text) {
+    const lines = text.split('\n');
+    const out = [];
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (!line.includes(PICTURE_GAP)) {
+            out.push(line);
+            continue;
+        }
+        const rest = line.split(PICTURE_GAP).join('');
+        if (rest.trim()) {
+            out.push(rest);
+            continue;
+        }
+        const afterBlank = !out.length || !out[out.length - 1].trim();
+        if (afterBlank && i + 1 < lines.length && !lines[i + 1].trim()) i += 1;
+    }
+    return out.join('\n');
+}
+
+// 주소가 refs 가운데 하나와 꼭 같은 그림 자리(그림 틀·맨 <img>·마크다운 그림)를 지운 글과 지운 자리 수.
+// local:img_1을 지울 때 local:img_10은 남는다
+function removeLessonImages(md, refs) {
+    const targets = new Set(refs);
+    let count = 0;
+    const strip = prose => LESSON_IMAGE_SHAPES.reduce((text, shape) => text.replace(shape, (whole, url) => {
+        if (!targets.has(url)) return whole;
+        count += 1;
+        return PICTURE_GAP;
+    }), prose);
+    const gapped = mapPictureProse(String(md ?? ''), strip);
+    return { text: count ? tidyPictureGaps(gapped) : String(md ?? ''), count };
+}
+
+function withoutLessonImages(md, refs) {
+    return removeLessonImages(md, refs).text;
+}
+
+// AI 작업이 도는 중인지. 다시 만들기·일괄 생성·분량 채우기는 비운 탭에 돌려 넣을 고정 섹션의 그림을 쥐고 있다(그동안은 그림 값을 지우지 않는다).
+// 있는 표시만 읽는다(course-flow.js generationBusy·_lessonRun, lesson-pipeline.js, lesson-volume.js)
+function pictureJobRunning() {
+    return (typeof generationBusy === 'function' && !!generationBusy())
+        || (typeof _lessonRun !== 'undefined' && !!_lessonRun)
+        || !!window.isLessonPipelineRunning?.()
+        || !!window.isVolumeFilling?.();
+}
+
+// 글이 그 그림 키를 가리키는지. local:img_1 뒤에 키 글자가 더 이어지면(local:img_10) 다른 그림이다
+function textUsesImage(text, key) {
+    const ref = `local:${key}`;
+    for (let at = text.indexOf(ref); at !== -1; at = text.indexOf(ref, at + 1)) {
+        if (!/[\w-]/.test(text.charAt(at + ref.length))) return true;
+    }
+    return false;
+}
+
+// 차시 어딘가가 아직 그 그림 키를 쓰는지: 글(합친 본문·탭·교수안·슬라이드)이 그 키를 가리키거나 삽화·판서 영상이 붙잡고 있다.
+// tabs.js unusedLessonImageIds와 같은 곳을 보되 local:img_1과 local:img_10을 가른다
+function lessonStillUsesImage(mod, key) {
+    const illustrations = Array.isArray(mod.illustrations) ? mod.illustrations.map(item => item?.imgId) : [];
+    const pinned = [...illustrations, ...Object.keys(mod.whiteboardVideos || {})];
+    return pinned.some(id => id != null && String(id) === key) || lessonImageRefTexts(mod).some(text => textUsesImage(text, key));
+}
+
+// 지운 뒤의 탭 글과 할 일을 미리 센다(차시는 바꾸지 않는다). 확인 창의 글에 쓰고, 확인한 뒤에 다시 센다.
+// busy: AI 작업이 돌아 그림 값·영상 연결을 남긴다 / unlink: 이 탭에서 빼면 어느 글도 쓰지 않게 되는 판서 영상 그림 키 / shared: 다른 탭·교수안·슬라이드에도 있는 그림인지
+function deleteImagePlan(mod, tabId, targets) {
+    const { text, count } = removeLessonImages(tabSourceFor(mod, tabId), targets.refs);
+    const after = { ...mod };
+    setTabMarkdown(after, tabId, text);
+    const texts = lessonImageRefTexts(after);
+    const usedElsewhere = key => texts.some(item => textUsesImage(item, key));
+    const busy = pictureJobRunning();
+    return {
+        text,
+        count,
+        busy,
+        unlink: busy ? [] : targets.keys.filter(key => mod.whiteboardVideos?.[key] && !usedElsewhere(key)),
+        shared: targets.keys.some(usedElsewhere)
+    };
+}
+
+function deleteImageMessage(plan) {
+    return [
+        '이 그림을 교안에서 지웁니다.',
+        plan.count > 1 ? `이 탭에 같은 그림이 ${plan.count}곳 있어 모두 지웁니다.` : '',
+        plan.unlink.length ? '판서 영상으로 바꿔 둔 그림이라 영상 연결도 풉니다.' : '',
+        plan.shared ? '다른 탭이나 교수안·슬라이드에도 있는 그림이라 그곳의 그림은 그대로 둡니다.' : '',
+        '지운 뒤에는 Ctrl+Z로 되돌릴 수 없습니다.'
+    ].filter(Boolean).join('\n');
+}
+
+const DELETE_IMAGE_MISSING = '이 그림을 원문에서 찾지 못해 지우지 않았습니다. 도구 → 원문 전체 수정에서 지워 주세요.';
+
+// 숨은 원문 칸이 이 차시·탭을 그렸으면 바뀐 글로 맞춘다(지운 그림을 다시 저장하거나 다시 그리지 않게). storedFrom: 칸을 맞춘 저장된 글
+function rawViewAfterImageDelete(mod, tabId) {
+    const raw = document.getElementById('raw-view');
+    if (!raw || String(raw.dataset.moduleId) !== String(mod.id) || (raw.dataset.tabId || tabId) !== tabId) return;
+    const stored = tabSourceFor(mod, tabId);
+    raw.value = raw.lastSaved = stored;
+    raw.storedFrom = stored;
+}
+
+// 보기 화면의 삭제 버튼. 물어본 뒤 이 탭의 그 그림 자리를 지운다. 그림 값은 다른 곳이 쓰지 않을 때만 지운다
+// (다른 탭·교수안·슬라이드·삽화, 진행 중인 AI 작업). 판서 영상은 연결만 풀고 파일은 저장된 작업을 열 때 정리한다(whiteboard-video.js)
+window.deleteImage = async function (imgId) {
     const mod = getEditingModule();
     if (!mod) return;
-
-    const { key, refs } = lessonImageTargets(mod, imgId);
-
-    // Base64 캐시에서 제거
-    if (key) delete mod.images[key];
-
-    // 마크다운에서 이 이미지의 참조만 제거한다
     const tabId = typeof currentLessonTab !== 'undefined' ? currentLessonTab : null;
-    if (tabId && mod.tabContents && mod.tabContents[tabId]) {
-        mod.tabContents[tabId] = withoutMdImages(mod.tabContents[tabId], refs);
-        // 숨겨진 편집기가 지운 참조를 다시 저장하지 않게 맞춘다
-        const rawView = document.getElementById('raw-view');
-        if (rawView) rawView.value = rawView.lastSaved = mod.tabContents[tabId];
+    const plan = deleteImagePlan(mod, tabId, lessonImageTargets(mod, imgId));
+    if (!plan.count) return window.showToast?.(DELETE_IMAGE_MISSING, 'warning');
+    if (!(await confirmAsync(deleteImageMessage(plan), { title: '그림 지우기', okLabel: '지우기', tone: 'danger' }))) return;
+    // 기다리는 동안 다른 차시·탭으로 옮겼으면 지우지 않는다. 그사이 글과 그림이 바뀌었을 수 있어 다시 센다
+    if (!isViewingTab(mod, tabId)) return window.showToast?.('다른 차시나 탭으로 옮겨 그림을 지우지 않았습니다.', 'warning');
+    const targets = lessonImageTargets(mod, imgId);
+    const now = deleteImagePlan(mod, tabId, targets);
+    if (!now.count) return window.showToast?.(DELETE_IMAGE_MISSING, 'warning');
+    setTabMarkdown(mod, tabId, now.text);
+    if (!now.busy) {
+        if (typeof dropWhiteboardVideo === 'function') now.unlink.forEach(key => dropWhiteboardVideo(mod, key)); // 영상 연결이 남으면 그림 값도 남는다
+        const drop = targets.keys.filter(key => !lessonStillUsesImage(mod, key));
+        if (drop.length) mod.images = Object.fromEntries(Object.entries(mod.images).filter(([key]) => !drop.includes(key)));
     }
-    if (mod.content) mod.content = withoutMdImages(mod.content, refs);
-
-    // DOM에서 이미지 wrapper 제거
-    const wrapper = btnEl?.closest('[data-imgid]');
-    if (wrapper) {
-        wrapper.style.transition = 'opacity 0.3s, transform 0.3s';
-        wrapper.style.opacity = '0';
-        wrapper.style.transform = 'scale(0.95)';
-        setTimeout(() => wrapper.remove(), 300);
-    }
-
-    saveState();
-    if (window.showToast) window.showToast('이미지가 삭제되었습니다.', 'success');
+    rawViewAfterImageDelete(mod, tabId);
+    await window.writeLessonTab(mod, tabId, now.text);
+    window.showToast?.('그림을 지웠습니다.', 'success');
 };
+
+/* ---------- 보기 화면: 그림 틀·붙여 넣은 그림의 삭제 버튼 ---------- */
+const IMAGE_DELETE_BUTTON_CLASS = 'absolute top-2 left-2 z-10 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity px-3 py-1.5 bg-red-500/80 hover:bg-red-600 text-white text-xs font-bold rounded-lg shadow-lg flex items-center gap-1 backdrop-blur-sm';
+
+function imageDeleteButton(imgId) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.lessonAction = 'delete-image';
+    button.dataset.imgId = imgId;
+    button.className = IMAGE_DELETE_BUTTON_CLASS;
+    button.title = '그림 지우기';
+    button.innerHTML = '<i class="ph-bold ph-trash"></i> 삭제';
+    return button;
+}
+
+// 틀 없이 붙여 넣은 그림은 버튼을 달 칸(block span)으로 감싼다. 화면 블록 수는 그대로다(두 번 눌러 고치기는 블록 순서로도 짝짓는다)
+function wrapLooseImage(img) {
+    const box = document.createElement('span');
+    box.className = 'block';
+    img.replaceWith(box);
+    box.appendChild(img);
+    return box;
+}
+
+// 마크다운 그림 밖의 그림(그림 틀, 붙여 넣은 맨 <img>)에도 삭제 버튼을 단다. 마크다운 그림([data-imgid])은 렌더러가 단다.
+// 진짜 그림·웹 그림에만 달고(빈 주소는 어느 그림인지 알 수 없다) 링크 안 그림은 건너뛴다. 버튼은 왼쪽 위(다시 찾기는 오른쪽 위).
+// 그림 키를 하나로 알 수 있으면 키를, 아니면 그림 주소를 넘긴다(deleteImage가 같은 값의 키를 모두 고른다)
+function addImageDeleteButtons(view, mod) {
+    if (!view || !mod) return;
+    const images = mod.images && typeof mod.images === 'object' ? mod.images : {};
+    view.querySelectorAll('img').forEach(img => {
+        const src = img.getAttribute('src') || '';
+        if (!/^(?:data:image\/|https?:)/i.test(src) || img.closest('[data-imgid], a')) return;
+        const holder = img.closest('.image-wrapper') || wrapLooseImage(img);
+        const keys = Object.keys(images).filter(key => images[key] === src);
+        const own = [...holder.querySelectorAll('[data-img-id]')].find(el => el.dataset.lessonAction !== 'delete-image')?.dataset.imgId; // 저장된 다시 찾기 버튼의 키
+        const key = keys.length === 1 ? keys[0] : (keys.includes(own) ? own : '');
+        holder.classList.add('relative', 'group');
+        holder.appendChild(imageDeleteButton(key || encodeURIComponent(src)));
+    });
+}
 
 // v7.3: 이미지 JPG 일괄 다운로드
 window.downloadImagesAsJPG = function (moduleId) {

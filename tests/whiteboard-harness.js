@@ -57,7 +57,8 @@ function makeContext({ loc = PAGES, mod = lesson(), setItemThrows = false, onSav
         DBManager: {
             setItem: async (key, value) => { db[key] = value; },
             getItem: async key => db[key],
-            deleteItem: async key => { delete db[key]; }
+            deleteItem: async key => { delete db[key]; },
+            keys: async () => Object.keys(db)
         },
         LESSON_ACTIONS: {}
     };
@@ -78,6 +79,7 @@ function makeContext({ loc = PAGES, mod = lesson(), setItemThrows = false, onSav
         remove: async requestId => { ctx.inbox = ctx.inbox.filter(record => record.requestId !== requestId); }
     };
     ctx.applied = [];
+    ctx.realApplyWhiteboardVideos = ctx.applyWhiteboardVideos; // 보기 화면 그리기를 따로 볼 때 쓴다
     ctx.applyWhiteboardVideos = m => ctx.applied.push(m);
     return ctx;
 }
