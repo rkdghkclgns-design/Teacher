@@ -57,11 +57,11 @@ function tabImageCount(tabs, imageAmount = 'section') {
 }
 
 // 차시 하나에서 할 일. tabs: 만들 탭 id 목록(또는 탭 수) / imageAmount: 설정의 교안 이미지 양(all·section·none) / slideImages: 교수안을 만들면 슬라이드에 넣는 그림 수
-// 기본 학습을 만들면 낭독 분량 채우기(volume)도 센다. 탭 수만 알면 어느 탭인지 몰라 세지 않는다
-function lessonWork({ tabs = 0, gyosuan = false, qbank = false, art = false, ncs } = {}, imageAmount = 'section', slideImages = defaultSlideImageCount()) {
+// 기본 학습을 만들면 낭독 분량 채우기(volume)도 센다. 탭 수만 알면 어느 탭인지 몰라 세지 않는다. 분량을 채우지 않는 최종 평가는 fillsVolume: false
+function lessonWork({ tabs = 0, gyosuan = false, qbank = false, art = false, ncs, fillsVolume = true } = {}, imageAmount = 'section', slideImages = defaultSlideImageCount()) {
     const tabCount = Array.isArray(tabs) ? tabs.length : (Number(tabs) || 0);
     const withNcs = ncs === undefined ? tabCount > 0 : ncs;
-    const volume = Array.isArray(tabs) && tabs.includes('basicLearn') ? { volume: 1 } : {};
+    const volume = fillsVolume && Array.isArray(tabs) && tabs.includes('basicLearn') ? { volume: 1 } : {};
     return { tabs: tabCount, images: tabImageCount(tabs, imageAmount), slideImages: gyosuan ? slideImages : 0, ncs: withNcs ? 1 : 0, gyosuan: gyosuan ? 1 : 0, qbank: qbank ? 1 : 0, art: art ? 1 : 0, ...volume };
 }
 

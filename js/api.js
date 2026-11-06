@@ -951,7 +951,8 @@ function moduleGenerationEstimate(mod) {
             gyosuan: typeof lessonNeedsGyosuan === 'function' ? lessonNeedsGyosuan(mod) : !mod.gyosuan?.docMd,
             qbank: true,
             art: typeof lessonWantsArt === 'function' && lessonWantsArt(mod),
-            ncs: typeof needsElementAutoAssign === 'function' && needsElementAutoAssign(mod)
+            ncs: typeof needsElementAutoAssign === 'function' && needsElementAutoAssign(mod),
+            fillsVolume: mod.id !== 'mainQuest' // 최종 평가는 기본 학습 분량을 채우지 않는다
         }, currentEstimateSettings().imageAmount));
     } catch (err) {
         console.warn('[미리 보기] 교안 생성 예고를 만들지 못했습니다:', err);

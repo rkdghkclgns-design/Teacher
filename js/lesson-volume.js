@@ -28,6 +28,7 @@ const VOLUME_MAX_OUTPUT_TOKENS = 65536;
 const VOLUME_DEFAULT_GOAL = Math.ceil(BASIC_LEARN_MIN_MINUTES * READ_CHARS_PER_MINUTE * VOLUME_MARGIN);
 const VOLUME_TIME_LABEL = /\(\s*⏱[^)]*\)|⏱\S*\s*(?:약\s*)?\d+\s*분/;
 const VOLUME_IMAGE_TAG = /<!--\s*\[IMG:[\s\S]*?-->/g;
+const VOLUME_QUEST_HEADING = /^#\s.*일일\s*퀘스트/; // 교안 전체 생성이 본문 뒤에 붙이는 '# ⚔️ 일일 퀘스트 (실습 과제)'
 // 늘리지 않는 섹션: 실습·심화·일일 퀘스트·과제·평가로 시작하거나, 루브릭·채점이 들거나, 요약·정리·마무리로 끝나는 제목
 const VOLUME_SKIP_TITLE = new RegExp(`${LESSON_HEADING_PREFIX}(?:실습|심화|일일\\s*퀘스트|과제|평가)|루브릭|채점|(?:요약|정리|마무리)$`);
 const VOLUME_CHIP_TITLE = `강사가 소리 내어 읽는 시간을 1분에 ${READ_CHARS_PER_MINUTE}자(공백 포함)로 셌습니다. 코드·표·그림·다이어그램·서식 기호는 세지 않습니다.`;
@@ -46,13 +47,19 @@ function volumeTitleMinutes(title) {
 const volumeCleanTitle = title => String(title || '').replace(/\s*\(⏱[^)]*\)\s*/g, ' ').trim();
 
 // 코드 블록 밖의 # 제목(교안 전체 생성의 '# ⚔️ 일일 퀘스트')을 품은 섹션은 끝에 이어 붙이지 않는다
-function hasTopHeading(text) {
+function hasTopHeading(text, heading = /^#\s/) {
     let fence = 0;
     return String(text || '').split('\n').some(line => {
         const wasFenced = fence;
         fence = nextCodeFence(fence, line);
-        return !wasFenced && !fence && /^#\s/.test(line);
+        return !wasFenced && !fence && heading.test(line);
     });
+}
+
+// '# ⚔️ 일일 퀘스트'를 품은 섹션의 번호. 그 뒤의 ## 섹션은 퀘스트의 소제목이므로 늘리지 않고 시간도 다시 매기지 않는다. 없으면 섹션 수
+function volumeQuestStart(sections) {
+    const at = sections.findIndex(section => hasTopHeading(section.text, VOLUME_QUEST_HEADING));
+    return at < 0 ? sections.length : at;
 }
 
 // 늘릴 수 있는 내용 섹션: 제목이 있고, 학습 목표·개요·체크리스트·고정·실습·요약 섹션이 아니며, # 제목을 품지 않는다
@@ -83,15 +90,17 @@ function volumeRequestSize(need, ratio = VOLUME_START_RATIO) {
 }
 
 // 다음에 늘릴 섹션. 가장 많이 모자란 섹션을 고른다. 코드 차시에서 코드를 설명하는데 예제가 없는 섹션은 목표를 채운 뒤에도 한 번 먼저 고른다.
-// 고를 섹션이 없거나 목표를 채웠으면 null
-function volumePlan(md, { goal = VOLUME_DEFAULT_GOAL, lockedKeys = new Set(), failures = new Map(), codeTopic = false, codeTried = new Set(), ratio = VOLUME_START_RATIO } = {}) {
+// avoid: 방금 늘지 않은 섹션. 다른 섹션이 있으면 바로 다시 고르지 않는다(한 섹션의 잇단 실패로 채우기 전체가 멈추지 않게). 고를 섹션이 없거나 목표를 채웠으면 null
+function volumePlan(md, { goal = VOLUME_DEFAULT_GOAL, lockedKeys = new Set(), failures = new Map(), codeTopic = false, codeTried = new Set(), ratio = VOLUME_START_RATIO, avoid = null } = {}) {
     const rows = mdSections(md).map((section, index) => ({ ...section, index, key: lockTitleKey(section.title), spoken: spokenChars(section.text) }));
     const total = rows.reduce((sum, row) => sum + row.spoken, 0);
-    const candidates = rows.filter(row => isVolumeContentSection(row, lockedKeys) && (failures.get(row.key) || 0) < VOLUME_SECTION_FAILS);
+    const quest = volumeQuestStart(rows);
+    const candidates = rows.filter(row => row.index < quest && isVolumeContentSection(row, lockedKeys) && (failures.get(row.key) || 0) < VOLUME_SECTION_FAILS);
     const open = candidates.length ? volumeDeficits(candidates, total, goal) : [];
     const codeFirst = codeTopic ? open.find(row => !codeTried.has(row.key) && !lessonHasCodeExample(row.text) && lessonCodeSignals(row.text)) : null;
     if (!open.length || (total >= goal && !codeFirst)) return null;
-    const pick = codeFirst || open.reduce((best, row) => (row.deficit > best.deficit ? row : best));
+    const others = open.filter(row => row.key !== avoid);
+    const pick = codeFirst || (others.length ? others : open).reduce((best, row) => (row.deficit > best.deficit ? row : best));
     const need = total >= goal ? VOLUME_MIN_NEED : Math.min(Math.max(pick.deficit, VOLUME_MIN_NEED), goal - total);
     const codeSection = codeTopic && (lessonCodeSignals(pick.text) || lessonHasCodeExample(pick.text));
     return { ...pick, total, needCode: !!codeFirst, codeSection, ...volumeRequestSize(need, ratio) };
@@ -152,23 +161,28 @@ function volumeSplitBlocks(text) {
     return blocks;
 }
 
+// 번호·아이콘·(⏱ N분)을 뺀 제목 키. 섹션 제목을 소주제로 되풀이했는지 본다
+const volumeBareKey = title => compactTitle(String(title || '').replace(new RegExp(LESSON_HEADING_PREFIX), ''));
+
 // 받은 답을 섹션 끝에 붙일 소주제로 다듬는다. 감싼 펜스·이어쓰기 표시·그림 태그를 떼고, 잘린 답은 마지막 빈 줄에서 자른 뒤 코드 블록을 닫는다.
-// 학습 목표·개요·체크리스트 소주제와 섹션이나 답 안에서 되풀이한 소주제는 버린다. 붙일 글이 없으면 ''
+// 학습 목표·개요·체크리스트 소주제, 섹션 제목을 되풀이한 소주제, 섹션이나 답 안에서 되풀이한 소주제, 본문 없는 제목은 버린다. 붙일 글이 없으면 ''
 function cleanVolumeAddition(data, { sectionText = '', truncated = data?.candidates?.[0]?.finishReason === 'MAX_TOKENS' } = {}) {
     let text = extractText(data, { unwrap: true }).replace(/\r\n/g, '\n').replace(REVIEW_MARKERS, '').replace(VOLUME_IMAGE_TAG, '');
     if (truncated) text = cutAtLastBreak(text);
     text = closeOpenFence(text.trim());
     if (typeof sanitizeMarkdownContent === 'function') text = sanitizeMarkdownContent(text) || '';
     const seen = new Set(subtopicTitles(sectionText));
+    const own = volumeBareKey(mdSections(sectionText)[0]?.title);
     const kept = volumeSplitBlocks(text).filter(block => {
         if (!block.title) return true;
         if (LESSON_FRAME_TITLE.test(block.title) || LESSON_OVERVIEW_TITLE.test(block.title)) return false;
+        if (own && volumeBareKey(block.title) === own) return false;
         const key = compactTitle(block.title);
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
     });
-    return kept.map(block => block.lines.join('\n').trim()).filter(Boolean).join('\n\n');
+    return kept.map(block => block.lines.join('\n').trim()).filter(part => part && !/^###\s[^\n]*$/.test(part)).join('\n\n');
 }
 
 /* ---------- 이어 붙이기 ---------- */
@@ -207,14 +221,15 @@ function withTitleMinutes(text, minutes) {
 const volumeLabelSum = md => mdSections(md).reduce((sum, section) => sum + volumeTitleMinutes(section.title), 0);
 
 // 내용 섹션의 (⏱ N분)을 낭독 길이에 맞춰 다시 매긴다. 학습 목표·개요·체크리스트·고정·실습·요약 섹션의 라벨은 그대로 두고,
-// 목표 시간에서 그 합을 뺀 시간을 낭독 글자 비율로 5분 단위로 나눈다(섹션마다 5분 이상). 라벨 합계가 목표 시간이 된다
+// 목표 시간에서 그 합을 뺀 시간을 낭독 글자 비율로 5분 단위로 나눈다(섹션마다 5분 이상). 남은 시간은 5분 단위로 올려 라벨 합계가 목표 시간 이상이 된다
 function retimeSections(md, targetMinutes, lockedKeys = new Set()) {
     const sections = mdSections(md).map((section, index) => ({ ...section, index }));
-    const open = sections.filter(section => isVolumeContentSection(section, lockedKeys));
+    const quest = volumeQuestStart(sections);
+    const open = sections.filter(section => section.index < quest && isVolumeContentSection(section, lockedKeys));
     if (!open.length) return md;
     const openIndexes = new Set(open.map(section => section.index));
     const kept = sections.filter(section => !openIndexes.has(section.index)).reduce((sum, section) => sum + volumeTitleMinutes(section.title), 0);
-    const total = Math.max(open.length * VOLUME_TIME_UNIT, targetMinutes - kept);
+    const total = Math.max(open.length * VOLUME_TIME_UNIT, Math.ceil((targetMinutes - kept) / VOLUME_TIME_UNIT) * VOLUME_TIME_UNIT);
     const minutes = allocateTime(open.length, total, open.map(section => spokenChars(section.text)), VOLUME_TIME_UNIT);
     const labels = new Map(open.map((section, i) => [section.index, minutes[i]]));
     return sections.map(section => (labels.has(section.index) ? withTitleMinutes(section.text, labels.get(section.index)) : section.text)).join('\n\n');
@@ -242,7 +257,7 @@ function volumeJob({ md = '', mod = null, tabId = 'basicLearn', lockedBlocks = [
         isLive: typeof isLive === 'function' ? isLive : () => true,
         onStatus: typeof onStatus === 'function' ? onStatus : () => {},
         onRetry, waitSignal,
-        calls: 0, added: 0, stalls: 0, requested: 0, gained: 0, retried: false,
+        calls: 0, added: 0, stalls: 0, requested: 0, gained: 0, retried: false, lastFailed: null,
         failures: new Map(), codeTried: new Set(), stopped: false, gone: false, error: null, reason: ''
     };
 }
@@ -291,7 +306,7 @@ async function volumeCall(job, plan) {
     }
 }
 
-// 받은 답을 붙이거나(늘어난 글자를 센다) 버린다(잇단 실패와 그 섹션의 실패로 센다)
+// 받은 답을 붙이거나(늘어난 글자를 센다) 버린다(잇단 실패와 그 섹션의 실패로 센다. 다음에는 다른 섹션부터 고른다)
 function volumeMerge(job, plan, data) {
     const merged = mergeVolumeAddition(job.md, plan, data);
     job.requested += plan.requestChars;
@@ -299,12 +314,14 @@ function volumeMerge(job, plan, data) {
     if (!merged) {
         job.stalls += 1;
         job.failures.set(plan.key, (job.failures.get(plan.key) || 0) + 1);
+        job.lastFailed = plan.key;
         return;
     }
     job.md = merged.md;
     job.gained += Math.max(0, merged.gain);
     job.added += 1;
     job.stalls = 0;
+    job.lastFailed = null;
 }
 
 const volumeStop = job => {
@@ -322,7 +339,7 @@ async function volumeLoop(job) {
     while (true) {
         if (job.isStopped()) return volumeStop(job);
         if (!job.isLive()) return volumeGone(job);
-        const plan = volumePlan(job.md, { goal: job.goal, lockedKeys: job.lockedKeys, failures: job.failures, codeTopic: job.codeTopic, codeTried: job.codeTried, ratio: volumeRatio(job) });
+        const plan = volumePlan(job.md, { goal: job.goal, lockedKeys: job.lockedKeys, failures: job.failures, codeTopic: job.codeTopic, codeTried: job.codeTried, ratio: volumeRatio(job), avoid: job.lastFailed });
         if (!plan) return spokenChars(job.md) >= job.goal ? 'target' : 'none';
         if (job.calls >= job.cap) return 'cap';
         if (job.calls > 0) await waitMs(VOLUME_COOLDOWN_MS, job.waitSignal);

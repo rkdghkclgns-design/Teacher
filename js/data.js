@@ -2,10 +2,11 @@
 
 // 0. 공통 유틸리티 (모든 모듈에서 참조 — 반드시 data.js에 위치)
 // 코드 펜스를 줄 단위로 따라간다(lesson-lint.js nextCodeFence와 같은 규칙). 여는 펜스보다 짧은 ``` 는 코드의 일부다. 펜스 밖이면 0이다
+// 언어 칸에 `가 든 줄(```npm install```)은 펜스가 아니라 인라인 코드다
 function fenceStateAfter(fence, line) {
     const [, marks, rest] = String(line).match(/^\s*(`{3,})(.*?)\r?$/) || [];
     if (!marks) return fence;
-    if (!fence) return marks.length;
+    if (!fence) return rest.includes('`') ? 0 : marks.length;
     return marks.length >= fence && !rest.trim() ? 0 : fence;
 }
 
@@ -30,16 +31,23 @@ function stashCodeFences(text) {
     return { text: lines.join('\n'), restore };
 }
 
+const WRAP_TAIL_LINE = /^\s*(?:<!--.*-->\s*)?$/; // 감싼 펜스를 닫은 뒤에 붙는 <!-- END --> 같은 주석 줄과 빈 줄
+
 // 응답 전체를 감싼 펜스를 벗긴다. 첫 줄이 ```markdown·```md(bare면 언어 없는 ```도)로 열고, 마지막 줄이 그 길이 이상으로 닫고,
 // 안쪽 펜스의 짝이 맞을 때만이다. 글 중간의 ```markdown 예제는 코드로 둔다.
+// 닫는 펜스 뒤에 <!-- END --> 같은 주석 줄만 있으면 그 줄은 벗긴 글 끝에 남긴다.
 // 마지막 줄이 펜스가 아니면 출력 한도에서 잘린 응답으로 보고, 안쪽 펜스의 짝이 맞을 때 여는 줄만 뗀다
 function unwrapWholeFence(text, { bare = false } = {}) {
     const source = String(text ?? '');
     const lines = source.trim().split(/\r?\n/);
     const [, marks = '', lang = ''] = lines[0].match(/^(`{3,})[ \t]*([\w-]*)[ \t]*$/) || [];
     if (!marks || lines.length < 2 || !(/^(?:markdown|md)$/i.test(lang) || (bare && !lang))) return source;
-    const [, closing = ''] = lines[lines.length - 1].match(/^(`{3,})[ \t]*$/) || [];
-    const inner = closing.length >= marks.length ? lines.slice(1, -1) : lines.slice(1);
+    const closes = line => ((line.match(/^(`{3,})[ \t]*$/) || [])[1] || '').length >= marks.length;
+    let end = lines.length;
+    while (end > 2 && WRAP_TAIL_LINE.test(lines[end - 1])) end -= 1;
+    const tailed = end < lines.length && closes(lines[end - 1]) ? [...lines.slice(1, end - 1), ...lines.slice(end)] : null;
+    if (tailed && !tailed.reduce(fenceStateAfter, 0)) return tailed.join('\n');
+    const inner = closes(lines[lines.length - 1]) ? lines.slice(1, -1) : lines.slice(1);
     return inner.reduce(fenceStateAfter, 0) ? source : inner.join('\n');
 }
 

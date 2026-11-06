@@ -454,7 +454,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         }) : null;
         if (volume?.gone) { // 채우는 동안 차시를 지웠거나 백업·PC 폴더를 불러왔다. 그 차시에 쓰지 않는다
             const goneText = `차시가 지워졌거나 불러온 내용으로 바뀌어 ${tabMeta.label} 만들기를 멈췄습니다.`;
-            if (!opts.quiet) window.showAlert(goneText);
+            if (!_suppressTabAlert && !opts.quiet) window.showAlert(goneText); // 탭 모두 다시 만들기는 끝에 한 번만 알린다
             return { ok: false, error: goneText };
         }
         if (volume) resultText = volume.md;

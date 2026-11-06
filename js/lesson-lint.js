@@ -133,10 +133,11 @@ function lintChecklistBullets(goals, checks) {
 }
 
 // 코드 펜스를 줄 단위로 따라간다. 여는 펜스보다 짧은 ``` 는 코드의 일부다. 펜스 밖이면 0을 돌려준다.
+// 언어 칸에 `가 든 줄(```npm install```)은 펜스가 아니라 인라인 코드다(marked도 그렇게 그린다)
 function nextCodeFence(fence, line) {
     const [, marks, rest] = line.match(/^\s*(`{3,})(.*)$/) || [];
     if (!marks) return fence;
-    if (!fence) return marks.length;
+    if (!fence) return rest.includes('`') ? 0 : marks.length;
     return marks.length >= fence && !rest.trim() ? 0 : fence;
 }
 

@@ -155,6 +155,22 @@ const BASH_BLOCK = ['```bash', 'ls \\', '  -la', '```'].join('\n');
         assert.deepStrictEqual(plain(call(ctx, 'safeJSONParse')(extract('```json\n{"a": "가. 나", "b": [1, 2]}\n```'))), { a: '가. 나', b: [1, 2] }, 'JSON 응답은 그대로 읽힌다');
     });
 
+    await run('AI 응답 정리: 감싼 펜스를 닫은 뒤 <!-- END --> 같은 표시만 있으면 감싸기로 보고 표시는 남긴다', () => {
+        assert.strictEqual(extract('```markdown\n## 가\n본문입니다.\n```\n<!-- END -->'), '## 가\n본문입니다.\n<!-- END -->', '감싼 교안 전체가 코드 블록으로 보이지 않는다');
+        assert.strictEqual(extract('```\n## 가\n```\n\n<!-- CONTINUE -->', { unwrap: true }), '## 가\n\n<!-- CONTINUE -->');
+        assert.strictEqual(extract('```\n## 가\n```\n\n<!-- CONTINUE -->'), '```\n## 가\n```\n\n<!-- CONTINUE -->', '언어 없는 감싸기는 unwrap일 때만');
+        assert.strictEqual(extract('```markdown\n## 가\n```python\nx = 1\n```\n<!-- CONTINUE -->'), '## 가\n\n```python\nx = 1\n```\n<!-- CONTINUE -->', '잘려 닫지 못한 감싸기의 마지막 펜스는 안쪽 코드를 닫는다');
+        assert.strictEqual(extract('```markdown\n# 제목\n```\n위 예시는 제목입니다.'), '```markdown\n# 제목\n```\n위 예시는 제목입니다.', '예제 뒤에 설명이 오면 여전히 감싸기가 아니다');
+    });
+
+    await run('코드 블록 닫기: 한 줄에서 여닫는 ```npm install```은 인라인 코드라 코드 블록을 열지 않는다', () => {
+        const md = '## 1. 설치 (⏱ 30분)\n\n터미널에서 실행합니다.\n\n```npm install```\n\n설치가 끝났습니다. 다음 단계입니다.';
+        assert.strictEqual(call(ctx, 'closeOpenFence')(md), md, '닫는 펜스를 덧붙이지 않는다(덧붙이면 뒤의 글이 코드가 된다)');
+        assert.ok(extract(md).endsWith('설치가 끝났습니다.\n다음 단계입니다.'), '뒤의 글도 다듬는다');
+        assert.deepStrictEqual(plain(call(ctx, 'lessonFences')(md)), [], '코드 블록으로 세지 않는다');
+        assert.ok(call(ctx, 'spokenText')(md).endsWith('npm install 설치가 끝났습니다. 다음 단계입니다.'), '뒤의 글도 낭독 분량에 든다');
+    });
+
     await run('코드 블록 닫기: 글이 코드 블록 안에서 끝나면 여는 펜스 길이로 닫는다', () => {
         const close = call(ctx, 'closeOpenFence');
         assert.strictEqual(close('글\n````python\nx = 1\n'), '글\n````python\nx = 1\n````');
