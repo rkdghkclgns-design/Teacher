@@ -3994,8 +3994,8 @@ async function insertImageSlot() {
         return;
     }
     window.flushVisibleRawView?.(); // 다른 차시·탭을 그린 채 열린 원문 칸이 있으면 그 글을 먼저 그 차시에 넣는다(다시 그리며 잃지 않게)
-    // 탭이 없는 최종 평가는 본문(content)이 곧 보이는 글이다
-    const source = mod.tabContents ? tabSourceFor(mod, tabId) : mod.content || '';
+    // 탭이 없는 최종 평가는 본문(content)이 곧 보이는 글이다. 비운 기본학습에 보이는 다른 탭을 합친 글은 기본학습에 옮겨 넣지 않는다(showsOtherTabsText)
+    const source = mod.tabContents ? (showsOtherTabsText(mod, tabId) ? '' : tabSourceFor(mod, tabId)) : mod.content || '';
     setTabMarkdown(mod, tabId, source + tag);
     saveState();
     renderEditor(mod);

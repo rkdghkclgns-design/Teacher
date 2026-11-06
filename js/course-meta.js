@@ -179,9 +179,12 @@ function trashLessonCopy(mod, subjectId = currentSubjectId, batch = '') {
 
 // 생성(진행 막대의 작업·전체 탭 생성·교수안·남은 차시 일괄 생성·기존 내용 보강·기본 학습 분량 채우기)이 도는 동안에는 되살리지 않는다.
 // 만드는 중인 차시를 지웠다가 되살리면 만들던 탭이 버려진 차시에 쓰여 사라지거나, 되살린 내용이 일괄 생성이 되돌린 내용과 겹친다.
+// 창을 닫기 전에 묻는 AI 작업(course-flow.js isAiWorkRunning)도 센다. 과정 설계·차시 목차 만들기는 교과·차시 목록을 바꾸고,
+// 삽화·문제은행 창과 컨벤션 검수의 AI 수정 제안은 열 때 잡아 둔 차시에 결과를 쓴다.
 // 다른 파일의 표시는 그 파일이 없어도(테스트 등) 멈추지 않게 typeof로 읽는다
 function trashRestoreBlocked() {
-    return (typeof generationBusy === 'function' && !!generationBusy())
+    return (typeof isAiWorkRunning === 'function' && !!isAiWorkRunning())
+        || (typeof generationBusy === 'function' && !!generationBusy())
         || (typeof _lessonRun !== 'undefined' && !!_lessonRun)
         || (typeof _backfillRun !== 'undefined' && !!_backfillRun)
         || !!window.isVolumeFilling?.();

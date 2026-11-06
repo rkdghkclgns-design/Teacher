@@ -224,6 +224,45 @@ async function run(name, fn) {
         assert.deepStrictEqual(ctx.archived, []);
     });
 
+    await run('그림 지우기(실제 deleteImage): 숨은 원문 칸과 기준(storedFrom)을 지운 글로 맞춰, 저장을 기다리는 동안 칸에 쓴 글도 넣고 지운 그림은 되살리지 않는다(탭이 없는 최종 평가도)', async () => {
+        const ctx = makeContext();
+        const { L1, Q1 } = twoSubjects(ctx);
+        const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+        L1.images = { img_1: PNG };
+        call(ctx, 'setTabMarkdown')(L1, 'basicLearn', '## 1. 기본\n\n![그림](local:img_1)\n\n기본 글입니다.');
+        Object.assign(Q1, { images: { img_q: PNG }, content: '## 과제\n\n![도식](local:img_q)\n\n교과1 최종 평가 본문입니다.' });
+        // format-toolbar.js writeLessonTab과 같은 차례(탭에 넣기 → 저장 → 다시 그리기)
+        ctx.writeLessonTab = async (mod, tabId, md) => {
+            call(ctx, 'setTabMarkdown')(mod, tabId, md);
+            await ctx.saveState();
+            call(ctx, 'renderEditor')(mod);
+        };
+        let typing = false;
+        ctx.saveState = async () => { // 지운 뒤 저장을 기다리는 동안 원문 전체 수정을 열어 쓴다
+            ctx.saved += 1;
+            if (typing) {
+                typing = false;
+                call(ctx, 'toggleEditorMode')('edit');
+                rawBox(ctx).value += '\n\n저장을 기다리며 쓴 줄';
+            }
+            return true;
+        };
+        const deleteIn = async (mod, imgId) => {
+            ctx.currentEditingModuleId = mod.id;
+            call(ctx, 'renderEditor')(mod);
+            typing = true;
+            await ctx.deleteImage(imgId);
+        };
+        await deleteIn(L1, 'img_1');
+        assert.strictEqual(L1.tabContents.basicLearn, '## 1. 기본\n\n기본 글입니다.\n\n저장을 기다리며 쓴 줄', '지운 글 위에 쓴 글을 넣는다');
+        assert.deepStrictEqual(Object.keys(L1.images), [], '어디에도 쓰지 않게 된 그림 값은 지운다');
+        await deleteIn(Q1, 'img_q');
+        assert.strictEqual(Q1.content, '## 과제\n\n교과1 최종 평가 본문입니다.\n\n저장을 기다리며 쓴 줄');
+        assert.strictEqual(Q1.tabContents, undefined, '탭을 만들지 않는다');
+        assert.deepStrictEqual(ctx.archived, [], "그림 지우기가 맞춘 칸은 '넣지 못한 원문'으로 보지 않는다");
+        assert.deepStrictEqual(ctx.toasts.map(toast => toast.kind), ['success', 'success'], JSON.stringify(ctx.toasts));
+    });
+
     await run('원문 칸: 칸이 줄바꿈(CRLF)과 첫 빈 줄을 바꿔 담아도 저장된 글로 견주므로 다른 기능이 바꾼 것으로 보지 않는다', async () => {
         const ctx = makeContext();
         const { L1 } = twoSubjects(ctx);

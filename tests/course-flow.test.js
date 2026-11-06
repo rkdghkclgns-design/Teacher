@@ -700,7 +700,7 @@ async function run(name, fn) {
         assert.deepStrictEqual(plain(other.lessons).map(item => item.id), [5]);
     });
 
-    await run('휴지통 되살리기·작업 기록 되돌리기·차시 삭제: 생성(진행 막대의 작업·전체 탭 생성·일괄 생성·기존 내용 보강·분량 채우기)이 도는 동안에는 하지 않고, 끝나면 한다', async () => {
+    await run('휴지통 되살리기·작업 기록 되돌리기·차시 삭제: 생성(진행 막대의 작업·전체 탭 생성·일괄 생성·기존 내용 보강·분량 채우기)과 창을 닫기 전에 묻는 AI 작업(과정 설계·차시 목차·문제은행 창)이 도는 동안에는 하지 않고, 끝나면 한다', async () => {
         const local = makeContext();
         // 교과 휴지통·작업 기록 되돌리기(data-safety.js)와 기존 내용 보강의 실행 표시(course-backfill.js)를 함께 올린다
         ['data-safety.js', 'course-backfill.js'].forEach(file => vm.runInContext(fs.readFileSync(root + file, 'utf8'), local));
@@ -743,7 +743,11 @@ async function run(name, fn) {
             ['전체 탭 생성(로딩 화면)', () => { local.elements['editor-loading'].style.display = 'flex'; }, () => { local.elements['editor-loading'].style.display = 'none'; }],
             ['남은 차시 일괄 생성', () => vm.runInContext('_lessonRun = { stopped: false }', local), () => vm.runInContext('_lessonRun = null', local)],
             ['기존 내용 보강', () => vm.runInContext('_backfillRun = { stopped: false }', local), () => vm.runInContext('_backfillRun = null', local)],
-            ['기본 학습 분량 채우기', () => { local.isVolumeFilling = () => true; }, () => { delete local.isVolumeFilling; }]
+            ['기본 학습 분량 채우기', () => { local.isVolumeFilling = () => true; }, () => { delete local.isVolumeFilling; }],
+            // 창을 닫기 전에 묻는 AI 작업(isAiWorkRunning)도 센다
+            ['과정 설계', () => vm.runInContext('_designBusy = true', local), () => vm.runInContext('_designBusy = false', local)],
+            ['차시 목차 만들기', () => { local.elements['sidebar-loading'] = { style: { display: 'flex' } }; }, () => { delete local.elements['sidebar-loading']; }],
+            ['문제은행 창의 문항 만들기', () => vm.runInContext('_qbank = { moduleId: 1, busy: true }', local), () => vm.runInContext('_qbank = null', local)]
         ];
         for (const [name, begin, end] of busyStates) {
             resetTrash();

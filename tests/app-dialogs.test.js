@@ -1,5 +1,5 @@
-// 브라우저 기본 창 대신 앱의 창으로 묻는 곳 테스트: 차시 병합(merge.js), 이미지 저장 고르기·그림 자리 넣기(api.js) (실행: node tests/app-dialogs.test.js)
-// 실제 파일을 vm에서 돌리고 확인·입력 창(confirmAsync·showConfirm·promptAsync)만 흉내 낸다. 기본 confirm·prompt를 부르면 실패한다
+// 브라우저 기본 창 대신 앱의 창으로 묻는 곳 테스트: 차시 병합(merge.js), 이미지 저장 고르기·그림 지우기·그림 자리 넣기(api.js), 휴지통 모두 복원(course-meta.js) (실행: node tests/app-dialogs.test.js)
+// 실제 파일을 vm에서 돌리고 확인·입력 창(confirmAsync·showConfirm·promptAsync)만 흉내 낸다(그림 지우기·모두 복원은 ui.js의 앱 창 틀로 실제로 띄운다). 기본 confirm·prompt를 부르면 실패한다
 const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
@@ -61,8 +61,42 @@ function fakeElement() {
     };
 }
 
-// mod: 열어 둔 차시. 받은 그림(a.click)은 ctx.downloads에 모은다
-function apiContext(mod) {
+/* 앱 창 틀(ui.js)을 함께 싣을 때의 창: innerHTML에 있는 [data-…] 칸만 찾고(찾은 차례가 Tab 차례), 포커스는 document.activeElement에 남긴다
+   (ui-safety.test.js fakeOverlay와 같다). 막 뜬 창의 시간(APP_DIALOG_GRACE_MS)은 clock으로 넘긴다 */
+let clock = 1000;
+class FakeDate extends Date { static now() { return clock; } }
+const keyEvent = key => ({ key, stopPropagation() {}, preventDefault() {} });
+
+function shellOverlay(doc) {
+    const parts = new Map();
+    const part = () => ({
+        id: '', attributes: {}, onclick: null,
+        get isConnected() { return overlay.isConnected; },
+        setAttribute(name, value) { this.attributes[name] = String(value); },
+        querySelector: sel => overlay.querySelector(sel),
+        querySelectorAll: () => overlay.querySelectorAll(),
+        contains: el => overlay.contains(el),
+        getClientRects: () => [{}],
+        focus() { doc.activeElement = this; },
+        click() { this.onclick?.(); }
+    });
+    const overlay = {
+        className: '', innerHTML: '', isConnected: false, onclick: null, dataset: {},
+        querySelector(sel) {
+            if (!overlay.innerHTML.includes(sel.replace(/^\[|\]$/g, ''))) return null;
+            if (!parts.has(sel)) parts.set(sel, part());
+            return parts.get(sel);
+        },
+        querySelectorAll: () => [...parts].filter(([sel]) => !/^\[data-app-dialog/.test(sel)).map(([, item]) => item),
+        contains: el => el === overlay || [...parts.values()].includes(el),
+        remove() { this.isConnected = false; }
+    };
+    return overlay;
+}
+
+// mod: 열어 둔 차시. 받은 그림(a.click)은 ctx.downloads에 모은다.
+// shell: 확인 창을 흉내 내지 않고 ui.js의 앱 창 틀(data-safety.js confirmAsync 포함)을 싣는다. 띄운 창은 ctx.opened, 키 처리는 ctx.listeners.keydown
+function apiContext(mod, { shell = false } = {}) {
     const elements = {};
     const ctx = {
         ...noNativeDialogs,
@@ -71,21 +105,24 @@ function apiContext(mod) {
         localStorage: { getItem: () => null, setItem() {} },
         currentEditingModuleId: mod.id,
         escapeHtml: s => (typeof s === 'string' ? s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') : ''),
-        saved: 0, rendered: 0, downloads: [], alerts: [], toasts: [], elements,
+        saved: 0, rendered: 0, downloads: [], alerts: [], toasts: [], opened: [], listeners: {}, elements,
         saveState: async () => { ctx.saved += 1; },
         renderSidebar() {}, showLessonView() {}, lessonDesignBrief: () => '', lessonGenBrief: () => '', archiveContent: async () => {},
         document: {
-            readyState: 'complete', body: { appendChild() {} },
-            createElement: tag => (tag === 'a' ? { click() { ctx.downloads.push(this.download); } } : fakeElement()),
+            readyState: 'complete', activeElement: null,
+            body: { appendChild: el => { el.isConnected = true; ctx.opened.push(el); } },
+            createElement: tag => (tag === 'a' ? { click() { ctx.downloads.push(this.download); } } : shell ? shellOverlay(ctx.document) : fakeElement()),
             getElementById: id => elements[id] || null,
-            addEventListener() {}, querySelectorAll: () => []
+            addEventListener() {}, querySelector: () => null, querySelectorAll: () => []
         }
     };
+    if (shell) Object.assign(ctx, { Date: FakeDate, location: { hash: '' }, addEventListener: (type, fn) => { ctx.listeners[type] = fn; } });
     ctx.window = ctx;
-    ctx.showAlert = message => ctx.alerts.push(message);
-    ctx.showToast = (message, type) => ctx.toasts.push([message, type]);
     vm.createContext(ctx);
     API_FILES.forEach(file => vm.runInContext(read(file), ctx));
+    if (shell) ['data-safety.js', 'ui.js'].forEach(file => vm.runInContext(read(file), ctx));
+    ctx.showAlert = message => ctx.alerts.push(message);
+    ctx.showToast = (message, type) => ctx.toasts.push([message, type]);
     ctx.currentMod = mod;
     vm.runInContext('getEditingModule = (id = window.currentMod?.id) => (String(id) === String(window.currentMod?.id) ? window.currentMod : null); renderEditor = () => { window.rendered += 1; };', ctx);
     return ctx;
@@ -157,6 +194,45 @@ const tabs = extra => ({ basicLearn: '기본 글', basicPrac: '실습 글', advL
         assert.deepStrictEqual([asked, ctx.downloads.length], [null, 7], '고를 것이 없으면 묻지 않고 받는다');
     });
 
+    await run('앱 창 틀과 함께: 그림 지우기는 지우기 창으로 묻고 취소 버튼에서 시작하며, Esc로 닫으면 지우지 않고 포커스를 돌려준다. 확인하면 지운다', async () => {
+        const mod = { id: 1, title: '차시', tabContents: tabs({ basicLearn: '## 1. 기본\n\n![a](local:img_a)\n\n글' }), images: { img_a: PNG } };
+        const ctx = apiContext(mod, { shell: true });
+        ctx.writeLessonTab = async (lesson, tabId, md) => vm.runInContext('setTabMarkdown', ctx)(lesson, tabId, md);
+        const opener = { isConnected: true, focus() { ctx.document.activeElement = this; } }; // 누른 삭제 버튼
+        opener.focus();
+        const cancelled = ctx.deleteImage('img_a');
+        const ask = ctx.opened.at(-1);
+        assert.ok(ask.innerHTML.includes('그림 지우기') && ask.innerHTML.includes('>지우기<'), ask.innerHTML);
+        assert.strictEqual(ctx.document.activeElement, ask.querySelector('[data-confirm-cancel]'), '지우기 창은 취소 버튼에서 시작한다');
+        ctx.listeners.keydown(keyEvent('Escape'));
+        assert.strictEqual(ask.isConnected, true, '막 뜬 창은 Esc를 받지 않는다');
+        clock += 600;
+        ctx.listeners.keydown(keyEvent('Escape'));
+        await cancelled;
+        assert.deepStrictEqual([ask.isConnected, mod.tabContents.basicLearn.includes('local:img_a'), ctx.document.activeElement === opener], [false, true, true], 'Esc는 취소와 같다');
+        const confirmed = ctx.deleteImage('img_a');
+        clock += 600;
+        ctx.opened.at(-1).querySelector('[data-confirm-ok]').click();
+        await confirmed;
+        assert.deepStrictEqual([mod.tabContents.basicLearn, Object.keys(mod.images)], ['## 1. 기본\n\n글', []]);
+    });
+
+    await run("앱 창 틀과 함께: 휴지통 '모두 복원'은 되살리기 창으로 묻고 확인 버튼에서 시작하며, Esc로 닫으면 되살리지 않는다", async () => {
+        const mod = { id: 1, title: '차시', tabContents: tabs(), images: {} };
+        const ctx = apiContext(mod, { shell: true });
+        const copy = id => ({ lesson: { id, title: `사본 ${id}`, tabContents: tabs(), images: {} }, subjectId: 's1', at: '2026-11-06T01:00:00.000Z', reason: '다시 만들기 전', kind: 'rewrite', batch: 'run_1' });
+        ctx.globalState = { subjects: [{ id: 's1', title: '교과', lessons: [mod] }], lessonTrash: [copy(21), copy(22)] };
+        ctx.currentSubjectId = 's1';
+        ctx.courseData = ctx.globalState.subjects[0].lessons;
+        vm.runInContext('restoreTrashBatch', ctx)([...ctx.globalState.lessonTrash]);
+        const ask = ctx.opened.at(-1);
+        assert.ok(ask.innerHTML.includes('사본 모두 복원') && ask.innerHTML.includes('>모두 복원<'), ask.innerHTML);
+        assert.strictEqual(ctx.document.activeElement, ask.querySelector('[data-confirm-ok]'), '되살리기 창은 확인 버튼에서 시작한다');
+        clock += 600;
+        ctx.listeners.keydown(keyEvent('Escape'));
+        assert.deepStrictEqual([ask.isConnected, ctx.globalState.lessonTrash.length, ctx.courseData.length], [false, 2, 1], 'Esc는 취소와 같다');
+    });
+
     await run('그림 자리 넣기: 앱의 입력 창으로 묻고 보고 있는 탭 끝에 넣는다(최종 평가처럼 탭이 없으면 본문 끝에)', async () => {
         const mod = { id: 1, title: '차시', tabContents: tabs(), content: '기본 글\n\n---\n\n실습 글', images: {} };
         const ctx = apiContext(mod);
@@ -177,6 +253,20 @@ const tabs = extra => ({ basicLearn: '기본 글', basicPrac: '실습 글', advL
         await questCtx.insertImageSlot();
         assert.strictEqual(quest.content, '과제 글\n<!-- [IMG: "diagram"] -->\n', '탭이 없으면 본문 끝에(본문을 지우지 않는다)');
         assert.strictEqual(quest.tabContents, undefined, '탭을 만들지 않는다');
+    });
+
+    await run('그림 자리 넣기: 비운 기본학습에 다른 탭을 합친 글이 보여도 그 글을 기본학습에 옮기지 않고 그림 자리만 넣는다(탭이 모두 빈 옛 본문은 그 끝에)', async () => {
+        const mod = { id: 1, title: '차시', tabContents: tabs({ basicLearn: null }), content: '실습 글', images: {} };
+        const ctx = apiContext(mod);
+        ctx.promptAsync = async () => 'cat';
+        await ctx.insertImageSlot();
+        assert.deepStrictEqual([mod.tabContents.basicLearn, mod.tabContents.basicPrac], ['\n<!-- [IMG: "cat"] -->\n', '실습 글']);
+        assert.strictEqual(mod.content.split('실습 글').length, 2, '합친 본문에 실습 글이 한 번만 든다');
+        const legacy = { id: 1, title: '옛 차시', tabContents: tabs({ basicLearn: null, basicPrac: null }), content: '옛 본문', images: {} };
+        const legacyCtx = apiContext(legacy);
+        legacyCtx.promptAsync = async () => 'cat';
+        await legacyCtx.insertImageSlot();
+        assert.strictEqual(legacy.tabContents.basicLearn, '옛 본문\n<!-- [IMG: "cat"] -->\n', '옛 단일 본문은 기본학습 글이다');
     });
 
     await run('그림 자리 넣기: 따옴표·]·줄바꿈·--·앞의 local:은 표시를 깨지 않게 빼고, 비우거나 취소하면 넣지 않는다', async () => {

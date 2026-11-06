@@ -432,8 +432,6 @@ test('핵심 개념 창: 앱 창 틀을 써서 막 뜬 창의 클릭·Enter를 �
     assert.deepStrictEqual([seen.appended[1].isConnected, got.length], [false, 1], 'Esc는 만들지 않고 닫는다');
 });
 
-// 그림 지우기(api.js deleteImage)의 확인 창은 그림 묶음이 바꾼다. 묶음을 합칠 때 이 예외를 뺀다
-const NATIVE_DIALOG_PICTURES_SITE = "api.js: if (!confirm('이 이미지를 삭제하시겠습니까?')) return;";
 const NATIVE_DIALOG_CALL = /(^|[^.\w]|\bwindow\.)(confirm|prompt)\((?!\))/;
 
 test('소스: 브라우저 기본 확인·입력 창(confirm·prompt)을 쓰지 않는다(kbuilder 밖의 js와 index.html)', () => {
@@ -442,7 +440,7 @@ test('소스: 브라우저 기본 확인·입력 창(confirm·prompt)을 쓰지 
     const files = fs.readdirSync(path.join(root, 'js')).filter(file => file.endsWith('.js')).map(file => [file, js(file)]);
     files.push(['index.html', fs.readFileSync(path.join(root, 'index.html'), 'utf8')]);
     const found = files.flatMap(([file, source]) => source.split(/\r?\n/).filter(line => NATIVE_DIALOG_CALL.test(line)).map(line => `${file}: ${line.trim()}`));
-    assert.deepStrictEqual(found.filter(site => site !== NATIVE_DIALOG_PICTURES_SITE), []);
+    assert.deepStrictEqual(found, []);
 });
 
 test('소스: Esc는 앱 창 틀이 맡고(없는 #custom-modal을 찾던 처리는 없다), F1 도움말이 그렇게 말한다', () => {
