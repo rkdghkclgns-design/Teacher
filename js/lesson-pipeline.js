@@ -162,7 +162,7 @@ function startPipelineTicker(run) {
 // kind: 'all'(빈 항목을 채우는 전체 생성) | 'job'(사용자가 고른 작업 하나)
 // alerts: 작업 안의 탭 생성이 미리보기와 완료 알림을 띄울지. 전체 생성은 끝에 한 번만 알린다
 window.beginLessonPipeline = function (moduleId, { kind = 'all', label = LESSON_TABS[0].label, current = LESSON_TABS[0].id, alerts = false } = {}) {
-    _pipeline = { moduleId, subjectId: currentSubjectId, kind, stopped: false, moved: false, current, label, status: '', done: 0, total: 0, failed: [], partial: [], skipped: [], startedAt: Date.now(), ticker: null, ownsImageRun: !!window.beginImageRun?.(), imageNote: '' };
+    _pipeline = { moduleId, subjectId: currentSubjectId, kind, stopped: false, moved: false, halted: false, current, label, status: '', done: 0, total: 0, failed: [], partial: [], short: [], skipped: [], startedAt: Date.now(), ticker: null, ownsImageRun: !!window.beginImageRun?.(), imageNote: '' };
     _suppressTabAlert = !alerts;
     _tabGenStop = false;
     window.resetTabGenStop?.(); // 새 끊기 신호(tabs.js). 캐시에 옛 tabs.js가 남아 있어도 위 줄이 중지를 푼다
@@ -179,15 +179,20 @@ window.updateLessonJob = function (step) {
     refreshPipelineView(_pipeline);
 };
 
+// short: 기본 학습이 낭독 목표에 못 미친 항목 / halted: 한도·키 문제로 남은 항목을 만들지 않고 멈췄다
 function pipelineSummary(run) {
+    const short = run.short || [];
     const problems = [
         run.moved ? '다른 교과로 옮기거나 차시가 없어져 전체 생성을 멈췄습니다.' : '',
         run.failed.length ? `만들지 못한 항목:\n${run.failed.join('\n')}` : '',
+        run.halted ? '같은 까닭으로 남은 항목은 만들지 않았습니다.' : '',
         run.skipped.length ? `교안 탭이 모두 있어야 해서 건너뛴 항목: ${run.skipped.join(', ')}` : '',
-        run.partial.length ? `일부 내용이 빠졌을 수 있는 항목: ${run.partial.join(', ')}` : ''
+        run.partial.length ? `일부 내용이 빠졌을 수 있는 항목: ${run.partial.join(', ')}` : '',
+        short.length ? `기본 학습 분량이 목표에 못 미친 항목: ${short.join(', ')}. 기본 학습 탭 위 '분량 채우기'로 늘릴 수 있습니다.` : ''
     ].filter(Boolean);
-    const retry = run.moved || run.failed.length || run.skipped.length ? '이 차시에서 전체 생성을 다시 누르면 빠진 항목만 만듭니다.' : '내용이 빠진 탭은 해당 탭에서 다시 생성해주세요.';
-    if (problems.length) return { alert: `${[...problems, run.imageNote].filter(Boolean).join('\n\n')}\n\n${retry}` };
+    const onlyShort = short.length && !run.moved && !run.failed.length && !run.skipped.length && !run.partial.length;
+    const retry = run.moved || run.failed.length || run.skipped.length ? '이 차시에서 전체 생성을 다시 누르면 빠진 항목만 만듭니다.' : onlyShort ? '' : '내용이 빠진 탭은 해당 탭에서 다시 생성해주세요.';
+    if (problems.length) return { alert: [...problems, run.imageNote, retry].filter(Boolean).join('\n\n') };
     // 그림 모델이 막혀 그림 자리를 남겼으면 창으로 알린다. 작업 하나(job)는 부른 쪽이 끝을 따로 알리므로 안내만 보인다
     if (run.imageNote) {
         const head = run.kind === 'all' ? (run.stopped ? '전체 생성을 중지했습니다. 만든 내용은 저장했습니다.' : '전체 생성을 마쳤습니다.') : '';
@@ -224,11 +229,13 @@ window.finishLessonPipeline = function ({ quiet = false } = {}) {
 };
 
 // continuing: 교안 전체 생성이 기본 학습을 만든 뒤 이어서 부를 때 / lockedByTab: 재생성 전에 챙겨 둔 고정 섹션
-// quiet: 끝나도 성공 알림을 띄우지 않는다
-window.runLessonPipeline = async function (moduleId, { lockedByTab = {}, continuing = false, quiet = false } = {}) {
+// quiet: 끝나도 성공 알림을 띄우지 않는다 / shortNote: 이어서 부르기 전에 만든 기본 학습이 낭독 목표에 못 미쳤으면 끝 알림에 적을 항목
+window.runLessonPipeline = async function (moduleId, { lockedByTab = {}, continuing = false, quiet = false, shortNote = '' } = {}) {
     if (_pipeline && !continuing) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
     if (!continuing) window.beginLessonPipeline(moduleId);
     const run = _pipeline;
+    if (!run.short) run.short = [];
+    if (shortNote) run.short.push(shortNote);
     const steps = pipelineSteps(moduleId, lockedByTab);
     run.total = steps.length;
     try {
@@ -247,6 +254,13 @@ window.runLessonPipeline = async function (moduleId, { lockedByTab = {}, continu
             const result = await runPipelineStep(steps[i]);
             if (!result.ok && !result.stopped) run.failed.push(`${steps[i].label}: ${result.error}`);
             if (result.partial) run.partial.push(steps[i].label);
+            if (result.short) run.short.push(`${steps[i].label}(낭독 약 ${result.readMinutes}분/목표 ${result.targetMinutes}분)`);
+            // 하루 한도·키·연결 문제는 남은 항목도 같은 까닭으로 실패하므로 멈춘다. 기본 학습은 저장했지만 분량 채우기가 멈춘 경우도 알린다
+            if (result.halt) {
+                if (result.ok) run.failed.push(`${steps[i].label} 분량 채우기: ${result.error}`);
+                run.halted = true;
+                break;
+            }
             if (!run.stopped) await new Promise(resolve => setTimeout(resolve, PIPELINE_COOLDOWN_MS));
         }
     } finally {

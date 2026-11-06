@@ -42,26 +42,32 @@ async function generateLesson(item, attempt, isStopped, onRetry) {
     await waitBeforeRetry(isStopped);
     if (isStopped()) return first;
     const second = await attemptSafely(attempt, item, 2);
-    return { ...second, partial: !!(first.partial || second.partial) };
+    const short = second.short ? second : first.short ? first : null; // 첫 시도에서 만든 기본 학습이 짧았으면 다시 해도 그 탭은 그대로다
+    return { ...second, partial: !!(first.partial || second.partial), ...(short ? { short: true, readMinutes: short.readMinutes } : {}) };
 }
+
+// 기본 학습이 낭독 목표에 못 미친 차시는 따로 모은다(그 차시의 '분량 채우기'로 늘린다)
+const withShortLesson = (list, item, result) => (result.short ? [...(list || []), { ...item, readMinutes: result.readMinutes }] : list);
 
 function recordLessonResult(report, item, result) {
     const partial = result.partial ? [...report.partial, item] : report.partial;
-    if (result.ok) return { ...report, partial, done: [...report.done, item] };
-    return { ...report, partial, failed: [...report.failed, { ...item, error: result.error || '원인을 알 수 없습니다.' }] };
+    const short = withShortLesson(report.short, item, result);
+    const next = short ? { ...report, partial, short } : { ...report, partial };
+    if (result.ok) return { ...next, done: [...report.done, item] };
+    return { ...next, failed: [...report.failed, { ...item, error: result.error || '원인을 알 수 없습니다.' }] };
 }
 
 // 차시를 차례로 생성하고 결과를 모은다. 실패한 차시는 건너뛰고 계속하며, 중지는 차시와 탭 사이에서 받는다.
 // 다음 차시도 같은 까닭으로 실패할 오류(halt: 하루 한도·한도 0·키·연결 문제, 다른 생성이 도는 중)면 그 차시를 실패로 적고 멈춘다(halted)
 async function runLessonQueue(queue, attempt, { isStopped = () => false, onLesson = () => {}, onRetry = () => {} } = {}) {
-    let report = { done: [], partial: [], failed: [], left: [], stopped: false };
+    let report = { done: [], partial: [], failed: [], short: [], left: [], stopped: false };
     for (let i = 0; i < queue.length; i++) {
         if (isStopped()) return { ...report, stopped: true, left: queue.slice(i) };
         onLesson(queue[i], i, queue.length);
         const result = await generateLesson(queue[i], attempt, isStopped, onRetry);
         if (result.stopped || (!result.ok && isStopped())) {
             const partial = result.partial ? [...report.partial, queue[i]] : report.partial;
-            return { ...report, partial, stopped: true, left: queue.slice(i) };
+            return { ...report, partial, short: withShortLesson(report.short, queue[i], result), stopped: true, left: queue.slice(i) };
         }
         report = recordLessonResult(report, queue[i], result);
         if (!result.ok && result.halt) return { ...report, stopped: true, halted: true, left: queue.slice(i + 1) };
@@ -149,8 +155,9 @@ async function fillRunLesson(item, run, key) {
     const needsGyosuan = lessonNeedsGyosuan(getEditingModule(item.lessonId));
     const gyosuan = needsGyosuan ? await runGyosuanGeneration(item.lessonId, { onStatus: setLessonRunStatus }) : { ok: true };
     const partial = !!(tabs.partial || gyosuan.partial);
-    if (!gyosuan.ok) return { ok: false, stopped: gyosuan.stopped, error: gyosuan.error, partial };
-    return { ...(await fillQuestionBank(item.lessonId, { isStopped: () => run.stopped, onStatus: setLessonRunStatus })), partial };
+    const short = tabs.short ? { short: true, readMinutes: tabs.readMinutes } : {}; // 기본 학습이 낭독 목표에 못 미쳤으면 보고에 남긴다
+    if (!gyosuan.ok) return { ok: false, stopped: gyosuan.stopped, error: gyosuan.error, partial, ...short };
+    return { ...(await fillQuestionBank(item.lessonId, { isStopped: () => run.stopped, onStatus: setLessonRunStatus })), partial, ...short };
 }
 
 /* ---------- 일괄 생성 화면 ---------- */
@@ -181,7 +188,7 @@ function lessonRunQueueHtml(queue, uploaded) {
 
 function lessonRunIntroHtml(queue, uploaded, withGyosuan = false) {
     return `
-        <p class="text-xs text-textLight">내용이 비어 있는 탭만 차례로 생성합니다. 이미 있는 탭은 그대로 둡니다. 차시마다 몇 분 걸릴 수 있습니다. 교안을 만든 차시에는 NCS 능력단위요소도 확정 전 상태로 배정합니다.</p>
+        <p class="text-xs text-textLight">내용이 비어 있는 탭만 차례로 생성합니다. 이미 있는 탭은 그대로 둡니다. 차시마다 몇 분 걸릴 수 있습니다. 교안을 만든 차시에는 NCS 능력단위요소도 확정 전 상태로 배정합니다. 기본 학습은 낭독 480분 분량을 채우느라 차시마다 20분 넘게 걸릴 수 있습니다.</p>
         <div id="lesson-run-queue" class="space-y-2">${lessonRunQueueHtml(queue, uploaded)}</div>
         <div id="lesson-run-estimate"></div>
         <label class="flex items-start gap-2 text-xs text-textLight">
@@ -226,6 +233,8 @@ function lessonRunReportHtml(report, { trashed = 0, imageNote = '', restored = 0
         ${report.halted ? '<p class="text-xs text-amber-300">남은 차시도 같은 까닭으로 만들 수 없어 일괄 생성을 멈췄습니다. 아래 실패 까닭을 해결한 뒤 다시 실행해 주세요.</p>' : ''}
         ${lessonRunListHtml('실패해서 건너뛴 차시', report.failed, item => item.error)}
         ${lessonRunListHtml('일부 단락이 누락되었을 수 있는 차시', report.partial)}
+        ${lessonRunListHtml('기본 학습 분량이 목표에 못 미친 차시', report.short || [], item => `낭독 약 ${item.readMinutes}분`)}
+        ${(report.short || []).length ? "<p class=\"text-xs text-textMuted\">그 차시의 기본 학습 탭 위 '분량 채우기'로 이어서 늘릴 수 있습니다.</p>" : ''}
         ${restored > 0 ? `<p class="text-xs text-textMuted">탭을 하나도 만들지 못한 차시 ${restored}개는 지우기 전 내용으로 되돌렸습니다.</p>` : ''}
         ${unfinished ? '<p class="text-xs text-textMuted">만든 내용은 저장했습니다. 다시 실행하면 남은 탭부터 이어서 생성합니다.</p>' : ''}
         ${lessonRunTrashNote(trashed)}

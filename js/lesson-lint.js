@@ -147,6 +147,55 @@ function closeOpenFence(md) {
     return fence ? `${text.trimEnd()}\n${'`'.repeat(fence)}` : text;
 }
 
+/* ---------- 낭독 분량 ---------- */
+// 강사가 소리 내어 읽는 속도(공백 포함 1분에 250자)와 기본 학습의 최소 낭독 시간. (⏱ N분) 합계는 목표보다 30분까지 길어도 된다
+const READ_CHARS_PER_MINUTE = 250;
+const BASIC_LEARN_MIN_MINUTES = 480;
+const BASIC_LEARN_LABEL_SLACK = 30;
+const SPOKEN_SKIP_LINE = /^\s*\|.*\|\s*$|class="image-(?:wrapper|placeholder)"/; // 파이프 표 줄과 저장된 그림 칸 줄(다시 찾기 버튼·그림 설명까지)
+const SPOKEN_MARKS = /[■▣□▪◆●▶►•※]|\p{Extended_Pictographic}|\uFE0F|\u200D/gu; // 소리 내어 읽지 않는 장식 기호와 그림 문자
+
+// 기본 학습의 목표 낭독 시간(분). 차시 시간(course-design.js lessonMinutes)이 480분보다 길면 그 시간이다
+function basicLearnTargetMinutes(mod) {
+    const own = mod && typeof lessonMinutes === 'function' ? Number(lessonMinutes(mod)) || 0 : 0;
+    return Math.max(BASIC_LEARN_MIN_MINUTES, own);
+}
+
+// 강사가 소리 내어 읽는 글만 남긴다. 코드 블록(mermaid·실행 결과 포함, 닫지 않은 블록은 끝까지)·표·그림·HTML·서식 기호·(⏱ N분)은 빼고,
+// 제목·학습 목표·개요·체크리스트의 글과 인라인 코드의 글(문장 안에서 읽는다)은 남긴다
+function spokenText(md) {
+    let fence = 0;
+    const prose = String(md ?? '').replace(/\r\n/g, '\n').split('\n').filter(line => {
+        const wasFenced = fence;
+        fence = nextCodeFence(fence, line);
+        return !wasFenced && !fence && !SPOKEN_SKIP_LINE.test(line);
+    }).join('\n');
+    return prose
+        .replace(/<!--[\s\S]*?-->/g, ' ')
+        .replace(/<table\b[\s\S]*?<\/table>/gi, ' ')
+        .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+        .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+        .replace(/https?:\/\/\S+/g, ' ')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&(?:#\d+|#x[\da-f]+|[a-z]+);/gi, ' ')
+        .replace(/\(⏱[^)]*\)/g, ' ')
+        .replace(/^[ \t]*(?:[-*_][ \t]*){3,}$/gm, ' ')
+        .replace(/^[ \t]*(?:#{1,6}[ \t]+|>[ \t]?|[-*+][ \t]+|\d+[.)][ \t]+)+/gm, '')
+        .replace(/\*+|__|~~|`/g, '')
+        .replace(SPOKEN_MARKS, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+// 낭독 글자 수(공백 포함)와 낭독 시간(분)
+function spokenChars(md) {
+    return spokenText(md).length;
+}
+
+function readAloudMinutes(md) {
+    return Math.round(spokenChars(md) / READ_CHARS_PER_MINUTE);
+}
+
 // 체크리스트의 "다시 보기"로 목표와 내용 섹션의 대응을 확인한다. 제목 앞 이모지나 시간 표기는 달라도 같은 섹션으로 본다.
 function lintChecklistRefs(titles, checks) {
     const where = '학습 후 체크리스트';

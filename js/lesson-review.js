@@ -166,20 +166,33 @@ async function requestSectionFix({ tabId, md, issues, lockedBlocks = [], onRetry
     return { text: restoreLockedSections(merged, lockedBlocks), plan };
 }
 
-// 생성 직후 필수 지적이 남으면 한 번만 고쳐 받고, 나아졌을 때만 바꾼다. 어떤 실패도 생성 결과를 잃게 하지 않는다.
-async function autoFixGeneratedTab({ tabId, md, lockedBlocks = [], onStatus, onRetry }) {
-    const before = lintLessonMarkdown(md, tabId);
-    const required = before.filter(issue => issue.sev === 'bad');
-    if (!required.length) return md;
+// 생성 직후 필수 지적이 남으면 고쳐 받고, 나아졌을 때만 바꾼다. 어떤 실패도 생성 결과를 잃게 하지 않는다.
+// rounds: 고쳐 받는 최대 횟수(기본 한 번). 지적이 없거나, 나아지지 않거나, 중지하면 멈춘다
+// minSpokenChars: 분량을 채운 기본 학습은 고친 글의 낭독 글자 수가 이 값(또는 고치기 전 글자 수 중 작은 값)보다 줄면 쓰지 않는다
+async function autoFixGeneratedTab({ tabId, md, lockedBlocks = [], onStatus, onRetry, rounds = 1, minSpokenChars = 0, isStopped = () => false }) {
+    let current = md;
+    for (let round = 1; round <= rounds; round++) {
+        if (round > 1 && isStopped()) break;
+        const before = lintLessonMarkdown(current, tabId);
+        const required = before.filter(issue => issue.sev === 'bad');
+        if (!required.length) break;
+        const next = await fixRoundText({ tabId, md: current, required, lockedBlocks, onRetry, onStatus: text => onStatus?.(rounds > 1 ? `${text} (${round}/${rounds})` : text) });
+        const shrank = minSpokenChars > 0 && next !== null && spokenChars(next) < Math.min(minSpokenChars, spokenChars(current));
+        if (next === null || shrank || !isBetterFix(before, lintLessonMarkdown(next, tabId))) break;
+        current = next;
+    }
+    if (current !== md) window.showToast?.('컨벤션 필수 지적을 자동으로 고쳤습니다.', 'success');
+    return current;
+}
+
+// 한 번 고쳐 받은 글. 실패하면 null(부른 쪽이 지금 글을 지킨다)
+async function fixRoundText({ tabId, md, required, lockedBlocks, onRetry, onStatus }) {
     try {
-        onStatus?.(`🔍 컨벤션 필수 지적 ${required.length}건을 고치고 있습니다...`);
-        const { text } = await requestSectionFix({ tabId, md, issues: required, lockedBlocks, onRetry });
-        if (!isBetterFix(before, lintLessonMarkdown(text, tabId))) return md;
-        window.showToast?.('컨벤션 필수 지적을 자동으로 고쳤습니다.', 'success');
-        return text;
+        onStatus(`🔍 컨벤션 필수 지적 ${required.length}건을 고치고 있습니다...`);
+        return (await requestSectionFix({ tabId, md, issues: required, lockedBlocks, onRetry })).text;
     } catch (err) {
         console.warn('[자동 수정] 실패해 생성 결과를 유지합니다:', err.message);
-        return md;
+        return null;
     }
 }
 
@@ -249,10 +262,16 @@ function reviewIssueGroup(label, tone, issues) {
     return `<section><h3 class="text-xs font-bold ${tone} mb-1">${label} ${issues.length}건</h3><ul class="space-y-1">${issues.map(reviewIssueRow).join('')}</ul></section>`;
 }
 
-function reviewIssuesHtml(issues, tabId, md) {
+// 기본 학습은 낭독 분량도 보인다(탭 위 표시와 같은 저장 글로 센다)
+function reviewVolumeStat(mod, tabId, md) {
+    if (tabId !== 'basicLearn' || !mod || mod.id === 'mainQuest' || typeof readAloudMinutes !== 'function') return '';
+    return ` · 낭독 약 ${readAloudMinutes(storedTabMarkdown(mod, tabId) || md)}분(목표 ${basicLearnTargetMinutes(mod)}분)`;
+}
+
+function reviewIssuesHtml(issues, tabId, md, mod = null) {
     const stats = LESSON_STRUCTURED_TABS.includes(tabId) ? lessonStructureStats(md) : null;
     return `
-        ${stats ? `<p class="text-xs text-textMuted">학습 목표 ${stats.objectives}개 · 내용 섹션 ${stats.sections}개 · 체크리스트 ${stats.checklist}개</p>` : ''}
+        ${stats ? `<p class="text-xs text-textMuted">학습 목표 ${stats.objectives}개 · 내용 섹션 ${stats.sections}개 · 체크리스트 ${stats.checklist}개${reviewVolumeStat(mod, tabId, md)}</p>` : ''}
         ${issues.length ? '' : '<p class="text-xs text-emerald-300">콘텐츠 업무 설계 규칙에 어긋난 곳이 없습니다.</p>'}
         ${reviewIssueGroup('필수', 'text-rose-300', issues.filter(issue => issue.sev === 'bad'))}
         ${reviewIssueGroup('권장', 'text-amber-300', issues.filter(issue => issue.sev !== 'bad'))}`;
@@ -306,7 +325,7 @@ function reviewPanelHtml(mod, tabId, md, busy) {
                 <p class="text-xs text-textMuted mt-1">콘텐츠 업무 설계 규칙으로 현재 탭을 검사했습니다.</p>
             </div>
             <div class="flex-1 overflow-y-auto p-4 space-y-3">
-                ${reviewIssuesHtml(issues, tabId, md)}
+                ${reviewIssuesHtml(issues, tabId, md, mod)}
                 ${reviewManualHtml(mod, tabId, md)}
                 ${reviewRulesHtml(tabId)}
             </div>
@@ -370,6 +389,7 @@ window.runConventionCheck = function (moduleId) {
 
 // 탭 전환과 저장 때만 다시 센다. 입력할 때마다 세지 않는다.
 window.syncReviewBadge = function (mod = getEditingModule()) {
+    window.syncVolumeChip?.(mod); // 탭 위 낭독 분량 표시(lesson-volume.js)도 같은 때 다시 센다
     const badge = document.getElementById('convention-check-count');
     if (!badge || !mod) return;
     const md = getActiveTabContent(mod);

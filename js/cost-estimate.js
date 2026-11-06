@@ -19,10 +19,13 @@ const ESTIMATE_RULES = {
     gyosuanWaitCalls: 6,                            // 전개는 셋씩 함께 부르므로 기다리는 시간은 호출 6번쯤
     qbankCalls: 2,                                  // 문제은행 채우기
     artCalls: 4,                                    // SVG 삽화(후보 1회 + 그림 최대 3장)
-    ocrMaxCallsPerPdf: 8                            // 스캔 PDF: 30쪽까지 4쪽마다 1회
+    ocrMaxCallsPerPdf: 8,                           // 스캔 PDF: 30쪽까지 4쪽마다 1회
+    volumeCalls: 16                                 // 기본 학습 분량 보강 보통 12~20번 + 자동 수정 0~2번(lesson-volume.js)
 };
 const CALL_SECONDS = { low: 20, mid: 45, high: 90 };       // 잰 기록이 없을 때 본문 호출 하나(초)
 const SHORT_CALL_FACTOR = 0.3;                             // 잰 기록이 없을 때 짧은 호출은 본문 호출의 이만큼
+const LONG_CALL_FACTOR = 3;                                // 잰 기록이 없을 때 분량 보강(긴 글) 호출은 본문 호출의 이만큼
+const ESTIMATE_VOLUME = { minutes: 480, chars: 120000 };   // lesson-lint.js BASIC_LEARN_MIN_MINUTES × READ_CHARS_PER_MINUTE와 같다(테스트는 lesson-lint.js 없이 돈다)
 const IMAGE_CALL_SECONDS = { gemini: 25, higgsfield: 60 }; // 잰 기록이 없을 때 그림 한 장(초)
 const ESTIMATE_GAPS = { image: 7, tab: 4 };                // 교안 그림 사이 간격(api.js IMAGE_TAG_GAP_MS), 탭·단계 사이 쉬는 시간(초)
 const EFFORT_FACTOR = { low: 0.7, medium: 1, high: 1.5, xhigh: 1.75, max: 2 };
@@ -54,10 +57,12 @@ function tabImageCount(tabs, imageAmount = 'section') {
 }
 
 // 차시 하나에서 할 일. tabs: 만들 탭 id 목록(또는 탭 수) / imageAmount: 설정의 교안 이미지 양(all·section·none) / slideImages: 교수안을 만들면 슬라이드에 넣는 그림 수
+// 기본 학습을 만들면 낭독 분량 채우기(volume)도 센다. 탭 수만 알면 어느 탭인지 몰라 세지 않는다
 function lessonWork({ tabs = 0, gyosuan = false, qbank = false, art = false, ncs } = {}, imageAmount = 'section', slideImages = defaultSlideImageCount()) {
     const tabCount = Array.isArray(tabs) ? tabs.length : (Number(tabs) || 0);
     const withNcs = ncs === undefined ? tabCount > 0 : ncs;
-    return { tabs: tabCount, images: tabImageCount(tabs, imageAmount), slideImages: gyosuan ? slideImages : 0, ncs: withNcs ? 1 : 0, gyosuan: gyosuan ? 1 : 0, qbank: qbank ? 1 : 0, art: art ? 1 : 0 };
+    const volume = Array.isArray(tabs) && tabs.includes('basicLearn') ? { volume: 1 } : {};
+    return { tabs: tabCount, images: tabImageCount(tabs, imageAmount), slideImages: gyosuan ? slideImages : 0, ncs: withNcs ? 1 : 0, gyosuan: gyosuan ? 1 : 0, qbank: qbank ? 1 : 0, art: art ? 1 : 0, ...volume };
 }
 
 const sumWork = list => list.reduce((total, work) => {
@@ -65,24 +70,26 @@ const sumWork = list => list.reduce((total, work) => {
     return total;
 }, {});
 
-// work: { tabs, images(교안 그림), slideImages(슬라이드 그림), ncs, gyosuan, qbank, art, ocr } 개수 →
-// 본문 호출(body), 기다리는 시간으로 센 본문 호출(bodyWait), 짧은 호출(short), 그림 장수(images)
+// work: { tabs, images(교안 그림), slideImages(슬라이드 그림), ncs, gyosuan, qbank, art, ocr, volume(기본 학습 분량 채우기) } 개수 →
+// 본문 호출(body), 기다리는 시간으로 센 본문 호출(bodyWait), 짧은 호출(short), 그림 장수(images), 분량 보강의 긴 호출(long, 있을 때만)
 function estimateCallSplit(work = {}) {
     const rule = ESTIMATE_RULES;
     const tabs = (work.tabs || 0) * rule.tabCalls;
     const others = (work.ncs || 0) * rule.ncsCalls + (work.qbank || 0) * rule.qbankCalls + (work.art || 0) * rule.artCalls + (work.ocr || 0);
+    const long = (work.volume || 0) * rule.volumeCalls;
     return {
         body: tabs + others + (work.gyosuan || 0) * rule.gyosuanCalls,
         bodyWait: tabs + others + (work.gyosuan || 0) * rule.gyosuanWaitCalls,
         short: (work.images || 0) * rule.shortCallsPerImage + (work.slideImages || 0) * rule.shortCallsPerSlideImage,
-        images: (work.images || 0) + (work.slideImages || 0)
+        images: (work.images || 0) + (work.slideImages || 0),
+        ...(long > 0 ? { long } : {})
     };
 }
 
 // 글 모델 호출 수. SVG 삽화는 글 모델이 그리므로 그림 장수도 더한다
 function estimateCalls(work = {}, imageSource = 'gemini') {
     const split = estimateCallSplit(work);
-    return Math.ceil(split.body + split.short + (imageSource === 'svg' ? split.images : 0));
+    return Math.ceil(split.body + split.short + (split.long || 0) + (imageSource === 'svg' ? split.images : 0));
 }
 
 /* ---------- 걸린 시간 기록 ---------- */
@@ -95,8 +102,9 @@ function readAiTimings() {
     }
 }
 
-// 'short'는 그림 검색어·판정처럼 짧은 호출. 본문 호출과 섞으면 평균이 짧아져 따로 모은다(예전 기록은 모델 이름 그대로라 본문 시간으로 읽힌다)
-const aiTimingKey = (model, kind = '') => (kind === 'short' ? `${model}#short` : model);
+// 'short'는 그림 검색어·판정처럼 짧은 호출, 'long'은 기본 학습 분량 보강처럼 긴 글을 받는 호출. 본문 호출과 섞으면 평균이 흐려져 따로 모은다
+// (예전 기록은 모델 이름 그대로라 본문 시간으로 읽힌다)
+const aiTimingKey = (model, kind = '') => (kind === 'short' || kind === 'long' ? `${model}#${kind}` : model);
 
 // 성공한 호출만 넣는다(대기·재시도 시간 포함이라 실제 체감에 가깝다). kind: 'short'면 짧은 호출
 function recordAiTiming(model, ms, kind = '') {
@@ -112,12 +120,13 @@ function recordAiTiming(model, ms, kind = '') {
     }
 }
 
-// 호출 하나에 걸리는 시간(초). kind: 'short'면 짧은 호출(잰 기록이 없으면 본문 호출의 SHORT_CALL_FACTOR배)
+// 호출 하나에 걸리는 시간(초). kind: 'short'면 짧은 호출(잰 기록이 없으면 본문 호출의 SHORT_CALL_FACTOR배), 'long'이면 긴 호출(LONG_CALL_FACTOR배)
 function secondsPerCall(model, effort, timings = readAiTimings(), kind = '') {
     const seen = timings[aiTimingKey(model, kind)];
     if (seen && seen.count >= AI_TIMING_MIN_SAMPLES && seen.avg > 0) return { seconds: seen.avg / 1000, measured: true };
     const seconds = CALL_SECONDS[modelCostTier(model)] * (EFFORT_FACTOR[effort] || 1);
-    return { seconds: kind === 'short' ? seconds * SHORT_CALL_FACTOR : seconds, measured: false };
+    const factor = { short: SHORT_CALL_FACTOR, long: LONG_CALL_FACTOR }[kind] || 1;
+    return { seconds: seconds * factor, measured: false };
 }
 
 // 그림 한 장(초). 그림 모델 호출은 그 모델 이름으로 잰다(Higgsfield는 api.js generateImageAPI가 잰다)
@@ -135,15 +144,17 @@ function estimateSummary(work, { model = '', effort = 'medium', timings = readAi
     const split = estimateCallSplit(work);
     const body = secondsPerCall(model, effort, timings);
     const shortSeconds = secondsPerCall(model, effort, timings, 'short').seconds;
+    const long = secondsPerCall(model, effort, timings, 'long');
+    const longSeconds = long.measured ? long.seconds : body.seconds * LONG_CALL_FACTOR; // 잰 긴 호출이 없으면 본문 호출 시간(잰 값이면 그 값)의 3배
     const imageSeconds = imageSource === 'svg' ? body.seconds : secondsPerImage(imageModel, imageSource, timings);
-    const seconds = split.bodyWait * body.seconds + split.short * shortSeconds + split.images * imageSeconds
+    const seconds = split.bodyWait * body.seconds + split.short * shortSeconds + (split.long || 0) * longSeconds + split.images * imageSeconds
         + (work.images || 0) * ESTIMATE_GAPS.image + (work.tabs || 0) * ESTIMATE_GAPS.tab;
     const minutes = seconds / 60;
     const minutesLow = Math.max(1, Math.round(minutes * 0.7));
     const minutesHigh = Math.max(minutesLow, Math.ceil(minutes * 1.5));
     const tier = modelCostTier(model);
     return {
-        calls: estimateCalls(work, imageSource), images: split.images, slideImages: work.slideImages || 0,
+        calls: estimateCalls(work, imageSource), images: split.images, slideImages: work.slideImages || 0, volume: work.volume || 0,
         imageSource, exactImages, routed, imageAmount, imageSearch,
         minutesLow, minutesHigh, tier, costLabel: COST_LABEL[tier], measured: body.measured
     };
@@ -189,6 +200,7 @@ function imageBlockNote(summary) {
 function estimateNote(summary, model = '') {
     return [
         summary.measured ? '시간은 이 브라우저에서 잰 최근 호출 평균으로 셌습니다.' : '시간은 모델과 추론 강도로 어림했습니다.',
+        summary.volume ? `기본 학습은 낭독 ${ESTIMATE_VOLUME.minutes}분(공백 포함 약 ${ESTIMATE_VOLUME.chars.toLocaleString('ko-KR')}자)이 될 때까지 섹션마다 나눠 보강해 차시마다 긴 호출이 약 ${ESTIMATE_RULES.volumeCalls}번 늘어납니다.` : '',
         summary.tier === 'low' && /gemini/i.test(model) ? '무료 키는 분당 호출 한도가 있어 더 걸릴 수 있습니다.' : '',
         imageBlockNote(summary),
         summary.images > summary.slideImages && !summary.exactImages && summary.imageAmount === 'all' ? "교안 이미지 양이 '모두'라 글이 길면 그림이 더 늘어납니다." : '',

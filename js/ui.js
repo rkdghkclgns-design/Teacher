@@ -258,9 +258,10 @@ async function saveNow() {
     window.showToast?.('저장했습니다.', 'success');
 }
 
-// 창을 닫기 전에 물을 일: 열어 둔 원문 칸(교안·교수안)에 넣지 않은 글, 끝나지 않은 브라우저 저장, 아래 AI 명령줄에서 기다리거나 아직 넣지 않은 결과(api.js)
+// 창을 닫기 전에 물을 일: 열어 둔 원문 칸(교안·교수안)에 넣지 않은 글, 끝나지 않은 브라우저 저장, 아래 AI 명령줄에서 기다리거나 아직 넣지 않은 결과(api.js),
+// 아직 저장하지 않은 기본 학습 분량 채우기(lesson-volume.js. 닫으면 채우던 분량을 잃는다)
 function hasUnsavedWork() {
-    return !!(window.hasPendingRawEdit?.() || window.hasPendingGyosuanRaw?.() || window.isSavePending?.() || window.isAiResultPending?.());
+    return !!(window.hasPendingRawEdit?.() || window.hasPendingGyosuanRaw?.() || window.isSavePending?.() || window.isAiResultPending?.() || window.isVolumeFilling?.());
 }
 
 // 고치던 원문은 먼저 넣고, 넣지 못한 글, 끝나지 않은 저장, 아직 넣지 않은 AI 명령줄 결과가 있으면 브라우저의 '사이트에서 나가시겠습니까?' 창을 띄운다(문구는 브라우저가 정한다)
@@ -1623,6 +1624,16 @@ function codeTopicPrompt(tabId) {
           '- 학습 목표, 개요, 학습 후 체크리스트에는 코드를 넣지 않습니다.');
 }
 
+// 기본 학습의 분량 규칙(낭독 기준). 탭 생성·이어쓰기·교안 전체 생성이 같은 말로 준다(lesson-lint.js READ_CHARS_PER_MINUTE)
+function basicLearnVolumeRule(minutes = BASIC_LEARN_MIN_MINUTES) {
+    const perMinute = READ_CHARS_PER_MINUTE;
+    const chars = (minutes * perMinute).toLocaleString('ko-KR');
+    return `- 분량은 강사가 소리 내어 읽는 본문 글자 수(공백 포함)로 셉니다. 1분에 ${perMinute}자를 읽으므로 ${minutes}분은 ${chars}자 이상입니다.\n` +
+        '- 코드 블록, 표, mermaid 다이어그램, 이미지 태그, 마크다운·HTML 기호는 분량에 들어가지 않습니다. 코드를 설명하는 문장은 분량에 들어갑니다.\n' +
+        `- 각 ## 제목 끝에 (⏱ N분)을 적고 합계가 ${minutes}분 이상 ${minutes + BASIC_LEARN_LABEL_SLACK}분 이하가 되게 합니다. 완성된 탭에서 ## 섹션 하나의 본문은 (⏱ N분) × ${perMinute}자 이상입니다(예: (⏱ 60분)이면 ${(60 * perMinute).toLocaleString('ko-KR')}자 이상).\n` +
+        '- 분량을 맞추려고 섹션을 생략하거나 요약하지 않고, 같은 내용을 되풀이해 늘리지 않습니다. 강의 대본처럼 말을 걸지 않고 교안 문체를 유지합니다.';
+}
+
 // 탭별 규칙 필터링 — 학습탭에 실습/평가/강사가이드 혼입 방지. 학습이해도는 코드제출 문항 형식을 따로 쓰므로 코드 예제 규칙을 뺀다
 const TAB_RULE_EXCLUSIONS = {
     basicLearn: ['rubric_100', 'quiz_format', 'assessment_design'],
@@ -1633,8 +1644,9 @@ const TAB_RULE_EXCLUSIONS = {
 };
 
 // 탭 전용 규칙 빌더 (buildFullRules 변형). 탭 생성과 탭 이어쓰기가 같은 규칙을 쓴다
-function buildTabRules(tabId, keyConcepts) {
-    const excludeKeys = TAB_RULE_EXCLUSIONS[tabId] || [];
+// exclude: 이 작업에서 더 뺄 규칙(분량 보강은 문서 구조·시간·체크리스트·그림·mermaid 규칙을 뺀다) / fewshot: 서식 예시를 넣을지
+function buildTabRules(tabId, keyConcepts, { exclude = [], fewshot = true } = {}) {
+    const excludeKeys = [...(TAB_RULE_EXCLUSIONS[tabId] || []), ...exclude];
     const r = CONTEXT_CORE.rules;
     const ruleEntries = [
         ['priority_rules', r.priority_rules],
@@ -1693,7 +1705,7 @@ function buildTabRules(tabId, keyConcepts) {
         '- 이들은 집필 지시용 표시일 뿐이며, 학생이 읽는 교안 본문에 그대로 노출되어서는 안 됩니다.\n' +
         '- 교안은 실제 학습 내용(## 섹션 → 본문)으로 바로 시작하세요. 작업 설명·메타 헤더·따옴표로 감싼 라벨로 문서를 시작하지 마세요.';
 
-    if (CONTEXT_CORE.fewshot_cases && tabId !== 'assessment') {
+    if (fewshot && CONTEXT_CORE.fewshot_cases && tabId !== 'assessment') {
         rules += '\n\n' + CONTEXT_CORE.fewshot_cases;
     }
 
@@ -1754,7 +1766,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
             '1. 설계 의도 부합성: 차시 목표와 내용이 일관되는가?\n' +
             '2. 대상 수준 적합성: 학습자 수준에 맞는 용어와 설명인가?\n' +
             '3. 사실 기반 여부: 근거 없는 단정이나 추측이 포함되지 않았는가?\n' +
-            '4. 분량 기준: 기본 학습(학습목표+개요+핵심내용) 영역은 공백과 서식(마크다운 기호, HTML 태그)을 제외한 순수 텍스트 기준 최소 7,000자를 충족하는가? 기본 실습·심화는 필요한 항목만 포함되면 분량 무관.\n' +
+            '4. 분량 기준: 지시문에 분량 기준이 있으면 그 기준을 채웠는가? 기본 학습은 강사가 소리 내어 읽는 본문 글자(공백 포함, 코드 블록·표·그림·서식 기호 제외)로 셉니다. 기본 실습·심화는 필요한 항목만 포함되면 분량 무관.\n' +
             '5. 서식 준수: 헤딩 위계, 아이콘, 간격, 이미지 태그 규칙을 모두 지켰는가?\n' +
             '6. 구조 연결성: 학습목표→개요→핵심→실습→심화의 흐름이 자연스러운가? 학습 목표가 최상단, 그다음 개요인가?\n' +
             '7. 용어 일관성: 과정/교과/차시/레벨테스트/기본실습 등 glossary 정의와 일치하는가?\n' +
@@ -1810,6 +1822,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
                 '- 교안 전체를 한 번에 작성하세요. 단, 출력이 길어져 중간에 잘릴 경우를 대비하여 다음 규칙을 따르세요.\n' +
                 '- 모든 섹션을 완전히 작성한 경우: 문서의 맨 마지막에 <!-- END -->를 붙이세요.\n' +
                 '- 출력 한도에 도달하여 교안이 미완성인 경우: 자연스러운 문단/섹션 끝에서 멈추고 <!-- CONTINUE -->를 붙이세요. 문장 중간이나 코드 블록 안에서 끊지 마세요.';
+            systemInstruction += '\n\n[기본 학습 분량 — 낭독 기준, 절대 준수]\n' + basicLearnVolumeRule(additionalContext.targetMinutes || BASIC_LEARN_MIN_MINUTES) + '\n- 출력 한도 안에서 학습 목표부터 모든 섹션을 끝까지 쓰는 것을 먼저 지킵니다. 핵심 내용 섹션마다 설명 글을 최소 2,500자 쓰고, 목표 분량에 못 미친 핵심 내용 섹션은 생성 뒤 섹션별로 이어서 보강합니다.';
 
 
 
@@ -1865,7 +1878,8 @@ function buildTaskContext(taskScope, additionalContext = "") {
                 '- 이전에 작성한 내용을 절대 반복하지 마세요. 중복 헤딩이나 중복 문단을 생성하면 안 됩니다.\n' +
                 '- 이전 내용의 마지막 헤딩/문단을 확인하고, 그 다음 섹션부터 자연스럽게 연결하세요.\n' +
                 '- 교안 구조에서 아직 작성되지 않은 남은 섹션을 모두 완성하세요.\n' +
-                '- 모든 내용을 마쳤으면 문서 끝에 <!-- END -->를 붙이세요.';
+                '- 아래 분량 기준을 채울 때까지 앞 청크와 같은 깊이로 이어 쓰고, 남은 섹션을 요약하지 않습니다.\n' + basicLearnVolumeRule(additionalContext.targetMinutes || BASIC_LEARN_MIN_MINUTES) + '\n' +
+                '- 모든 내용을 마쳤으면 문서 끝에 <!-- END -->를 붙이세요. 아직 더 남았으면 자연스러운 문단/섹션 끝에서 멈추고 <!-- CONTINUE -->를 붙이세요. 문장 중간이나 코드 블록 안에서 끊지 마세요.';
 
             if (additionalContext.hasMainQuest) {
                 systemInstruction += `\n- 차시 내용의 마지막(5번 항목 아래)에는 반드시 '# ⚔️ 일일 퀘스트 (실습 과제)' 항목을 만들어주세요.`;
@@ -1909,6 +1923,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
 
         // ─── 탭별 교안 생성 ───
         case 'tab_content': {
+            const learnMinutes = additionalContext.targetMinutes || BASIC_LEARN_MIN_MINUTES; // 기본 학습의 낭독 목표(분)
             systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildTabRules(additionalContext.tabId, additionalContext.keyConcepts)}`;
 
             // 분할 생성 지시 — 긴 탭(특히 기본 학습 480분)이 중간에 잘리는 것을 방지
@@ -1919,17 +1934,14 @@ function buildTaskContext(taskScope, additionalContext = "") {
 
             const tabPrompts = {
                 basicLearn: '이 교안의 "기본 학습" 영역을 작성하세요. 반드시 [1.학습 목표] → [2.개요] → [3.핵심 내용(개념 정의, 이론 설명, 예시, 사례 분석)] 순서로 구성합니다. 학습 목표가 교안 최상단에 오고, 그 다음 개요가 옵니다. 실습 과제, 평가 루브릭, 별도 강사 가이드 섹션은 다른 탭에서 작성하므로 여기서는 포함하지 마세요. 초보자도 이해할 수 있는 수준으로 단계적으로 설명하세요.\n' +
-                    '[시간 배분 — 이 탭 하나가 곧 480분(8시간) 본과정입니다]\n' +
-                    '이 "기본 학습" 탭 하나가 480분(8시간) 분량의 완결된 본 교안입니다. 다른 탭(실습/심화/평가)에 의존하지 말고, 이 탭만으로 하루 8시간 수업을 끝까지 진행할 수 있도록 작성하세요.\n' +
-                    '각 ## 제목 끝에 (⏱ N분)을 명시하고, 모든 섹션의 합계가 480분(±30분)이 되도록 구성하세요.\n' +
+                    `[시간 배분 — 이 탭 하나가 곧 ${learnMinutes}분 본과정입니다]\n` +
+                    `이 "기본 학습" 탭 하나가 강사가 소리 내어 읽으며 강의할 때 ${learnMinutes}분이 걸리는 완결된 본 교안입니다. 다른 탭(실습/심화/평가)에 의존하지 말고, 이 탭만으로 ${learnMinutes}분 학습 내용이 끝까지 이어지도록 작성하세요.\n` +
                     '시간을 채우기 위해 각 개념을 충분히 깊고 상세하게, 다양한 예시·비유·단계적 설명으로 풀어쓰세요. 개념을 나열만 하지 말고 "왜 그런지"까지 설명하세요.\n\n' +
-                    '[분량 규칙 — 절대 준수]\n' +
-                    '- 순수 텍스트(마크다운 서식 제외) 최소 40,000자 이상.\n' +
-                    '- 마크다운 줄 수 기준 최소 900줄 이상.\n' +
+                    '[분량 규칙 — 낭독 기준, 절대 준수]\n' + basicLearnVolumeRule(learnMinutes) + '\n' +
                     '- ## 대주제 최소 8개, ### 소주제 최소 16개.\n' +
                     '- 각 소주제마다 Key Concept 불릿 최소 6개, 구체적 사례(게임명 명시) 최소 2개, 본문 설명 단락 최소 3개.\n' +
-                    '- 표(Table) 최소 6개, mermaid 다이어그램 최소 3개.\n' +
-                    '- 짧은 교안은 불합격 처리됩니다. 480분을 채울 만큼 매우 상세하게 작성하세요.\n\n' +
+                    '- 표(Table) 최소 6개, mermaid 다이어그램 최소 3개. 표와 다이어그램은 설명 문장을 대신하지 않습니다.\n' +
+                    '- 출력 한도 안에서 학습 목표부터 "## ✅ 학습 후 체크리스트"까지 모든 섹션을 끝까지 쓰는 것을 먼저 지킵니다. 섹션마다 설명 글을 최소 2,500자 쓰고, 출력 한도가 남으면 섹션을 더 깊게 씁니다. 목표 분량에 못 미친 섹션은 생성 뒤 섹션별로 이어서 보강합니다.\n\n' +
                     '[분할 출력 규칙 — 절대 준수]\n' +
                     '- 내용이 매우 길어 한 번에 다 출력하지 못할 수 있습니다.\n' +
                     '- 모든 섹션을 끝까지 완성했다면 문서 맨 끝에 <!-- END -->를 붙이세요.\n' +
@@ -2029,6 +2041,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
                 '- 이 탭의 성격에 맞지 않는 섹션을 새로 만들지 마세요. (학습 탭에 채점 루브릭·퀴즈를 추가하지 말 것)\n' +
                 '- 이미지 태그 형식도 이전 청크와 동일하게 유지하세요.\n' +
                 (learningTab ? '- "## ✅ 학습 후 체크리스트"는 모든 본문 섹션을 다 쓴 뒤 문서 맨 끝에 한 번만 둡니다. [지금까지 쓴 ## 제목]에 이미 있으면 다시 쓰지 않습니다.\n' : '') +
+                (additionalContext.tabId === 'basicLearn' ? '- 분량 기준은 첫 청크와 같습니다. 남은 섹션을 요약하지 않습니다.\n' + basicLearnVolumeRule(additionalContext.targetMinutes || BASIC_LEARN_MIN_MINUTES) + '\n' : '') +
                 '- 아래 "이전 작성 내용"의 마지막 지점부터 이어서 작성하세요. 절대 처음부터 다시 쓰지 마세요.\n' +
                 '- 이미 작성된 내용을 반복하지 마세요. 중복 헤딩이나 중복 문단을 생성하면 안 됩니다.\n' +
                 '- 이전 내용의 마지막 헤딩/문단을 확인하고, 그 다음 섹션부터 자연스럽게 연결하세요.\n' +
@@ -2041,6 +2054,32 @@ function buildTaskContext(taskScope, additionalContext = "") {
                 (writtenHeadings ? `\n\n[지금까지 쓴 ## 제목 — 다시 쓰지 않습니다]\n${writtenHeadings}` : '') +
                 `\n\n[이전 작성 내용 — 여기서부터 이어쓰세요. 반복 금지]\n${additionalContext.previousContent}`;
             if (additionalContext.codeTopic && additionalContext.tabId !== 'assessment') userPrompt += codeTopicPrompt(additionalContext.tabId);
+            break;
+        }
+
+        // ─── 기본 학습 분량 보강: 섹션 하나 끝에 이어 붙일 새 ### 소주제 (lesson-volume.js) ───
+        case 'volume_expand': {
+            const a = additionalContext;
+            const minutes = a.targetMinutes || BASIC_LEARN_MIN_MINUTES;
+            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildTabRules(a.tabId, [], { exclude: ['markdown_structure', 'time_allocation', 'learning_checklist', 'image_tags', 'mermaid_rules'], fewshot: false })}` +
+                '\n\n[분량 보강 규칙 — 절대 준수]\n' +
+                '- 이미 작성한 교안 섹션 하나를 더 깊고 길게 만드는 작업입니다. [보강할 섹션] 끝에 이어 붙일 새 ### 소주제만 출력합니다.\n' +
+                '- ## 제목, 학습 목표, 개요, 학습 후 체크리스트는 출력하지 않습니다. 다른 섹션의 내용도 쓰지 않습니다.\n' +
+                '- [보강할 섹션]에 이미 있는 소주제 제목, 설명, 예시, 문장을 되풀이하지 않습니다. 같은 개념은 원리와 이유, 단계별 풀이, 비교, 흔한 오해와 바로잡기, 적용 사례, 판단 기준처럼 새 각도에서 더 깊이 설명합니다.\n' +
+                '- 새 소주제는 "### ■ 제목"으로 시작하고 개념 정의 → 이론 설명 → 구체적 예시 → 사례 분석 흐름을 따릅니다. 소주제 제목에는 (⏱ N분)을 붙이지 않습니다.\n' +
+                '- 이 섹션이 속한 학습 목표 범위 안에서만 씁니다. 다른 학습 목표의 내용이나 새 주제를 끌어오지 않습니다.\n' +
+                '- 분량은 소리 내어 읽는 본문 글자 수(공백 포함)로 셉니다. 코드 블록, 표, mermaid, 이미지 태그는 분량에 들어가지 않습니다. 이미지 태그와 mermaid는 새로 넣지 않고, 표는 소주제마다 하나까지만 씁니다.\n' +
+                '- 같은 교안의 다른 부분을 가리킬 때도 "앞에서", "앞서", "이전 시간", "다음 시간"을 쓰지 않고 그 개념의 이름을 직접 씁니다.\n' +
+                '- 강의 대본처럼 말을 걸거나 수업 진행을 쓰지 않습니다. 코드 블록 밖의 본문에 "여러분", "당신", "우리는", "강사는", "교수자는", "수업에서는"이 없어야 하고, 문장 끝은 [작성 규칙]의 어투를 따릅니다.\n' +
+                '- <!-- CONTINUE -->, <!-- END --> 같은 표시와 작업 설명을 붙이지 말고, 코드 펜스로 감싸지 않은 마크다운만 출력합니다.';
+            userPrompt = `[현재 작업: ${a.tabLabel} 분량 보강 — 목표 낭독 ${minutes}분]\n모듈명: ${a.title}\n설명: ${a.description}` +
+                `\n\n[문서 구조 — 이 순서와 제목은 바꾸지 않습니다]\n${(a.outline || []).map(title => `- ${title}`).join('\n')}` +
+                (a.objectives?.length ? `\n\n[이 교안의 학습 목표 — 참고용]\n${a.objectives.map(goal => `- ${goal}`).join('\n')}` : '') +
+                `\n\n[보강할 섹션 — 이 섹션 끝에 이어 붙일 내용만 씁니다]\n${a.sectionText}` +
+                `\n\n[보강 분량]\n- 새 ### 소주제 ${a.subtopics}개 안팎, 소리 내어 읽는 본문 ${Number(a.requestChars).toLocaleString('ko-KR')}자 이상(공백 포함)을 씁니다. 소주제 하나는 2,000자 이상입니다.` +
+                (a.needCode ? '\n\n[코드 예제 — 이 섹션에는 아직 코드 예제가 없습니다]\n- 첫 새 소주제는 언어를 적은 코드 블록 예제로 시작합니다. 코드 앞에 무엇을 하는 코드인지, 코드 뒤에 핵심 줄 설명과 실행 결과(```text)를 씁니다.' : '') +
+                (a.codeSection ? '\n\n[코드 예제 — 이 섹션은 코드를 다룹니다]\n- 새 소주제마다 언어를 적은 코드 블록 예제를 하나 이상 넣고, 코드 앞에 무엇을 하는 코드인지, 코드 뒤에 핵심 줄 설명과 실행 결과(```text)를 씁니다.\n- 코드 자체는 분량에 들어가지 않으므로 코드를 설명하는 문장을 충분히 씁니다.' : '') +
+                (a.fromUpload ? '\n\n[원본 문서]\n- 사용자가 올린 문서로 만든 교안입니다. 섹션에 이미 있는 사실과 어긋나는 내용을 만들지 않습니다.' : '');
             break;
         }
 

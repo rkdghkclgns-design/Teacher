@@ -641,6 +641,10 @@ async function generateModuleContent(moduleId, keyConcepts) {
     // 탭을 비우기 전에 고정 섹션을 챙겨 재생성 뒤 되돌린다
     const lockedByTab = Object.fromEntries(LESSON_TABS.map(tab => [tab.id, lockedSectionBlocks(mod, tab.id)]));
     const lockedBlocks = lockedByTab.basicLearn;
+    // 시작한 교과와 기본 학습 분량 채우기(lesson-volume.js)에 붙일 참고 자료는 기다리기 전에 잡아 둔다
+    const subj = globalState.subjects.find(s => s.id === currentSubjectId);
+    const volumeSnap = moduleId !== 'mainQuest' && typeof ensureSpokenVolume === 'function' ? volumeSnapshot(mod) : null;
+    const targetMinutes = basicLearnTargetMinutes(mod); // 기본 학습의 낭독 목표(분)
 
     // [재생성 중복 방지] 재생성인 경우 기존 tabContents·images 초기화
     // 이전엔 status==='done'이면 tabContents가 남아있어 5탭 자동생성이 스킵되고
@@ -655,8 +659,6 @@ async function generateModuleContent(moduleId, keyConcepts) {
         dropUnusedLessonImages(mod, Object.values(lockedByTab).flat().map(block => block.text));
     }
 
-
-    const subj = globalState.subjects.find(s => s.id === currentSubjectId);
 
     let hasMainQuest = false;
 
@@ -738,7 +740,8 @@ async function generateModuleContent(moduleId, keyConcepts) {
             mainQuestText: mainQuestText,
             otherLessonsText: otherLessonsText,
             uploadedMdContent: mod.uploadedMdContent,
-            codeTopic
+            codeTopic,
+            targetMinutes
         });
 
         setLoadingStatus('교안 작성 중... (1단계: 초안 생성)');
@@ -750,8 +753,9 @@ async function generateModuleContent(moduleId, keyConcepts) {
                         { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
                         { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
                     ],
-                    contents: [{ parts: [{ text: userPrompt + lessonDesignBrief(mod) + lockedSectionPrompt(lockedBlocks) }] }],
-                    systemInstruction: { parts: [{ text: systemInstruction }] }
+                    contents: [{ parts: [{ text: userPrompt + lessonDesignBrief(mod, 'basicLearn') + lockedSectionPrompt(lockedBlocks) }] }],
+                    systemInstruction: { parts: [{ text: systemInstruction }] },
+                    generationConfig: { maxOutputTokens: 65536 }
         });
 
         // 응답 전체를 감싼 펜스만 벗긴다. 청크 끝의 코드 블록을 닫는 펜스는 코드의 일부다
@@ -776,7 +780,8 @@ async function generateModuleContent(moduleId, keyConcepts) {
                 hasMainQuest: hasMainQuest,
                 chunkIndex: chunkCount,
                 previousContent: contextTail,
-                codeTopic
+                codeTopic,
+                targetMinutes
             });
 
             // API 쿨다운
@@ -790,7 +795,8 @@ async function generateModuleContent(moduleId, keyConcepts) {
                             { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
                         ],
                         contents: [{ parts: [{ text: contPrompt }] }],
-                        systemInstruction: { parts: [{ text: contSys }] }
+                        systemInstruction: { parts: [{ text: contSys }] },
+                        generationConfig: { maxOutputTokens: 65536 }
             });
 
             let contText = extractText(contData, { unwrap: true }).trim();
@@ -822,17 +828,32 @@ async function generateModuleContent(moduleId, keyConcepts) {
         fullContent = cleanLessonOpening(restoreLockedSections(fullContent, lockedBlocks));
         if (typeof checklistLast === 'function') fullContent = checklistLast(fullContent, 'basicLearn');
 
+        // 기본 학습은 모자란 섹션마다 새 소주제를 이어 붙여 낭독 목표 분량까지 채운다. 그림 자리는 초안에만 미리 넣는다(붙인 소주제에는 넣지 않는다)
+        const isStopped = () => !!window.isTabGenerationStopped?.();
+        const volume = volumeSnap && !isStopped() ? await ensureSpokenVolume({
+            ...volumeSnap, md: autoInjectImageTags(fullContent), mod, tabId: 'basicLearn', lockedBlocks, targetMinutes, codeTopic, fromUpload: !!mod.uploadedMdContent,
+            isStopped, isLive: () => !subj || lessonStillLive(subj, mod), onStatus: setLoadingStatus, waitSignal: window.aiStopSignal?.() || null
+        }) : null;
+        if (volume?.gone) { // 채우는 동안 차시를 지웠거나 백업·PC 폴더를 불러왔다. 그 차시에 쓰지 않는다
+            reported = true;
+            window.showAlert('차시가 지워졌거나 불러온 내용으로 바뀌어 기본학습 만들기를 멈췄습니다.');
+            return;
+        }
+        if (volume) fullContent = volume.md;
+        const volumeHalt = !!volume && typeof aiErrorStopsRun === 'function' && aiErrorStopsRun(volume.error); // 하루 한도·키 문제: 고치기·그림·남은 탭도 같은 까닭으로 실패한다
+
         // 중단하면 끝까지 받지 못한 글이므로 자동 수정과 이미지 생성 비용을 쓰지 않는다
-        const stopped = !!window.isTabGenerationStopped?.();
-        if (!stopped) {
+        const stopped = isStopped();
+        if (!stopped && !volumeHalt) {
             if (moduleId !== 'mainQuest') {
-                fullContent = await autoFixGeneratedTab({ tabId: 'basicLearn', md: fullContent, lockedBlocks, onStatus: setLoadingStatus });
+                const floor = volume ? { rounds: VOLUME_FIX_ROUNDS, minSpokenChars: volume.targetChars, isStopped } : {}; // 채운 분량 아래로 줄이지 않는다
+                fullContent = await autoFixGeneratedTab({ tabId: 'basicLearn', md: fullContent, lockedBlocks, onStatus: setLoadingStatus, ...floor });
             }
 
-            // ── 이미지 태그 처리 ──
+            // ── 이미지 태그 처리 ── 분량을 채운 글은 초안에 넣은 그림 자리만 채운다
             setLoadingStatus(chunkCount > 1 ? `이미지 생성 중... (${chunkCount}단계 완료)` : '이미지 생성 중...');
 
-            fullContent = restoreLockedSections(await processImageTags(mod, fullContent, { onStatus: setLoadingStatus }), lockedBlocks);
+            fullContent = restoreLockedSections(await processImageTags(mod, fullContent, { onStatus: setLoadingStatus, inject: !volume }), lockedBlocks);
         }
 
         mod.content = fullContent;
@@ -848,16 +869,37 @@ async function generateModuleContent(moduleId, keyConcepts) {
         renderSidebar();
         if (lessonOpenHere(subj, mod)) renderEditor(mod);
 
+        const readMinutes = readAloudMinutes(fullContent);
         if (stopped) {
             reported = true;
-            window.showAlert('교안 생성을 중단했습니다. 받은 내용까지 저장했습니다. 이전 교안은 작업 기록에 있습니다.');
+            window.showAlert(`교안 생성을 중단했습니다. 받은 내용까지 저장했습니다(기본학습 낭독 약 ${readMinutes}분). 이전 교안은 작업 기록에 있습니다.`);
+            return;
+        }
+        if (volumeHalt) { // 남은 탭도 같은 까닭으로 실패하므로 만들지 않는다
+            reported = true;
+            window.showAlert(`${volume.error.message}\n기본학습(낭독 약 ${readMinutes}분)은 저장했습니다. 남은 탭은 한도가 풀린 뒤 '전체 생성'으로 만드세요.`);
             return;
         }
 
-        // 나머지 탭, 교수안·슬라이드, 문제은행을 차례로 만든다 (기본학습은 이미 완료)
-        await window.runLessonPipeline(mod.id, { lockedByTab, continuing: true });
+        // 나머지 탭, 교수안·슬라이드, 문제은행을 차례로 만든다 (기본학습은 이미 완료). 기본 학습이 낭독 목표에 못 미쳤으면 끝 알림에 적는다
+        const shortNote = volume && spokenChars(fullContent) < volume.targetChars ? `기본학습(낭독 약 ${readMinutes}분/목표 ${volume.targetMinutes}분)` : '';
+        await window.runLessonPipeline(mod.id, { lockedByTab, continuing: true, shortNote });
 
     } catch (err) {
+
+        // 중지로 끊긴 호출(지금은 단락 호출에 중지 신호를 넘기지 않아 오지 않는다): 받은 글을 한 번만 저장하고 멈췄다고만 알린다
+        if (err?.name === 'AbortError') {
+            reported = true;
+            if (fullContent && fullContent.length > 200) {
+                mod.content = closeOpenFence(fullContent.replace(new RegExp(CONTINUE_MARKER, 'g'), '').replace(END_MARKER, '').trimEnd());
+                mod.status = 'done';
+                await saveState();
+                renderSidebar();
+                if (lessonOpenHere(subj, mod)) renderEditor(mod);
+            }
+            window.showAlert('교안 생성을 중단했습니다. 받은 내용까지 저장했습니다. 이전 교안은 작업 기록에 있습니다.');
+            return;
+        }
 
         console.error("교안 생성 중 에러 상세 (generateModuleContent):", err, err.stack);
         reported = true;
@@ -2945,6 +2987,7 @@ function renderEditor(mod) {
                     <div class="flex items-center gap-0.5 px-4 py-1 bg-white border-t border-gray-200 overflow-x-auto">
                         <div id="lesson-nav-items" class="flex items-center gap-0.5">${renderTabBar(mod)}</div>
                         <div class="flex-1"></div>
+                        <span id="lesson-volume-chip" class="hidden"></span>
                     </div>
 
                 </div>

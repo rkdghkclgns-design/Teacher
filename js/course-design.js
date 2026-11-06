@@ -278,18 +278,19 @@ function lessonGenOptions(mod) {
     return { ...globalState.courseDesign?.genOptions, ...own };
 }
 
-function lessonGenLines(mod) {
+// 기본 학습은 낭독 분량 규칙을 따르므로 섹션당 분량 옵션을 넣지 않는다
+function lessonGenLines(mod, tabId = '') {
     const { objectives, level, length } = lessonGenOptions(mod);
     return [
         objectives ? `- 학습 목표 수: ${objectives}개 (정해 둔 학습 목표와 수가 다르면 묶거나 나누어 맞춥니다)` : '',
         level ? `- 학습자 수준: ${level}` : '',
-        length ? `- 학습 내용 섹션 하나당 분량: ${length}` : ''
+        length && tabId !== 'basicLearn' ? `- 학습 내용 섹션 하나당 분량: ${length}` : ''
     ].filter(Boolean).join('\n');
 }
 
 // 이어쓰기 청크에는 옵션만 보낸다. 목표·진행 단계까지 다시 주면 앞부분을 되풀이할 수 있다
-function lessonGenBrief(mod) {
-    const options = lessonGenLines(mod);
+function lessonGenBrief(mod, tabId = '') {
+    const options = lessonGenLines(mod, tabId);
     return options ? `\n\n[생성 옵션 — 반드시 반영]\n${options}` : '';
 }
 
@@ -301,7 +302,7 @@ function lessonGenFieldsHtml(prefix, values = {}) {
                 ${options.map(option => `<option value="${escapeHtml(option)}" ${values[key] === option ? 'selected' : ''}>${escapeHtml(option)}${unit}</option>`).join('')}
             </select>
         </label>`;
-    return `<div class="flex gap-2">${select('objectives', '학습 목표 수', LESSON_OBJECTIVE_COUNTS, '개')}${select('level', '학습자 수준', LESSON_LEVELS)}${select('length', '섹션당 분량', LESSON_LENGTHS)}</div>`;
+    return `<div class="flex gap-2">${select('objectives', '학습 목표 수', LESSON_OBJECTIVE_COUNTS, '개')}${select('level', '학습자 수준', LESSON_LEVELS)}${select('length', '섹션당 분량(기본 학습 제외)', LESSON_LENGTHS)}</div>`;
 }
 
 // 고른 값만 돌려준다. 빈 값을 남기면 차시 저장 때 바뀌지 않은 옵션이 변경 이력에 남는다
@@ -310,18 +311,28 @@ function readLessonGenFields(prefix) {
     return Object.fromEntries(pairs.filter(([, value]) => value));
 }
 
-// 차시에 설계 정보가 있으면 교안 생성 프롬프트에 덧붙인다
-function lessonDesignBrief(mod) {
+// 기본 학습 탭은 차시 시간으로 줄이지 않고 낭독 목표 분량(lesson-lint.js basicLearnTargetMinutes)을 지킨다. 진행 단계는 내용 순서만 참고한다
+function lessonDesignTimeLine(mod, learn) {
+    if (!mod.minutes) return '';
+    const head = `이 차시는 과정 설계에서 ${lessonMinutes(mod)}분으로 배정되었습니다.`;
+    if (!learn) return `${head} 지시문의 시간과 분량 기준을 이 시간에 맞게 비례해 줄이세요.`;
+    const target = basicLearnTargetMinutes(mod);
+    return `${head} 기본 학습 탭은 이 시간으로 줄이지 않고 낭독 ${target}분(공백 포함 약 ${(target * READ_CHARS_PER_MINUTE).toLocaleString('ko-KR')}자) 분량을 지킵니다. 진행 단계는 내용의 순서를 정하는 데만 참고합니다.`;
+}
+
+// 차시에 설계 정보가 있으면 교안 생성 프롬프트에 덧붙인다. tabId: 만드는 탭(교수안처럼 주지 않으면 지금과 같다)
+function lessonDesignBrief(mod, tabId = '') {
     if (!mod) return '';
+    const learn = tabId === 'basicLearn';
     const objectives = (mod.objectives || []).map(o => `- ${o}`).join('\n');
-    const flow = (mod.flow || []).map(step => `- ${step.phase}: ${step.title} (${step.minutes}분)`).join('\n');
+    const flow = (mod.flow || []).map(step => `- ${step.phase}: ${step.title}${learn ? '' : ` (${step.minutes}분)`}`).join('\n');
     const tools = lessonTools(mod).map(tool => `- ${toolLabel(tool)}`).join('\n');
     const prereqs = (mod.prereqs || []).map(item => `- ${item.title}`).join('\n');
-    const options = lessonGenLines(mod);
+    const options = lessonGenLines(mod, tabId);
     const parts = [
-        mod.minutes ? `이 차시는 과정 설계에서 ${lessonMinutes(mod)}분으로 배정되었습니다. 지시문의 시간과 분량 기준을 이 시간에 맞게 비례해 줄이세요.` : '',
+        lessonDesignTimeLine(mod, learn),
         objectives ? `[학습 목표]\n${objectives}` : '',
-        flow ? `[진행 단계]\n${flow}` : '',
+        flow ? `${learn ? '[진행 단계 — 내용 순서만 참고합니다]' : '[진행 단계]'}\n${flow}` : '',
         tools ? `[사용 툴과 버전]\n${tools}\n버전 번호는 본문에 쓰지 않습니다.` : '',
         prereqs ? `[선행 차시]\n${prereqs}\n선행 내용은 다시 설명하지 않고, 본문에서 다른 차시를 지칭하지 않습니다.` : '',
         options ? `[생성 옵션]\n${options}\n출력 형식과 구성 순서는 바꾸지 않습니다.` : ''
