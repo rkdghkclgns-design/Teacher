@@ -1387,6 +1387,8 @@ function generationContext(callGemini, mod) {
         assert.strictEqual(without(odd, ['local:img_1']), '<div class="image-wrapper"><span>머리</span><div class="image-caption">설명</div></div>\n\n다음 문단');
         const open = '<div class="image-wrapper"><img src="local:img_1">\n\n긴 문단은 남는다</div>';
         assert.strictEqual(without(open, ['local:img_1']), '<div class="image-wrapper">\n\n긴 문단은 남는다</div>', '빈 줄을 넘어 지우지 않는다');
+        const crlf = '앞\r\n\r\n<div class="image-wrapper"><img src="local:img_1">\r\n\r\n긴 문단은 남는다</div>\r\n';
+        assert.strictEqual(without(crlf, ['local:img_1']), '앞\r\n\r\n<div class="image-wrapper">\r\n\r\n긴 문단은 남는다</div>\r\n', '\\r\\n으로 끝나는 빈 줄도 넘지 않는다');
         // 그림 값을 주소로 바로 쓴 틀도 보기 화면 버튼이 넘긴 키로 지운다
         const inline = { id: 1, title: '차시', tabContents: { basicLearn: `앞\n\n<div class="image-wrapper"><img src="${PICTURE_A}" alt="x"></div>\n\n뒤` }, images: { img_1: PICTURE_A } };
         await call(pictureContext(inline), 'deleteImage')('img_1');
@@ -1419,6 +1421,21 @@ function generationContext(callGemini, mod) {
             assert.strictEqual(mod.images.img_1, PICTURE_A, `${name}: 그림 값을 남긴다`);
             assert.strictEqual(ctx.asked[0].message.includes('그곳의 그림은 그대로 둡니다'), shared, name);
         }
+    });
+
+    await run('그림 지우기: 비운 기본학습에 보이는 다른 탭 글에서는 지우지 않는다(다른 탭 글이 기본학습에 겹쳐 들어가지 않게)', async () => {
+        const mod = { id: 1, title: '차시', tabContents: { basicLearn: '', basicPrac: '실습\n\n![그림](local:img_1)\n\n끝' }, images: { img_1: PICTURE_A } };
+        mod.content = mod.tabContents.basicPrac;
+        const before = JSON.stringify(mod);
+        const ctx = pictureContext(mod);
+        await call(ctx, 'deleteImage')(encodeURIComponent(PICTURE_A));
+        assert.strictEqual(JSON.stringify(mod), before, '기본학습·다른 탭·그림이 그대로다');
+        assert.deepStrictEqual([ctx.asked.length, ctx.written.length], [0, 0]);
+        assert.ok(ctx.toasts[0].includes('다른 탭의 글이 보이는 중'), ctx.toasts.join('|'));
+        // 탭이 모두 빈 옛 차시의 본문은 기본학습 글이라 지운다
+        const legacy = { id: 1, title: '차시', content: '앞\n\n![그림](local:img_1)\n\n뒤', tabContents: { basicLearn: null, basicPrac: null }, images: { img_1: PICTURE_A } };
+        await call(pictureContext(legacy), 'deleteImage')('img_1');
+        assert.deepStrictEqual([legacy.tabContents.basicLearn, legacy.content, Object.keys(legacy.images).length], ['앞\n\n뒤', '앞\n\n뒤', 0]);
     });
 
     await run('그림 지우기: 확인 창에서 취소하면 글·그림·저장이 그대로다', async () => {

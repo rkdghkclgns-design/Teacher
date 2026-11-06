@@ -3609,8 +3609,9 @@ function lessonImageTargets(mod, imgId) {
 
 // 원문의 그림 자리 세 모양. 정해 둔 모양으로만 찾고 주소는 글자 그대로 견준다(그림 키나 data URL로 정규식을 만들지 않는다).
 // 그림 틀: <div class="image-wrapper"><img src="…"> 뒤의 AI 표시(span)·다시 찾기 버튼·그림 설명(image-caption)과 닫는 </div>까지.
-// 그 사이 글에 '<'가 있어도 되지만 안쪽 <div나 빈 줄에서 멈춘다(모양이 다른 옛 틀은 맨 <img>만 지운다. 블록을 넘어 지우지 않는다)
-const IMAGE_WRAPPER_BLOCK = /<div class="image-wrapper(?:\s[^"]*)?"[^>]*>(?:(?!\n[ \t]*\n)\s)*<img\b[^>]*?\ssrc="([^"]*)"[^>]*>(?:(?!<div|<\/div>|\n[ \t]*\n)[\s\S])*(?:<div class="image-caption"[^>]*>(?:(?!<div|<\/div>|\n[ \t]*\n)[\s\S])*<\/div>(?:(?!<div|<\/div>|\n[ \t]*\n)[\s\S])*)?<\/div>/g;
+// 그 사이 글에 '<'가 있어도 되지만 안쪽 <div나 빈 줄에서 멈춘다(모양이 다른 옛 틀은 맨 <img>만 지운다. 블록을 넘어 지우지 않는다).
+// 빈 줄은 \r\n으로 끝나는 줄(윈도에서 만든 MD)도 센다
+const IMAGE_WRAPPER_BLOCK = /<div class="image-wrapper(?:\s[^"]*)?"[^>]*>(?:(?!\n[ \t\r]*\n)\s)*<img\b[^>]*?\ssrc="([^"]*)"[^>]*>(?:(?!<div|<\/div>|\n[ \t\r]*\n)[\s\S])*(?:<div class="image-caption"[^>]*>(?:(?!<div|<\/div>|\n[ \t\r]*\n)[\s\S])*<\/div>(?:(?!<div|<\/div>|\n[ \t\r]*\n)[\s\S])*)?<\/div>/g;
 // 붙여 넣은 맨 그림 <img src="…">(src 앞에 다른 속성이 있어도 된다)
 const HTML_IMAGE_TAG = /<img\b[^>]*?\ssrc="([^"]*)"[^>]*>/g;
 // 마크다운 그림 ![설명](주소)
@@ -3706,10 +3707,17 @@ function lessonStillUsesImage(mod, key) {
     return pinned.some(id => id != null && String(id) === key) || lessonImageRefTexts(mod).some(text => textUsesImage(text, key));
 }
 
+// 비운 기본학습 칸에는 다른 탭을 합친 글(content)이 보인다(tabs.js tabSourceFor). 그 글에서 지우면 다른 탭 글이 기본학습에 겹쳐 들어간다.
+// 탭이 모두 빈 옛 차시의 본문은 기본학습 글이라 그대로 지운다
+function showsOtherTabsText(mod, tabId) {
+    return tabId === 'basicLearn' && !!mod.tabContents && !mod.tabContents.basicLearn && LESSON_TABS.some(tab => mod.tabContents[tab.id]);
+}
+
 // 지운 뒤의 탭 글과 할 일을 미리 센다(차시는 바꾸지 않는다). 확인 창의 글에 쓰고, 확인한 뒤에 다시 센다.
 // busy: AI 작업이 돌아 그림 값·영상 연결을 남긴다 / unlink: 이 탭에서 빼면 어느 글도 쓰지 않게 되는 판서 영상 그림 키 / shared: 다른 탭·교수안·슬라이드에도 있는 그림인지
 function deleteImagePlan(mod, tabId, targets) {
-    const { text, count } = removeLessonImages(tabSourceFor(mod, tabId), targets.refs);
+    const source = showsOtherTabsText(mod, tabId) ? '' : tabSourceFor(mod, tabId);
+    const { text, count } = removeLessonImages(source, targets.refs);
     const after = { ...mod };
     setTabMarkdown(after, tabId, text);
     const texts = lessonImageRefTexts(after);
@@ -3735,6 +3743,7 @@ function deleteImageMessage(plan) {
 }
 
 const DELETE_IMAGE_MISSING = '이 그림을 원문에서 찾지 못해 지우지 않았습니다. 도구 → 원문 전체 수정에서 지워 주세요.';
+const DELETE_IMAGE_OTHER_TAB = '기본학습 탭이 비어 있어 다른 탭의 글이 보이는 중이라 지우지 않았습니다. 그림이 든 탭에서 지워 주세요.';
 
 // 숨은 원문 칸이 이 차시·탭을 그렸으면 바뀐 글로 맞춘다(지운 그림을 다시 저장하거나 다시 그리지 않게). storedFrom: 칸을 맞춘 저장된 글
 function rawViewAfterImageDelete(mod, tabId) {
@@ -3751,14 +3760,15 @@ window.deleteImage = async function (imgId) {
     const mod = getEditingModule();
     if (!mod) return;
     const tabId = typeof currentLessonTab !== 'undefined' ? currentLessonTab : null;
+    const missing = () => window.showToast?.(showsOtherTabsText(mod, tabId) ? DELETE_IMAGE_OTHER_TAB : DELETE_IMAGE_MISSING, 'warning');
     const plan = deleteImagePlan(mod, tabId, lessonImageTargets(mod, imgId));
-    if (!plan.count) return window.showToast?.(DELETE_IMAGE_MISSING, 'warning');
+    if (!plan.count) return missing();
     if (!(await confirmAsync(deleteImageMessage(plan), { title: '그림 지우기', okLabel: '지우기', tone: 'danger' }))) return;
     // 기다리는 동안 다른 차시·탭으로 옮겼으면 지우지 않는다. 그사이 글과 그림이 바뀌었을 수 있어 다시 센다
     if (!isViewingTab(mod, tabId)) return window.showToast?.('다른 차시나 탭으로 옮겨 그림을 지우지 않았습니다.', 'warning');
     const targets = lessonImageTargets(mod, imgId);
     const now = deleteImagePlan(mod, tabId, targets);
-    if (!now.count) return window.showToast?.(DELETE_IMAGE_MISSING, 'warning');
+    if (!now.count) return missing();
     setTabMarkdown(mod, tabId, now.text);
     if (!now.busy) {
         if (typeof dropWhiteboardVideo === 'function') now.unlink.forEach(key => dropWhiteboardVideo(mod, key)); // 영상 연결이 남으면 그림 값도 남는다
