@@ -34,141 +34,256 @@ window.showToast = function (message, type = 'success') {
     }, 3000);
 };
 
+// ── 앱 창(알림·확인·내용 보기·입력)이 함께 쓰는 틀 ──
+// 떠 있는 창을 쌓아 두고 맨 위 창만 키보드를 받는다. Esc는 바깥 클릭처럼 닫기(취소)이고, Tab은 창 안에서만 돈다.
+// 창을 닫으면 열기 전에 포커스가 있던 곳으로 돌려준다
+// 창이 뜬 뒤 이 시간 안의 클릭·Enter·Esc는 받지 않는다(바깥·취소·확인 모두). 두 번 누른 클릭의 둘째가 막 뜬 창을 바로 닫거나 확인하지 않게
+const APP_DIALOG_GRACE_MS = 500;
+const APP_DIALOG_FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+let _appDialogs = []; // 아래 창부터 위 창 순서
+let _appDialogSeq = 0;
+
+// 한글 등을 조합하는 중의 키. 조합을 끝내는 Enter·Esc는 창이 받지 않는다(사파리는 조합 중 키의 keyCode가 229다)
+const isImeKey = event => !!event.isComposing || event.keyCode === 229;
+
+// 화면에 남은 창만 둔다(다른 코드가 창을 지웠으면 빼서 Esc·Tab을 삼키지 않게)
+function liveAppDialogs() {
+    _appDialogs = _appDialogs.filter(entry => entry.overlay.isConnected);
+    return _appDialogs;
+}
+
+const topAppDialog = () => liveAppDialogs().at(-1) || null;
+
+const focusAppDialog = entry => entry.initial.focus?.({ preventScroll: true });
+
+// 화면 읽기 프로그램이 창과 제목·글을 읽게 이름표를 단다. 창 자체도 포커스를 받을 수 있게 한다
+function labelAppDialog(panel, role) {
+    const id = `app-dialog-${++_appDialogSeq}`;
+    const title = panel.querySelector('[data-app-dialog-title]');
+    const text = panel.querySelector('[data-app-dialog-text]');
+    if (title) title.id = `${id}-title`;
+    if (text) text.id = `${id}-text`;
+    panel.setAttribute('role', role);
+    panel.setAttribute('aria-modal', 'true');
+    panel.setAttribute('tabindex', '-1');
+    if (title || text) panel.setAttribute('aria-labelledby', (title || text).id);
+    if (title && text) panel.setAttribute('aria-describedby', text.id);
+}
+
+// overlay를 앱 창으로 띄운다(먼저 body에 붙여 둔다). overlay 안에서 [data-app-dialog-panel]이 창, [data-app-dialog-title]이 제목, [data-app-dialog-text]가 글이다.
+// opts: role('dialog' | 'alertdialog'), layer(겹칠 때 아래위. 내용 보기 창 0은 확인 창 1 아래), dismissible(false면 바깥 클릭·Esc로 닫지 않는다),
+//       onDismiss(reason): 바깥 클릭('outside')·Esc('escape')로 닫을 때 할 일(없으면 그냥 닫는다), focus: 처음 포커스를 둘 요소(없으면 창)
+// 돌려주는 것: tooSoon()(막 뜬 창인가. 그동안의 클릭·Enter는 받지 않는다), close()(창을 닫고 포커스를 돌려준다)
+function openAppDialog(overlay, { role = 'dialog', layer = 1, dismissible = true, onDismiss = null, focus = null } = {}) {
+    const panel = overlay.querySelector('[data-app-dialog-panel]') || overlay;
+    const opener = document.activeElement;
+    const openedAt = Date.now();
+    const tooSoon = () => Date.now() - openedAt < APP_DIALOG_GRACE_MS;
+    overlay.dataset.appDialog = ''; // 저장본을 읽지 못한 창이 뒤 화면을 막을 때(inert)도 이 창은 누를 수 있게(state.js)
+    labelAppDialog(panel, role);
+    const entry = { overlay, panel, layer, initial: focus || panel, tooSoon };
+    entry.close = () => closeAppDialogEntry(entry, opener);
+    entry.dismiss = reason => {
+        if (!dismissible || tooSoon()) return;
+        if (typeof onDismiss === 'function') onDismiss(reason);
+        else entry.close();
+    };
+    overlay.onclick = () => entry.dismiss('outside');
+    // 층(layer)이 높은 창이 위, 같은 층이면 나중에 연 창이 위다
+    _appDialogs = [...liveAppDialogs(), entry].sort((a, b) => a.layer - b.layer);
+    // 등록한 뒤에 포커스를 옮긴다. 옮기며 뒤 칸이 저장(onchange)하다 같은 확인 창을 다시 열어도 겹치지 않게(showConfirm)
+    if (topAppDialog() === entry) focusAppDialog(entry);
+    const top = topAppDialog();
+    if (top && top !== entry && !top.panel.contains(document.activeElement)) focusAppDialog(top); // 포커스를 옮기는 사이 위에 다른 창이 떴다
+    return { tooSoon, close: entry.close };
+}
+
+// 창을 닫는다. 맨 위 창이었으면 열기 전 자리로(그 자리가 남은 창 밖이면 남은 맨 위 창으로) 포커스를 돌려준다. 아래 창이 닫히면 위 창의 포커스는 그대로 둔다
+function closeAppDialogEntry(entry, opener) {
+    const wasTop = topAppDialog() === entry;
+    entry.overlay.remove();
+    _appDialogs = _appDialogs.filter(other => other !== entry && other.overlay.isConnected);
+    if (!wasTop) return;
+    const next = topAppDialog();
+    if (opener?.isConnected && opener !== document.body && (!next || next.overlay.contains(opener))) opener.focus?.({ preventScroll: true });
+    else if (next) focusAppDialog(next);
+}
+
+// Tab·Shift+Tab은 창 안의 버튼·입력칸 사이만 돈다(끝에서 처음으로 잇는다). 포커스가 창·본문이나 창 밖에 있으면 처음(Shift+Tab이면 끝)으로
+function keepAppDialogFocus(entry, event) {
+    const items = [...entry.panel.querySelectorAll(APP_DIALOG_FOCUSABLE)].filter(el => el.getClientRects().length > 0);
+    event.preventDefault();
+    if (!items.length) return focusAppDialog(entry);
+    const at = items.indexOf(document.activeElement);
+    const step = event.shiftKey ? -1 : 1;
+    const next = at < 0 ? items[event.shiftKey ? items.length - 1 : 0] : items[(at + step + items.length) % items.length];
+    next.focus({ preventScroll: true });
+}
+
+// 맨 위 창의 키. Esc는 그 창만 닫고(바깥 클릭과 같은 취소) 아래 창이나 다른 화면(화이트보드·안내 창)으로 넘기지 않는다.
+// 누르고 있는 Enter·Esc는 받지 않는다(눌러 둔 키가 막 뜬 창을 확인하거나 겹친 창을 잇달아 닫지 않게). 한글 조합 중의 키는 조합에 맡긴다(전파도 막지 않는다)
+function onAppDialogKey(event) {
+    const top = topAppDialog();
+    if (!top || isImeKey(event)) return;
+    if (event.key === 'Escape' || (event.key === 'Enter' && event.repeat)) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.key === 'Escape' && !event.repeat) top.dismiss('escape');
+    } else if (event.key === 'Tab') {
+        keepAppDialogFocus(top, event);
+    }
+}
+
+// 문서의 다른 키 처리(단축키·화이트보드 창의 Esc 등)보다 먼저 받는다
+window.addEventListener('keydown', onAppDialogKey, true);
+
 window.showAlert = function (message) {
-
     const overlay = document.createElement('div');
-
     overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] animate-fade-in';
-    overlay.dataset.appDialog = ''; // 저장본을 읽지 못한 창이 뒤 화면을 막을 때(inert)도 이 알림은 누를 수 있게(state.js)
-
-    overlay.onclick = () => overlay.remove();
-
     overlay.innerHTML = `
-
-                <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[320px] p-6 shadow-2xl flex flex-col items-center text-center" onclick="event.stopPropagation()">
-
+                <div data-app-dialog-panel class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[320px] p-6 shadow-2xl flex flex-col items-center text-center" onclick="event.stopPropagation()">
                     <div class="w-12 h-12 rounded-full bg-accent/20 flex items-center justify-center mb-4">
-
-                        <i class="ph-fill ph-info text-2xl text-accent"></i>
-
+                        <i class="ph-fill ph-info text-2xl text-accent" aria-hidden="true"></i>
                     </div>
-
-                    <p class="text-sm text-textLight mb-6 whitespace-pre-wrap">${escapeHtml(message)}</p>
-
-                    <button class="w-full px-4 py-2.5 text-sm font-bold text-white bg-accent hover:bg-accentHover rounded-xl transition-colors" onclick="this.closest('.fixed').remove()">확인</button>
-
+                    <p data-app-dialog-text class="text-sm text-textLight mb-6 whitespace-pre-wrap">${escapeHtml(message)}</p>
+                    <button type="button" data-alert-ok class="w-full px-4 py-2.5 text-sm font-bold text-white bg-accent hover:bg-accentHover rounded-xl transition-colors">확인</button>
                 </div>
-
             `;
-
     document.body.appendChild(overlay);
-
+    const ok = overlay.querySelector('[data-alert-ok]');
+    const dialog = openAppDialog(overlay, { role: 'alertdialog', focus: ok }); // 확인 버튼에 포커스(Enter로 닫는다)
+    ok.onclick = () => {
+        if (!dialog.tooSoon()) dialog.close();
+    };
 };
-
-
 
 window.alert = window.showAlert;
 
-
-
 // 같은 확인 창(제목·글·확인 버튼 이름이 같음)이 떠 있으면 하나 더 띄우지 않는다. 키보드로 두 번 누르거나, 늦게 뜨는 창의 버튼을 다시 눌러도 창이 겹치지 않게
 const _openConfirms = new Map();
-// 창이 뜬 뒤 이 시간 안의 클릭은 받지 않는다(바깥·취소·확인 모두). 두 번 누른 클릭의 둘째가 막 뜬 창을 바로 닫거나 확인하지 않게
-const CONFIRM_CLICK_GRACE_MS = 500;
 
-// opts: okLabel(확인 버튼 이름, 기본 '삭제'), cancelLabel(취소 버튼 이름, 기본 '취소'), tone('danger' 빨강 | 'primary' 보라), title, onCancel,
-//       dismissible(false면 바깥을 눌러도 닫지 않는다. 버리면 다시 볼 수 없는 결과를 물을 때. Esc는 원래 이 창을 닫지 않는다)
-// 같은 확인 창이 이미 떠 있으면 새로 띄우지 않고 onCancel을 부른다(confirmAsync는 false)
+// opts: okLabel(확인 버튼 이름, 기본 '삭제'), cancelLabel(취소 버튼 이름, 기본 '취소'), tone('danger' 빨강 | 'primary' 보라), title,
+//       onCancel(reason): 취소로 끝날 때. reason은 'button'(취소 버튼)·'outside'(바깥 클릭)·'escape'(Esc)·'duplicate'(같은 창이 이미 떠 있다),
+//       dismissible(false면 바깥 클릭·Esc로 닫지 않는다. 버리면 다시 볼 수 없는 결과를 물을 때)
+// 같은 확인 창이 이미 떠 있으면 새로 띄우지 않고 onCancel('duplicate')를 부른다(confirmAsync는 false)
+// 처음 포커스는 'primary'면 확인 버튼, 그 밖(지우기 등)은 취소 버튼이다(Enter로 답하되 되돌리기 어려운 일은 바로 확인하지 않게)
 window.showConfirm = function (message, onConfirm, opts = {}) {
     const { okLabel = '삭제', cancelLabel = '취소', tone = 'danger', title = '확인', onCancel, dismissible = true } = opts;
+    const cancelled = reason => {
+        if (typeof onCancel === 'function') onCancel(reason);
+    };
     const key = JSON.stringify([title, message, okLabel]);
-    if (_openConfirms.get(key)?.isConnected) {
-        if (typeof onCancel === 'function') onCancel();
-        return;
-    }
+    if (_openConfirms.get(key)?.isConnected) return cancelled('duplicate');
     const okClass = tone === 'primary' ? 'bg-accent hover:bg-accentHover' : 'bg-red-500/80 hover:bg-red-500';
     const overlay = document.createElement('div');
     overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] animate-fade-in';
-    overlay.dataset.appDialog = ''; // 저장본을 읽지 못한 창이 뒤 화면을 막을 때(inert)도 이 확인 창은 누를 수 있게(state.js)
-    const openedAt = Date.now();
-    const tooSoon = () => Date.now() - openedAt < CONFIRM_CLICK_GRACE_MS;
-    const close = () => {
-        overlay.remove();
-        if (_openConfirms.get(key) === overlay) _openConfirms.delete(key);
-    };
-    const cancel = () => {
-        close();
-        if (typeof onCancel === 'function') onCancel();
-    };
-    overlay.onclick = () => {
-        if (!dismissible || tooSoon()) return;
-        cancel();
-    };
     overlay.innerHTML = `
-                <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[360px] max-w-[92vw] p-6 shadow-2xl flex flex-col" onclick="event.stopPropagation()">
+                <div data-app-dialog-panel class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[360px] max-w-[92vw] p-6 shadow-2xl flex flex-col" onclick="event.stopPropagation()">
                     <div class="flex items-center gap-3 mb-4">
-                        <i class="ph-fill ph-warning-circle text-2xl text-yellow-400"></i>
-                        <h3 class="font-bold text-white text-sm">${escapeHtml(title)}</h3>
+                        <i class="ph-fill ph-warning-circle text-2xl text-yellow-400" aria-hidden="true"></i>
+                        <h3 data-app-dialog-title class="font-bold text-white text-sm">${escapeHtml(title)}</h3>
                     </div>
-                    <p class="text-sm text-textMuted mb-6 leading-relaxed whitespace-pre-wrap max-h-[60vh] overflow-y-auto">${escapeHtml(message)}</p>
+                    <p data-app-dialog-text class="text-sm text-textMuted mb-6 leading-relaxed whitespace-pre-wrap max-h-[60vh] overflow-y-auto">${escapeHtml(message)}</p>
                     <div class="flex justify-end gap-2">
-                        <button class="px-4 py-2 text-xs font-bold text-textLight bg-white/5 hover:bg-white/10 rounded-lg transition-colors" data-confirm-cancel>${escapeHtml(cancelLabel)}</button>
-                        <button class="px-4 py-2 text-xs font-bold text-white ${okClass} rounded-lg transition-colors" data-confirm-ok>${escapeHtml(okLabel)}</button>
+                        <button type="button" class="px-4 py-2 text-xs font-bold text-textLight bg-white/5 hover:bg-white/10 rounded-lg transition-colors" data-confirm-cancel>${escapeHtml(cancelLabel)}</button>
+                        <button type="button" class="px-4 py-2 text-xs font-bold text-white ${okClass} rounded-lg transition-colors" data-confirm-ok>${escapeHtml(okLabel)}</button>
                     </div>
                 </div>
             `;
     _openConfirms.set(key, overlay);
     document.body.appendChild(overlay);
     // 버튼은 이 창 안에서 찾는다. 창이 겹쳐도 위 창의 버튼이 아래 창을 움직이지 않게
-    overlay.querySelector('[data-confirm-cancel]').onclick = () => {
-        if (tooSoon()) return; // 막 뜬 창의 취소(버리기)도 받지 않는다
-        cancel();
+    const cancelButton = overlay.querySelector('[data-confirm-cancel]');
+    const okButton = overlay.querySelector('[data-confirm-ok]');
+    const finish = () => {
+        dialog.close();
+        if (_openConfirms.get(key) === overlay) _openConfirms.delete(key);
     };
-    overlay.querySelector('[data-confirm-ok]').onclick = () => {
-        if (tooSoon()) return;
-        close();
+    const cancel = reason => {
+        finish();
+        cancelled(reason);
+    };
+    const dialog = openAppDialog(overlay, { role: 'alertdialog', dismissible, onDismiss: cancel, focus: tone === 'primary' ? okButton : cancelButton });
+    cancelButton.onclick = () => {
+        if (dialog.tooSoon()) return; // 막 뜬 창의 취소(버리기)도 받지 않는다
+        cancel('button');
+    };
+    okButton.onclick = () => {
+        if (dialog.tooSoon()) return;
+        finish();
         if (typeof onConfirm === 'function') onConfirm();
     };
 };
 
-
-
+// 내용 보기 창. title은 HTML 그대로 넣는다(부르는 쪽이 이스케이프한다. 작업 기록 제목은 state.js가 이스케이프해 넘긴다)
 window.showModal = function (title, contentHTML) {
-
     const overlay = document.createElement('div');
-
     overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9998] animate-fade-in';
-
-    overlay.onclick = () => overlay.remove();
-
+    overlay.dataset.appModal = ''; // closeAppModal이 닫는 내용 보기 창
     overlay.innerHTML = `
-
-                <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[800px] max-w-[90vw] max-h-[85vh] shadow-2xl flex flex-col" onclick="event.stopPropagation()">
-
+                <div data-app-dialog-panel class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[800px] max-w-[90vw] max-h-[85vh] shadow-2xl flex flex-col" onclick="event.stopPropagation()">
                     <div class="flex items-center justify-between p-5 border-b border-white/10 shrink-0">
-
-                        <h3 class="font-bold text-white text-lg flex items-center gap-2"><i class="ph-fill ph-book-open-text text-accent"></i> ${title}</h3>
-
-                        <button class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 text-textMuted hover:text-white transition-colors" onclick="this.closest('.fixed').remove()">
-
-                            <i class="ph-bold ph-x text-lg"></i>
-
+                        <h3 data-app-dialog-title class="font-bold text-white text-lg flex items-center gap-2"><i class="ph-fill ph-book-open-text text-accent" aria-hidden="true"></i> ${title}</h3>
+                        <button type="button" data-modal-close aria-label="닫기" class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 text-textMuted hover:text-white transition-colors">
+                            <i class="ph-bold ph-x text-lg" aria-hidden="true"></i>
                         </button>
-
                     </div>
-
-                    <div class="p-6 overflow-y-auto editor-scroll flex-1 text-sm bg-bgEditor markdown-body rounded-b-2xl">
-
+                    <div data-modal-body tabindex="-1" class="p-6 overflow-y-auto editor-scroll flex-1 text-sm bg-bgEditor markdown-body rounded-b-2xl focus:outline-none">
                         ${contentHTML}
-
                     </div>
-
                 </div>
-
             `;
-
     document.body.appendChild(overlay);
+    // 확인 창보다 아래 층이다(이 창 안의 '되돌리기'가 띄우는 확인 창이 위에 온다). 처음 포커스는 본문(방향키로 읽어 내린다)
+    const dialog = openAppDialog(overlay, { layer: 0, focus: overlay.querySelector('[data-modal-body]') });
+    overlay.querySelector('[data-modal-close]').onclick = () => {
+        if (!dialog.tooSoon()) dialog.close();
+    };
+};
 
+// 내용 보기 창을 닫는다(작업 기록을 되돌린 뒤 등). 그 위에 뜬 확인 창·알림은 그대로 둔다
+window.closeAppModal = function () {
+    liveAppDialogs().filter(entry => 'appModal' in entry.overlay.dataset).forEach(entry => entry.close());
+};
+
+// 글 한 줄을 묻는다(브라우저 기본 입력 창 대신. Electron에서도 뜬다). 확인·Enter면 앞뒤 빈칸을 뗀 글, 취소·Esc·바깥 클릭이면 null
+// opts: title, okLabel, cancelLabel, placeholder, value(처음 글)
+window.promptAsync = function (message, opts = {}) {
+    const { title = '입력', okLabel = '확인', cancelLabel = '취소', placeholder = '', value = '' } = opts;
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] animate-fade-in';
+        overlay.innerHTML = `
+            <div data-app-dialog-panel class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[400px] max-w-[92vw] p-6 shadow-2xl flex flex-col" onclick="event.stopPropagation()">
+                <h3 data-app-dialog-title class="font-bold text-white text-sm mb-2">${escapeHtml(title)}</h3>
+                <p data-app-dialog-text class="text-xs text-textMuted mb-3 leading-relaxed whitespace-pre-wrap">${escapeHtml(message)}</p>
+                <input type="text" data-prompt-input value="${escapeHtml(String(value ?? ''))}" placeholder="${escapeHtml(placeholder)}"
+                    class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent transition-colors mb-4">
+                <div class="flex justify-end gap-2">
+                    <button type="button" data-prompt-cancel class="px-4 py-2 text-xs font-bold text-textLight bg-white/5 hover:bg-white/10 rounded-lg transition-colors">${escapeHtml(cancelLabel)}</button>
+                    <button type="button" data-prompt-ok class="px-4 py-2 text-xs font-bold text-white bg-accent hover:bg-accentHover rounded-lg transition-colors">${escapeHtml(okLabel)}</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+        const input = overlay.querySelector('[data-prompt-input]');
+        const answer = text => {
+            dialog.close();
+            resolve(text);
+        };
+        const dialog = openAppDialog(overlay, { onDismiss: () => answer(null), focus: input });
+        const submit = () => {
+            if (!dialog.tooSoon()) answer(String(input.value ?? '').trim());
+        };
+        overlay.querySelector('[data-prompt-cancel]').onclick = () => {
+            if (!dialog.tooSoon()) answer(null);
+        };
+        overlay.querySelector('[data-prompt-ok]').onclick = submit;
+        input.onkeydown = event => {
+            if (event.key !== 'Enter' || isImeKey(event)) return;
+            event.preventDefault();
+            submit();
+        };
+    });
 };
 
 // ── F1-2: 핵심개념 입력 팝업 ──
@@ -178,36 +293,44 @@ window.showKeyConceptsPrompt = function (title, defaultConcepts, onConfirm, opts
     const defaults = Array.isArray(defaultConcepts) ? defaultConcepts.filter(Boolean) : [];
     const overlay = document.createElement('div');
     overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] animate-fade-in';
-    overlay.onclick = () => overlay.remove();
     overlay.innerHTML = `
-        <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[420px] p-6 shadow-2xl flex flex-col" onclick="event.stopPropagation()">
+        <div data-app-dialog-panel class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[420px] p-6 shadow-2xl flex flex-col" onclick="event.stopPropagation()">
             <div class="flex items-center gap-3 mb-4">
-                <i class="ph-fill ph-lightbulb text-2xl text-accent"></i>
-                <h3 class="font-bold text-white text-sm">${escapeHtml(title)}</h3>
+                <i class="ph-fill ph-lightbulb text-2xl text-accent" aria-hidden="true"></i>
+                <h3 data-app-dialog-title class="font-bold text-white text-sm">${escapeHtml(title)}</h3>
             </div>
-            <p class="text-xs text-textMuted mb-3 leading-relaxed">이 차시에서 반드시 다뤄야 할 핵심 개념을 입력하세요.<br>쉼표(,)로 구분하며, 비워두면 AI가 자동 구성합니다.</p>
+            <p data-app-dialog-text class="text-xs text-textMuted mb-3 leading-relaxed">이 차시에서 반드시 다뤄야 할 핵심 개념을 입력하세요.<br>쉼표(,)로 구분하며, 비워두면 AI가 자동 구성합니다.</p>
             ${opts.warning ? `<p class="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 mb-3 leading-relaxed"><i class="ph-bold ph-warning"></i> ${escapeHtml(opts.warning)}</p>` : ''}
             ${opts.estimateHtml ? `<div class="mb-3">${opts.estimateHtml}</div>` : ''}
-            <input type="text" id="kc-prompt-input" value="${escapeHtml(defaults.join(', '))}"
+            <input type="text" data-kc-input value="${escapeHtml(defaults.join(', '))}" aria-label="핵심 개념"
                 placeholder="예: 게임 루프, 프레임 레이트, 델타 타임"
-                class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent transition-colors mb-4"
-                onkeydown="if(event.key==='Enter' && !event.isComposing){document.getElementById('kc-prompt-ok').click();}">
+                class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent transition-colors mb-4">
             <div class="flex justify-end gap-2">
-                <button class="px-4 py-2 text-xs font-bold text-textLight bg-white/5 hover:bg-white/10 rounded-lg transition-colors" onclick="this.closest('.fixed').remove()">취소</button>
-                <button id="kc-prompt-ok" class="px-4 py-2 text-xs font-bold text-white bg-accent hover:bg-accentHover rounded-lg transition-colors flex items-center gap-1">
-                    <i class="ph-bold ph-sparkle"></i> ${escapeHtml(opts.okLabel || '생성')}
+                <button type="button" data-kc-cancel class="px-4 py-2 text-xs font-bold text-textLight bg-white/5 hover:bg-white/10 rounded-lg transition-colors">취소</button>
+                <button type="button" data-kc-ok class="px-4 py-2 text-xs font-bold text-white bg-accent hover:bg-accentHover rounded-lg transition-colors flex items-center gap-1">
+                    <i class="ph-bold ph-sparkle" aria-hidden="true"></i> ${escapeHtml(opts.okLabel || '생성')}
                 </button>
             </div>
         </div>
     `;
     document.body.appendChild(overlay);
-    const input = document.getElementById('kc-prompt-input');
-    setTimeout(() => input.focus(), 100);
-    document.getElementById('kc-prompt-ok').onclick = () => {
+    const input = overlay.querySelector('[data-kc-input]');
+    const dialog = openAppDialog(overlay, { focus: input });
+    const submit = () => {
+        if (dialog.tooSoon()) return;
         const raw = input.value.trim();
         const concepts = raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
-        overlay.remove();
+        dialog.close();
         if (typeof onConfirm === 'function') onConfirm(concepts);
+    };
+    overlay.querySelector('[data-kc-cancel]').onclick = () => {
+        if (!dialog.tooSoon()) dialog.close();
+    };
+    overlay.querySelector('[data-kc-ok]').onclick = submit;
+    input.onkeydown = event => {
+        if (event.key !== 'Enter' || isImeKey(event)) return;
+        event.preventDefault();
+        submit();
     };
 };
 
@@ -1487,13 +1610,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // 탭 교안을 기본으로 보여 준다. 교수안 항목을 고르면 강사뷰로 바뀐다
     window.viewMode = 'student';
 
-    // v5.9: 키보드 단축키
+    // v5.9: 키보드 단축키. 열린 앱 창을 Esc로 닫는 일은 창 틀(onAppDialogKey)이 맡는다
     document.addEventListener('keydown', (e) => {
-        // Escape: 모달 닫기
-        if (e.key === 'Escape') {
-            const modal = document.getElementById('custom-modal');
-            if (modal && !modal.classList.contains('hidden')) modal.classList.add('hidden');
-        }
         // Ctrl+S(맥은 Cmd+S): 고치던 원문 칸까지 넣고 저장한 뒤 실제 결과를 알린다(누르고 있어도 한 번만). 읽지 못한 동안은 saveNow가 막는다
         if (isSaveShortcut(e)) {
             e.preventDefault();
@@ -1502,10 +1620,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 window.showToast?.('저장하지 못했습니다. 잠시 뒤 다시 Ctrl+S를 눌러 주세요.', 'error');
             });
         }
-        // F1: 도움말
+        // F1: 도움말(누르고 있어도 한 번만 띄운다)
         if (e.key === 'F1') {
             e.preventDefault();
-            window.showAlert('키보드 단축키:\n• Ctrl+S: 저장\n• Escape: 모달 닫기\n• F1: 이 도움말');
+            if (!e.repeat) window.showAlert('키보드 단축키:\n• Ctrl+S: 저장\n• Esc: 열린 창 닫기(취소와 같다)\n• F1: 이 도움말');
         }
     });
 });
@@ -2165,7 +2283,8 @@ window.renderCacheList = async function () {
 };
 
 window.deleteSingleCache = async function (keyword) {
-    if (!confirm(`'${keyword}' 캐시를 삭제하시겠습니까?`)) return;
+    const ask = `'${keyword}' 검색어로 저장해 둔 그림을 검색 그림 저장소에서 지웁니다.\n교안에 넣은 그림은 그대로이고, 같은 검색어로 다시 찾으면 검색 한도를 씁니다.`;
+    if (!(await confirmAsync(ask, { title: '검색 그림 저장소', okLabel: '지우기', tone: 'danger' }))) return;
     try {
         await DBManager.deleteCache(keyword);
         renderCacheList(); // 리스트 갱신
@@ -2176,7 +2295,8 @@ window.deleteSingleCache = async function (keyword) {
 };
 
 window.clearAllImageCaches = async function () {
-    if (!confirm('경고: 로컬 시스템에 저장된 모든 이미지 캐시를 영구적으로 삭제합니다. 진행하시겠습니까?')) return;
+    const ask = '검색 그림 저장소에 저장해 둔 그림을 모두 지웁니다. 되돌릴 수 없습니다.\n교안에 넣은 그림은 그대로이고, 같은 검색어로 다시 찾으면 검색 한도를 씁니다.';
+    if (!(await confirmAsync(ask, { title: '검색 그림 저장소 비우기', okLabel: '모두 지우기', tone: 'danger' }))) return;
     try {
         await DBManager.clearAllCaches();
         renderCacheList();

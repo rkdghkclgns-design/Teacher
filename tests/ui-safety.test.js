@@ -12,14 +12,40 @@ class FakeDate extends Date { static now() { return clock; } }
 const tick = ms => { clock += ms; };
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
-function fakeOverlay() {
-    const buttons = {};
-    return {
+// 앱 창 하나를 흉내 낸다. innerHTML에 있는 [data-…] 칸만 찾고(같은 고른 글이면 같은 칸), 찾은 차례가 곧 화면 차례(Tab 순서)다.
+// 포커스는 doc.activeElement에 남긴다
+function fakeOverlay(doc) {
+    const parts = new Map();
+    const overlay = {
         className: '', innerHTML: '', isConnected: false, onclick: null, dataset: {},
-        querySelector(sel) { return buttons[sel] || (buttons[sel] = { onclick: null, click() { this.onclick?.(); } }); },
+        querySelector(sel) {
+            if (!overlay.innerHTML.includes(sel.replace(/^\[|\]$/g, ''))) return null;
+            if (!parts.has(sel)) parts.set(sel, fakePart(doc, overlay));
+            return parts.get(sel);
+        },
+        // 창·제목·글과 본문(tabindex -1)은 Tab으로 가지 않는다
+        querySelectorAll: () => [...parts].filter(([sel]) => !/^\[data-(app-dialog|modal-body)/.test(sel)).map(([, part]) => part),
+        contains: el => el === overlay || [...parts.values()].includes(el),
         remove() { this.isConnected = false; }
     };
+    return overlay;
 }
+function fakePart(doc, overlay) {
+    return {
+        id: '', value: '', attributes: {}, onclick: null, onkeydown: null,
+        get isConnected() { return overlay.isConnected; },
+        setAttribute(name, value) { this.attributes[name] = String(value); },
+        querySelector: sel => overlay.querySelector(sel),
+        querySelectorAll: sel => overlay.querySelectorAll(sel),
+        contains: el => overlay.contains(el),
+        getClientRects: () => [{}],
+        focus() { doc.activeElement = this; },
+        click() { this.onclick?.(); }
+    };
+}
+// 키보드 이벤트 흉내. 막은 횟수를 센다
+const keyEvent = (key, extra = {}) => ({ key, stopped: 0, prevented: 0, stopPropagation() { this.stopped += 1; }, preventDefault() { this.prevented += 1; }, ...extra });
+const plain = value => JSON.parse(JSON.stringify(value));
 class FakeZip {
     constructor() { this.files = {}; }
     file(name, data) { this.files[name] = data; return this; }
@@ -39,7 +65,7 @@ function loadUi() {
         document: {
             addEventListener() {}, getElementById: () => null, querySelector: () => null,
             querySelectorAll: sel => ctx.queried?.(sel) || [],
-            createElement: () => fakeOverlay(),
+            createElement: () => fakeOverlay(ctx.document),
             body: { appendChild: el => { el.isConnected = true; seen.appended.push(el); } },
             activeElement: null
         },
@@ -156,6 +182,279 @@ test('확인 창: 막 뜬 창의 클릭은 받지 않고, 취소 버튼 이름�
     assert.ok(seen.appended[2].innerHTML.includes('>버리기<'));
     ctx.showConfirm('F', () => {});
     assert.ok(seen.appended[3].innerHTML.includes('>취소<'), '기본 취소 버튼 이름');
+});
+
+// loadUi는 showAlert를 기록용으로 바꿔 둔다. 진짜 알림 창은 window.alert(ui.js가 showAlert로 바꿔 둔다)로 연다
+test('앱 창: 알림·내용 보기도 막 뜬 창의 클릭은 받지 않고, 모든 창이 창 이름표(role·aria-modal·aria-labelledby)를 단다', () => {
+    const { ctx, seen } = loadUi();
+    ctx.alert('알림 <b>글</b>');
+    const alert = seen.appended[0];
+    assert.ok(alert.innerHTML.includes('알림 &lt;b&gt;글&lt;/b&gt;'), '알림 글은 이스케이프한다');
+    alert.onclick();
+    alert.querySelector('[data-alert-ok]').click();
+    assert.strictEqual(alert.isConnected, true, '두 번 누른 클릭의 둘째가 막 뜬 알림을 닫지 않는다(바깥·확인 버튼)');
+    tick(600);
+    alert.querySelector('[data-alert-ok]').click();
+    assert.strictEqual(alert.isConnected, false);
+    ctx.showModal('기록: <i>제목</i>', '<p>내용</p>');
+    const modal = seen.appended[1];
+    assert.ok(modal.innerHTML.includes('기록: <i>제목</i>'), '내용 보기 제목은 부르는 쪽이 이스케이프한 HTML 그대로');
+    modal.onclick();
+    modal.querySelector('[data-modal-close]').click();
+    assert.strictEqual(modal.isConnected, true, '내용 보기 창도 막 뜬 동안은 닫지 않는다');
+    tick(600);
+    modal.onclick();
+    assert.strictEqual(modal.isConnected, false, '바깥을 누르면 닫는다');
+    ctx.showConfirm('지울까요?', () => {}, { title: '지우기' });
+    const confirmBox = seen.appended[2];
+    const named = (box, role, label, described) => {
+        const panel = box.querySelector('[data-app-dialog-panel]');
+        assert.strictEqual(box.dataset.appDialog, '', '읽지 못한 저장본 창이 뒤를 막아도 누를 수 있다(state.js)');
+        assert.deepStrictEqual([panel.attributes.role, panel.attributes['aria-modal'], panel.attributes.tabindex], [role, 'true', '-1']);
+        assert.ok(label.id && panel.attributes['aria-labelledby'] === label.id, '창 이름은 제목(없으면 글)');
+        assert.strictEqual(panel.attributes['aria-describedby'], described ? described.id : undefined);
+    };
+    named(alert, 'alertdialog', alert.querySelector('[data-app-dialog-text]'), null);
+    named(modal, 'dialog', modal.querySelector('[data-app-dialog-title]'), null);
+    named(confirmBox, 'alertdialog', confirmBox.querySelector('[data-app-dialog-title]'), confirmBox.querySelector('[data-app-dialog-text]'));
+    assert.notStrictEqual(alert.querySelector('[data-app-dialog-text]').id, confirmBox.querySelector('[data-app-dialog-text]').id, '창마다 다른 id');
+    assert.deepStrictEqual(['appModal' in modal.dataset, 'appModal' in alert.dataset, 'appModal' in confirmBox.dataset], [true, false, false], '내용 보기 창만 closeAppModal이 닫는 표시를 단다');
+});
+
+test('앱 창 키보드: Esc는 맨 위 창만 닫고(확인 창은 취소) 다른 처리로 넘기지 않는다. 막 뜬 창·닫지 않는 창·누르고 있는 키·한글 조합 중에는 닫지 않는다', () => {
+    const { ctx, seen } = loadUi();
+    const onKey = seen.listeners.keydown;
+    assert.strictEqual(typeof onKey, 'function', '창 틀의 키 처리는 window에 건다(문서의 단축키 처리보다 먼저)');
+    const reasons = [];
+    ctx.showConfirm('아래', () => {}, { onCancel: reason => reasons.push(`아래:${reason}`) });
+    ctx.showConfirm('위', () => {}, { onCancel: reason => reasons.push(`위:${reason}`) });
+    const [below, above] = seen.appended;
+    const early = keyEvent('Escape');
+    onKey(early);
+    assert.deepStrictEqual([above.isConnected, early.stopped, early.prevented], [true, 1, 1], '막 뜬 창은 Esc를 받지 않지만 아래 창·다른 화면으로도 넘기지 않는다');
+    tick(600);
+    const composing = keyEvent('Escape', { isComposing: true });
+    onKey(composing);
+    assert.deepStrictEqual([above.isConnected, composing.stopped, composing.prevented], [true, 0, 0], '한글 조합 중의 Esc는 조합에 맡긴다(전파도 막지 않는다)');
+    const held = keyEvent('Escape', { repeat: true });
+    onKey(held);
+    assert.deepStrictEqual([above.isConnected, held.stopped], [true, 1], '누르고 있는 Esc는 겹친 창을 잇달아 닫지 않는다');
+    const esc = keyEvent('Escape');
+    onKey(esc);
+    assert.deepStrictEqual([above.isConnected, below.isConnected, esc.stopped], [false, true, 1], 'Esc는 맨 위 창만 닫는다');
+    onKey(keyEvent('Escape'));
+    assert.deepStrictEqual(reasons, ['위:escape', '아래:escape'], 'Esc는 바깥 클릭처럼 취소');
+    ctx.showConfirm('버리면 다시 볼 수 없습니다', () => {}, { dismissible: false, onCancel: reason => reasons.push(`고정:${reason}`) });
+    const fixed = seen.appended[2];
+    tick(600);
+    const blocked = keyEvent('Escape');
+    onKey(blocked);
+    assert.deepStrictEqual([fixed.isConnected, blocked.stopped, reasons.length], [true, 1, 2], 'dismissible: false 창은 Esc로 닫지 않는다');
+    const heldEnter = keyEvent('Enter', { repeat: true });
+    onKey(heldEnter);
+    assert.deepStrictEqual([heldEnter.prevented, heldEnter.stopped], [1, 1], '누르고 있는 Enter는 막 뜬 창을 확인하지 않는다');
+    const enter = keyEvent('Enter');
+    onKey(enter);
+    assert.deepStrictEqual([enter.prevented, enter.stopped], [0, 0], '한 번 누른 Enter는 포커스 둔 버튼이 받는다');
+    fixed.querySelector('[data-confirm-cancel]').click();
+    const free = keyEvent('Escape');
+    onKey(free);
+    assert.deepStrictEqual([free.stopped, free.prevented], [0, 0], '창이 없으면 Esc를 건드리지 않는다(화이트보드 창 등이 받는다)');
+    ctx.alert('다른 코드가 지울 알림');
+    seen.appended.at(-1).remove();
+    const after = keyEvent('Escape');
+    onKey(after);
+    assert.strictEqual(after.stopped, 0, '다른 코드가 지운 창은 Esc를 삼키지 않는다');
+});
+
+test('앱 창 포커스: 지우기는 취소에, primary는 확인에 처음 포커스를 두고, Tab은 창 안만 돌며, 닫으면 연 자리로 돌려준다', () => {
+    const { ctx, seen } = loadUi();
+    const onKey = seen.listeners.keydown;
+    const page = { isConnected: true, focus() { ctx.document.activeElement = this; } };
+    page.focus();
+    ctx.showConfirm('지울까요?', () => {});
+    const danger = seen.appended[0];
+    const cancel = danger.querySelector('[data-confirm-cancel]');
+    const ok = danger.querySelector('[data-confirm-ok]');
+    assert.strictEqual(ctx.document.activeElement, cancel, '되돌리기 어려운 확인은 취소 버튼에 포커스(Enter가 바로 지우지 않게)');
+    const tab = keyEvent('Tab');
+    onKey(tab);
+    assert.deepStrictEqual([ctx.document.activeElement === ok, tab.prevented], [true, 1]);
+    onKey(keyEvent('Tab'));
+    assert.strictEqual(ctx.document.activeElement, cancel, '끝에서 처음으로 돈다');
+    onKey(keyEvent('Tab', { shiftKey: true }));
+    assert.strictEqual(ctx.document.activeElement, ok, 'Shift+Tab은 거꾸로 돈다');
+    page.focus();
+    onKey(keyEvent('Tab'));
+    assert.strictEqual(ctx.document.activeElement, cancel, '창 밖에 있던 포커스는 창 안으로 데려온다');
+    ctx.showConfirm('만들까요?', () => {}, { tone: 'primary', okLabel: '만들기' });
+    const primary = seen.appended[1];
+    assert.strictEqual(ctx.document.activeElement, primary.querySelector('[data-confirm-ok]'), 'primary는 확인 버튼에 포커스(Enter로 확인)');
+    tick(600);
+    primary.querySelector('[data-confirm-cancel]').click();
+    assert.strictEqual(ctx.document.activeElement, cancel, '닫으면 연 자리(아래 창의 취소 버튼)로 돌아간다');
+    cancel.click();
+    assert.strictEqual(ctx.document.activeElement, page, '마지막 창을 닫으면 창을 열기 전 자리로 돌아간다');
+    ctx.alert('알림');
+    const alert = seen.appended[2];
+    assert.strictEqual(ctx.document.activeElement, alert.querySelector('[data-alert-ok]'), '알림은 확인 버튼에 포커스');
+    ctx.showModal('기록', '<p>글</p>');
+    const modal = seen.appended[3];
+    assert.strictEqual(ctx.document.activeElement, alert.querySelector('[data-alert-ok]'), '내용 보기 창은 알림·확인 창 아래 층이라 포커스를 빼앗지 않는다');
+    tick(600);
+    onKey(keyEvent('Escape'));
+    assert.deepStrictEqual([alert.isConnected, modal.isConnected], [false, true], 'Esc도 위 층(알림)부터 닫는다');
+    assert.strictEqual(ctx.document.activeElement, modal.querySelector('[data-modal-body]'), '연 자리가 남은 창 밖이면 남은 창으로');
+});
+
+test('확인 창의 취소 까닭(onCancel): 취소 버튼·바깥 클릭·Esc·같은 창이 이미 떠 있음. confirmAsync는 모두 false', async () => {
+    const { ctx, seen } = loadUi();
+    const reasons = [];
+    const ask = () => ctx.showConfirm('A', () => reasons.push('ok'), { onCancel: reason => reasons.push(reason) });
+    ask();
+    ask();
+    tick(600);
+    seen.appended[0].querySelector('[data-confirm-cancel]').click();
+    ask();
+    tick(600);
+    seen.appended[1].onclick();
+    ask();
+    tick(600);
+    seen.listeners.keydown(keyEvent('Escape'));
+    assert.deepStrictEqual(reasons, ['duplicate', 'button', 'outside', 'escape']);
+    const answers = [ctx.confirmAsync('B', { title: 'T', okLabel: '하기', tone: 'primary' }), ctx.confirmAsync('B', { title: 'T', okLabel: '하기', tone: 'primary' })];
+    tick(600);
+    seen.listeners.keydown(keyEvent('Escape'));
+    const outside = ctx.confirmAsync('C', { title: 'T', okLabel: '하기', tone: 'primary' });
+    tick(600);
+    seen.appended.at(-1).onclick();
+    assert.deepStrictEqual(await Promise.all([...answers, outside]), [false, false, false], '같은 창·Esc·바깥 클릭은 모두 취소');
+});
+
+test('promptAsync: 확인·Enter면 다듬은 글, 취소·Esc·바깥 클릭이면 null. 막 뜬 창과 한글 조합 중 Enter는 받지 않고, 글은 이스케이프한다', async () => {
+    const { ctx, seen } = loadUi();
+    const first = ctx.promptAsync('검색어 <b>', { title: '<제목>', value: '"처음"', placeholder: '<예>', okLabel: '넣기' });
+    const box = seen.appended[0];
+    ['&lt;제목&gt;', '검색어 &lt;b&gt;', 'value="&quot;처음&quot;"', 'placeholder="&lt;예&gt;"', '>넣기<', '>취소<'].forEach(part => assert.ok(box.innerHTML.includes(part), part));
+    const panel = box.querySelector('[data-app-dialog-panel]');
+    assert.deepStrictEqual([panel.attributes.role, panel.attributes['aria-modal']], ['dialog', 'true']);
+    const input = box.querySelector('[data-prompt-input]');
+    assert.strictEqual(ctx.document.activeElement, input, '입력칸에 포커스');
+    input.value = '  game loop  ';
+    input.onkeydown(keyEvent('Enter'));
+    box.querySelector('[data-prompt-ok]').click();
+    box.onclick();
+    assert.strictEqual(box.isConnected, true, '막 뜬 창은 Enter·클릭을 받지 않는다');
+    tick(600);
+    const composing = keyEvent('Enter', { isComposing: true });
+    input.onkeydown(composing);
+    assert.deepStrictEqual([box.isConnected, composing.prevented], [true, 0], '한글 조합을 끝내는 Enter는 받지 않는다');
+    input.onkeydown(keyEvent('Enter'));
+    assert.strictEqual(await first, 'game loop');
+    assert.strictEqual(box.isConnected, false);
+    const second = ctx.promptAsync('둘째');
+    tick(600);
+    seen.appended[1].querySelector('[data-prompt-input]').value = ' x ';
+    seen.appended[1].querySelector('[data-prompt-ok]').click();
+    assert.strictEqual(await second, 'x');
+    const third = ctx.promptAsync('셋째');
+    tick(600);
+    seen.listeners.keydown(keyEvent('Escape'));
+    assert.strictEqual(await third, null, 'Esc는 null');
+    const fourth = ctx.promptAsync('넷째');
+    tick(600);
+    seen.appended[3].onclick();
+    assert.strictEqual(await fourth, null, '바깥 클릭은 null');
+    const fifth = ctx.promptAsync('다섯째');
+    tick(600);
+    seen.appended[4].querySelector('[data-prompt-cancel]').click();
+    assert.strictEqual(await fifth, null, '취소 버튼은 null');
+});
+
+test('closeAppModal: 내용 보기 창만 닫고 그 위의 확인 창·알림과 포커스는 그대로 둔다(작업 기록 되돌리기 뒤)', () => {
+    const { ctx, seen } = loadUi();
+    ctx.showModal('작업 기록', '<button>되돌리기</button>');
+    const modal = seen.appended[0];
+    ctx.showConfirm('되돌릴까요?', () => {}, { tone: 'primary', okLabel: '되돌리기', title: '작업 기록 되돌리기' });
+    const confirmBox = seen.appended[1];
+    ctx.alert('저장하지 못했습니다.');
+    const alert = seen.appended[2];
+    const focused = ctx.document.activeElement;
+    ctx.closeAppModal();
+    assert.deepStrictEqual([modal.isConnected, confirmBox.isConnected, alert.isConnected], [false, true, true], '내용 보기 창만 닫는다');
+    assert.strictEqual(ctx.document.activeElement, focused, '위 창의 포커스는 그대로');
+    ctx.closeAppModal();
+    assert.deepStrictEqual([confirmBox.isConnected, alert.isConnected], [true, true], '내용 보기 창이 없으면 아무것도 닫지 않는다');
+});
+
+test("검색 그림 저장소: 앱의 확인 창으로 묻고, 확인을 누른 뒤에만 지운다('검색 그림 저장소'라고 부른다)", async () => {
+    const { ctx, seen } = loadUi();
+    const deleted = [];
+    ctx.DBManager = { deleteCache: async keyword => { deleted.push(keyword); }, clearAllCaches: async () => { deleted.push('*'); }, getAllCaches: async () => [] };
+    const single = ctx.deleteSingleCache('고양이');
+    const ask = seen.appended[0];
+    assert.ok(ask.innerHTML.includes('검색 그림 저장소') && ask.innerHTML.includes('&#039;고양이&#039;') && ask.innerHTML.includes('>지우기<'), ask.innerHTML);
+    ask.querySelector('[data-confirm-ok]').click();
+    assert.strictEqual(ask.isConnected, true, '막 뜬 창의 확인은 받지 않는다');
+    tick(600);
+    ask.querySelector('[data-confirm-ok]').click();
+    await single;
+    assert.deepStrictEqual(deleted, ['고양이']);
+    const all = ctx.clearAllImageCaches();
+    const askAll = seen.appended[1];
+    assert.ok(askAll.innerHTML.includes('검색 그림 저장소') && askAll.innerHTML.includes('>모두 지우기<'), askAll.innerHTML);
+    tick(600);
+    askAll.querySelector('[data-confirm-cancel]').click();
+    await all;
+    assert.deepStrictEqual(deleted, ['고양이'], '취소하면 지우지 않는다');
+});
+
+test('핵심 개념 창: 앱 창 틀을 써서 막 뜬 창의 클릭·Enter를 받지 않고, Enter로 고르고, Esc로 닫는다', () => {
+    const { ctx, seen } = loadUi();
+    const got = [];
+    ctx.showKeyConceptsPrompt('<탭>', ['루프'], concepts => got.push(concepts), { okLabel: '생성' });
+    const box = seen.appended[0];
+    const input = box.querySelector('[data-kc-input]');
+    assert.strictEqual(ctx.document.activeElement, input, '입력칸에 포커스');
+    assert.ok(box.innerHTML.includes('&lt;탭&gt;') && box.innerHTML.includes('value="루프"'));
+    box.onclick();
+    input.onkeydown(keyEvent('Enter'));
+    assert.deepStrictEqual([box.isConnected, got.length], [true, 0], '두 번 누른 클릭의 둘째가 막 뜬 창을 닫지 않는다');
+    tick(600);
+    input.value = ' 게임 루프, 프레임 ,';
+    input.onkeydown(keyEvent('Enter', { isComposing: true }));
+    assert.strictEqual(got.length, 0, '한글 조합 중 Enter는 받지 않는다');
+    input.onkeydown(keyEvent('Enter'));
+    assert.deepStrictEqual(plain(got), [['게임 루프', '프레임']]);
+    ctx.showKeyConceptsPrompt('둘째', [], () => got.push('둘째'));
+    tick(600);
+    seen.listeners.keydown(keyEvent('Escape'));
+    assert.deepStrictEqual([seen.appended[1].isConnected, got.length], [false, 1], 'Esc는 만들지 않고 닫는다');
+});
+
+// 그림 지우기(api.js deleteImage)의 확인 창은 그림 묶음이 바꾼다. 묶음을 합칠 때 이 예외를 뺀다
+const NATIVE_DIALOG_PICTURES_SITE = "api.js: if (!confirm('이 이미지를 삭제하시겠습니까?')) return;";
+const NATIVE_DIALOG_CALL = /(^|[^.\w]|\bwindow\.)(confirm|prompt)\((?!\))/;
+
+test('소스: 브라우저 기본 확인·입력 창(confirm·prompt)을 쓰지 않는다(kbuilder 밖의 js와 index.html)', () => {
+    ["if (!confirm('x')) return;", "window.confirm('x')", "const k = prompt('x', '');"].forEach(line => assert.ok(NATIVE_DIALOG_CALL.test(line), line));
+    ["await confirmAsync('x')", "showConfirm('x')", "opts.confirm('x')", "promptAsync('x')", '// prompt()는 Electron에서 뜨지 않는다'].forEach(line => assert.ok(!NATIVE_DIALOG_CALL.test(line), line));
+    const files = fs.readdirSync(path.join(root, 'js')).filter(file => file.endsWith('.js')).map(file => [file, js(file)]);
+    files.push(['index.html', fs.readFileSync(path.join(root, 'index.html'), 'utf8')]);
+    const found = files.flatMap(([file, source]) => source.split(/\r?\n/).filter(line => NATIVE_DIALOG_CALL.test(line)).map(line => `${file}: ${line.trim()}`));
+    assert.deepStrictEqual(found.filter(site => site !== NATIVE_DIALOG_PICTURES_SITE), []);
+});
+
+test('소스: Esc는 앱 창 틀이 맡고(없는 #custom-modal을 찾던 처리는 없다), F1 도움말이 그렇게 말한다', () => {
+    const ui = js('ui.js');
+    assert.ok(!ui.includes('custom-modal'));
+    assert.ok(ui.includes("window.addEventListener('keydown', onAppDialogKey, true);"));
+    assert.ok(ui.includes('• Esc: 열린 창 닫기(취소와 같다)') && !ui.includes('모달 닫기'));
+    ['window.showAlert', 'window.showConfirm', 'window.showModal', 'window.promptAsync', 'window.showKeyConceptsPrompt'].forEach(name => {
+        const start = ui.indexOf(`${name} = function`);
+        const body = ui.slice(start, ui.indexOf('\n};', start));
+        assert.ok(start >= 0 && body.includes('openAppDialog(overlay'), `${name}은 앱 창 틀을 쓴다`);
+    });
 });
 
 test('Ctrl+S 판별: 한글 입력 상태(키 위치)와 Cmd+S도, Shift·Alt가 섞이면 아니다', () => {

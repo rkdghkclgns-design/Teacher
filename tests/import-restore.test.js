@@ -668,7 +668,14 @@ test('시작: 읽지 못하면 폴더를 다시 잇지 않고 막는 창을 열�
     // Ctrl+S는 saveNow로 저장한다. saveNow는 무엇보다 먼저 읽지 못한 상태를 막는다(묶음 8이 원문 칸 넣기를 더했다)
     assert.ok(/if \(isSaveShortcut\(e\)\) \{\n\s*e\.preventDefault\(\);\n\s*if \(!e\.repeat\) saveNow\(\)/.test(ui), 'Ctrl+S는 saveNow로 저장한다');
     assert.ok(/async function saveNow\(\) \{\n\s*if \(window\.isStateLoadFailed\?\.\(\)\) return window\.showStateLoadFailedDialog\?\.\(\);/.test(ui), 'Ctrl+S는 저장하기 전에 막는다');
-    assert.strictEqual((ui.match(/overlay\.dataset\.appDialog = '';/g) || []).length, 2, '알림·확인 창은 막는 창 위에서도 누를 수 있다');
+    // 알림·확인·내용 보기·입력 창은 모두 앱 창 틀(openAppDialog)로 띄우고, 그 틀이 막는 창 위에서도 누를 수 있게 표시한다
+    const shell = ui.slice(ui.indexOf('function openAppDialog('), ui.indexOf('\n}\n', ui.indexOf('function openAppDialog(')));
+    assert.ok(shell.includes("overlay.dataset.appDialog = '';"), '앱 창 틀이 막는 창 위에서도 누를 수 있게 한다');
+    assert.strictEqual((ui.match(/overlay\.dataset\.appDialog = '';/g) || []).length, 1, '창마다 따로 달지 않는다(틀 한 곳)');
+    ['showAlert', 'showConfirm', 'showModal', 'promptAsync', 'showKeyConceptsPrompt'].forEach(name => {
+        const start = ui.indexOf(`window.${name} = function`);
+        assert.ok(start >= 0 && ui.slice(start, ui.indexOf('\n};\n', start)).includes('openAppDialog(overlay'), `${name}은 앱 창 틀로 띄운다`);
+    });
 });
 
 test("Ctrl+S: 브라우저에 저장했을 때만 '저장했습니다'라고 한다(저장하지 못하면 saveState의 오류 알림 뒤에 저장하지 못했다고 알린다)", async () => {

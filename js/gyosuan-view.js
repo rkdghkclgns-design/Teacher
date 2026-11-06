@@ -19,15 +19,23 @@ if (_gyosuanTabs) {
         const mod = getEditingModule();
         if (!mod || String(mod.id) !== _gyosuanForeignChange) return;
         window.showToast?.('다른 탭에서 이 차시가 바뀌었습니다. 새로고침하면 최신 내용을 불러옵니다.', 'warning');
-        renderGyosuanView(mod);
+        // 원문 칸에 아직 넣지 않은 글이 있으면 칸을 다시 그리지 않고 안내 문구만 바꾼다(쓰던 글이 옛 글로 바뀌지 않게. 덮어쓸지 묻는 동안도)
+        if (pendingGyosuanRaw()) refreshGyosuanNote(mod);
+        else renderGyosuanView(mod);
     };
 }
 
 const isGyosuanForeignChanged = mod => _gyosuanForeignChange === String(mod.id);
 
-function allowGyosuanOverwrite(mod) {
+// 다른 탭이 이 차시를 고쳤으면 덮어쓰기 전에 앱의 확인 창으로 묻는다(취소하면 false)
+async function allowGyosuanOverwrite(mod) {
     if (!isGyosuanForeignChanged(mod)) return true;
-    return confirm('다른 탭에서 이 차시를 고쳤습니다. 이 탭의 내용으로 덮어쓸까요?\n취소한 뒤 새로고침하면 최신 내용을 불러옵니다.');
+    return confirmAsync('다른 탭에서 이 차시를 고쳤습니다. 이 탭의 내용으로 덮어쓸까요?\n취소한 뒤 새로고침하면 최신 내용을 불러옵니다.', { title: '다른 탭에서 고친 차시', okLabel: '덮어쓰기', tone: 'danger' });
+}
+
+// 덮어쓴 차시의 '다른 탭에서 바뀜' 표시만 지운다(묻는 동안 다른 차시의 알림이 왔으면 그 표시는 남긴다)
+function clearGyosuanForeignChange(mod) {
+    if (isGyosuanForeignChanged(mod)) _gyosuanForeignChange = null;
 }
 
 /* ---------- 강사뷰 ---------- */
@@ -230,21 +238,37 @@ function pendingGyosuanRaw() {
     return { mod, raw, field };
 }
 
-window.saveGyosuanRaw = async function () {
+// 안내 문구만 바꾼다(누르는 중인 버튼이나 쓰던 원문 칸은 다시 그리지 않는다)
+function refreshGyosuanNote(mod) {
+    const note = document.querySelector?.('#gyosuan-view .gyosuan-note');
+    if (note) note.textContent = gyosuanNoteText(mod);
+}
+
+// 넣는 중인 원문 저장(덮어쓸지 묻는 중일 수 있다). 그동안 다시 부르면(칸을 벗어남·Ctrl+S·슬라이드 다시 만들기) 같은 일을 기다린다
+let _gyosuanRawSaving = null;
+
+window.saveGyosuanRaw = function () {
+    _gyosuanRawSaving = _gyosuanRawSaving || putGyosuanRaw().finally(() => { _gyosuanRawSaving = null; });
+    return _gyosuanRawSaving;
+};
+
+// 넣을 글과 차시는 묻기 전에 잡아 둔다. 덮어쓰기를 묻는 동안 다른 차시로 옮겨도 쓰던 글은 그 차시에 넣는다
+async function putGyosuanRaw() {
     const pending = pendingGyosuanRaw();
     if (!pending) return;
     const { mod, raw, field } = pending;
-    if (!allowGyosuanOverwrite(mod)) return;
+    if (!(await allowGyosuanOverwrite(mod))) return;
     // 슬라이드 화면 편집은 편성안을 고쳤다고 지우지 않는다. '슬라이드 다시 만들기'를 눌러야 바뀐다
     const deckDirty = field === 'deckMd' ? gyosuanHasScreenEdits(mod.gyosuan) : !!mod.gyosuan.deckDirty;
     mod.gyosuan = { ...mod.gyosuan, [field]: raw.value, deckDirty, updatedAt: new Date().toISOString() };
-    _gyosuanForeignChange = null;
+    clearGyosuanForeignChange(mod);
     await saveGyosuan(mod);
+    // 그사이 다른 차시를 열었으면 그 차시의 슬라이드 패널과 안내는 건드리지 않는다
+    if (getEditingModule() !== mod) return;
     syncSlidePanel(mod);
     // 저장은 입력 칸을 벗어날 때 일어난다. 누르는 중인 버튼을 다시 그리면 클릭을 잃으므로 안내 문구만 바꾼다
-    const note = document.querySelector?.('#gyosuan-view .gyosuan-note');
-    if (note) note.textContent = gyosuanNoteText(mod);
-};
+    refreshGyosuanNote(mod);
+}
 
 // 교수안 원문 칸에 넣지 않은 글이 있는가(Ctrl+S 결과·창을 닫기 전에 묻는다)
 window.hasPendingGyosuanRaw = () => !!pendingGyosuanRaw();
@@ -254,13 +278,14 @@ window.rebuildGyosuanDeck = async function (moduleId) {
     const mod = getEditingModule(moduleId);
     const deckMd = mod?.gyosuan?.deckMd || '';
     if (!window.KBuilder.parseDeck(deckMd).slides.length) return window.showAlert('슬라이드를 찾지 못했습니다. 편성안에 "### 슬라이드 1 - 제목" 형식의 블록이 있어야 합니다.');
-    if (gyosuanHasScreenEdits(mod.gyosuan) && !confirm('편성안으로 슬라이드를 다시 만듭니다. 슬라이드 화면에서 편집한 내용은 사라집니다. 계속할까요?')) return;
-    if (!allowGyosuanOverwrite(mod)) return;
+    if (gyosuanHasScreenEdits(mod.gyosuan) && !(await confirmAsync('편성안으로 슬라이드를 다시 만듭니다. 슬라이드 화면에서 편집한 내용은 사라집니다. 계속할까요?', { title: '슬라이드 다시 만들기', okLabel: '다시 만들기', tone: 'danger' }))) return;
+    if (!(await allowGyosuanOverwrite(mod))) return;
+    // 묻는 동안 다른 교과로 옮겼으면 그 교과의 같은 번호 차시로 슬라이드를 만들지 않는다
+    if (gyosuanTargetMoved(moduleId, mod)) return;
     mod.gyosuan = { ...mod.gyosuan, ...freshDeckState(mod.gyosuan), updatedAt: new Date().toISOString() };
-    _gyosuanForeignChange = null;
+    clearGyosuanForeignChange(mod);
     await saveGyosuan(mod);
-    syncSlidePanel(mod);
-    renderGyosuanView(mod);
+    refreshGyosuanViews(mod); // 지금 연 차시일 때만 다시 그린다(gyosuan-io.js)
     window.generateSlideView(mod.id);
 };
 

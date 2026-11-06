@@ -112,7 +112,11 @@ window.importGyosuanMdFiles = async function (moduleId) {
         const sorted = sortGyosuanFiles(files.map((file, index) => ({ name: file.name, text: texts[index] })));
         if (sorted.error) return window.showAlert(sorted.error);
         const replacing = mod.gyosuan?.docMd || gyosuanHasDeck(mod);
-        if (replacing && !confirm('올린 파일로 이 차시의 교수안·편성안을 바꿉니다. 편성안을 바꾸면 슬라이드 화면 편집 내용도 사라집니다. 계속할까요?')) return;
+        if (replacing) {
+            const ok = await confirmAsync('올린 파일로 이 차시의 교수안·편성안을 바꿉니다. 편성안을 바꾸면 슬라이드 화면 편집 내용도 사라집니다. 계속할까요?', { title: '교수안 바꾸기', okLabel: '바꾸기', tone: 'danger' });
+            if (!ok) return;
+            if (gyosuanTargetMoved(moduleId, mod)) return;
+        }
         mod.gyosuan = convertedGyosuan(mod.gyosuan, sorted);
         await saveGyosuan(mod);
         refreshGyosuanViews(mod);
@@ -173,7 +177,11 @@ window.importGyosuanHtml = async function (moduleId, text, session = null, read 
     try {
         const target = importTarget(imported, session, mod.gyosuan?.docMd ? gyosuanSessionList(mod).length : 0);
         if (target.error) return { ok: false, error: target.error };
-        if (gyosuanHasDeck(mod) && !confirm('불러온 파일로 이 슬라이드를 바꿉니다. 지금 슬라이드 내용은 사라집니다. 계속할까요?')) return { ok: false };
+        if (gyosuanHasDeck(mod)) {
+            // 스튜디오 창(z 9000) 위에 뜬다. 취소하거나 묻는 동안 차시가 바뀌면 아무것도 바꾸지 않는다
+            const ok = await confirmAsync('불러온 파일로 이 슬라이드를 바꿉니다. 지금 슬라이드 내용은 사라집니다. 계속할까요?', { title: '슬라이드 바꾸기', okLabel: '바꾸기', tone: 'danger' });
+            if (!ok || gyosuanTargetMoved(moduleId, mod)) return { ok: false };
+        }
         mod.gyosuan = importedGyosuan(mod.gyosuan, imported, target.session);
         if (imported.source?.refs.length) mod.refImages = imported.source.refs;
         rememberImportedTheme(imported.theme);

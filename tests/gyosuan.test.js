@@ -27,7 +27,9 @@ function makeContext(aiStub) {
         document: { addEventListener() {}, getElementById: () => null, createElement: () => ({}) },
         saveState: async () => { ctx.saved = (ctx.saved || 0) + 1; },
         renderEditor: () => { ctx.rendered = (ctx.rendered || 0) + 1; },
-        confirm: () => true,
+        // 브라우저 기본 확인 창을 쓰면 실패한다. 앱의 확인 창은 바로 승인한다
+        confirm: () => { throw new Error('브라우저 기본 확인 창을 쓰면 안 된다'); },
+        confirmAsync: async () => true,
         alerts: []
     };
     ctx.window = ctx;

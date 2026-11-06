@@ -39,7 +39,9 @@ function makeContext(callGemini = async () => reply('## 본문\n\n내용')) {
         archiveContents: async items => { items.forEach(item => ctx.archived.push(item.title)); },
         saveState: async () => { ctx.saves += 1; },
         showLessonView() {}, renderSidebar() {}, renderEditor() {}, renderOverview() {}, renderOverviewLNB() {},
-        confirm: () => true,
+        // 브라우저 기본 확인 창을 쓰면 실패한다. 앱의 확인 창은 바로 승인한다(시험마다 바꿀 수 있다)
+        confirm: () => { throw new Error('브라우저 기본 확인 창을 쓰면 안 된다'); },
+        confirmAsync: async () => true,
         callGemini
     };
     ctx.window = ctx;
@@ -570,6 +572,41 @@ async function run(name, fn) {
         assert.deepStrictEqual(saved.tools, [{ name: 'Unity', version: '' }]);
         assert.deepStrictEqual(saved.genOptions, { level: '비전공 입문' });
         assert.strictEqual(aiCtx.globalState.subjects.length, 1);
+    });
+
+    await run('교과로 추가: 시간이 맞지 않으면 앱의 확인 창으로 묻고, 취소하거나 묻는 동안 과정 설계 창을 닫으면 추가하지 않는다', async () => {
+        const aiCtx = makeContext();
+        aiCtx.apiKey = '';
+        vm.runInContext("_designDraft = createCourseDesign({ title: '과정', units: ['단원'], hours: [2] }, 2, '수강생')", aiCtx);
+        vm.runInContext('_designDraft = { ..._designDraft, units: _designDraft.units.map(unit => ({ ...unit, hours: unit.hours + 1 })) }', aiCtx);
+        assert.ok(vm.runInContext('designTimeMismatches(_designDraft)', aiCtx) > 0, '시간이 맞지 않는 초안');
+        const asked = [];
+        aiCtx.confirmAsync = async (message, opts) => { asked.push({ message, opts }); return false; };
+        const apply = vm.runInContext('applyCourseDesign', aiCtx);
+        await apply({ disabled: false });
+        assert.strictEqual(aiCtx.globalState.subjects.length, 0, '취소하면 추가하지 않는다');
+        assert.ok(asked[0].message.startsWith('시간이 맞지 않는 항목이'), asked[0].message);
+        assert.deepStrictEqual(plain(asked[0].opts), { title: '교과로 추가', okLabel: '그대로 추가', tone: 'primary' });
+        aiCtx.confirmAsync = async () => { vm.runInContext('closeCourseDesign()', aiCtx); return true; };
+        await apply({ disabled: false });
+        assert.strictEqual(aiCtx.globalState.subjects.length, 0, '묻는 동안 창을 닫으면 확인해도 추가하지 않는다');
+        aiCtx.confirmAsync = async () => true;
+        await apply({ disabled: false });
+        assert.strictEqual(aiCtx.globalState.subjects.length, 1, '확인하면 그대로 추가한다');
+    });
+
+    await run('과정 설계 다시 나누기: 고친 초안이 있으면 앱의 확인 창으로 묻고, 취소하면 초안을 그대로 둔다', async () => {
+        const local = makeContext();
+        vm.runInContext("_designDraft = { ...createCourseDesign({ title: '과정', units: ['단원'], hours: [2] }, 2, '수강생'), edited: true }", local);
+        const before = vm.runInContext('_designDraft', local);
+        const asked = [];
+        local.confirmAsync = async (message, opts) => { asked.push(opts); return false; };
+        await vm.runInContext('onDesignClick', local)({ target: { dataset: { designAction: 'draft' } } });
+        assert.strictEqual(vm.runInContext('_designDraft', local), before, '고친 초안을 그대로 둔다');
+        assert.deepStrictEqual(plain(asked), [{ title: '과정 설계', okLabel: '새 설계로 바꾸기', tone: 'danger' }]);
+        local.confirmAsync = async () => { vm.runInContext('closeCourseDesign()', local); return true; };
+        await vm.runInContext('onDesignClick', local)({ target: { dataset: { designAction: 'draft' } } });
+        assert.strictEqual(vm.runInContext('_designDraft', local), before, '묻는 동안 창을 닫으면 닫힌 창의 입력을 읽지 않는다');
     });
 
     const PLAN = { modules: [{ title: '새 블록1', minutes: 60, objectives: ['설명할 수 있습니다.'], flow: [{ phase: '전개', title: '본문', minutes: 60 }] }, { title: '새 블록2', minutes: 60, objectives: [], flow: [] }] };

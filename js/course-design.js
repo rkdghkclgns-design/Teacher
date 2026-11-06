@@ -507,14 +507,21 @@ function onDesignChange(event) {
 }
 
 // 고친 블록이 있으면 다시 나누기 전에 확인한다
-function confirmDesignReset() {
-    return !_designDraft?.edited || confirm('직접 고친 블록과 과정 목표 내용이 새 설계로 바뀝니다. 계속할까요?');
+async function confirmDesignReset() {
+    return !_designDraft?.edited || confirmAsync('직접 고친 블록과 과정 목표 내용이 새 설계로 바뀝니다. 계속할까요?', { title: '과정 설계', okLabel: '새 설계로 바꾸기', tone: 'danger' });
 }
 
 // 시간이 맞지 않으면 차시 구성과 교안 지시가 어긋나므로 추가하기 전에 확인한다
-function confirmDesignMismatch() {
+async function confirmDesignMismatch() {
     const count = designTimeMismatches(_designDraft);
-    return !count || confirm(`시간이 맞지 않는 항목이 ${count}개 있습니다. 그대로 교과로 추가할까요?`);
+    return !count || confirmAsync(`시간이 맞지 않는 항목이 ${count}개 있습니다. 그대로 교과로 추가할까요?`, { title: '교과로 추가', okLabel: '그대로 추가', tone: 'primary' });
+}
+
+// 확인을 받은 뒤에도 이어 갈 수 있는가. 묻는 동안 대화상자를 닫았거나(닫기는 _designRun을 올린다) 설계가 시작됐으면 멈춘다.
+// 초안을 고친 것은 막지 않는다(확인 창으로 포커스가 옮겨 가며 칸에 고쳐 둔 값이 초안에 들어간다. 그 값으로 이어 간다)
+async function designConfirmed(ask) {
+    const run = _designRun;
+    return !!(await ask()) && run === _designRun && !_designBusy;
 }
 
 async function onDesignClick(event) {
@@ -531,7 +538,7 @@ async function onDesignClick(event) {
         _designDraft = edited;
         renderDesignPreview();
     }
-    if (action === 'draft' && confirmDesignReset()) {
+    if (action === 'draft' && await designConfirmed(confirmDesignReset)) {
         const draft = readDesignInput();
         if (draft) {
             _designDraft = draft;
@@ -543,7 +550,7 @@ async function onDesignClick(event) {
         _designDraft = { ..._designDraft, units: _designDraft.units.map((unit, i) => normalizeDesignUnit({ ...unit, hours: hours[i] })) };
         renderDesignPreview();
     }
-    if (action === 'plan' && confirmDesignReset()) await runDesignPlan(event.target);
+    if (action === 'plan' && await designConfirmed(confirmDesignReset)) await runDesignPlan(event.target);
     if (action === 'apply') await applyCourseDesign(event.target);
 }
 
@@ -595,7 +602,7 @@ async function assignSubjectsNcs(subjects) {
 
 async function applyCourseDesign(button) {
     if (!_designDraft) return window.showAlert('먼저 시간을 나누거나 AI로 블록을 설계해주세요.');
-    if (!confirmDesignMismatch()) return;
+    if (!(await designConfirmed(confirmDesignMismatch)) || !_designDraft) return;
     _designBusy = true;
     button.disabled = true;
     const design = _designDraft;

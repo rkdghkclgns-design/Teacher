@@ -574,10 +574,19 @@ window.generateGyosuan = async function (moduleId, opts = {}) {
     return result.ok;
 };
 
-window.regenerateGyosuan = function (moduleId) {
-    if (confirm('교수안을 다시 생성합니다. 직접 수정한 내용과 슬라이드 편집 내용은 사라집니다. 계속할까요?')) {
-        window.generateGyosuan(moduleId);
-    }
+// 확인 창을 기다리는 동안 그 차시가 지금 교과에서 사라졌거나, 다른 교과로 옮겨 같은 번호가 다른 차시가 됐는가. 그러면 알리고 멈춘다
+function gyosuanTargetMoved(moduleId, mod) {
+    if (getEditingModule(moduleId) === mod) return false;
+    window.showToast?.('묻는 동안 차시가 바뀌어 아무것도 바꾸지 않았습니다. 다시 시도해 주세요.', 'warning');
+    return true;
+}
+
+window.regenerateGyosuan = async function (moduleId) {
+    const mod = getEditingModule(moduleId);
+    if (!mod) return window.showAlert('교안을 먼저 선택해주세요.');
+    const ok = await confirmAsync('교수안을 다시 생성합니다. 직접 수정한 내용과 슬라이드 편집 내용은 사라집니다. 계속할까요?', { title: '교수안 다시 생성', okLabel: '다시 생성', tone: 'danger' });
+    if (!ok || gyosuanTargetMoved(moduleId, mod)) return;
+    window.generateGyosuan(moduleId);
 };
 
 /* ---------- 슬라이드 스튜디오 (slide-studio.html) ---------- */
@@ -674,9 +683,11 @@ window.generateSlideView = async function (moduleId) {
 };
 
 window.regenerateSlideView = async function (moduleId) {
-    if (!confirm('슬라이드 편성안을 다시 생성합니다. 슬라이드에서 편집한 내용은 사라집니다. 계속할까요?')) return;
     const mod = getEditingModule(moduleId);
-    if (mod && await window.generateGyosuan(mod.id, { keepDoc: true })) window.generateSlideView(mod.id);
+    if (!mod) return window.showAlert('교안을 먼저 선택해주세요.');
+    const ok = await confirmAsync('슬라이드 편성안을 다시 생성합니다. 슬라이드에서 편집한 내용은 사라집니다. 계속할까요?', { title: '슬라이드 다시 생성', okLabel: '다시 생성', tone: 'danger' });
+    if (!ok || gyosuanTargetMoved(moduleId, mod)) return;
+    if (await window.generateGyosuan(mod.id, { keepDoc: true })) window.generateSlideView(mod.id);
 };
 
 // 내보내기 메뉴의 슬라이드 항목: 슬라이드는 차시 단위로 만들고 스튜디오에서 PPTX·HTML로 내보낸다

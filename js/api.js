@@ -2362,7 +2362,7 @@ function addReferenceUrl() {
     try { isNotebookLM = new URL(url).hostname.includes('notebooklm'); } catch (e) {}
 
     if (isNotebookLM) {
-        // 커스텀 다이얼로그로 노트북 이름 입력받기 (prompt()는 Electron에서 미지원)
+        // 노트북 이름은 앱의 입력 창으로 받는다(브라우저 기본 입력 창은 Electron에서 뜨지 않는다)
         showNotebookNameDialog(url, subj);
         return; // 다이얼로그 콜백에서 처리
     }
@@ -3924,22 +3924,21 @@ window.downloadImagesAsJPG = function (moduleId) {
         return window.showAlert('다운로드할 이미지가 없습니다.');
     }
 
-    // 선택 다이얼로그
-    const hasTabImages = tabImgIds.length > 0;
-    const hasAllImages = allImgIds.length > 0;
-
-    let targetIds;
-    if (hasTabImages && allImgIds.length > tabImgIds.length) {
-        const choice = confirm(
-            `현재 탭: ${tabImgIds.length}개 이미지\n전체 차시: ${allImgIds.length}개 이미지\n\n[확인] = 현재 탭만 다운로드\n[취소] = 전체 차시 다운로드`
-        );
-        targetIds = choice ? tabImgIds : allImgIds;
-    } else {
-        targetIds = hasTabImages ? tabImgIds : allImgIds;
+    // 현재 탭만 받을지 전체 차시를 받을지 버튼으로 고른다. 바깥 클릭·Esc는 아무것도 받지 않고 닫는다(같은 창을 또 눌러도)
+    if (tabImgIds.length > 0 && allImgIds.length > tabImgIds.length) {
+        return window.showConfirm(`현재 탭: ${tabImgIds.length}개 이미지\n전체 차시: ${allImgIds.length}개 이미지\n\n어느 이미지를 내려받을까요?`, () => downloadLessonJpgs(mod, tabImgIds), {
+            title: '이미지 저장', okLabel: '현재 탭만', cancelLabel: '전체 차시', tone: 'primary',
+            onCancel: reason => {
+                if (reason === 'button') downloadLessonJpgs(mod, allImgIds);
+            }
+        });
     }
+    downloadLessonJpgs(mod, tabImgIds.length > 0 ? tabImgIds : allImgIds);
+};
 
-    // 다운로드 실행
-    targetIds.forEach((imgId, index) => {
+// 고른 그림을 하나씩 내려받는다(동시에 받지 않게 0.3초씩 띄운다). 받기를 시작할 때만 알린다
+function downloadLessonJpgs(mod, imgIds) {
+    imgIds.forEach((imgId, index) => {
         const b64 = mod.images[imgId];
         if (!b64) return;
         setTimeout(() => {
@@ -3947,11 +3946,10 @@ window.downloadImagesAsJPG = function (moduleId) {
             a.href = b64;
             a.download = `${(mod.title || '교안').replace(/[^\w가-힣]/g, '_')}_img_${index + 1}.jpg`;
             a.click();
-        }, index * 300); // 동시 다운로드 방지
+        }, index * 300);
     });
-
-    if (window.showToast) window.showToast(`📸 ${targetIds.length}개 이미지 다운로드 시작`, 'success');
-};
+    window.showToast?.(`📸 ${imgIds.length}개 이미지 다운로드 시작`, 'success');
+}
 
 
 // ── Phase F3: 최종 서식 변환 (local: → 웹 URL 일괄) ──
@@ -3973,24 +3971,33 @@ function applyViewMode(mode) {
 
 
 // ─── v5.9 포팅: 이미지 슬롯 빠른 삽입 ───
-function insertImageSlot() {
-    const keyword = prompt('이미지 검색 키워드를 입력하세요 (영어 권장):', '');
-    if (!keyword || !keyword.trim()) return;
-    const tag = '\n<!-- [IMG: "' + keyword.trim() + '"] -->\n';
-    const editArea = document.getElementById('edit-textarea');
-    if (editArea && !editArea.classList.contains('hidden')) {
-        const start = editArea.selectionStart;
-        const val = editArea.value;
-        editArea.value = val.substring(0, start) + tag + val.substring(start);
-        editArea.selectionStart = editArea.selectionEnd = start + tag.length;
-        editArea.focus();
-    } else {
-        const mod = getEditingModule();
-        if (mod && mod.content) {
-            mod.content += tag;
-            saveState();
-            renderEditor(mod);
-            window.showAlert('이미지 슬롯이 끝에 추가되었습니다.');
-        }
+// 그림 자리 표시에 넣을 검색어. 따옴표·]·줄바꿈은 표시를 깨고, '--'는 HTML 주석을 일찍 닫으며, 앞의 local:은 저장한 그림 자리로 읽히므로 뺀다
+function imageSlotKeyword(text) {
+    return String(text ?? '').replace(/["\]\r\n]/g, ' ').replace(/-{2,}/g, '-').replace(/^(\s*local:)+/i, '').replace(/\s+/g, ' ').trim();
+}
+
+// 보고 있는 탭에 그림 자리(<!-- [IMG: "검색어"] -->)를 넣는다. 원문 칸을 열어 두었으면 커서 자리에, 아니면 탭 끝에 넣는다(일괄 이미지 찾기가 채운다)
+async function insertImageSlot() {
+    const mod = getEditingModule();
+    const tabId = typeof currentLessonTab !== 'undefined' ? currentLessonTab : 'basicLearn';
+    if (!mod || !isViewingTab(mod, tabId)) return window.showAlert('그림 자리는 보고 있는 교안 탭에 넣습니다. 교안 탭을 연 뒤 다시 눌러 주세요.');
+    const answer = await window.promptAsync('찾을 그림의 검색어를 적으세요(영어 권장).', { title: '그림 자리 넣기', okLabel: '넣기', placeholder: '예: game loop diagram' });
+    const keyword = imageSlotKeyword(answer);
+    if (!keyword) return;
+    // 묻는 동안 다른 차시·탭으로 옮겼으면 넣지 않는다(옮긴 화면의 글에 넣지 않게)
+    if (!isViewingTab(mod, tabId)) return window.showToast?.('다른 차시나 탭으로 옮겨 그림 자리를 넣지 않았습니다.', 'warning');
+    const tag = `\n<!-- [IMG: "${keyword}"] -->\n`;
+    const raw = document.getElementById('raw-view');
+    if (raw && !raw.classList.contains('hidden') && String(raw.dataset.moduleId) === String(mod.id) && (raw.dataset.tabId || tabId) === tabId) {
+        insertTextAtCursor(raw, tag); // 원문 칸에 넣고 바로 저장한다(state.js)
+        raw.focus();
+        return;
     }
+    window.flushVisibleRawView?.(); // 다른 차시·탭을 그린 채 열린 원문 칸이 있으면 그 글을 먼저 그 차시에 넣는다(다시 그리며 잃지 않게)
+    // 탭이 없는 최종 평가는 본문(content)이 곧 보이는 글이다
+    const source = mod.tabContents ? tabSourceFor(mod, tabId) : mod.content || '';
+    setTabMarkdown(mod, tabId, source + tag);
+    saveState();
+    renderEditor(mod);
+    window.showToast?.("그림 자리를 탭 끝에 넣었습니다. 도구의 '일괄 이미지 찾기'가 이 자리에 그림을 찾아 넣습니다.", 'success');
 }

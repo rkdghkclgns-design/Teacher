@@ -1700,6 +1700,25 @@ testAsync('차시 기록(5개 탭) 되돌리기는 예전처럼 그 차시를 �
     assert.strictEqual(asked[0].message, "'7차시' 차시(A 교과)를 이 기록(그제)으로 되돌립니다.\n지금 내용은 작업 기록에 먼저 남겨 다시 되돌릴 수 있습니다.");
 });
 
+testAsync('되돌리기를 마치면 내용 보기 창만 닫는다(closeAppModal). 화면에 늘 있는 창(내보내기·백업 메뉴)을 찾아 지우지 않고, 취소하면 닫지 않는다', async () => {
+    historyRestoreSetup();
+    const closed = [];
+    const looked = [];
+    ctx.window.closeAppModal = () => closed.push('내용 보기');
+    ctx.document = { ...ctx.document, querySelector: selector => { looked.push(selector); return null; } };
+    try {
+        ctx.contentHistory = [{ id: 8, title: '7차시', date: '그제', lessonId: 7, subjectId: 's1', content: '옛 기본', images: {}, tabContents: { basicLearn: '옛 기본', basicPrac: null, advLearn: null, advPrac: null, assessment: null } }];
+        await ctx.restoreHistoryItem(8);
+        assert.deepStrictEqual(closed, ['내용 보기'], '되돌린 뒤 한 번 닫는다');
+        assert.ok(!looked.some(selector => selector.includes('.fixed')), `화면의 고정 창을 찾지 않는다: ${looked.join(', ')}`);
+        ctx.window.showConfirm = (message, onOk, opts) => opts.onCancel('button');
+        await ctx.restoreHistoryItem(8);
+        assert.deepStrictEqual(closed, ['내용 보기'], '취소하면 내용 보기 창을 그대로 둔다');
+    } finally {
+        delete ctx.window.closeAppModal;
+    }
+});
+
 testAsync('차시가 없으면 연 교과에 새 차시로 그 탭에 넣고, 연 교과가 없으면 먼저 알린다', async () => {
     const { asked, notes } = historyRestoreSetup();
     ctx.contentHistory = [{ id: 6, title: '지운 차시 · 기본실습', date: '어제', lessonId: 99, subjectId: 's2', tabId: 'basicPrac', content: '실습 글' }];

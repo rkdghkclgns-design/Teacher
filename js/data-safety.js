@@ -1543,7 +1543,7 @@ async function restoreHistoryItem(id) {
     await saveState();
     if (typeof renderSidebar === 'function') renderSidebar();
     showRestoredHistory(mod, target.mode === 'replace' ? target.part : null);
-    document.querySelector('.fixed .ph-book-open-text')?.closest('.fixed')?.remove(); // 내용 보기 창이 열려 있으면 닫는다
+    window.closeAppModal?.(); // 내용 보기 창이 열려 있으면 닫는다(내보내기 메뉴 같은 다른 화면은 건드리지 않는다)
     if (typeof refreshHistoryPanel === 'function' && !document.getElementById('history-panel')?.classList.contains('hidden')) refreshHistoryPanel();
     window.showToast?.(done, 'success');
 }
