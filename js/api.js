@@ -1,6 +1,9 @@
 // ═══ v7.6: 공통 전처리/후처리 함수 ═══
 
-function preprocessMarkdown(text) {
+function preprocessMarkdown(source) {
+    // 코드 블록 안의 글은 바꾸지 않는다(# 주석, 2. 같은 줄도 코드다)
+    const fences = stashCodeFences(source);
+    let text = fences.text;
     // 영문 괄호 제거
     text = text.replace(/개요\s*\(Overview\)/gi, '개요');
     text = text.replace(/학습\s*목표\s*\(Objectives?\)/gi, '학습 목표');
@@ -19,12 +22,15 @@ function preprocessMarkdown(text) {
     // 표 셀 볼드 공백 보장
     text = text.replace(/\|\s*\*\*/g, '| **');
     text = text.replace(/\*\*\s*\|/g, '** |');
-    return text;
+    return fences.restore(text);
 }
 
-function postprocessHtml(html) {
+function postprocessHtml(source) {
     const EMOJI_SET = '💡|✅|☑️|ℹ️|💬|🎮|⚠️|⚙️|🗣️|💥|🔑|🎯|🏆|📌|🔍|🎨|📝|🧠|🎵|🎬|📊|🔧|🎓|🎲|🕹️|📱|💻|🖥️';
     const TOP_EMOJI = '💡|🎮|⚠️|✅|⚙️|☑️';
+    // 코드 블록(<pre>)은 후처리하지 않는다. a**2 + b**2가 굵은 글씨가 되거나 이모지 앞에 줄바꿈이 들어가지 않게 맨 끝에 되돌린다
+    const pres = [];
+    let html = String(source).replace(/<pre\b[^>]*>[\s\S]*?<\/pre>/gi, block => `\u0000PRE${pres.push(block) - 1}\u0000`);
 
     // 퀴즈 보기 줄바꿈
     html = html.replace(/([^\n<,])(\s+)([①②③④⑤])/g, '$1<br>$3');
@@ -142,7 +148,7 @@ function postprocessHtml(html) {
     // marked.js가 "**경험(Player Experience)**을" 같은 패턴을 렌더링하지 못하는 경우 보정
     html = html.replace(/\*\*([^*\n]+?)\*\*/g, '<strong>$1</strong>');
 
-    return html;
+    return html.replace(/\u0000PRE(\d+)\u0000/g, (whole, i) => pres[i] ?? whole);
 }
 
 // ── 교안 마크다운 → 최종 HTML 단일 렌더 파이프라인 ──────────────────────────
@@ -427,25 +433,47 @@ function sanitizeMermaidCode(code) {
 window.sanitizeMermaidCode = sanitizeMermaidCode;
 
 // ------------------------------------------------------------------------
+// 교안 코드 블록: 언어 이름표와 복사 버튼(lesson-sanitize.js copyLessonCode)
+// ------------------------------------------------------------------------
+const CODE_BLOCK_LANG = /^[A-Za-z0-9#+._-]{1,24}$/; // 이 모양이 아닌 언어 표기는 class와 이름표에 쓰지 않는다
+const CODE_BLOCK_OUTPUT_LANGS = ['text', 'txt', 'plaintext', 'output', 'console'];
+const codeBlockEscape = text => String(text ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+// 이름표: 문제은행과 같은 언어 이름(course-qbank.js), 실행 결과, Markdown, 표기가 없으면 '코드', 그 밖에는 적힌 그대로
+function codeBlockLabel(lang) {
+    const key = String(lang || '').toLowerCase();
+    const names = typeof QBANK_LANG_NAMES === 'object' && QBANK_LANG_NAMES ? QBANK_LANG_NAMES : {};
+    if (Object.prototype.hasOwnProperty.call(names, key)) return names[key];
+    if (CODE_BLOCK_OUTPUT_LANGS.includes(key)) return '실행 결과';
+    if (key === 'md' || key === 'markdown') return 'Markdown';
+    return lang || '코드';
+}
+
+// 이름표는 CSS(::before)로 보이고 버튼에는 글자가 없어, 블록의 글자가 코드와 같다(두 번 눌러 고치기·복사가 코드 글자로 찾는다)
+function lessonCodeBlockHtml(code, info) {
+    const word = (String(info || '').match(/\S*/) || [''])[0];
+    const lang = CODE_BLOCK_LANG.test(word) ? word : '';
+    const langClass = lang ? ` class="language-${codeBlockEscape(lang)}"` : '';
+    return `<div class="lesson-code" data-lang="${codeBlockEscape(codeBlockLabel(lang))}">` +
+        '<button type="button" class="lesson-code-copy" data-lesson-action="copy-code" title="코드 복사" aria-label="코드 복사"><i class="ph-bold ph-copy" aria-hidden="true"></i></button>' +
+        `<pre><code${langClass}>${codeBlockEscape(code)}</code></pre></div>\n`;
+}
+
+// ------------------------------------------------------------------------
 // Marked.js 커스텀 렌더러 설정 (이미지 호버 재생성 UI 주입)
 // ------------------------------------------------------------------------
 if (typeof marked !== 'undefined') {
     const renderer = {
-        code(codeArg, infostringArg, escapedArg) {
+        code(codeArg, infostringArg) {
             // marked 최신 v8.0.0+ 에서는 첫 번째 인자에 token 객체가 넘어옵니다.
-            let codeText = typeof codeArg === 'object' ? codeArg.text : codeArg;
-            let infostring = typeof codeArg === 'object' ? codeArg.lang : infostringArg;
+            const codeText = typeof codeArg === 'object' ? codeArg.text : codeArg;
+            const infostring = typeof codeArg === 'object' ? codeArg.lang : infostringArg;
 
             if (infostring === 'mermaid') {
                 return `<div class="mermaid">\n${sanitizeMermaidCode(codeText)}\n</div>`;
             }
-            // mermaid가 아닌 일반 코드 블록 폴백 처리
-            const lang = (infostring || '').match(/\S*/)?.[0] || '';
-            let escapedCode = codeText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-            if (!lang) {
-                return `<pre><code>${escapedCode}</code></pre>\n`;
-            }
-            return `<pre><code class="language-${lang}">${escapedCode}</code></pre>\n`;
+            // mermaid가 아닌 코드 블록은 언어 이름표와 복사 버튼을 붙인다
+            return lessonCodeBlockHtml(codeText, infostring);
         },
         image(hrefArg, titleArg, textArg) {
             // marked v8.0.0+: 첫 인자가 token 객체일 수 있음
@@ -699,6 +727,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
 
     try {
         renderEditor(mod);
+        const codeTopic = lessonCodeTopic(mod); // 코드를 다루는 차시면 설명마다 예제 코드 블록을 쓰게 한다
 
         // ── Chunk 1: 최초 생성 ──
         const { systemInstruction, userPrompt } = buildTaskContext('module', {
@@ -708,7 +737,8 @@ async function generateModuleContent(moduleId, keyConcepts) {
             hasMainQuest: hasMainQuest,
             mainQuestText: mainQuestText,
             otherLessonsText: otherLessonsText,
-            uploadedMdContent: mod.uploadedMdContent
+            uploadedMdContent: mod.uploadedMdContent,
+            codeTopic
         });
 
         setLoadingStatus('교안 작성 중... (1단계: 초안 생성)');
@@ -724,16 +754,15 @@ async function generateModuleContent(moduleId, keyConcepts) {
                     systemInstruction: { parts: [{ text: systemInstruction }] }
         });
 
-        let chunkText = extractText(firstData);
-        chunkText = chunkText.replace(/^```\w*\n?/i, '').replace(/\n?```$/i, '').trim();
-        fullContent = chunkText;
+        // 응답 전체를 감싼 펜스만 벗긴다. 청크 끝의 코드 블록을 닫는 펜스는 코드의 일부다
+        fullContent = extractText(firstData, { unwrap: true }).trim();
         chunkCount = 1;
 
         // ── Chunk 2~N: 이어쓰기 루프 ──
         while (fullContent.includes(CONTINUE_MARKER) && chunkCount < MAX_CHUNKS && !window.isTabGenerationStopped?.()) {
             chunkCount++;
-            // CONTINUE 마커 제거
-            fullContent = fullContent.replace(CONTINUE_MARKER, '').trimEnd();
+            // CONTINUE 마커 제거. 코드 블록 안에서 끊겼으면 닫아 이어 쓴 글이 코드로 들어가지 않게 한다
+            fullContent = closeOpenFence(fullContent.replace(CONTINUE_MARKER, '').trimEnd());
 
             setLoadingStatus(`교안 이어쓰기 중... (${chunkCount}단계)`);
 
@@ -746,7 +775,8 @@ async function generateModuleContent(moduleId, keyConcepts) {
                 keyConcepts: mod.keyConcepts || [],
                 hasMainQuest: hasMainQuest,
                 chunkIndex: chunkCount,
-                previousContent: contextTail
+                previousContent: contextTail,
+                codeTopic
             });
 
             // API 쿨다운
@@ -763,8 +793,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
                         systemInstruction: { parts: [{ text: contSys }] }
             });
 
-            let contText = extractText(contData);
-            contText = contText.replace(/^```\w*\n?/i, '').replace(/\n?```$/i, '').trim();
+            let contText = extractText(contData, { unwrap: true }).trim();
 
             // 이어쓰기 내용 병합 (중복 헤딩 방지: 이전 마지막 헤딩과 동일하면 제거)
             const lastHeadingMatch = fullContent.match(/^(#{1,4}\s+.+)$/gm);
@@ -782,8 +811,8 @@ async function generateModuleContent(moduleId, keyConcepts) {
 
         // END 마커 정리
         fullContent = fullContent.replace(END_MARKER, '').trimEnd();
-        // 잔여 CONTINUE 마커 정리 (MAX_CHUNKS 초과 시)
-        fullContent = fullContent.replace(new RegExp(CONTINUE_MARKER, 'g'), '').trimEnd();
+        // 잔여 CONTINUE 마커 정리 (MAX_CHUNKS 초과 시). 코드 블록 안에서 끝났으면 닫는다
+        fullContent = closeOpenFence(fullContent.replace(new RegExp(CONTINUE_MARKER, 'g'), '').trimEnd());
 
         // 마크다운 정리 (이미지 처리 전에 적용)
         if (typeof sanitizeMarkdownContent === 'function') {
@@ -837,7 +866,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
 
         // 부분 생성 복구: 일부 청크가 성공한 경우 저장
         if (fullContent && fullContent.length > 200) {
-            fullContent = fullContent.replace(new RegExp(CONTINUE_MARKER, 'g'), '').replace(END_MARKER, '').trimEnd();
+            fullContent = closeOpenFence(fullContent.replace(new RegExp(CONTINUE_MARKER, 'g'), '').replace(END_MARKER, '').trimEnd());
             mod.content = fullContent;
             mod.status = 'done';
             await saveState();
@@ -1322,19 +1351,24 @@ function autoInjectImageTags(markdown) {
     const SKIP_RE = /학습\s*목표|Objectives?|교강사\s*가이드|강사\s*전용|개요|Overview|요약|정리|마무리|Summary/i;
 
     // 섹션을 헤딩 단위로 분리하여 각 섹션의 길이·이미지 보유 여부 점검
+    // 코드 블록 안의 # 줄과 이미지 태그는 제목·그림으로 보지 않는다
     const lines = markdown.split('\n');
     const sections = []; // { startLine, level, title, content, hasImage }
     let cur = null;
+    let fence = 0;
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
-        const m = line.match(/^(#{2,3})\s+(.+)$/);
+        const wasFenced = fence;
+        fence = fenceStateAfter(fence, line);
+        const outside = !wasFenced && !fence;
+        const m = outside && line.match(/^(#{2,3})\s+(.+)$/);
         if (m) {
             if (cur) sections.push(cur);
             const title = m[2].replace(ICON_RE, '').replace(/^\[|\]$/g, '').trim();
             cur = { startLine: i, level: m[1].length, title, content: '', hasImage: false };
         } else if (cur) {
             cur.content += line + '\n';
-            if (/<!--\s*\[IMG:/.test(line)) cur.hasImage = true;
+            if (outside && /<!--\s*\[IMG:/.test(line)) cur.hasImage = true;
         }
     }
     if (cur) sections.push(cur);

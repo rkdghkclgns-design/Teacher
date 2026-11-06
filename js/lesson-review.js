@@ -9,8 +9,11 @@ const REVIEW_MAX_OUTPUT_TOKENS = 65536;
 const REVIEW_FRAME_WHERE = ['학습 목표', '학습 후 체크리스트'];
 const REVIEW_REFERENCE_TITLE = /학습\s*목표|학습\s*후\s*체크리스트/;
 const LESSON_CHECKLIST_TITLE = /학습\s*후\s*체크리스트/;
-// 학습이해도는 차시의 학습 목표 수를 알아야 목표마다 문제가 있는지 본다
-const lessonLintContext = (mod, tabId) => (tabId === 'assessment' && mod ? { objectiveCount: qbankObjectives(mod).length } : {});
+// 학습이해도는 차시의 학습 목표 수를 알아야 목표마다 문제가 있는지 본다. 코드를 다루는 차시는 코드 예제 규칙도 본다
+const lessonLintContext = (mod, tabId) => ({
+    ...(tabId === 'assessment' && mod ? { objectiveCount: qbankObjectives(mod).length } : {}),
+    ...(mod && typeof lessonCodeTopic === 'function' && lessonCodeTopic(mod) ? { codeTopic: true } : {})
+});
 const REVIEW_MARKERS = /<!--\s*(?:CONTINUE|END)\s*-->/g;
 const REVIEW_IMAGE_REF = /local:[\w-]+|\[IMG:[^\]]*\]/g;
 const REVIEW_BADGE_STYLES = { bad: 'bg-rose-500 text-white', warn: 'bg-amber-400 text-amber-950', ok: 'bg-emerald-500 text-white' };
@@ -58,6 +61,7 @@ function reviewSystemPrompt(tabId) {
         personas.instructor, '[작성 규칙]', rules.content_design,
         LESSON_STRUCTURED_TABS.includes(tabId) && rules.learning_checklist,
         tabId === 'assessment' && rules.assessment_design,
+        tabId !== 'assessment' && rules.code_examples,
         rules.korean_period, rules.emoji_rule,
         '수정한 마크다운만 출력합니다. 설명이나 코드 펜스를 붙이지 않습니다.'
     ].filter(Boolean).join('\n');

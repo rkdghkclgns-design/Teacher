@@ -67,9 +67,24 @@ function markTermParagraphs(html) {
 }
 
 /* ---------- 교안 안의 버튼 ---------- */
+// 코드 블록의 코드만 복사한다(api.js lessonCodeBlockHtml). 이름표는 CSS이고 버튼에는 글자가 없다
+async function copyLessonCode(button) {
+    const box = button.closest('.lesson-code');
+    const code = (box?.querySelector('pre code') || box?.querySelector('pre'))?.textContent ?? '';
+    try {
+        if (typeof copyPlainText === 'function') await copyPlainText(code); // 클립보드가 막히면 선택 복사로 대신한다(course-list.js)
+        else await navigator.clipboard.writeText(code);
+        window.showToast?.('코드를 복사했습니다.', 'success');
+    } catch (err) {
+        console.warn('[코드 복사] 실패:', err?.message);
+        window.showToast?.('복사하지 못했습니다. 코드를 끌어 골라 복사해 주세요.', 'warning');
+    }
+}
+
 const LESSON_ACTIONS = {
     'regenerate-image': button => window.promptRegenerateImage(button, button.dataset.keyword || '', button.dataset.imgId || null),
-    'delete-image': button => window.deleteImage(button.dataset.imgId, button)
+    'delete-image': button => window.deleteImage(button.dataset.imgId, button),
+    'copy-code': copyLessonCode
 };
 
 function onLessonActionClick(event) {

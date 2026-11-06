@@ -1613,13 +1613,23 @@ function cleanForAPI(text) {
 
 
 
-// 탭별 규칙 필터링 — 학습탭에 실습/평가/강사가이드 혼입 방지
+// 코드를 다루는 차시(lessonCodeTopic)의 생성 지시에 붙인다. 실습 탭은 단계마다 입력할 코드를, 학습 탭은 설명 뒤 예제를 요구한다
+function codeTopicPrompt(tabId) {
+    const practice = tabId === 'basicPrac' || tabId === 'advPrac';
+    return '\n\n[코드 예제 — 이 차시는 코드를 다룹니다]\n' + (practice
+        ? '- 실습 단계마다 입력할 코드를 언어를 적은 코드 블록으로 보이고, 그 코드가 하는 일과 실행 결과(```text)를 함께 씁니다.'
+        : '- 코드, 명령어, 쿼리를 설명하는 섹션은 개념 설명 바로 뒤에 예제 코드 블록을 둡니다. 설명만 있고 코드가 없는 코드 섹션을 만들지 않습니다.\n' +
+          '- 예제마다 무엇을 하는 코드인지 → 코드 블록(```언어) → 핵심 줄 설명 → 실행 결과(```text) 순서로 씁니다.\n' +
+          '- 학습 목표, 개요, 학습 후 체크리스트에는 코드를 넣지 않습니다.');
+}
+
+// 탭별 규칙 필터링 — 학습탭에 실습/평가/강사가이드 혼입 방지. 학습이해도는 코드제출 문항 형식을 따로 쓰므로 코드 예제 규칙을 뺀다
 const TAB_RULE_EXCLUSIONS = {
     basicLearn: ['rubric_100', 'quiz_format', 'assessment_design'],
     advLearn: ['rubric_100', 'quiz_format', 'assessment_design'],
     basicPrac: ['rubric_100', 'quiz_format', 'assessment_design', 'learning_checklist'],
     advPrac: ['rubric_100', 'quiz_format', 'assessment_design', 'learning_checklist'],
-    assessment: ['time_allocation', 'image_tags', 'mermaid_rules', 'learning_checklist']
+    assessment: ['time_allocation', 'image_tags', 'mermaid_rules', 'learning_checklist', 'code_examples']
 };
 
 // 탭 전용 규칙 빌더 (buildFullRules 변형). 탭 생성과 탭 이어쓰기가 같은 규칙을 쓴다
@@ -1642,6 +1652,7 @@ function buildTabRules(tabId, keyConcepts) {
         ['body_lists', r.body_lists],
         ['numbering_usage', r.numbering_usage],
         ['text_emphasis', r.text_emphasis],
+        ['code_examples', r.code_examples],
         ['evidence_based', r.evidence_based],
         ['table_html_style', r.table_html_style],
         ['spacing', r.spacing],
@@ -1717,6 +1728,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
             r.body_lists,
             r.numbering_usage,
             r.text_emphasis,
+            r.code_examples,
             r.evidence_based,
             r.table_html_style,
             r.spacing,
@@ -1797,7 +1809,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
             systemInstruction += '\n\n[분량 관리]\n' +
                 '- 교안 전체를 한 번에 작성하세요. 단, 출력이 길어져 중간에 잘릴 경우를 대비하여 다음 규칙을 따르세요.\n' +
                 '- 모든 섹션을 완전히 작성한 경우: 문서의 맨 마지막에 <!-- END -->를 붙이세요.\n' +
-                '- 출력 한도에 도달하여 교안이 미완성인 경우: 자연스러운 문단/섹션 끝에서 멈추고 <!-- CONTINUE -->를 붙이세요. 문장 중간에서 끊지 마세요.';
+                '- 출력 한도에 도달하여 교안이 미완성인 경우: 자연스러운 문단/섹션 끝에서 멈추고 <!-- CONTINUE -->를 붙이세요. 문장 중간이나 코드 블록 안에서 끊지 마세요.';
 
 
 
@@ -1812,6 +1824,9 @@ function buildTaskContext(taskScope, additionalContext = "") {
                 userPrompt = `${thinkingPrefix}[현재 작업: 상세 교안 작성]\n모듈명: ${additionalContext.title}\n설명: ${additionalContext.description}`;
 
             }
+
+            // 코드를 다루는 차시는 설명마다 예제 코드 블록을 함께 쓰게 한다
+            if (additionalContext.codeTopic) userPrompt += codeTopicPrompt('basicLearn');
 
             // 커리큘럼 목차 맥락 주입 (앞뒤 흐름 유지 + 중복 방지)
             userPrompt += getCurriculumOutline();
@@ -1857,6 +1872,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
             }
 
             userPrompt = `[현재 작업: 교안 이어쓰기 (${additionalContext.chunkIndex}번째 연속)]\n모듈명: ${additionalContext.title}\n설명: ${additionalContext.description}\n\n[이전 작성 내용 — 여기서부터 이어쓰세요]\n${additionalContext.previousContent}`;
+            if (additionalContext.codeTopic) userPrompt += codeTopicPrompt('basicLearn');
             break;
 
         case 'main_quest':
@@ -1899,7 +1915,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
             systemInstruction += '\n\n[분량 관리]\n' +
                 '- 탭 내용을 한 번에 작성하세요. 단, 출력이 길어져 중간에 잘릴 경우를 대비하여 다음 규칙을 따르세요.\n' +
                 '- 모든 섹션을 완전히 작성한 경우: 문서의 맨 마지막에 <!-- END -->를 붙이세요.\n' +
-                '- 출력 한도에 도달하여 미완성인 경우: 자연스러운 문단/섹션 끝에서 멈추고 <!-- CONTINUE -->를 붙이세요. 문장 중간에서 끊지 마세요.';
+                '- 출력 한도에 도달하여 미완성인 경우: 자연스러운 문단/섹션 끝에서 멈추고 <!-- CONTINUE -->를 붙이세요. 문장 중간이나 코드 블록 안에서 끊지 마세요.';
 
             const tabPrompts = {
                 basicLearn: '이 교안의 "기본 학습" 영역을 작성하세요. 반드시 [1.학습 목표] → [2.개요] → [3.핵심 내용(개념 정의, 이론 설명, 예시, 사례 분석)] 순서로 구성합니다. 학습 목표가 교안 최상단에 오고, 그 다음 개요가 옵니다. 실습 과제, 평가 루브릭, 별도 강사 가이드 섹션은 다른 탭에서 작성하므로 여기서는 포함하지 마세요. 초보자도 이해할 수 있는 수준으로 단계적으로 설명하세요.\n' +
@@ -1917,7 +1933,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
                     '[분할 출력 규칙 — 절대 준수]\n' +
                     '- 내용이 매우 길어 한 번에 다 출력하지 못할 수 있습니다.\n' +
                     '- 모든 섹션을 끝까지 완성했다면 문서 맨 끝에 <!-- END -->를 붙이세요.\n' +
-                    '- 출력 한도에 도달하면 자연스러운 문단/섹션 끝에서 멈추고 <!-- CONTINUE -->를 붙이세요. 문장 중간에서 끊지 마세요.',
+                    '- 출력 한도에 도달하면 자연스러운 문단/섹션 끝에서 멈추고 <!-- CONTINUE -->를 붙이세요. 문장 중간이나 코드 블록 안에서 끊지 마세요.',
                 basicPrac: '이 교안의 "기본 실습" 영역을 작성하세요. 학생이 핵심 내용을 직접 체험하는 실습 과제를 설계하세요.\n' +
                     '[시간 배분 — 이 탭: 90~120분]\n' +
                     '이 탭은 "기본 학습" 본과정을 보완하는 독립 기본 실습 모듈로, 90~120분 분량입니다.\n' +
@@ -1991,7 +2007,8 @@ function buildTaskContext(taskScope, additionalContext = "") {
             };
             const tabInstruction = tabPrompts[additionalContext.tabId] || tabPrompts.basicLearn;
 
-            userPrompt = `${thinkingPrefix}[현재 작업: 탭별 교안 작성 — ${additionalContext.tabLabel}]\n모듈명: ${additionalContext.title}\n설명: ${additionalContext.description}\n\n[탭 작성 지시]\n${tabInstruction}`;
+            userPrompt = `${thinkingPrefix}[현재 작업: 탭별 교안 작성 — ${additionalContext.tabLabel}]\n모듈명: ${additionalContext.title}\n설명: ${additionalContext.description}\n\n[탭 작성 지시]\n${tabInstruction}` +
+                (additionalContext.codeTopic && additionalContext.tabId !== 'assessment' ? codeTopicPrompt(additionalContext.tabId) : '');
             userPrompt += getCurriculumOutline();
             userPrompt += getReferenceContext(8000);
 
@@ -2016,13 +2033,14 @@ function buildTaskContext(taskScope, additionalContext = "") {
                 '- 이미 작성된 내용을 반복하지 마세요. 중복 헤딩이나 중복 문단을 생성하면 안 됩니다.\n' +
                 '- 이전 내용의 마지막 헤딩/문단을 확인하고, 그 다음 섹션부터 자연스럽게 연결하세요.\n' +
                 '- 아직 작성되지 않은 남은 섹션을 모두 완성하세요.\n' +
-                '- 모든 내용을 마쳤으면 문서 끝에 <!-- END -->를 붙이세요. 아직 더 남았으면 자연스러운 문단/섹션 끝에서 멈추고 <!-- CONTINUE -->를 붙이세요. 문장 중간에서 끊지 마세요.';
+                '- 모든 내용을 마쳤으면 문서 끝에 <!-- END -->를 붙이세요. 아직 더 남았으면 자연스러운 문단/섹션 끝에서 멈추고 <!-- CONTINUE -->를 붙이세요. 문장 중간이나 코드 블록 안에서 끊지 마세요.';
 
             // 이전 내용은 끝부분만 주므로, 이미 쓴 섹션을 제목 목록으로 알려 중복과 순서 꼬임을 막는다
             const writtenHeadings = (additionalContext.writtenHeadings || []).join('\n');
             userPrompt = `[현재 작업: 탭 이어쓰기 (${additionalContext.chunkIndex}번째 연속) — ${additionalContext.tabLabel}]\n모듈명: ${additionalContext.title}\n설명: ${additionalContext.description}` +
                 (writtenHeadings ? `\n\n[지금까지 쓴 ## 제목 — 다시 쓰지 않습니다]\n${writtenHeadings}` : '') +
                 `\n\n[이전 작성 내용 — 여기서부터 이어쓰세요. 반복 금지]\n${additionalContext.previousContent}`;
+            if (additionalContext.codeTopic && additionalContext.tabId !== 'assessment') userPrompt += codeTopicPrompt(additionalContext.tabId);
             break;
         }
 

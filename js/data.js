@@ -1,13 +1,58 @@
 // data.js - 설정값, 상수, 프롬프트, 모의 데이터 관리
 
 // 0. 공통 유틸리티 (모든 모듈에서 참조 — 반드시 data.js에 위치)
-function extractText(data) {
+// 코드 펜스를 줄 단위로 따라간다(lesson-lint.js nextCodeFence와 같은 규칙). 여는 펜스보다 짧은 ``` 는 코드의 일부다. 펜스 밖이면 0이다
+function fenceStateAfter(fence, line) {
+    const [, marks, rest] = String(line).match(/^\s*(`{3,})(.*?)\r?$/) || [];
+    if (!marks) return fence;
+    if (!fence) return marks.length;
+    return marks.length >= fence && !rest.trim() ? 0 : fence;
+}
+
+// 코드 블록을 자리표시 줄로 바꿔 두고, 되돌리는 함수(restore)를 함께 준다. 닫히지 않은 블록은 글 끝까지 코드다.
+// 코드 안의 특수 공백(U+00A0)은 보통 공백으로 바꾼다. 자리표시 줄은 여는 펜스의 들여쓰기를 따른다
+function stashCodeFences(text) {
+    const blocks = [];
+    let fence = 0;
+    const lines = String(text ?? '').split('\n').flatMap(line => {
+        const wasFenced = fence;
+        fence = fenceStateAfter(fence, line);
+        if (!wasFenced && !fence) return [line];
+        const code = line.replace(/\u00A0/g, ' ');
+        if (wasFenced) {
+            blocks[blocks.length - 1].push(code);
+            return [];
+        }
+        blocks.push([code]);
+        return [`${line.match(/^[ \t]*/)[0]}\u0000CODE${blocks.length - 1}\u0000`];
+    });
+    const restore = value => String(value).replace(/[ \t]*\u0000CODE(\d+)\u0000/g, (whole, i) => (blocks[i] ? blocks[i].join('\n') : whole));
+    return { text: lines.join('\n'), restore };
+}
+
+// 응답 전체를 감싼 펜스를 벗긴다. 첫 줄이 ```markdown·```md(bare면 언어 없는 ```도)로 열고, 마지막 줄이 그 길이 이상으로 닫고,
+// 안쪽 펜스의 짝이 맞을 때만이다. 글 중간의 ```markdown 예제는 코드로 둔다.
+// 마지막 줄이 펜스가 아니면 출력 한도에서 잘린 응답으로 보고, 안쪽 펜스의 짝이 맞을 때 여는 줄만 뗀다
+function unwrapWholeFence(text, { bare = false } = {}) {
+    const source = String(text ?? '');
+    const lines = source.trim().split(/\r?\n/);
+    const [, marks = '', lang = ''] = lines[0].match(/^(`{3,})[ \t]*([\w-]*)[ \t]*$/) || [];
+    if (!marks || lines.length < 2 || !(/^(?:markdown|md)$/i.test(lang) || (bare && !lang))) return source;
+    const [, closing = ''] = lines[lines.length - 1].match(/^(`{3,})[ \t]*$/) || [];
+    const inner = closing.length >= marks.length ? lines.slice(1, -1) : lines.slice(1);
+    return inner.reduce(fenceStateAfter, 0) ? source : inner.join('\n');
+}
+
+// unwrap: 응답 전체를 감싼 언어 없는 펜스도 벗긴다(교안 본문을 받을 때). ```markdown·```md로 감싼 응답은 늘 벗긴다.
+// 아래 정리 규칙은 코드 블록 밖의 글에만 적용하고, 코드 블록은 받은 그대로 돌려 놓는다
+function extractText(data, { unwrap = false } = {}) {
     try {
         const parts = data?.candidates?.[0]?.content?.parts;
         if (!parts || parts.length === 0) return "";
         // Thinking 파트(thought: true)를 건너뛰고 실제 응답 텍스트만 반환
         const textPart = parts.filter(p => !p.thought).map(p => p.text).join('');
-        let text = textPart || parts[parts.length - 1]?.text || "";
+        const fences = stashCodeFences(unwrapWholeFence(textPart || parts[parts.length - 1]?.text || "", { bare: unwrap }));
+        let text = fences.text;
 
         // [방어 코드] AI가 프롬프트를 무시하고 &nbsp; 대신 비가시 특수 공백(U+00A0)을 출력하는 문제 해결
         // 1. 마크다운 리스트(-, *, 1. 등) 들여쓰기에 잘못 사용된 특수 공백이나 일반 공백이 섞인 경우, 리스트 문법을 보존하기 위해 들여쓰기 공백을 일반 공백(스페이스바) 2칸으로 묶어버림 (또는 제거)
@@ -17,8 +62,9 @@ function extractText(data) {
         text = text.replace(/\u00A0/g, '&nbsp;');
 
         // 3. 블록 요소(table, div, 코드펜스) 전 빈줄 보장 — 마크다운 파서 호환
+        // 코드 블록은 여는 펜스 자리(자리표시 줄) 앞에만 넣는다. 닫는 펜스 앞에 빈 줄을 넣으면 코드가 바뀐다
         text = text.replace(/([^\n])\n(<(?:table|div|blockquote)[\s>])/gi, '$1\n\n$2');
-        text = text.replace(/([^\n])\n(```)/g, '$1\n\n$2');
+        text = text.replace(/([^\n])\n(?=\u0000CODE\d+\u0000)/g, '$1\n\n');
 
         // 4. GFM 테이블 전후 빈 줄 보장 (marked.js 파싱 조건)
         text = text.replace(/([^\n])\n(\|[^\n]+\|[^\n]*\n\|[\s:|-]+\|)/g, '$1\n\n$2');
@@ -176,7 +222,7 @@ function extractText(data) {
             return line.replace(/([가-힣])\.\s+(?=[가-힣])/g, '$1.\n');
         });
 
-        return text;
+        return fences.restore(text);
     } catch (e) {
         console.error("extractText 실패:", e);
         return "";
@@ -280,6 +326,8 @@ function sanitizeMarkdownContent(md) {
         /^[ \t>]*#{0,4}[ \t]*\*{0,3}\[?\s*(?:상세\s*교안|현재\s*작업[^\]\n]*|탭\s*범위\s*제한|내부\s*프로세스[^\]\n]*|기본\s*학습)\s*\]?\*{0,3}[ \t]*[:：]?[ \t]*$/gm,
         ''
     );
+    //      새 지시 라벨은 대괄호로 감싼 줄 전체일 때만 지운다. 같은 말로 시작하는 본문 제목은 둔다
+    t = t.replace(/^[ \t>]*#{0,4}[ \t]*\*{0,3}\[\s*(?:코드\s*예제\s*—)[^\]\n]*\]\*{0,3}[ \t]*[:：]?[ \t]*$/gm, '');
 
     // 2-1) 마크다운 표 보호 + 정상화 (다른 단계가 표를 망가뜨리지 않도록)
     //      AI가 표 행을 모두 한 줄에 출력하거나 헤더와 구분선 사이 빈줄을 빼는 경우 복구
@@ -709,7 +757,16 @@ const CONTEXT_CORE = {
             "✗ 잘못된 예:\n1. **핵심 개념: 시스템 설계**\n2. 게임을 구성하는 모든 규칙...\n3. 캐릭터 능력치...\n" +
             "✓ 올바른 예:\n**핵심 개념: 시스템 설계**\n- 게임을 구성하는 모든 규칙...\n- 캐릭터 능력치...",
 
-        text_emphasis: "텍스트 강조 2종: Bold(**...**) = 개념·키워드 강조, Inline Code(`...`) = 파일명·코드 스니펫. 두 가지를 일관되게 사용하세요.",
+        text_emphasis: "텍스트 강조 2종: Bold(**...**) = 개념·키워드 강조, Inline Code(`...`) = 파일명·함수 이름·한 줄 안의 짧은 값. 여러 줄 코드와 실행해 보는 예제는 인라인 코드가 아니라 언어를 적은 코드 블록(```python 등)으로 씁니다. 두 가지를 일관되게 사용하세요.",
+
+        // ── 코드 예제: 코드를 설명할 때는 예제 코드 블록을 함께 보인다 ──
+        code_examples: '[코드 예제 규칙]\n' +
+            '- 코드, 명령어, 쿼리, 설정 파일처럼 코드로 쓰는 내용을 설명할 때는 말로만 설명하지 않고 그대로 실행할 수 있는 예제 코드 블록을 함께 보입니다. 코드와 관계없는 내용에는 코드를 넣지 않습니다.\n' +
+            '- 코드 블록은 ```python, ```javascript, ```csharp, ```sql, ```bash처럼 언어 이름을 적어 열고 반드시 닫습니다.\n' +
+            '- 예제 하나는 무엇을 하는 코드인지 한두 문장 → 코드 블록(30줄 이하) → 핵심 줄 설명(불릿) → 실행 결과나 예상 출력(```text 블록) 순서로 씁니다.\n' +
+            '- 개념마다 가장 작은 예제를 먼저 보이고 응용 예제를 하나 더 둡니다. 틀리기 쉬운 코드는 잘못된 예와 고친 예를 나란히 보입니다.\n' +
+            '- 예제는 생략 표시("...", "// 생략") 없이 완결된 코드로 쓰고, 코드 안 주석은 짧은 한 줄로 씁니다.\n' +
+            '- 코드 블록 안에는 이미지 태그, 표, 이모지, 마크다운 서식(**, ##)을 넣지 않고 실제 키·비밀번호·개인 정보를 쓰지 않습니다.',
 
         // ── Phase 3: 이미지 태그 전략 + 에비던스 + HTML 표 ──
 
@@ -935,6 +992,19 @@ const CONTEXT_CORE = {
 ■ 텍스트 강조 2종:
 **핵심 포인트** = 개념·키워드 강조 (Bold)
 \`파일명.txt\` = 파일명·코드 (Inline Code)
+
+■ 코드 예제(코드를 설명할 때만):
+점수 목록의 평균을 구하는 코드입니다.
+\`\`\`python
+scores = [80, 92, 75]
+average = sum(scores) / len(scores)
+print(round(average, 1))
+\`\`\`
+- 2행: sum()으로 합계를 구하고 len()으로 나눠 평균을 냅니다.
+- 3행: round()로 소수 첫째 자리까지 반올림해 출력합니다.
+\`\`\`text
+82.3
+\`\`\`
 
 ■ 들여쓰기 2종:
 #### &nbsp;&nbsp; ▣ L4 헤딩 (&nbsp;&nbsp;+ ▣)

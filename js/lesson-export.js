@@ -30,6 +30,9 @@ a { color: #6d4fe0; text-decoration: underline; text-underline-offset: 2px; }
 code { background: #eee8f8; color: #7c5bf5; padding: .1rem .3rem; border-radius: 4px; font-family: ui-monospace, Consolas, monospace; font-size: .9em; }
 pre { background: #1e1e2e; color: #e2e0f0; padding: 1rem; border-radius: 8px; overflow-x: auto; margin: 0 0 1rem; }
 pre code { background: none; color: inherit; padding: 0; }
+.lesson-code { position: relative; margin: 0 0 1rem; }
+.lesson-code > pre { margin: 0; padding-top: 2.1rem; }
+.lesson-code[data-lang]::before { content: attr(data-lang); position: absolute; top: .55rem; left: 1rem; font: 700 .7rem/1 ui-monospace, Consolas, monospace; color: #a6a3c8; pointer-events: none; }
 blockquote { border-left: 3px solid #7c5bf5; padding: .75rem 1.2rem; margin: 1.2rem 0; background: #f6f3ff; border-radius: 0 8px 8px 0; color: #4a4a7a; }
 p.lesson-term { margin: 0 0 0 1.25rem; padding: .35rem 0 .35rem 1rem; border-left: 4px solid #d4d4de; }
 ul + p.lesson-term, ol + p.lesson-term, p:not(.lesson-term) + p.lesson-term { margin-top: -.5rem; }
@@ -48,7 +51,7 @@ hr { border: 0; border-top: 1px solid #e5e5ee; margin: 2rem 0; }
     .lesson-doc { max-width: none; padding: 0; }
     .lesson-tab + .lesson-tab, .lesson-break + .lesson-break { break-before: page; margin-top: 0; padding-top: 0; border-top: 0; }
     h1, h2, h3, h4 { break-after: avoid; }
-    img, video, table, pre, blockquote, .image-wrapper, .mermaid { break-inside: avoid; }
+    img, video, table, pre, blockquote, .image-wrapper, .mermaid, .lesson-code { break-inside: avoid; }
     pre { white-space: pre-wrap; }
 }`;
 

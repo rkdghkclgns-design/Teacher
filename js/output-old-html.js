@@ -304,7 +304,7 @@ function oldHtmlKeepsRaw(node) {
     const classed = oldHtmlHasAttr(node, 'class');
     if (OLD_HTML_RAW_TAGS.has(name)) return true;
     if (name === 'P') return styled || classed; // 용어 문단(p.lesson-term) 등
-    if (name === 'DIV') return (styled || classed) && !oldHtmlHasClass(node, 'image-wrapper') && !node.hasAttribute('data-imgid');
+    if (name === 'DIV') return (styled || classed) && !oldHtmlHasClass(node, 'image-wrapper') && !oldHtmlHasClass(node, 'lesson-code') && !node.hasAttribute('data-imgid');
     if (name === 'UL' || name === 'OL') return styled || Array.from(node.querySelectorAll('li')).some(item => oldHtmlHasAttr(item, 'style'));
     if (name === 'I') return classed; // 아이콘
     if (name === 'IMG') return styled || node.hasAttribute('width') || node.hasAttribute('height');
@@ -355,6 +355,11 @@ function oldHtmlService(Turndown) {
     service.addRule('teacherImageWrapper', {
         filter: node => node.nodeName === 'DIV' && oldHtmlHasClass(node, 'image-wrapper') && !!node.querySelector('img'),
         replacement: (content, node) => `\n\n${oldHtmlWrapper(node)}\n\n`
+    });
+    // 언어 이름표를 단 코드 블록(api.js lessonCodeBlockHtml)은 안의 코드로 펜스를 다시 쓴다. HTML로 두면 코드의 빈 줄이 빠진다
+    service.addRule('teacherCodeBox', {
+        filter: node => node.nodeName === 'DIV' && oldHtmlHasClass(node, 'lesson-code') && !!node.querySelector('pre'),
+        replacement: (content, node) => oldHtmlFence(node.querySelector('pre'))
     });
     service.addRule('teacherRaw', {
         filter: oldHtmlKeepsRaw,

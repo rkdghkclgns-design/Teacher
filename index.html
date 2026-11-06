@@ -508,6 +508,49 @@
             padding: 0;
         }
 
+        /* 코드 블록 언어 이름표와 복사 버튼 (api.js lessonCodeBlockHtml). 복사 버튼은 교안 화면에서만 보인다 */
+        .markdown-body .lesson-code {
+            position: relative;
+            margin-bottom: 1rem;
+        }
+        .markdown-body .lesson-code > pre {
+            margin-bottom: 0;
+            padding-top: 2.1rem;
+        }
+        .markdown-body .lesson-code[data-lang]::before {
+            content: attr(data-lang);
+            position: absolute;
+            top: 0.55rem;
+            left: 1rem;
+            font: 700 0.7rem/1 monospace;
+            color: #a6a3c8;
+            pointer-events: none;
+        }
+        .lesson-code-copy {
+            display: none;
+        }
+        #render-view .lesson-code-copy {
+            display: inline-flex;
+            align-items: center;
+            position: absolute;
+            top: 0.35rem;
+            right: 0.5rem;
+            padding: 0.2rem 0.45rem;
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.08);
+            color: #e2e0f0;
+            opacity: 0.75;
+        }
+        #render-view .lesson-code-copy:hover {
+            background: rgba(255, 255, 255, 0.18);
+            opacity: 1;
+        }
+        #render-view .lesson-code-copy:focus-visible {
+            opacity: 1;
+            outline: 2px solid #7c5bf5;
+            outline-offset: 1px;
+        }
+
         .markdown-body blockquote {
             border-left: 3px solid #7c5bf5;
             padding: 0.75rem 1.2rem;

@@ -298,7 +298,8 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         tabLabel: tabMeta.label,
         otherTabContents: otherTabSummaries || null,
         hasMainQuest: !!subj?.mainQuest,
-        mainQuestText: subj?.mainQuest?.description || ''
+        mainQuestText: subj?.mainQuest?.description || '',
+        codeTopic: lessonCodeTopic(mod) // 코드를 다루는 차시면 설명마다 예제 코드 블록을 쓰게 한다
     };
     const { systemInstruction, userPrompt } = buildTaskContext('tab_content', baseArgs);
 
@@ -339,7 +340,8 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             generationConfig: { maxOutputTokens: 65536 }
         };
 
-        let fullText = extractText(await callGemini(TEXT_MODEL, { ...firstPayload, waitSignal: stopSignal }, onRetry));
+        // 응답 전체를 감싼 펜스만 벗긴다. 단락 끝의 코드 블록은 그대로 둔다
+        let fullText = extractText(await callGemini(TEXT_MODEL, { ...firstPayload, waitSignal: stopSignal }, onRetry), { unwrap: true });
         let chunkCount = 1;
         // 이어쓰기 단계에서 호출 한도 등으로 실패하면, 이미 만든 단락은 버리지 않고 보존하기 위한 플래그
         let partialDueToError = false;
@@ -347,8 +349,8 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         let stoppedWhileWaiting = false; // 이어 쓸 단락을 다시 보내려고 기다리다 중지했다
 
         while (fullText.includes(CONTINUE_MARKER) && chunkCount < MAX_CHUNKS && !_tabGenStop) {
-            // 마커 제거 후 이어쓰기 준비
-            fullText = fullText.replace(new RegExp(CONTINUE_MARKER, 'g'), '').trimEnd();
+            // 마커 제거 후 이어쓰기 준비. 코드 블록 안에서 끊겼으면 닫아 이어 쓴 글이 코드로 들어가지 않게 한다
+            fullText = closeOpenFence(fullText.replace(new RegExp(CONTINUE_MARKER, 'g'), '').trimEnd());
             const contextTail = fullText.length > 2000 ? fullText.slice(-2000) : fullText;
 
             const cont = buildTaskContext('tab_content_continue', {
@@ -370,7 +372,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
 
             let contText;
             try {
-                contText = extractText(await callGemini(TEXT_MODEL, { ...contPayload, waitSignal: stopSignal }, onRetry));
+                contText = extractText(await callGemini(TEXT_MODEL, { ...contPayload, waitSignal: stopSignal }, onRetry), { unwrap: true });
             } catch (contErr) {
                 if (contErr?.name === 'AbortError') { // 중지: 받은 단락은 남기고 멈춘다
                     stoppedWhileWaiting = true;
@@ -401,11 +403,11 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
 
         const stoppedEarly = _tabGenStop && (fullText.includes(CONTINUE_MARKER) || stoppedWhileWaiting); // 마커는 이어쓰기 전에 지웠으므로 기다리다 멈춘 것은 따로 센다
 
-        // 잔여 마커 정리
-        fullText = fullText
+        // 잔여 마커 정리. 코드 블록 안에서 끝났으면 닫는다(합친 본문에서 다음 탭이 코드로 보이지 않게)
+        fullText = closeOpenFence(fullText
             .replace(new RegExp(CONTINUE_MARKER, 'g'), '')
             .replace(new RegExp(END_MARKER, 'g'), '')
-            .trimEnd();
+            .trimEnd());
 
         let resultText = fullText;
         // 마크다운 정리
@@ -580,7 +582,8 @@ async function reinforceCurrentTab(moduleId, command = '') {
                 '\n[규칙]\n- 기존 교안 내용을 유지하면서, 사용자의 보강 명령에 따라 내용을 개선하세요.\n- 전체 구조와 서식은 보존하되, 요청된 부분만 보강·수정하세요.\n- ' +
                 CONTEXT_CORE.rules.content_design + '\n- ' +
                 CONTEXT_CORE.rules.korean_period + '\n- ' +
-                (CONTEXT_CORE.rules.emoji_rule || '');
+                (CONTEXT_CORE.rules.emoji_rule || '') +
+                (tabId !== 'assessment' && CONTEXT_CORE.rules.code_examples ? '\n- ' + CONTEXT_CORE.rules.code_examples : '');
 
             const userPrompt = `[현재 작업: ${tabMeta.label} 보강 재생성]\n모듈명: ${mod.title}\n\n[사용자 보강 명령]\n${reinforceCmd}\n\n[기존 교안 내용 — 이 내용을 기반으로 보강하세요]\n${existingContent}`;
 

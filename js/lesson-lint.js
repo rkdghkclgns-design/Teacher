@@ -2,6 +2,7 @@
 // 금지 표현, 학습 목표, 체크리스트, 문항 규칙은 develocket-slide(assets/course-rules.js @3a7303f)의 검수 기준을 따른다.
 
 const LESSON_LINT_VERSION_MSG = '버전 의존 정보를 본문에 쓰지 않습니다.';
+const LESSON_CODE_EXAMPLE_MSG = '코드를 설명하면 예제 코드 블록을 함께 둡니다.';
 const LESSON_LINT_MAX_OBJECTIVES = 3;
 const LESSON_LINT_MIN_OBJECTIVE_LENGTH = 18;
 const LESSON_LINT_MIN_CHOICES = 4;
@@ -54,7 +55,7 @@ const LESSON_HEADING_PREFIX = '^(?:[^\\s\\w가-힣]+\\s*)?(?:\\d+[.)]\\s*)?';
 const LESSON_OVERVIEW_TITLE = new RegExp(`${LESSON_HEADING_PREFIX}(?:차시\\s*|수업\\s*|학습\\s*)?개요(?!서)`);
 const LESSON_FRAME_TITLE = new RegExp(`${LESSON_HEADING_PREFIX}(?:학습\\s*목표|학습\\s*후\\s*체크리스트)`);
 const LESSON_CHECK_REF = /다시\s*보기\s*:\s*([^)）]+)/;
-const LESSON_RULE_NOTE = '개요, 목표와 내용의 대응은 기본학습·심화학습 탭에만 적용합니다. 코드 블록과 이미지 태그는 검사하지 않습니다.';
+const LESSON_RULE_NOTE = '개요, 목표와 내용의 대응은 기본학습·심화학습 탭에만 적용합니다. 코드 블록 안의 글과 이미지 태그는 어구 검사에서 뺍니다. 코드 예제 규칙은 코드를 다루는 차시에만 검사합니다.';
 const LESSON_RULE_LIST = [
     { sev: 'bad', area: '개요', rule: '개요를 작성합니다.', desc: '이 차시를 왜 배우는지 제시합니다. 문제 상황, 해결할 일, 학습 후 가능해지는 일을 담습니다.' },
     { sev: 'bad', area: '학습 목표', rule: '학습 목표를 1개 이상 작성합니다.', desc: '교안은 학습 목표로 시작해 그 목표를 확인하며 끝납니다.' },
@@ -72,7 +73,9 @@ const LESSON_RULE_LIST = [
     { sev: 'warn', area: '모호한 표현', rule: '정도는 수치로 씁니다.', desc: '「매우 느리다」 대신 「응답 시간이 2배로 늘어난다」처럼 씁니다.' },
     { sev: 'warn', area: '모호한 표현', rule: '당연하다는 표현을 쓰지 않습니다.', desc: '「당연히」, 「물론」, 「쉽게」는 모르는 학습자를 자책하게 만듭니다.' },
     { sev: 'warn', area: '버전 의존', rule: LESSON_LINT_VERSION_MSG, desc: '툴 버전, 단축키, 메뉴 위치는 차시 메타데이터의 사용 툴과 버전이 관리합니다.' },
-    { sev: 'warn', area: '교안/교수안', rule: '수업 진행은 교수안의 몫입니다.', desc: '교안은 무엇을 배울지 지정하고, 어떻게 가르칠지는 교수안에서 설계합니다.' }
+    { sev: 'warn', area: '교안/교수안', rule: '수업 진행은 교수안의 몫입니다.', desc: '교안은 무엇을 배울지 지정하고, 어떻게 가르칠지는 교수안에서 설계합니다.' },
+    { sev: 'warn', area: '코드 예제', rule: LESSON_CODE_EXAMPLE_MSG, desc: '코드를 말로만 설명한 섹션을 찾습니다. 무엇을 하는 코드인지, 코드 블록, 핵심 줄 설명, 실행 결과 순서로 보입니다.' },
+    { sev: 'warn', area: '코드 예제', rule: '코드 블록에 언어를 적고 닫습니다.', desc: '```python처럼 언어를 적어야 이름표가 붙습니다. 닫지 않은 코드 블록은 뒤의 본문까지 코드로 보입니다.' }
 ];
 
 const lintCounts = issues => {
@@ -135,6 +138,13 @@ function nextCodeFence(fence, line) {
     if (!marks) return fence;
     if (!fence) return marks.length;
     return marks.length >= fence && !rest.trim() ? 0 : fence;
+}
+
+// 글이 코드 블록 안에서 끝나면 여는 펜스 길이만큼 닫는다. 이어 붙이는 글이 코드 안으로 들어가지 않게 한다
+function closeOpenFence(md) {
+    const text = String(md ?? '');
+    const fence = text.split(/\r?\n/).reduce(nextCodeFence, 0);
+    return fence ? `${text.trimEnd()}\n${'`'.repeat(fence)}` : text;
 }
 
 // 체크리스트의 "다시 보기"로 목표와 내용 섹션의 대응을 확인한다. 제목 앞 이모지나 시간 표기는 달라도 같은 섹션으로 본다.
@@ -394,9 +404,101 @@ function lintObjectiveCoverage(source, objectiveCount) {
     return missing.length ? [{ sev: 'warn', where: '학습 목표 대응', msg: '모든 학습 목표를 1문제 이상 묻습니다.', snip: `묻지 않은 학습 목표 ${missing.join(', ')}` }] : [];
 }
 
+/* ---------- 코드 예제 ---------- */
+// 코드를 다루는 차시를 알아보는 말. 영어 이름은 다른 영문자에 붙어 있으면 보지 않는다(GitHub의 Git 등)
+const LESSON_CODE_TOPIC = new RegExp([
+    '코딩|프로그래밍|소스\\s*코드|코드\\s*(?:작성|구현|예제)|스크립트\\s*(?:작성|언어)|스크립팅|알고리즘|자료\\s*구조',
+    '함수\\s*(?:작성|정의|호출)|반복문|조건문|객체\\s*지향|쿼리|정규\\s*표현식|API\\s*(?:호출|연동|개발)|명령어|터미널|셸',
+    '파이썬|자바스크립트|타입스크립트|코틀린|블루프린트',
+    '(?<![A-Za-z])(?:Python|JavaScript|TypeScript|Java|Kotlin|Swift|Rust|Ruby|PHP|SQL|HTML|CSS|C\\+\\+|C#|Lua|mLua|GDScript|Bash|PowerShell|React|Vue|Node\\.js|Django|Flask|Spring|Unity|Unreal|Git|Docker|Linux|JSON|YAML)(?![A-Za-z])'
+].join('|'), 'i');
+// 코드 같은 인라인 코드(영문·숫자·기호가 든 것)와 코드를 설명하는 말. g 정규식이므로 match로만 센다
+const LESSON_CODE_SPAN = /`[^`\n]*[\w(){}[\]=<>;:.+\-*/%!&|$#'"][^`\n]*`/g;
+const LESSON_CODE_TALK = /함수|변수|반복문|조건문|클래스|메서드|자료형|배열|문자열|딕셔너리|인스턴스|반환\s*값|코드|스크립트|쿼리|명령어|컴파일|디버깅|문법|주석|라이브러리|API/g;
+const LESSON_CODE_SIGNAL = new RegExp(`${LESSON_CODE_SPAN.source}|${LESSON_CODE_TALK.source}`); // 지적에 보일 첫 근거 하나
+// 예제로 세지 않는 코드 블록: 다이어그램, 실행 결과, 문서 예시
+const LESSON_NON_CODE_FENCES = new Set(['mermaid', 'text', 'txt', 'plaintext', 'output', 'console', 'md', 'markdown']);
+
+// 코드를 다루는 차시인지. 제목·설명·핵심 개념·학습 목표·사용 툴 이름을 보고, 교안에 코드 블록이 이미 있어도 그렇게 본다
+function lessonCodeTopic(mod) {
+    if (!mod) return false;
+    const list = value => (Array.isArray(value) ? value : []);
+    const tools = typeof lessonTools === 'function' && typeof globalState !== 'undefined' && globalState ? lessonTools(mod) : mod.tools;
+    const text = [mod.title, mod.description, ...list(mod.keyConcepts), ...list(mod.objectives), ...list(tools).map(tool => tool?.name ?? tool)]
+        .filter(value => typeof value === 'string').join(' ');
+    return LESSON_CODE_TOPIC.test(text) || (typeof lessonCodeTags === 'function' && lessonCodeTags(mod).length > 0);
+}
+
+// 코드 블록 밖의 글이 코드를 설명하는지: 코드 같은 인라인 코드 2개, 인라인 코드 1개와 코드 말 1개, 또는 코드 말 3개
+function lessonCodeSignals(text) {
+    const prose = lessonLintText(text, { keepInlineCode: true });
+    const spans = (prose.match(LESSON_CODE_SPAN) || []).length;
+    const talk = (prose.replace(LESSON_CODE_SPAN, ' ').match(LESSON_CODE_TALK) || []).length;
+    return spans >= 2 || (spans >= 1 && talk >= 1) || talk >= 3;
+}
+
+// 코드 블록 목록: 언어(소문자), 여는 줄, 첫 코드 줄, 닫혔는지
+function lessonFences(text) {
+    const fences = [];
+    let fence = 0;
+    String(text || '').split('\n').forEach(line => {
+        const wasFenced = fence;
+        fence = nextCodeFence(fence, line);
+        const last = fences[fences.length - 1];
+        if (!wasFenced && fence) fences.push({ lang: ((line.match(/^\s*`{3,}\s*([^\s`]*)/) || [])[1] || '').toLowerCase(), line: line.trim(), code: '', closed: false });
+        else if (wasFenced && !fence) last.closed = true;
+        else if (wasFenced && !last.code && line.trim()) last.code = line.trim().slice(0, 40);
+    });
+    return fences;
+}
+
+const isCodeExampleFence = fence => !LESSON_NON_CODE_FENCES.has(fence.lang);
+
+// 실행 결과·다이어그램·문서 예시가 아닌 코드 블록이 있으면 예제가 있다고 본다
+function lessonHasCodeExample(text) {
+    return lessonFences(text).some(isCodeExampleFence);
+}
+
+// ## 기준으로 나누되 코드 블록은 그대로 둔다(lessonLintSections는 코드 블록을 지운다). 코드 블록 안의 ## 은 제목이 아니다
+function lessonCodeSections(md) {
+    const sections = [{ title: '', lines: [] }];
+    let fence = 0;
+    String(md || '').split('\n').forEach(line => {
+        const wasFenced = fence;
+        fence = nextCodeFence(fence, line);
+        const heading = !wasFenced && !fence && line.match(/^##\s+(.*)/);
+        if (heading) sections.push({ title: heading[1].trim(), lines: [line] });
+        else sections[sections.length - 1].lines.push(line);
+    });
+    return sections.map(section => ({ title: section.title, text: section.lines.join('\n') })).filter(section => section.title || section.text.trim());
+}
+
+function codeSignalSnip(text) {
+    const prose = lessonLintText(text.replace(/^##\s.*$/m, ' '), { keepInlineCode: true });
+    const hit = LESSON_CODE_SIGNAL.exec(prose);
+    return hit ? prose.slice(Math.max(0, hit.index - 12), hit.index + hit[0].length + 10).replace(/\s+/g, ' ').trim() : '';
+}
+
+// 코드를 다루는 차시에서만 본다: 코드를 설명하는 내용 섹션에 예제가 없음(학습이해도 제외), 언어를 적지 않은 코드 블록, 닫지 않은 코드 블록
+function lintCodeExamples(source, tabId, codeTopic) {
+    if (!codeTopic) return [];
+    return lessonCodeSections(source).flatMap(section => {
+        const where = section.title || '본문';
+        const fences = lessonFences(section.text);
+        const content = !!section.title && !LESSON_FRAME_TITLE.test(section.title) && !LESSON_OVERVIEW_TITLE.test(section.title);
+        const missing = tabId !== 'assessment' && content && !fences.some(isCodeExampleFence) && lessonCodeSignals(section.text);
+        return [
+            missing && { sev: 'warn', where, msg: LESSON_CODE_EXAMPLE_MSG, snip: codeSignalSnip(section.text) },
+            ...fences.filter(fence => !fence.lang).map(fence => ({ sev: 'warn', where, msg: '코드 블록에 언어를 적습니다.', snip: fence.code || fence.line })),
+            ...fences.filter(fence => !fence.closed).map(fence => ({ sev: 'warn', where, msg: '닫히지 않은 코드 블록이 있습니다.', snip: fence.code || fence.line }))
+        ].filter(Boolean);
+    });
+}
+
 // tabId를 주면 그 탭의 구조까지 검사한다. 지적은 { sev, where, msg, snip, missing } 형식이다. missing은 없는 섹션을 새로 써야 한다는 뜻이다.
 // context.objectiveCount: 차시의 학습 목표 수(qbankObjectives). 주면 학습이해도의 목표 대응과 번호 범위를 검사한다.
-function lintLessonMarkdown(md, tabId, { objectiveCount = 0 } = {}) {
+// context.codeTopic: 코드를 다루는 차시(lessonCodeTopic)면 코드 예제 규칙도 검사한다
+function lintLessonMarkdown(md, tabId, { objectiveCount = 0, codeTopic = false } = {}) {
     const source = String(md || '').replace(/\r\n/g, '\n');
     const goals = lessonLintBullets(source, '학습\\s*목표');
     const checks = lessonLintBullets(source, '학습\\s*후\\s*체크리스트');
@@ -406,6 +508,7 @@ function lintLessonMarkdown(md, tabId, { objectiveCount = 0 } = {}) {
         ...lintChecklistBullets(goals, checks),
         ...lessonLintQuestions(source).flatMap(block => lintQuestionBlock(block, checks, objectiveCount || Infinity)),
         ...(tabId === 'assessment' ? lintObjectiveCoverage(source, objectiveCount) : []),
-        ...lessonLintSections(source).flatMap(section => lintLessonPhrases(section.text, section.title))
+        ...lessonLintSections(source).flatMap(section => lintLessonPhrases(section.text, section.title)),
+        ...lintCodeExamples(source, tabId, codeTopic)
     ];
 }
