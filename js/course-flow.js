@@ -175,6 +175,20 @@ function generationBusy() {
         || document.getElementById('editor-loading')?.style.display === 'flex';
 }
 
+// 돌고 있는 AI 작업이 있는가. 창을 닫기 전에 묻는다(ui.js hasUnsavedWork). 닫으면 만들던 결과와 그 비용을 잃는다.
+// 새 생성을 막는 조건(generationBusy: 진행 막대의 작업·교수안·로딩 화면. 분량 채우기 뒤의 자동 수정·그림·저장도 그 안이다)에 더해
+// 일괄 생성·기존 내용 보강·과정 설계·차시 목차 만들기, 기본 학습 분량 채우기(lesson-volume.js), 열어 둔 삽화·문제은행 창의 작업도 센다.
+// 뒤에 싣는 파일의 이름은 typeof로 본다(그 파일을 싣지 않은 화면·시험에서도 멈추지 않게)
+function isAiWorkRunning() {
+    return generationBusy() || !!_lessonRun
+        || (typeof _backfillRun !== 'undefined' && !!_backfillRun)
+        || (typeof _designBusy !== 'undefined' && !!_designBusy)
+        || document.getElementById('sidebar-loading')?.style.display === 'flex'
+        || !!window.isVolumeFilling?.()
+        || (typeof _lessonArt !== 'undefined' && !!_lessonArt?.busy)
+        || (typeof _qbank !== 'undefined' && !!_qbank?.busy);
+}
+
 function lessonRunListHtml(title, items, detail = () => '') {
     if (!items.length) return '';
     const rows = items.map(item => `<li>${escapeHtml(lessonLabel(item))}${detail(item) ? ` <span class="text-textMuted">— ${escapeHtml(detail(item))}</span>` : ''}</li>`).join('');

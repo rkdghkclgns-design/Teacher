@@ -573,6 +573,35 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
         assert.ok(!call('wordDiffHtml')('같은 문장', '같은 문장').includes('<del'));
     });
 
+    await run('창을 닫은 뒤 끝난 문제은행 수정·삽화: 다른 교과의 같은 번호 차시를 보고 있으면 그 화면을 다시 그리지 않는다(같은 객체일 때만 그린다)', async () => {
+        const local = makeContext();
+        const mod = { id: 1, title: '차시', tabContents: { assessment: QB }, images: {} };
+        const other = { id: 1, title: '다른 교과 차시', tabContents: { assessment: QB }, images: {} };
+        let open = other;
+        let rendered = [];
+        local.currentEditingModuleId = 1; // 열린 차시의 번호는 같다
+        local.getEditingModule = () => open;
+        local.renderEditor = shown => rendered.push(shown);
+        local.withHistoryNote = () => ({});
+        local.archiveContent = async () => { vm.runInContext('_qbank = null', local); }; // 남기는 사이 창을 닫았다
+        vm.runInContext('renderQbank = () => {}; _qbank = { moduleId: 1, busy: false };', local);
+        await vm.runInContext('commitQbankMarkdown', local)(mod, '### 문제 1. 새 문항\n\n내용');
+        assert.strictEqual(mod.tabContents.assessment, '### 문제 1. 새 문항\n\n내용');
+        assert.deepStrictEqual(rendered, [], '문제은행: 다른 교과의 1번 차시 화면');
+        open = mod;
+        vm.runInContext('_qbank = { moduleId: 1, busy: false };', local);
+        await vm.runInContext('commitQbankMarkdown', local)(mod, '### 문제 1. 또 고친 문항\n\n내용');
+        assert.deepStrictEqual(rendered, [mod], '그 차시를 보고 있으면 그린다');
+        rendered = [];
+        open = other;
+        vm.runInContext('_lessonArt = null;', local); // 삽화 창을 닫은 뒤 끝났다
+        await vm.runInContext('finishLessonArtChange', local)(mod, 1, '삽화를 만들었습니다.');
+        assert.deepStrictEqual(rendered, [], '삽화: 다른 교과의 1번 차시 화면');
+        open = mod;
+        await vm.runInContext('finishLessonArtChange', local)(mod, 1, '삽화를 만들었습니다.');
+        assert.deepStrictEqual(rendered, [mod]);
+    });
+
     await run('문제은행: 고치기 전 학습이해도는 그 차시·탭과 함께 작업 기록에 남는다', async () => {
         const local = makeContext();
         const items = [];

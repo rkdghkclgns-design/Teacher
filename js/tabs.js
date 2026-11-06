@@ -38,8 +38,12 @@ function lessonPanelButton(mod, panel) {
         </button>`;
 }
 
+// 탭이 없는 최종 평가(차시 목록의 카드로 만든 본문 하나). 기본학습 칸에 본문을 보이고 탭 단추·탭 생성은 두지 않는다(탭 생성은 본문을 버리고 새 탭을 만든다)
+const isTablessQuest = mod => mod?.id === 'mainQuest' && !mod.tabContents;
+
 function renderTabBar(mod) {
     if (!mod || !LESSON_TABS) return '';
+    if (isTablessQuest(mod)) return ''; // 본문 하나뿐이라 고를 탭이 없다(교수안·슬라이드·문제은행 항목도 최종 평가에는 없다)
     const tabContents = mod.tabContents || {};
     const tabs = LESSON_TABS.map(tab => {
         const isActive = !_lessonPanel && currentLessonTab === tab.id;
@@ -442,6 +446,8 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             resultText = sanitizeMarkdownContent(resultText);
         }
 
+        // 탭이 없는 최종 평가·옛 차시의 본문은 기본 학습 탭으로 옮긴다. 새 탭이 본문을 지우지 않고, 기본 학습을 다시 만들면 미리 보고 작업 기록에 남긴다
+        migrateMonolithicContent(mod);
         if (!mod.tabContents) mod.tabContents = { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null };
         resultText = cleanLessonOpening(restoreLockedSections(resultText, lockedBlocks));
         if (typeof checklistLast === 'function') resultText = checklistLast(resultText, tabId);

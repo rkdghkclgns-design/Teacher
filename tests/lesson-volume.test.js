@@ -749,6 +749,41 @@ async function run(name, fn) {
         assert.strictEqual(declined.prompts.length, 0, '묻는 창에서 그만두면 부르지 않는다');
     });
 
+    await run("창 닫기: '분량 채우기'는 채운 뒤의 자동 수정·미리 보기·저장까지 AI 작업이 돌고 있다고 본다(분량 채우기 표시만으로는 채우는 동안뿐)", async () => {
+        const start = draftMd({ sectionBody: () => `${filler(2400)} 앞에서 다룬 반복입니다.` }); // 컨벤션 필수 지적이 남아 채운 뒤 고쳐 받는다
+        const mod = { ...MOD, tabContents: { basicLearn: start, basicPrac: null, advLearn: null, advPrac: null, assessment: null } };
+        const ctx = genContext();
+        ctx.currentMod = mod;
+        const states = { fill: [], fix: [], preview: [] };
+        const state = () => [call(ctx, 'isVolumeFilling')(), call(ctx, 'isAiWorkRunning')()];
+        const model = volumeModel(ctx, { onCall: () => { states.fill.push(state()); }, fixReply: () => { states.fix.push(state()); return reply(''); } });
+        ctx.callGemini = model;
+        ctx.onOverlay = overlay => {
+            if (overlay.id === 'lesson-pipeline-bar') return; // 진행 막대는 미리 보기가 아니다
+            states.preview.push(state());
+            setImmediate(() => overlay.fire('click', { target: { dataset: { diffAction: 'apply' } } }));
+        };
+        assert.deepStrictEqual(state(), [false, false]);
+        await call(ctx, 'fillLessonVolume')(1);
+        assert.ok(states.fill.length > 0 && states.fill.every(([filling, running]) => filling && running), JSON.stringify(states.fill));
+        assert.ok(states.fix.length > 0, '채운 뒤 고쳐 받았다');
+        assert.ok(states.fix.every(([filling, running]) => !filling && running), `자동 수정: ${JSON.stringify(states.fix)}`);
+        assert.deepStrictEqual(states.preview, [[false, true]], '바뀐 섹션을 고르는 동안');
+        assert.ok(call(ctx, 'spokenChars')(mod.tabContents.basicLearn) >= TARGET_CHARS, '반영했다');
+        assert.deepStrictEqual(state(), [false, false], '반영하고 끝나면 묻지 않는다');
+        // 탭 만들기도 같다: 분량을 채운 뒤의 그림 단계에서 닫아도 묻는다
+        const tabCtx = genContext();
+        const lesson = { ...MOD, tabContents: { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null } };
+        tabCtx.currentMod = lesson;
+        tabCtx.callGemini = volumeModel(tabCtx, { draft: draftMd() });
+        tabCtx.imageStates = [];
+        vm.runInContext('processImageTags = async (mod, md) => { window.imageStates.push([isVolumeFilling(), isAiWorkRunning()]); return md; };', tabCtx);
+        await call(tabCtx, 'runTabJob')(1, 'basicLearn');
+        assert.ok(lesson.tabContents.basicLearn, '만들었다');
+        assert.deepStrictEqual(plain(tabCtx.imageStates), [[false, true]], '그림 단계');
+        assert.strictEqual(call(tabCtx, 'isAiWorkRunning')(), false);
+    });
+
     await run('긴 탭 전체 AI 수정: 80,000자가 넘으면 먼저 묻고, 그만두면 부르지 않는다', async () => {
         const ctx = genContext();
         ctx.currentMod = { ...MOD, tabContents: { basicLearn: `## 본문\n\n${filler(90000)}` } };

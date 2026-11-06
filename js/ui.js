@@ -259,12 +259,13 @@ async function saveNow() {
 }
 
 // 창을 닫기 전에 물을 일: 열어 둔 원문 칸(교안·교수안)에 넣지 않은 글, 끝나지 않은 브라우저 저장, 아래 AI 명령줄에서 기다리거나 아직 넣지 않은 결과(api.js),
-// 아직 저장하지 않은 기본 학습 분량 채우기(lesson-volume.js. 닫으면 채우던 분량을 잃는다)
+// 아직 저장하지 않은 기본 학습 분량 채우기(lesson-volume.js), 돌고 있는 AI 작업(생성·고치기·일괄 생성·과정 설계 등과 그 뒤의 자동 수정·그림·저장, course-flow.js).
+// 닫으면 만들던 결과와 그 비용을 잃는다
 function hasUnsavedWork() {
-    return !!(window.hasPendingRawEdit?.() || window.hasPendingGyosuanRaw?.() || window.isSavePending?.() || window.isAiResultPending?.() || window.isVolumeFilling?.());
+    return !!(window.hasPendingRawEdit?.() || window.hasPendingGyosuanRaw?.() || window.isSavePending?.() || window.isAiResultPending?.() || window.isVolumeFilling?.() || window.isAiWorkRunning?.());
 }
 
-// 고치던 원문은 먼저 넣고, 넣지 못한 글, 끝나지 않은 저장, 아직 넣지 않은 AI 명령줄 결과가 있으면 브라우저의 '사이트에서 나가시겠습니까?' 창을 띄운다(문구는 브라우저가 정한다)
+// 고치던 원문은 먼저 넣고, 넣지 못한 글, 끝나지 않은 저장, 아직 넣지 않은 AI 명령줄 결과, 돌고 있는 AI 작업이 있으면 브라우저의 '사이트에서 나가시겠습니까?' 창을 띄운다(문구는 브라우저가 정한다)
 function warnBeforeUnload(event) {
     if (window.isStateLoadFailed?.()) return; // 읽지 못한 동안은 아무것도 저장하지 않으므로 묻지 않는다
     const waiting = !!window.isSavePending?.(); // 미뤄 둔 저장(참고자료 칸)은 아래에서 바로 시작하므로 먼저 본다
@@ -1518,6 +1519,9 @@ document.addEventListener('DOMContentLoaded', () => {
 // ------------------------------------------------------------------------
 
 function openEditor(subjectId, targetModuleId = null) {
+
+    // 교과를 바꾸기 전에 고치던 원문을 넣는다. 아직 그 칸을 그린 교과가 열려 있을 때 넣어야 그 교과의 차시에 들어간다(Alt+← 같은 주소 이동)
+    window.saveRawContent?.();
 
     currentSubjectId = subjectId;
 

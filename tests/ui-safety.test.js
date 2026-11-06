@@ -265,6 +265,14 @@ test('창 닫기: 넣지 않은 글이나 끝나지 않은 저장이 있을 때�
     onUnload(ai);
     assert.strictEqual(ai.prevented, true, '아래 AI 명령줄에 보낸 명령의 결과를 기다리거나 아직 넣지 않았다(버리면 다시 볼 수 없다)');
     ctx.isAiResultPending = () => false;
+    ctx.isAiWorkRunning = () => true;
+    const working = ev();
+    onUnload(working);
+    assert.deepStrictEqual([working.prevented, working.returnValue], [true, true], 'AI 작업(생성·고치기·일괄 생성·과정 설계 등)이 돌고 있다(닫으면 만들던 결과를 잃는다)');
+    ctx.isAiWorkRunning = () => false;
+    const idle = ev();
+    onUnload(idle);
+    assert.strictEqual(!!idle.prevented, false, '돌던 작업이 끝났으면 묻지 않는다');
     let soon = true;
     ctx.isSavePending = () => soon;
     ctx.flushSaveStateSoon = () => { soon = false; };
@@ -276,6 +284,22 @@ test('창 닫기: 넣지 않은 글이나 끝나지 않은 저장이 있을 때�
     const unread = ev();
     onUnload(unread);
     assert.strictEqual(!!unread.prevented, false, '저장본을 읽지 못한 동안은 묻지 않는다');
+});
+
+test('교과 열기: 고치던 원문은 교과를 바꾸기 전에(그 칸을 그린 교과가 열려 있을 때) 넣는다', () => {
+    const { ctx } = loadUi();
+    const s2 = { id: 's2', title: '교과2', lessons: [{ id: 1, title: 'B', tabContents: { basicLearn: '다른 글' }, images: {} }] };
+    ctx.globalState.subjects.push(s2);
+    const els = { 'topic-input': { value: '' }, 'editor-content-area': { innerHTML: '' }, 'ai-command-bar': { classList: { add() {} } } };
+    ctx.document.getElementById = id => els[id] || null;
+    ctx.renderSidebar = () => {};
+    const seenWhileSaving = [];
+    ctx.saveRawContent = () => seenWhileSaving.push([ctx.currentSubjectId, els['editor-content-area'].innerHTML]);
+    ctx.openEditor('s2');
+    assert.deepStrictEqual(seenWhileSaving, [['s1', '']], '교과와 편집 영역을 바꾸기 전에 넣는다');
+    assert.strictEqual(ctx.currentSubjectId, 's2');
+    assert.strictEqual(ctx.courseData, s2.lessons);
+    assert.strictEqual(els['topic-input'].value, '교과2');
 });
 
 test('교과 백업 ZIP: 편집 중에는 지금 교과, 개요에서는 고른 교과(고르지 않으면 모든 교과)', () => {

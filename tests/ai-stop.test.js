@@ -769,26 +769,67 @@ async function run(name, fn) {
         assert.notStrictEqual(vm.runInContext('currentEditingModuleId', ctx), 'mainQuest', '교과2의 편집 중 차시를 최종 평가로 바꾸지 않는다');
         assert.ok(ctx.toasts.some(text => text.includes("'교과1' 교과의 최종 평가를 만들었습니다")), JSON.stringify(ctx.toasts));
         assert.strictEqual(mq2.content, '교과2가 이미 쓴 최종 평가입니다.');
-        // 그래도 교과1의 최종 평가를 그린 원문 칸이 남아 있으면(예전 화면) 교과2의 최종 평가에 넣지 않는다
+        // 그래도 교과1의 최종 평가를 그린 원문 칸이 남아 있으면(예전 화면) 교과2의 최종 평가가 아니라 그린 교과1의 최종 평가에 넣는다
         const raw = ctx.fakeElement();
         raw.id = 'raw-view';
         Object.assign(raw.dataset, { moduleId: 'mainQuest', subjectId: 's1', tabId: 'basicLearn' });
-        raw.defaultValue = mq1.content;
+        raw.defaultValue = raw.storedFrom = mq1.content;
         raw.value = mq1.content + '\n\n강사가 덧붙인 문장입니다.';
         ctx.elements['raw-view'] = raw;
         try {
             call('saveRawContent')();
+            assert.strictEqual(mq1.content, '교과1 새 최종 평가 본문입니다.\n\n강사가 덧붙인 문장입니다.', '그린 교과1의 최종 평가에 넣는다');
             assert.strictEqual(mq2.content, '교과2가 이미 쓴 최종 평가입니다.', '다른 교과의 최종 평가를 덮지 않는다');
             assert.strictEqual(call('hasPendingRawEdit')(), false);
-            raw.dataset.subjectId = 's2'; // 교과2에서 그린 칸이면 넣는다
-            raw.defaultValue = mq2.content;
-            raw.value = mq2.content + ' 고침';
+            const raw2 = ctx.fakeElement(); // 교과2에서 그린 칸이면 교과2의 최종 평가에 넣는다
+            raw2.id = 'raw-view';
+            Object.assign(raw2.dataset, { moduleId: 'mainQuest', subjectId: 's2', tabId: 'basicLearn' });
+            raw2.defaultValue = raw2.storedFrom = mq2.content;
+            raw2.value = mq2.content + ' 고침';
+            ctx.elements['raw-view'] = raw2;
             call('saveRawContent')();
             assert.strictEqual(mq2.content, '교과2가 이미 쓴 최종 평가입니다. 고침');
+            assert.strictEqual(mq1.content, '교과1 새 최종 평가 본문입니다.\n\n강사가 덧붙인 문장입니다.', '교과1은 그대로');
         } finally {
             delete ctx.elements['raw-view'];
         }
         assert.strictEqual(s2.mainQuest, mq2);
+    });
+
+    await run('전체 생성이 끝날 때: 빈 탭을 손으로 쓰던 원문 칸은 먼저 그 탭에 넣고, 다시 그리지 않아 쓰던 칸을 그대로 둔다', async () => {
+        const learn = '## 1. 첫째\n\n본문입니다.';
+        const mod = { id: 7, title: '차시', images: {}, tabContents: tabsOf(learn), content: learn };
+        ctx.globalState = { subjects: [{ id: 's1', title: '기획', lessons: [mod] }] };
+        ctx.currentSubjectId = 's1';
+        ctx.courseData = [mod];
+        ctx.currentEditingModuleId = 7;
+        vm.runInContext("currentLessonTab = 'basicPrac'; _lessonPanel = null;", ctx);
+        const raw = openRawEdit(mod, 'basicPrac', '## 1. 실습\n\n강사가 손으로 쓰는 실습입니다.');
+        call('beginLessonPipeline')(7, { kind: 'job', label: '심화 학습 만들기', current: 'advLearn' }); // 다른 탭을 만드는 작업
+        try {
+            call('finishLessonPipeline')({ quiet: true });
+            assert.strictEqual(mod.tabContents.basicPrac, '## 1. 실습\n\n강사가 손으로 쓰는 실습입니다.', '쓰던 글을 그 탭에 넣는다');
+            assert.strictEqual(ctx.rendered, 0, '탭이 비지 않았으므로 다시 그리지 않는다(쓰던 칸이 그대로다)');
+            assert.strictEqual(ctx.elements['raw-view'], raw);
+            assert.strictEqual(ctx.saved, 1);
+        } finally {
+            delete ctx.elements['raw-view'];
+            vm.runInContext("currentLessonTab = 'basicLearn';", ctx);
+        }
+    });
+
+    await run('AI 수정 반영: 다른 교과로 옮겨 같은 id의 최종 평가를 보고 있으면 그 화면을 다시 그리지 않는다(같은 객체일 때만)', async () => {
+        const { s1, s2, mq1, mq2 } = mainQuestSubjects();
+        mq1.content = '## 과제\n\n교과1 본문입니다.';
+        vm.runInContext("currentSubjectId = 's2'; courseData = globalState.subjects[1].lessons; currentEditingModuleId = 'mainQuest'; currentLessonTab = 'basicLearn';", ctx);
+        const commit = call('commitTabChange');
+        assert.strictEqual(await commit(mq1, 'basicLearn', mq1.content, '## 과제\n\n교과1 고친 본문입니다.', 'AI 수정'), true);
+        assert.strictEqual(s1.mainQuest.content, '## 과제\n\n교과1 고친 본문입니다.');
+        assert.strictEqual(ctx.rendered, 0, '교과2의 최종 평가 화면에 교과1의 최종 평가를 그리지 않는다');
+        assert.strictEqual(await commit(mq2, 'basicLearn', mq2.content, '교과2 고친 글입니다.', 'AI 수정'), true);
+        assert.strictEqual(ctx.rendered, 1, '보고 있는 그 최종 평가는 다시 그린다');
+        assert.strictEqual(s2.mainQuest.content, '교과2 고친 글입니다.');
+        ctx.currentEditingModuleId = 1;
     });
 
     await run('최종 평가 만들기: 앞서 중지한 작업의 신호가 남아도 그림을 만들고, 진행 막대의 생성이 돌면 시작하지 않는다', async () => {

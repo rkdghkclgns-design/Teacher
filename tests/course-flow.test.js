@@ -213,6 +213,34 @@ async function run(name, fn) {
         assert.strictEqual(busy(), true, '탭 사이 대기로 로딩 화면이 내려간 때');
     });
 
+    await run('창 닫기 전 AI 작업: 새 생성을 막는 작업에 더해 일괄 생성·과정 설계·차시 목차·분량 채우기·문제은행 창의 작업도 돌고 있다고 본다', async () => {
+        const local = makeContext();
+        const running = () => vm.runInContext('isAiWorkRunning()', local);
+        assert.strictEqual(local.isAiWorkRunning, vm.runInContext('isAiWorkRunning', local), '창 닫기(ui.js)가 window로 부른다');
+        assert.strictEqual(running(), false, '아무것도 돌지 않으면 묻지 않는다');
+        assert.strictEqual(vm.runInContext("typeof _backfillRun === 'undefined' && typeof _lessonArt === 'undefined'", local), true, '보강·삽화 파일을 싣지 않은 화면에서도 멈추지 않는다');
+        const check = (label, on, off) => {
+            on();
+            assert.strictEqual(running(), true, label);
+            off();
+            assert.strictEqual(running(), false, `${label} 끝`);
+        };
+        check('로딩 화면(최종 평가·막는 탭 생성)', () => { local.elements['editor-loading'].style.display = 'flex'; }, () => { local.elements['editor-loading'].style.display = 'none'; });
+        check('진행 막대의 작업(전체 생성·탭 만들기·분량 채우기 뒤의 자동 수정과 저장)', () => local.beginLessonPipeline(3, { kind: 'job' }), () => local.finishLessonPipeline({ quiet: true }));
+        check('일괄 생성', () => vm.runInContext('_lessonRun = { stopped: false }', local), () => vm.runInContext('_lessonRun = null', local));
+        check('과정 설계', () => vm.runInContext('_designBusy = true', local), () => vm.runInContext('_designBusy = false', local));
+        local.elements['sidebar-loading'] = { style: {} };
+        check('차시 목차 만들기', () => { local.elements['sidebar-loading'].style.display = 'flex'; }, () => { local.elements['sidebar-loading'].style.display = 'none'; });
+        check('기본 학습 분량 채우기', () => { local.isVolumeFilling = () => true; }, () => { local.isVolumeFilling = () => false; });
+        check('문제은행 창의 문항 만들기', () => vm.runInContext('_qbank = { moduleId: 1, busy: true }', local), () => vm.runInContext('_qbank = null', local));
+        vm.runInContext('var _backfillRun = { stopped: false }; var _lessonArt = { busy: true };', local); // 기존 내용 보강·삽화 창을 싣고 돌린다
+        assert.strictEqual(running(), true, '기존 내용 보강');
+        vm.runInContext('_backfillRun = null;', local);
+        assert.strictEqual(running(), true, '삽화 창에서 그리는 중');
+        vm.runInContext('_lessonArt = { busy: false };', local);
+        assert.strictEqual(running(), false);
+    });
+
     await run('일괄 실행: 일부 누락 표시는 재시도 뒤에도 남음', async () => {
         const results = [{ ok: false, partial: true, error: '둘째 탭 실패' }, { ok: true, partial: false }];
         const report = plain(await call('runLessonQueue')(queueOf(1), async () => results.shift()));

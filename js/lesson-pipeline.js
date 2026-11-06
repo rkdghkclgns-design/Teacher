@@ -201,8 +201,10 @@ function pipelineSummary(run) {
     return run.stopped ? { toast: '전체 생성을 중지했습니다. 만든 내용은 저장했습니다.', kind: 'warning' } : { toast: '전체 생성을 마쳤습니다.', kind: 'success' };
 }
 
-// 기다리던 빈 탭의 안내가 남지 않게 한다. 내용을 읽거나 항목을 고치는 화면은 두고 탐색줄만 고친다
+// 기다리던 빈 탭의 안내가 남지 않게 한다. 내용을 읽거나 항목을 고치는 화면은 두고 탐색줄만 고친다.
+// 원문 칸에 쓰던 글을 먼저 넣는다(빈 탭을 손으로 쓰던 중이면 그 글이 탭에 들어가 다시 그리지 않고, 쓰던 칸도 그대로 둔다)
 function refreshFinishedLesson(mod) {
+    window.saveRawContent?.();
     const waiting = String(currentEditingModuleId) === String(mod.id) && !_lessonPanel && !getActiveTabContent(mod);
     if (waiting) renderEditor(mod);
     else window.refreshLessonNav?.(mod);

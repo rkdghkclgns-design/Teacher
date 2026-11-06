@@ -541,7 +541,8 @@ async function commitQbankMarkdown(mod, md) {
     mod.tabContents = { ...mod.tabContents, assessment: md };
     Object.assign(mod, withHistoryNote(mod, `문제은행 수정 (문항 ${lessonLintQuestions(md).length}개)`));
     await saveState();
-    if (_qbank?.moduleId !== moduleId) return String(currentEditingModuleId) === String(mod.id) ? renderEditor(mod) : undefined;
+    // 그사이 창을 닫았으면 그 차시(같은 객체)를 보고 있을 때만 다시 그린다. 다른 교과의 같은 번호 차시 화면은 그대로 둔다
+    if (_qbank?.moduleId !== moduleId) return getEditingModule() === mod ? renderEditor(mod) : undefined;
     _qbank = { ..._qbank, busy: false, dirty: true, editing: null, draft: null, status: '' };
     renderQbank();
 }

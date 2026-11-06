@@ -221,7 +221,8 @@ async function commitTabChange(mod, tabId, before, next, note) {
     setTabMarkdown(mod, tabId, next);
     mod.history = reviewHistory(mod, note);
     await saveState();
-    if (String(getEditingModule()?.id) === String(mod.id) && currentLessonTab === tabId) renderEditor(mod);
+    // 그 차시(같은 객체)를 보고 있을 때만 다시 그린다. 다른 교과의 같은 번호 차시나 같은 id의 최종 평가 화면에 이 차시를 그리지 않는다
+    if (getEditingModule() === mod && currentLessonTab === tabId) renderEditor(mod);
     return true;
 }
 

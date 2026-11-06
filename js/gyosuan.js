@@ -545,7 +545,7 @@ async function runGyosuanGeneration(moduleId, opts = {}) {
         Object.assign(mod, withHistoryNote(mod, keepDoc ? '슬라이드 편성안 AI 생성' : '교수안·슬라이드 편성안 AI 생성'));
         _gyosuanEditing = null;
         await saveGyosuan(mod);
-        if (String(currentEditingModuleId) === String(mod.id)) {
+        if (getEditingModule() === mod) { // 그 차시(같은 객체)를 보고 있을 때만. 다른 교과의 같은 번호 차시 화면은 그대로 둔다
             if (opts.background) window.refreshAfterGyosuan(mod);
             else renderEditor(mod);
         }

@@ -318,7 +318,7 @@ async function finishLessonArtChange(mod, moduleId, status) {
         _lessonArt = { ..._lessonArt, dirty: true, busy: false, status };
         return renderLessonArt();
     }
-    if (String(currentEditingModuleId) === String(moduleId)) renderEditor(mod);
+    if (getEditingModule() === mod) renderEditor(mod); // 그 차시(같은 객체)를 보고 있을 때만. 다른 교과의 같은 번호 차시 화면은 그대로 둔다
 }
 
 function placementContext(mod, tabId, place) {

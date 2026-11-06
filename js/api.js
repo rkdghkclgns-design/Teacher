@@ -2831,7 +2831,49 @@ window.cancelFileUpload = function (moduleId) {
     }
 }
 
+// 머리줄의 탭 생성 단추(이 탭 생성·전체 생성). 탭이 없는 최종 평가에는 두지 않는다(새 탭이 본문을 버린다. 최종 평가는 차시 목록의 카드에서 만든다)
+function tabGenerateButtonsHtml(mod, tabless) {
+    if (tabless) return '';
+    return `
+                    <button id="lesson-tab-generate" onclick="runTabJob('${mod.id}', currentLessonTab)"
+                        class="px-2.5 py-1.5 text-[0.6875rem] font-bold text-accent bg-accent/10 border border-accent/30 rounded hover:bg-accent/20 transition-colors flex items-center gap-1 shrink-0">
+                        <i class="ph-bold ph-sparkle"></i> 이 탭 생성
+                    </button>
+                    <button onclick="startLessonGeneration('${mod.id}')" title="빈 항목을 교안 탭, 교수안·슬라이드, 문제은행 순서로 만들기"
+                        class="px-2.5 py-1.5 text-[0.6875rem] font-bold text-white bg-accent rounded hover:bg-accentHover transition-colors flex items-center gap-1 shrink-0 ml-1">
+                        <i class="ph-bold ph-lightning"></i> 전체 생성
+                    </button>`;
+}
+
+// 아직 내용이 없는 탭의 안내와 만들기 단추. 탭이 없는 최종 평가는 탭 대신 최종 평가를 만든다(탭 생성은 본문을 버리고 새 탭을 만든다)
+function emptyTabPromptHtml(mod, tabless) {
+    const tabLabel = (typeof LESSON_TABS !== 'undefined' && Array.isArray(LESSON_TABS))
+        ? ((LESSON_TABS.find(t => t.id === currentLessonTab) || {}).label || '이 탭')
+        : '이 탭';
+    const title = tabless ? '아직 최종 평가 내용이 없습니다' : `아직 «${tabLabel}» 탭 내용이 없습니다`;
+    const hint = tabless ? '아래 버튼을 눌러 AI로 최종 평가를 만드세요.' : `아래 버튼을 눌러 AI로 «${tabLabel}» 탭 교안을 생성하세요.`;
+    const action = tabless ? 'promptAndGenerateMainQuest()' : `runTabJob('${mod.id}', currentLessonTab)`;
+    const label = tabless ? '최종 평가 만들기' : `«${tabLabel}» 탭 생성하기`;
+    return `
+            <div class="flex flex-col items-center justify-center text-center py-20 px-6 select-none">
+                <div class="w-16 h-16 mb-5 flex items-center justify-center rounded-2xl bg-accent/10 text-accent text-3xl">
+                    <i class="ph-bold ph-sparkle"></i>
+                </div>
+                <h3 class="text-lg font-bold text-gray-800 mb-2">${title}</h3>
+                <p class="text-sm text-gray-500 mb-6 leading-relaxed">${hint}<br>생성에는 수십 초가 걸릴 수 있습니다.</p>
+                <button onclick="${action}"
+                    class="px-5 py-2.5 text-sm font-bold text-white bg-accent rounded-lg hover:bg-accentHover transition-colors flex items-center gap-2 shadow-sm hover:-translate-y-0.5">
+                    <i class="ph-bold ph-lightning"></i> ${label}
+                </button>
+            </div>`;
+}
+
 function renderEditor(mod) {
+
+    window.saveRawContent?.(); // 칸을 바꾸기 전에 고치던 원문을 그 칸을 그린 차시·탭에 넣는다(칸을 벗어나기 전에 다시 그려도 잃지 않게)
+    // 탭이 없는 최종 평가는 본문 하나다. 기본학습 칸에 본문을 보이고(원문 칸·AI 명령줄·검수가 본문을 읽는다) 탭 생성 단추는 두지 않는다(tabs.js)
+    const tabless = typeof isTablessQuest === 'function' && isTablessQuest(mod);
+    if (tabless) currentLessonTab = 'basicLearn';
 
     window.clearAISelection?.(); // 다른 차시·탭에서 기억한 선택으로 고치지 않게
 
@@ -2910,21 +2952,7 @@ function renderEditor(mod) {
     } else if (_tabEmpty) {
 
         // [이슈#2] 미생성 탭 빈 화면 방지: 친절한 안내 + 생성 버튼 노출
-        const _tabLabel = (typeof LESSON_TABS !== 'undefined' && Array.isArray(LESSON_TABS))
-            ? ((LESSON_TABS.find(t => t.id === currentLessonTab) || {}).label || '이 탭')
-            : '이 탭';
-        htmlContent = `
-            <div class="flex flex-col items-center justify-center text-center py-20 px-6 select-none">
-                <div class="w-16 h-16 mb-5 flex items-center justify-center rounded-2xl bg-accent/10 text-accent text-3xl">
-                    <i class="ph-bold ph-sparkle"></i>
-                </div>
-                <h3 class="text-lg font-bold text-gray-800 mb-2">아직 «${_tabLabel}» 탭 내용이 없습니다</h3>
-                <p class="text-sm text-gray-500 mb-6 leading-relaxed">아래 버튼을 눌러 AI로 «${_tabLabel}» 탭 교안을 생성하세요.<br>생성에는 수십 초가 걸릴 수 있습니다.</p>
-                <button onclick="runTabJob('${mod.id}', currentLessonTab)"
-                    class="px-5 py-2.5 text-sm font-bold text-white bg-accent rounded-lg hover:bg-accentHover transition-colors flex items-center gap-2 shadow-sm hover:-translate-y-0.5">
-                    <i class="ph-bold ph-lightning"></i> «${_tabLabel}» 탭 생성하기
-                </button>
-            </div>`;
+        htmlContent = emptyTabPromptHtml(mod, tabless);
 
     } else {
 
@@ -2941,7 +2969,8 @@ function renderEditor(mod) {
 
     }
 
-
+    // 원문 칸을 채울 저장된 글(tabs.js tabSourceFor). 칸에 넣기 전에 그사이 다른 기능이 이 탭을 바꿨는지 이 글과 견준다(saveRawContent)
+    const drawnSource = typeof getActiveTabSource === 'function' ? getActiveTabSource(mod) : (mod.content || '');
 
     area.innerHTML = `
 
@@ -2957,15 +2986,7 @@ function renderEditor(mod) {
 
 
                             <div class="w-px h-4 bg-gray-300 mx-1"></div>
-
-                    <button id="lesson-tab-generate" onclick="runTabJob('${mod.id}', currentLessonTab)"
-                        class="px-2.5 py-1.5 text-[0.6875rem] font-bold text-accent bg-accent/10 border border-accent/30 rounded hover:bg-accent/20 transition-colors flex items-center gap-1 shrink-0">
-                        <i class="ph-bold ph-sparkle"></i> 이 탭 생성
-                    </button>
-                    <button onclick="startLessonGeneration('${mod.id}')" title="빈 항목을 교안 탭, 교수안·슬라이드, 문제은행 순서로 만들기"
-                        class="px-2.5 py-1.5 text-[0.6875rem] font-bold text-white bg-accent rounded hover:bg-accentHover transition-colors flex items-center gap-1 shrink-0 ml-1">
-                        <i class="ph-bold ph-lightning"></i> 전체 생성
-                    </button>
+${tabGenerateButtonsHtml(mod, tabless)}
                     <button onclick="runConventionCheck('${mod.id}')" class="ml-1 px-2.5 py-1.5 text-[0.6875rem] font-bold bg-rose-50 text-rose-600 border border-rose-200 rounded hover:bg-rose-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="콘텐츠 업무 설계 규칙으로 현재 탭 검사"><i class="ph-bold ph-list-checks"></i> 컨벤션 검수<span id="convention-check-count" class="hidden"></span></button>
                             <details id="lesson-tools-menu" class="relative">
                                 <summary class="list-none cursor-pointer px-3 py-1.5 text-xs font-bold bg-gray-50 text-gray-600 border border-gray-200 rounded hover:bg-gray-100 flex items-center gap-1"><i class="ph-bold ph-wrench"></i> 도구</summary>
@@ -3018,7 +3039,7 @@ function renderEditor(mod) {
 
                     <div id="render-view" class="markdown-body animate-fade-in">${htmlContent}</div>
 
-                    <textarea id="raw-view" data-module-id="${escapeHtml(String(mod.id))}" data-subject-id="${escapeHtml(String(lessonSubjectIdOf(mod)))}" data-tab-id="${currentLessonTab}" class="hidden w-full h-[600px] p-6 font-mono text-sm bg-gray-900 text-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-accent resize-y" spellcheck="false" onchange="saveRawContent()">${escapeHtml(typeof getActiveTabSource === 'function' ? getActiveTabSource(mod) : (mod.content || ''))}</textarea>
+                    <textarea id="raw-view" data-module-id="${escapeHtml(String(mod.id))}" data-subject-id="${escapeHtml(String(lessonSubjectIdOf(mod)))}" data-tab-id="${currentLessonTab}" class="hidden w-full h-[600px] p-6 font-mono text-sm bg-gray-900 text-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-accent resize-y" spellcheck="false" onchange="saveRawContent()">${escapeHtml(drawnSource)}</textarea>
 
                 </div>
 
@@ -3052,7 +3073,8 @@ function renderEditor(mod) {
 
             `;
 
-
+    const drawnRaw = document.getElementById('raw-view');
+    if (drawnRaw) drawnRaw.storedFrom = drawnSource; // 칸이 보이는 글(defaultValue)은 줄바꿈을 바꿔 담으므로 저장된 글을 따로 적어 둔다
 
     cmdBar.classList.remove('hidden');
     window.enhanceRawView?.();
@@ -3113,6 +3135,9 @@ window.toggleEditorMode = function (mode) {
         syncGyosuanView();
 
     } else {
+
+        // 숨기기 전에 고친 원문을 넣는다. 아래에서 이 칸의 글로 화면을 그리므로 넣지 않은 글이 숨은 칸에 남지 않게 한다
+        window.saveRawContent?.();
 
         renderView.classList.remove('hidden');
 
@@ -3236,36 +3261,77 @@ function lessonSubjectIdOf(mod) {
     return owner ?? currentSubjectId ?? '';
 }
 
+// 원문 칸을 그린 교과의 그 차시(최종 평가). 그사이 다른 교과를 열었어도 그린 교과에서 찾는다
+// (지금 교과의 같은 번호 차시나, 모든 교과가 같은 id인 최종 평가를 덮지 않게). 그 교과나 차시가 없어졌으면 null
+function rawViewLesson(rawView) {
+    const drawnIn = rawView.dataset.subjectId;
+    const moduleId = rawView.dataset.moduleId;
+    if (drawnIn === undefined || drawnIn === String(currentSubjectId ?? '')) return getEditingModule(moduleId || undefined) || null;
+    return moduleId ? lessonInSubject(drawnIn, moduleId) : null;
+}
+
 // 원문 칸(#raw-view)에 아직 넣지 않은 글. { mod, tabId, rawView, value }, 없으면 null.
-// 편집기를 그릴 때의 차시·탭에 넣는다(화면이 바뀌는 도중의 change가 다른 탭을 덮어쓰지 않게)
+// 편집기를 그릴 때의 교과·차시·탭에 넣는다(화면이 바뀌는 도중의 change가 다른 탭을 덮어쓰지 않게)
 function pendingRawEdit() {
     const rawView = document.getElementById('raw-view');
     if (!rawView) return null;
-    // 다른 교과의 차시를 그린 칸이면 넣지 않는다(지금 교과의 같은 번호 차시나, 모든 교과가 같은 id인 최종 평가를 덮지 않게)
-    const drawnIn = rawView.dataset.subjectId;
-    if (drawnIn !== undefined && drawnIn !== String(currentSubjectId ?? '')) return null;
-    const mod = getEditingModule(rawView.dataset.moduleId || undefined);
+    const mod = rawViewLesson(rawView);
     if (!mod) return null;
     const tabId = rawView.dataset.tabId || currentLessonTab;
+    // 칸이 저장된 글과 같으면 고치지 않은 것이다. 그 글을 칸의 새 기준으로 삼는다
+    // (다른 기능이 탭을 바꾸며 칸도 맞췄으면, 그 뒤에 고친 글을 그사이 바뀐 탭으로 잘못 보지 않게)
+    const shown = tabSourceFor(mod, tabId);
+    if (rawView.value === shown) {
+        rawView.storedFrom = shown;
+        return null;
+    }
     // 그린 뒤(또는 마지막으로 넣은 뒤) 손대지 않은 칸은 넣을 것이 없다. 처음 기준은 칸을 그린 글(defaultValue), 넣은 뒤에는 넣은 글(lastSaved).
     // 그사이 삽화 배치 같은 다른 기능이 탭을 바꿨어도 옛 글로 덮지 않는다
     const base = typeof rawView.lastSaved === 'string' ? rawView.lastSaved : rawView.defaultValue;
     if (typeof base === 'string' && rawView.value === base) return null;
-    // 칸을 채운 글과 같으면 고치지 않은 것이다(편집기는 첫머리를 정리해 보여 줄 때도 있다)
-    const shown = tabSourceFor(mod, tabId);
-    if (rawView.value === shown || rawView.value === cleanLessonOpening(shown)) return null;
+    // 첫머리를 정리한 글과 같아도 고치지 않은 것이다(편집기는 첫머리를 정리해 보여 줄 때도 있다)
+    if (rawView.value === cleanLessonOpening(shown)) return null;
     return { mod, tabId, rawView, value: rawView.value };
+}
+
+const RAW_UNSAVED_REASON = '넣지 못한 원문';
+
+// 칸을 채운 저장된 글(storedFrom)이 지금 탭과 다르면 그사이 다른 기능이 탭을 바꿨다. 예전 칸은 견줄 글이 없어 넣는다.
+// 탭을 바꾸며 칸도 지금 글로 맞춘 기능(칸의 기준 lastSaved가 지금 글)이면 바뀐 것으로 보지 않는다
+function rawBoxIsStale(rawView, stored) {
+    if (typeof rawView.storedFrom !== 'string' || rawView.storedFrom === stored) return false;
+    return !(typeof rawView.lastSaved === 'string' && rawView.lastSaved === stored);
+}
+
+// 칸을 그린(넣은) 뒤 다른 기능(탭 생성·그림 넣기·작업 기록 되돌리기 등)이 그 탭을 바꿨다. 칸의 옛 글로 덮지 않는다.
+// 칸의 글은 작업 기록에 '넣지 못한 원문'으로 남기고(기다리지 않는다) 칸을 저장된 글로 맞춘 뒤 알린다. 빈 칸은 남길 글이 없다
+function keepStoredRawTab({ mod, tabId, rawView, value }) {
+    const tab = (typeof LESSON_TABS !== 'undefined' && Array.isArray(LESSON_TABS) ? LESSON_TABS : []).find(item => item.id === tabId);
+    const place = mod.tabContents ? `${mod.title} · ${tab?.label || '이 탭'}` : mod.title;
+    if (value && typeof archiveContent === 'function') {
+        Promise.resolve(archiveContent({ title: place, content: value, images: mod.images, tabId, lesson: mod }, RAW_UNSAVED_REASON))
+            .catch(err => console.warn('[원문] 넣지 못한 원문을 작업 기록에 남기지 못했습니다:', err));
+    }
+    const stored = tabSourceFor(mod, tabId);
+    rawView.value = stored;
+    rawView.lastSaved = rawView.value; // 칸이 담은 글(줄바꿈을 바꿔 담는다)이 기준이다
+    rawView.storedFrom = stored;
+    const kept = value ? ` 고친 글은 작업 기록에 '${RAW_UNSAVED_REASON}'으로 남겼습니다.` : '';
+    window.showToast?.(`'${place}' 내용이 원문 칸을 연 뒤 다른 작업으로 바뀌어, 칸에서 고친 글을 넣지 않았습니다.${kept}`, 'warning');
 }
 
 window.saveRawContent = function () {
     const edit = pendingRawEdit();
     if (!edit) return;
     const { mod, tabId, rawView, value } = edit;
+    if (rawBoxIsStale(rawView, tabSourceFor(mod, tabId))) return keepStoredRawTab(edit); // 칸의 옛 글로 바뀐 탭을 덮지 않는다
     setTabMarkdown(mod, tabId, value);
     rawView.lastSaved = value; // 넣은 글이 이 칸의 새 기준이다(손대지 않으면 다시 넣지 않는다)
+    rawView.storedFrom = tabSourceFor(mod, tabId);
     // 어디에서도 쓰지 않게 된 그림만 지운다(용량 확보). 교수안·편성안에 붙여 넣은 그림, 삽화·판서 영상이 쓰는 그림은 남긴다(tabs.js)
     if (mod.images) dropUnusedLessonImages(mod);
     saveState();
+    if (getEditingModule() !== mod) return; // 다른 교과에서 그린 칸이면 지금 화면의 검수 표시와 미리 보기는 그대로 둔다
     window.syncReviewBadge?.(mod);
     window.refreshMdPreview?.();
 };
@@ -3561,7 +3627,11 @@ async function applyAiCommandResult(result) {
     const saved = await saveState();
     const raw = document.getElementById('raw-view');
     if (sameAiEditTarget(target, aiEditTargetNow()) && raw && String(raw.dataset.moduleId) === String(mod.id)) {
-        raw.value = raw.lastSaved = getActiveTabSource(mod); // 숨은 원문 칸도 맞춰 옛 글을 다시 넣지 않게
+        window.saveRawContent?.(); // 저장을 기다리는 동안 칸에 쓴 글은 맞추기 전에 넣는다(탭이 바뀌었으므로 작업 기록에 남는다)
+        const source = getActiveTabSource(mod);
+        raw.value = source; // 숨은 원문 칸도 맞춰 옛 글을 다시 넣지 않게
+        raw.lastSaved = raw.value;
+        raw.storedFrom = source;
         toggleEditorMode('view');
         window.syncReviewBadge?.(mod);
     }

@@ -172,6 +172,19 @@ async function run(name, fn) {
         assert.strictEqual(ctx.rendered, 1);
     });
 
+    await run('끝난 뒤 화면: 만드는 동안 다른 교과의 같은 번호 차시를 열었으면 그 화면을 다시 그리지 않는다(같은 객체일 때만 그린다)', async () => {
+        const ctx = makeContext(responder());
+        const mod = lesson(1);
+        const other = { ...lesson(1), title: '다른 교과의 같은 번호 차시' };
+        let open = mod;
+        ctx.getEditingModule = () => open;
+        ctx.saveState = async () => { ctx.saved = (ctx.saved || 0) + 1; open = other; }; // 저장하는 사이 다른 교과를 연다
+        assert.strictEqual(await ctx.generateGyosuan('m1'), true);
+        assert.ok(mod.gyosuan?.docMd, '시작한 차시에 넣는다');
+        assert.strictEqual(other.gyosuan, undefined);
+        assert.strictEqual(ctx.rendered, undefined, '다른 교과의 차시 화면은 그대로 둔다');
+    });
+
     await run('원고 정리: 강사 전용·이미지·코드·평가·교강사 가이드 제외', async () => {
         const ai = responder();
         const ctx = makeContext(ai);
