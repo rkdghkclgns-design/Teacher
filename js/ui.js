@@ -39,7 +39,8 @@ window.showToast = function (message, type = 'success') {
 // 창을 닫으면 열기 전에 포커스가 있던 곳으로 돌려준다
 // 창이 뜬 뒤 이 시간 안의 클릭·Enter·Esc는 받지 않는다(바깥·취소·확인 모두). 두 번 누른 클릭의 둘째가 막 뜬 창을 바로 닫거나 확인하지 않게
 const APP_DIALOG_GRACE_MS = 500;
-const APP_DIALOG_FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+// 내용 보기 창의 교안에는 접는 칸(details의 summary)과 재생 막대가 있는 영상·소리도 들어온다. 이것도 Tab으로 닿게 한다
+const APP_DIALOG_FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), details > summary:first-of-type, audio[controls], video[controls], [tabindex]:not([tabindex="-1"])';
 let _appDialogs = []; // 아래 창부터 위 창 순서
 let _appDialogSeq = 0;
 

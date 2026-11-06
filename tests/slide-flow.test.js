@@ -874,7 +874,7 @@ const draftLesson = () => ({ id: 'm1', title: '재미', hours: 1, tabContents: {
         const first = ctx.saveGyosuanRaw();
         const again = ctx.saveGyosuanRaw();
         await new Promise(resolve => setImmediate(resolve));
-        assert.strictEqual(ctx.asked.length, 1, '묻는 동안 다시 불러도 같은 저장을 기다린다');
+        assert.strictEqual(ctx.asked.length, 1, '묻는 동안 다시 불러도 같은 물음의 답을 기다린다');
         ctx.channels[0].onmessage({ data: { moduleId: 'm1' } });
         assert.deepStrictEqual([raw.value, ctx.elements['gyosuan-view'].innerHTML], ['내 편성안', ''], '넣지 않은 글이 있으면 칸을 옛 글로 다시 그리지 않는다');
         ctx.channels[0].onmessage({ data: { moduleId: 'other' } });
@@ -886,6 +886,56 @@ const draftLesson = () => ({ id: 'm1', title: '재미', hours: 1, tabContents: {
         assert.strictEqual(vm.runInContext('_gyosuanForeignChange', ctx), 'other', '묻는 동안 온 다른 차시의 알림은 지우지 않는다');
         ctx.channels[0].onmessage({ data: { moduleId: 'm1' } });
         assert.ok(ctx.elements['gyosuan-view'].innerHTML.includes('다른 탭에서 이 차시가 바뀌었습니다'), '넣을 글이 없으면 다시 그려 알린다');
+    });
+
+    await run('다른 탭 변경: 확인 창으로 포커스가 옮겨 가며 원문 칸이 다시 저장해도(onchange) 한 번만 묻고, 묻는 동안 다시 누른 Ctrl+S도 답을 기다린다', async () => {
+        const mod = lesson({ docMd: DOC, deckMd: DECK, sourceKey: 'k' });
+        const flush = () => new Promise(resolve => setImmediate(resolve));
+        let answer;
+        let open = false;
+        const nested = [];
+        const ctx = withLesson(mod, { confirm: () => {
+            if (open) return false; // 같은 확인 창이 떠 있으면 앱의 확인 창(showConfirm)은 겹쳐 띄우지 않고 false
+            open = true;
+            nested.push(ctx.saveGyosuanRaw()); // 창이 뜨며 칸을 벗어나 onchange가 그 자리에서 다시 부른다
+            return new Promise(resolve => { answer = resolve; });
+        } });
+        ctx.channels[0].onmessage({ data: { moduleId: 'm1' } });
+        ctx.toggleGyosuanEdit('deckMd');
+        ctx.elements['gyosuan-raw'] = { value: '내 편성안' };
+        const first = ctx.saveGyosuanRaw();
+        await flush();
+        let done = false;
+        const again = ctx.saveGyosuanRaw().then(() => { done = true; });
+        await flush();
+        assert.deepStrictEqual([ctx.asked.length, done], [1, false], '한 번만 묻고, 다시 누른 저장도 답할 때까지 끝나지 않는다');
+        answer(true);
+        await Promise.all([first, again, ...nested]);
+        assert.deepStrictEqual([mod.gyosuan.deckMd, ctx.saved], ['내 편성안', 1]);
+    });
+
+    await run('교수안 원문 칸: 저장하는 동안 더 고친 글도 칸을 벗어날 때 넣는다(먼저 시작한 저장에 묻히지 않게)', async () => {
+        const mod = lesson({ docMd: DOC, deckMd: DECK, sourceKey: 'k' });
+        const ctx = withLesson(mod);
+        const writes = [];
+        ctx.saveState = () => new Promise(resolve => writes.push(resolve)); // 큰 작업은 브라우저 저장이 오래 걸린다
+        const settle = async () => {
+            for (let i = 0; i < 6; i++) {
+                writes.splice(0).forEach(done => done());
+                await new Promise(resolve => setImmediate(resolve));
+            }
+        };
+        ctx.toggleGyosuanEdit('deckMd');
+        const raw = { value: '처음 고친 편성안' };
+        ctx.elements['gyosuan-raw'] = raw;
+        const first = ctx.saveGyosuanRaw(); // Ctrl+S
+        await new Promise(resolve => setImmediate(resolve));
+        raw.value = '이어서 더 고친 편성안'; // 저장이 끝나기 전에 이어 쓴다
+        const second = ctx.saveGyosuanRaw(); // 칸을 벗어남(onchange)
+        await settle();
+        await Promise.all([first, second]);
+        assert.strictEqual(mod.gyosuan.deckMd, '이어서 더 고친 편성안', '나중에 고친 글을 넣는다');
+        assert.strictEqual(ctx.hasPendingGyosuanRaw(), false, '넣지 않은 글이 남지 않는다');
     });
 
     await run('샘플: 스튜디오는 저장 없이 샘플 덱을 받는다', async () => {

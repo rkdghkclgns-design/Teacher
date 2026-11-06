@@ -27,10 +27,22 @@ if (_gyosuanTabs) {
 
 const isGyosuanForeignChanged = mod => _gyosuanForeignChange === String(mod.id);
 
+// 덮어쓸지 묻는 중인 물음 { mod, answer }. 묻는 동안 같은 차시를 다시 저장하면(칸을 벗어남·Ctrl+S·슬라이드 다시 만들기) 새로 묻지 않고 이 답을 기다린다
+let _gyosuanOverwriteAsk = null;
+
 // 다른 탭이 이 차시를 고쳤으면 덮어쓰기 전에 앱의 확인 창으로 묻는다(취소하면 false)
 async function allowGyosuanOverwrite(mod) {
+    if (_gyosuanOverwriteAsk?.mod === mod) return _gyosuanOverwriteAsk.answer;
     if (!isGyosuanForeignChanged(mod)) return true;
-    return confirmAsync('다른 탭에서 이 차시를 고쳤습니다. 이 탭의 내용으로 덮어쓸까요?\n취소한 뒤 새로고침하면 최신 내용을 불러옵니다.', { title: '다른 탭에서 고친 차시', okLabel: '덮어쓰기', tone: 'danger' });
+    // 물음을 먼저 걸어 두고 창은 다음 차례에 연다. 창으로 포커스가 옮겨 가며 원문 칸이 다시 저장해도(onchange) 이 답을 기다리게
+    const ask = { mod };
+    ask.answer = Promise.resolve()
+        .then(() => confirmAsync('다른 탭에서 이 차시를 고쳤습니다. 이 탭의 내용으로 덮어쓸까요?\n취소한 뒤 새로고침하면 최신 내용을 불러옵니다.', { title: '다른 탭에서 고친 차시', okLabel: '덮어쓰기', tone: 'danger' }))
+        .finally(() => {
+            if (_gyosuanOverwriteAsk === ask) _gyosuanOverwriteAsk = null;
+        });
+    _gyosuanOverwriteAsk = ask;
+    return ask.answer;
 }
 
 // 덮어쓴 차시의 '다른 탭에서 바뀜' 표시만 지운다(묻는 동안 다른 차시의 알림이 왔으면 그 표시는 남긴다)
@@ -244,20 +256,15 @@ function refreshGyosuanNote(mod) {
     if (note) note.textContent = gyosuanNoteText(mod);
 }
 
-// 넣는 중인 원문 저장(덮어쓸지 묻는 중일 수 있다). 그동안 다시 부르면(칸을 벗어남·Ctrl+S·슬라이드 다시 만들기) 같은 일을 기다린다
-let _gyosuanRawSaving = null;
-
-window.saveGyosuanRaw = function () {
-    _gyosuanRawSaving = _gyosuanRawSaving || putGyosuanRaw().finally(() => { _gyosuanRawSaving = null; });
-    return _gyosuanRawSaving;
-};
-
-// 넣을 글과 차시는 묻기 전에 잡아 둔다. 덮어쓰기를 묻는 동안 다른 차시로 옮겨도 쓰던 글은 그 차시에 넣는다
-async function putGyosuanRaw() {
+// 넣을 글과 차시는 묻기 전에 잡아 둔다. 덮어쓰기를 묻는 동안 다른 차시로 옮겨도 쓰던 글은 그 차시에 넣는다.
+// 부를 때마다 그때 칸의 글을 넣는다(앞 저장이 끝나기를 기다리는 동안 더 고친 글도 넣게). 덮어쓸지는 한 번만 묻는다(allowGyosuanOverwrite)
+window.saveGyosuanRaw = async function () {
     const pending = pendingGyosuanRaw();
     if (!pending) return;
     const { mod, raw, field } = pending;
     if (!(await allowGyosuanOverwrite(mod))) return;
+    // 같은 답을 기다린 다른 저장이 이 글을 이미 넣었으면 다시 저장하지 않는다
+    if (raw.value === (mod.gyosuan?.[field] || '')) return;
     // 슬라이드 화면 편집은 편성안을 고쳤다고 지우지 않는다. '슬라이드 다시 만들기'를 눌러야 바뀐다
     const deckDirty = field === 'deckMd' ? gyosuanHasScreenEdits(mod.gyosuan) : !!mod.gyosuan.deckDirty;
     mod.gyosuan = { ...mod.gyosuan, [field]: raw.value, deckDirty, updatedAt: new Date().toISOString() };
@@ -268,7 +275,7 @@ async function putGyosuanRaw() {
     syncSlidePanel(mod);
     // 저장은 입력 칸을 벗어날 때 일어난다. 누르는 중인 버튼을 다시 그리면 클릭을 잃으므로 안내 문구만 바꾼다
     refreshGyosuanNote(mod);
-}
+};
 
 // 교수안 원문 칸에 넣지 않은 글이 있는가(Ctrl+S 결과·창을 닫기 전에 묻는다)
 window.hasPendingGyosuanRaw = () => !!pendingGyosuanRaw();
