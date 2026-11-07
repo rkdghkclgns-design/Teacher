@@ -820,13 +820,15 @@ async function reinforceCurrentTab(moduleId, command = '') {
     await window.runLessonJob(moduleId, { label: `${shownLabel} AI로 고치기`, current: tabId, alerts: true }, async () => {
         try {
             window.setPipelineStatus('AI가 고친 글을 받고 있습니다...');
+            // 문항(문제은행 탭·최종 평가)은 문항 속 코드 주석 규칙을 받는다(code-comments-tool.js isCodeCommentQuiz)
+            const quizComments = typeof isCodeCommentQuiz === 'function' ? isCodeCommentQuiz(mod, tabId) : isQuestionBankTab(tabId);
             const systemInstruction = CONTEXT_CORE.personas.instructor +
                 '\n[규칙]\n- 기존 교안 내용을 유지하면서, 사용자의 보강 명령에 따라 내용을 개선하세요.\n- 전체 구조와 서식은 보존하되, 요청된 부분만 보강·수정하세요.\n- ' +
                 CONTEXT_CORE.rules.content_design + '\n- ' +
                 CONTEXT_CORE.rules.korean_period + '\n- ' +
                 (CONTEXT_CORE.rules.emoji_rule || '') +
                 (!isQuestionBankTab(tabId) && CONTEXT_CORE.rules.code_examples ? '\n- ' + CONTEXT_CORE.rules.code_examples : '') +
-                (isQuestionBankTab(tabId) ? '\n- 문항 속 코드(문제 글·보기·시작 코드)에도 한국어 주석을 넣습니다. 주석은 코드가 무엇을 하는지만 적고 정답, 출력 결과, 고칠 곳을 알려 주지 않습니다. 시작 코드에는 학습자가 채울 자리마다 무엇을 채울지 주석으로 적습니다.' : '');
+                (quizComments ? `\n- ${QUIZ_CODE_COMMENT_RULE}` : '');
 
             const userPrompt = `[현재 작업: ${tabMeta.label} 보강 재생성]\n모듈명: ${mod.title}\n\n[사용자 보강 명령]\n${reinforceCmd}\n\n[기존 교안 내용 — 이 내용을 기반으로 보강하세요]\n${existingContent}`;
 

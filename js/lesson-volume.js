@@ -584,8 +584,12 @@ window.fillLessonVolume = async function (id, tabId = 'basicLearn') {
     const current = String(storedTabMarkdown(mod, tabId) || '');
     if (!current.trim()) return window.showAlert(`먼저 ${label} 탭을 생성해 주세요.`);
     const target = learnTargetMinutes(mod, tabId);
-    const message = `${label}은 지금 낭독 약 ${readAloudMinutes(volumeShownText(mod, tabId))}분입니다. 목표 ${target}분이 될 때까지 모자란 내용 섹션 끝에 새 소주제를 이어 붙이고, 각 ## 제목의 시간(⏱)을 낭독 길이에 맞춰 다시 매깁니다. 컨벤션 필수 지적이 남은 섹션은 AI가 고쳐 쓸 수 있습니다. 주석이 모자란 코드 블록에는 주석만 더합니다. 끝나면 바뀐 섹션을 골라 반영하고, 채우기 전 글은 작업 기록에 남습니다.`;
-    const work = { volume: 1, volumeCalls: volumeCallEstimate(current, target), volumeMinutes: target, ...(tabId === 'advLearn' ? { volumeAdv: 1 } : {}) };
+    const message = `${label}은 지금 낭독 약 ${readAloudMinutes(volumeShownText(mod, tabId))}분입니다. 목표 ${target}분이 될 때까지 모자란 내용 섹션 끝에 새 소주제를 이어 붙이고, 각 ## 제목의 시간(⏱)을 낭독 길이에 맞춰 다시 매깁니다. 컨벤션 필수 지적이 남은 섹션은 AI가 고쳐 쓸 수 있습니다. 주석이 모자란 코드 블록에는 주석만 더하며, 이미 있던 블록도 함께 보아 AI 호출이 더 들 수 있습니다. 끝나면 바뀐 섹션을 골라 반영하고, 채우기 전 글은 작업 기록에 남습니다.`;
+    const volumeCalls = volumeCallEstimate(current, target);
+    // 늘린 뒤 주석 단계(fillVolumeJob)는 탭 전체를 본다: 있던 블록 가운데 주석이 모자란 블록과, 코드를 다루는 차시면 늘리는 호출마다 새 소주제(코드 블록) 몫을 센다
+    const newBlocks = lessonCodeTopic(mod) ? (volumeCalls - VOLUME_FIX_ROUNDS) * VOLUME_SUBTOPICS_MAX : 0;
+    const codeComments = typeof commentCallEstimate === 'function' ? commentCallEstimate(current, { lockedBlocks: lockedSectionBlocks(mod, tabId), extraBlocks: newBlocks }) : 0;
+    const work = { volume: 1, volumeCalls, volumeMinutes: target, ...(codeComments ? { codeComments } : {}), ...(tabId === 'advLearn' ? { volumeAdv: 1 } : {}) };
     if (!(await confirmWithEstimate(message, work, { title: `${label} 분량 채우기`, okLabel: '분량 채우기' }))) return;
     if (getEditingModule(id) !== mod) return;
     saveOpenEditsFor(mod, tabId); // 묻는 동안 고친 글도 넣고 시작한다

@@ -86,9 +86,10 @@ const LESSON_RULE_LIST = [
     { sev: 'warn', area: '코드 예제', rule: '코드 블록에 언어를 적고 닫습니다.', desc: '```python처럼 언어를 적어야 이름표가 붙습니다. 닫지 않은 코드 블록은 뒤의 본문까지 코드로 보입니다.' }
 ];
 
+// 정보(info, 이름표를 몰라 주석을 세지 못한 코드 블록 따위)는 고칠 지적이 아니라 필수에도 권장에도 세지 않는다
 const lintCounts = issues => {
     const required = issues.filter(issue => issue.sev === 'bad').length;
-    return { required, recommended: issues.length - required };
+    return { required, recommended: issues.filter(issue => issue.sev !== 'bad' && issue.sev !== 'info').length };
 };
 
 // 코드·주석·HTML 태그·표 구분선은 검사하지 않는다. keepInlineCode는 인라인 코드 안의 키 조합을 볼 때만 쓴다.

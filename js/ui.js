@@ -2146,7 +2146,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
 
         case 'main_quest':
 
-            systemInstruction = `${CONTEXT_CORE.personas.orchestrator}\n[작성 규칙]\n${buildFullRules()}\n- 과제에 시작 코드를 주면 학습자가 채울 자리마다 무엇을 채울지 한국어 주석으로 적고, 정답 코드는 주석에 적지 않습니다.`;
+            systemInstruction = `${CONTEXT_CORE.personas.orchestrator}\n[작성 규칙]\n${buildFullRules()}\n- ${QUIZ_CODE_COMMENT_RULE}`; // 최종 평가는 문항이다(data.js)
 
             userPrompt = `${thinkingPrefix}[현재 작업: 메인 퀘스트(교과 최종 과제) 설계]\n다음은 이 교과에 속한 차시들과 일일 퀘스트 내용입니다. 이를 모두 종합하여, 학습자가 교과 과정을 마스터했는지 평가할 수 있는 흥미로운 '메인 퀘스트' 스토리를 작성해주세요.\n\n차시 정보:\n${additionalContext}`;
 
@@ -2164,7 +2164,8 @@ function buildTaskContext(taskScope, additionalContext = "") {
 
         case 'edit':
 
-            systemInstruction = `${CONTEXT_CORE.personas.assistant}\n[규칙]\n- ${CONTEXT_CORE.rules.concise_edit}\n- 고친 글에 코드 블록이 있으면 코드 블록마다 한국어 주석을 넣고, 이미 있던 주석은 지우지 않습니다. 학습이해도·심화이해도 문항의 코드라면 주석에 정답, 출력 결과, 고칠 곳을 적지 않습니다.`;
+            // quiz: 문항(문제은행 탭·최종 평가)에서 고른 글이다(api.js runAICommand가 탭으로 정한다)
+            systemInstruction = `${CONTEXT_CORE.personas.assistant}\n[규칙]\n- ${CONTEXT_CORE.rules.concise_edit}\n- 고친 글에 코드 블록이 있으면 코드 블록마다 한국어 주석을 넣고, 이미 있던 주석은 지우지 않습니다.${additionalContext.quiz ? ' 이 글은 문항(학습이해도·심화이해도·최종 평가)입니다. 주석에 정답, 출력 결과, 고칠 곳을 적지 않습니다.' : ''}`;
 
             userPrompt = `[현재 작업: 텍스트 부분 수정]\n문맥:\n${cleanForAPI(additionalContext.context)}\n\n원본 텍스트:\n${additionalContext.selectedText}\n\n요청사항:\n${additionalContext.command}`;
 

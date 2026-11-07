@@ -3138,7 +3138,7 @@ ${tabGenerateButtonsHtml(mod, tabless)}
                             <button onclick="generateAllImagesInModule('${mod.id}')" id="img-batch-btn" class="px-3 py-1.5 text-xs font-bold bg-purple-50 text-purple-600 border border-purple-200 rounded hover:bg-purple-100 flex items-center gap-1 transition-colors hover:-translate-y-0.5"><i class="ph-bold ph-image-square"></i> 일괄 이미지 찾기</button>
                             <button onclick="sanitizeAllContent()" id="sanitize-btn" class="px-3 py-1.5 text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 flex items-center gap-1 transition-colors hover:-translate-y-0.5" title="교과의 모든 차시와 최종 평가에서 글 서식을 고치고, 아직 채우지 않은 그림 자리를 채웁니다"><i class="ph-bold ph-sparkle"></i> 콘텐츠 정리</button>
                             ${isQuestionBankTab(currentLessonTab) ? '' : `<button onclick="insertGamePictures('${mod.id}'); this.closest('details').open = false" id="game-picture-btn" class="px-3 py-1.5 text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 flex items-center gap-1 transition-colors" title="이 탭에서 예로 든 실제 게임을 AI가 찾아, 그 게임 그림을 위키백과에서 찾아 넣습니다(출처를 함께 적습니다). 위키백과에서 못 찾으면 검색 키가 있을 때 웹 검색으로 찾고, 그 그림에는 이용 조건 확인 필요라고 적습니다"><i class="ph-bold ph-game-controller"></i> 예시 게임 그림 넣기</button>`}
-                            <button onclick="startCodeComments('lesson'); this.closest('details').open = false" id="code-comment-btn" class="px-3 py-1.5 text-xs font-bold bg-cyan-50 text-cyan-700 border border-cyan-200 rounded hover:bg-cyan-100 flex items-center gap-1 transition-colors" title="이 차시의 모든 탭과 교수안·슬라이드 편성안에서 주석이 모자란 코드 블록에 AI가 주석만 더합니다. 코드 줄은 한 글자도 바꾸지 않고, 바꾸기 전 탭 글은 작업 기록에 남깁니다"><i class="ph-bold ph-chat-text"></i> 코드 주석 넣기</button>
+                            <button onclick="startCodeComments('lesson'); this.closest('details').open = false" id="code-comment-btn" class="px-3 py-1.5 text-xs font-bold bg-cyan-50 text-cyan-700 border border-cyan-200 rounded hover:bg-cyan-100 flex items-center gap-1 transition-colors" title="이 차시의 모든 탭에서 주석이 모자란 코드 블록에 AI가 주석만 더합니다. 코드 줄은 한 글자도 바꾸지 않고, 바꾸기 전 글은 작업 기록에 남깁니다"><i class="ph-bold ph-chat-text"></i> 코드 주석 넣기</button>
                             <label class="cursor-pointer px-3 py-1.5 text-xs font-bold bg-blue-50 text-blue-600 border border-blue-200 rounded hover:bg-blue-100 flex items-center gap-1 transition-colors" title="에디터에 이미지 삽입">
                                 <i class="ph-bold ph-image"></i> 이미지 삽입
                                 <input type="file" accept="image/*" class="hidden" multiple onchange="handleImageInputSelect(event)">
@@ -3571,6 +3571,32 @@ window.executeAICommand = async function () {
     }
 };
 
+// 글이 펜스 하나로 통째 감싸였는가(data.js fenceStateAfter와 같은 규칙): 첫 줄에 연 코드 블록이 마지막 줄에서 처음 닫히거나,
+// 이름표 없는 ```·```markdown으로 열고 마지막 줄에서 닫으며 그 안의 펜스 짝이 맞는다(감싼 글 안에 코드 블록이 든 답)
+function wrappedInOneFence(text) {
+    const lines = String(text ?? '').trim().split(/\r?\n/);
+    const [, lang] = lines[0].match(/^\s*`{3,}\s*([^\s`]*)\s*$/) || [];
+    if (lang === undefined || lines.length < 2 || !/^\s*`{3,}\s*$/.test(lines[lines.length - 1])) return false;
+    let fence = 0;
+    for (let k = 0; k < lines.length; k++) {
+        const was = fence;
+        fence = fenceStateAfter(fence, lines[k]);
+        if (was && !fence) {
+            if (k === lines.length - 1) return true;
+            break;
+        }
+    }
+    return /^(?:markdown|md)?$/i.test(lang) && !lines.slice(1, -1).reduce(fenceStateAfter, 0);
+}
+
+// 고른 글 고치기(edit) 답의 앞뒤 펜스: 답 전체를 감싼 펜스만 벗긴다. 고른 글도 그렇게 감싼 코드 블록이면(코드 블록을 골라 주석을 달아 달라고 했다) 펜스를 남긴다.
+// 코드 블록으로 끝나거나 시작하는 답은 감싼 것이 아니라 그대로 둔다(닫는 펜스가 지워져 뒤 섹션까지 코드가 되거나 # 주석 줄이 제목이 되지 않게)
+function editAnswerText(answer, selected) {
+    const text = String(answer ?? '').trim();
+    if (!wrappedInOneFence(text) || wrappedInOneFence(selected)) return text;
+    return text.split(/\r?\n/).slice(1, -1).join('\n').trim();
+}
+
 async function runAICommand() {
 
     const input = document.getElementById('ai-command-input');
@@ -3676,15 +3702,17 @@ async function runAICommand() {
             const selectedText = text.substring(selStart, selEnd);
             const context = text.substring(Math.max(0, selStart - 300), selStart);
 
-            const { systemInstruction, userPrompt } = buildTaskContext('edit', { context, selectedText, command });
+            // 문항(문제은행 탭·최종 평가)에서 고른 글이면 주석에 답을 적지 않게 묻는다(code-comments-tool.js isCodeCommentQuiz)
+            const editMod = getEditingModule(target.moduleId);
+            const quiz = typeof isCodeCommentQuiz === 'function' ? isCodeCommentQuiz(editMod, target.tabId) : isQuestionBankTab(target.tabId);
+            const { systemInstruction, userPrompt } = buildTaskContext('edit', { context, selectedText, command, quiz });
 
             const res = await callGemini(TEXT_MODEL, {
                 contents: [{ parts: [{ text: userPrompt + lessonAttachmentPrompt(currentEditingModuleId) }] }],
                 systemInstruction: { parts: [{ text: systemInstruction }] }
             });
 
-            let newText = extractText(res);
-            newText = newText.replace(/^```\w*\n?/i, '').replace(/\n?```$/i, '').trim();
+            const newText = editAnswerText(extractText(res), selectedText);
             result = { kind: 'edit', target, selStart, selEnd, selectedText, newText };
 
         } else if (aiCommandMode === 'image') {
