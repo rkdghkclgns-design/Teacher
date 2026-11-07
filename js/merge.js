@@ -73,15 +73,20 @@ async function fillMergedLearn(subj, lesson, draft, snapshot, target) {
     const fixed = await autoFixGeneratedTab({ tabId: 'basicLearn', md: volume.md, lockedBlocks: [], onStatus: setMergeStatus, rounds: VOLUME_FIX_ROUNDS, minSpokenChars: volume.targetChars, isStopped });
     // 고쳐 받은 체크리스트에도 다시 보기의 옛 (⏱) 시간이 남지 않게 뗀다(lesson-volume.js)
     const checked = typeof volumeChecklistText === 'function' ? volumeChecklistText(fixed, []) : fixed;
-    // 주석이 모자란 코드 블록에는 주석만 더한다(code-comments-tool.js)
-    const md = typeof addGeneratedCodeComments === 'function'
-        ? (await addGeneratedCodeComments({ md: checked, tabId: 'basicLearn', lockedBlocks: [], label: '기본학습', onStatus: setMergeStatus, isStopped, waitSignal: window.aiStopSignal?.() || null })).md
-        : checked;
-    return live() ? { md, volume } : { gone: true, md };
+    // 주석이 모자란 코드 블록에는 주석만 더한다(code-comments-tool.js). 결과(comments)는 저장한 뒤 끝 알림에 적는다(중지로 남은 블록도)
+    const commented = typeof addGeneratedCodeComments === 'function'
+        ? await addGeneratedCodeComments({ md: checked, tabId: 'basicLearn', lockedBlocks: [], label: '기본학습', onStatus: setMergeStatus, isStopped, waitSignal: window.aiStopSignal?.() || null, notify: false })
+        : { md: checked, run: null };
+    return live() ? { md: commented.md, volume, comments: commented.run } : { gone: true, md: commented.md };
 }
 
-// 병합을 마친 알림. 기본학습을 채웠으면 낭독 분량을 함께 알린다
-function mergeDoneText({ md, volume }) {
+// 병합을 마친 알림. 기본학습을 채웠으면 낭독 분량을, 주석을 보강했으면 그 결과(comments: codeCommentRun 결과)를 함께 알린다
+function mergeDoneText({ md, volume, comments = null }) {
+    const note = typeof commentDoneNote === 'function' ? commentDoneNote(comments).text : '';
+    return [mergeVolumeText(md, volume), note].filter(Boolean).join(' ');
+}
+
+function mergeVolumeText(md, volume) {
     if (!volume) return '병합 재생성이 완료되었습니다.';
     const minutes = readAloudMinutes(md);
     const resume = " 기본학습 탭 위 '분량 채우기'로 이어서 늘릴 수 있습니다.";

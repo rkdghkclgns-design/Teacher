@@ -128,12 +128,14 @@ async function runObjectiveAdd(mod, tabId, button) {
     setObjectiveStatus('새 학습 목표 세트를 만들고 있습니다...');
     try {
         const drafted = parseObjectiveSet(await askDesignJson(buildObjectiveSetPrompt(mod, objectiveTabMd(mod, tabId), hint)));
-        // 새 섹션의 주석이 모자란 코드 블록에는 주석만 더한다(code-comments-tool.js). 탭 전체는 돌리지 않고, 결과는 미리보기에서 본다
-        const set = typeof addGeneratedCodeComments === 'function'
-            ? { ...drafted, section: (await addGeneratedCodeComments({ md: drafted.section, tabId, quiz: isCodeCommentQuiz(mod, tabId), onStatus: setObjectiveStatus, notify: false })).md }
-            : drafted;
+        // 새 섹션의 주석이 모자란 코드 블록에는 주석만 더한다(code-comments-tool.js). 탭 전체는 돌리지 않고, 결과(넣지 못한 블록 포함)는 미리보기 안내에 적는다
+        const commented = typeof addGeneratedCodeComments === 'function'
+            ? await addGeneratedCodeComments({ md: drafted.section, tabId, quiz: isCodeCommentQuiz(mod, tabId), onStatus: setObjectiveStatus, notify: false })
+            : { md: drafted.section, run: null };
+        const set = { ...drafted, section: commented.md };
+        const note = typeof commentRunNote === 'function' ? commentRunNote(commented.run) : '';
         setObjectiveStatus('');
-        const approved = await previewAiChange(before, insertObjectiveSet(before, set), { title: '학습 목표 세트 미리보기', tabId });
+        const approved = await previewAiChange(before, insertObjectiveSet(before, set), { title: '학습 목표 세트 미리보기', tabId, note });
         if (approved === null || !(await commitTabChange(mod, tabId, before, approved, `학습 목표 추가: ${set.objective}`))) return;
         if (mod.objectives?.length && approved.includes(set.objective)) mod.objectives = [...mod.objectives, set.objective];
         await saveState();

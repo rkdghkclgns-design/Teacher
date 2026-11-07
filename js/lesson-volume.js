@@ -527,6 +527,35 @@ async function keepVolumeText(mod, md, tabId = 'basicLearn') {
     return `채운 글은 작업 기록에 '${VOLUME_UNAPPLIED_REASON}'으로 남겼습니다.`;
 }
 
+// 분량 채우기에서 반영할 글을 정하고 그 글에 주석을 넣는다. 결과 { plan: { base, next, note }, comments(codeCommentRun 결과 또는 null) },
+// 늘린 소주제를 붙일 섹션이 없어졌으면 { lost: 작업 기록에 남길 글 }.
+// plan: 채우는 동안 그 탭이 바뀌었으면(그림 지우기·두 번 눌러 고치기·원문 칸 등) 늘린 소주제를 지금 글에 이어 붙인 글이다(자동 수정은 반영하지 않는다).
+// 열어 둔 원문 칸의 글을 먼저 넣고 본다(미리 보기의 단추를 누르며 칸을 벗어나 넣으면 반영을 막는다).
+// comment가 참이면 반영할 글의 주석이 모자란 코드 블록에 주석만 더한다(code-comments-tool.js, commentOptions는 addGeneratedCodeComments 옵션).
+// 주석을 받는 동안 그 탭이 바뀌었으면 지금 글에 다시 붙이고 한 번 더 넣는다(주석을 넣은 글을 버리고 주석 없는 소주제를 저장하지 않게)
+async function volumeApplyText({ mod, tabId, before, fixed, volume, targetMinutes, label, isLive, comment = false, commentOptions = {} }) {
+    const stored = () => {
+        saveOpenEditsFor(mod, tabId);
+        return String(storedTabMarkdown(mod, tabId) || '');
+    };
+    const pick = () => {
+        const current = stored();
+        if (current === before) return { base: before, next: fixed, note: '' };
+        const rebased = rebaseVolumeParts(current, volume.parts, { targetMinutes, lockedBlocks: lockedSectionBlocks(mod, tabId), tabId, stopped: volume.stopped });
+        return rebased === null ? null : { base: current, next: rebased, note: `채우는 동안 ${label}이 바뀌어, 늘린 소주제를 지금 글에 이어 붙였습니다(자동 수정은 반영하지 않았습니다).` };
+    };
+    let plan = pick();
+    if (plan === null) return { lost: fixed };
+    if (!comment || typeof addGeneratedCodeComments !== 'function') return { plan, comments: null };
+    let added = await addGeneratedCodeComments({ ...commentOptions, md: plan.next });
+    if (isLive() && stored() !== plan.base) {
+        plan = pick();
+        if (plan === null) return { lost: added.md };
+        added = await addGeneratedCodeComments({ ...commentOptions, md: plan.next });
+    }
+    return { plan: { ...plan, next: added.md }, comments: added.run };
+}
+
 // 진행 막대 안에서 채운다. 늘린 소주제가 있으면 컨벤션 필수 지적을 고쳐 받고, 바뀐 섹션을 골라 반영한다(이전 글은 작업 기록에 '분량 채우기 전'으로 남는다). 그림은 만들지 않는다.
 // 다른 교과로 옮겨도 그 차시에 반영한다. 채우는 동안 그 학습 탭이 바뀌었으면(그림 지우기·두 번 눌러 고치기·원문 칸 등) 늘린 소주제를 지금 글에 이어 붙인다.
 // 반영하지 못하거나 반영하지 않기를 고른 채운 글은 작업 기록에 남긴다. tabId: 채우는 학습 탭(기본학습·심화학습)
@@ -549,28 +578,28 @@ async function fillVolumeJob({ mod, subj, before, snapshot, tabId = 'basicLearn'
     const fixed = fixable
         ? volumeChecklistText(await autoFixGeneratedTab({ tabId, md: volume.md, lockedBlocks, onStatus: window.setPipelineStatus, rounds: VOLUME_FIX_ROUNDS, minSpokenChars: volume.targetChars, isStopped }), lockedBlocks)
         : volume.md;
-    // 고쳐 받은 글의 주석이 모자란 코드 블록에는 주석만 더한다(code-comments-tool.js). 자동 수정과 같은 때만 한다
-    const filled = fixable && typeof addGeneratedCodeComments === 'function'
-        ? (await addGeneratedCodeComments({ md: fixed, tabId, lockedBlocks, label, onStatus: window.setPipelineStatus, isStopped, waitSignal: window.aiStopSignal?.() || null })).md
-        : fixed;
-    if (!isLive()) return window.showAlert(`${gone} 반영하지 못했습니다. ${await keep(filled)}`);
-    saveOpenEditsFor(mod, tabId); // 열어 둔 원문 칸의 글을 먼저 넣는다(미리 보기의 단추를 누르며 칸을 벗어나 넣으면 반영을 막는다)
-    const current = String(storedTabMarkdown(mod, tabId) || '');
-    let [base, next, rebaseNote] = [before, filled, ''];
-    if (current !== before) {
-        const rebased = rebaseVolumeParts(current, volume.parts, { targetMinutes, lockedBlocks: lockedSectionBlocks(mod, tabId), tabId, stopped: volume.stopped });
-        if (rebased === null) return window.showAlert(`채우는 동안 ${label}의 섹션 제목이 바뀌어 늘린 소주제를 붙일 자리를 찾지 못했습니다. ${await keep(filled)}`);
-        [base, next, rebaseNote] = [current, rebased, `채우는 동안 ${label}이 바뀌어, 늘린 소주제를 지금 글에 이어 붙였습니다(자동 수정은 반영하지 않았습니다).`];
-    }
+    if (!isLive()) return window.showAlert(`${gone} 반영하지 못했습니다. ${await keep(fixed)}`);
+    // 주석 보강은 자동 수정과 같은 때만 하고(fixable), 결과는 미리보기 안내와 반영한 뒤의 끝 알림에 적는다
+    const applied = await volumeApplyText({
+        mod, tabId, before, fixed, volume, targetMinutes, label, isLive, comment: fixable,
+        commentOptions: { tabId, lockedBlocks, label, onStatus: window.setPipelineStatus, isStopped, waitSignal: window.aiStopSignal?.() || null, notify: false }
+    });
+    if (applied.lost !== undefined) return window.showAlert(`채우는 동안 ${label}의 섹션 제목이 바뀌어 늘린 소주제를 붙일 자리를 찾지 못했습니다. ${await keep(applied.lost)}`);
+    const { plan, comments } = applied;
+    if (!isLive()) return window.showAlert(`${gone} 반영하지 못했습니다. ${await keep(plan.next)}`);
+    const { base, next } = plan;
     if (next === base) return window.showAlert(volumeSummaryText(volume, next, label));
     window.setPipelineStatus('바뀐 섹션을 골라 반영해 주세요.');
-    const choice = await previewAiChange(base, next, { title: `${label} 분량 채우기 미리보기`, tabId, note: [rebaseNote, volumeSummaryText(volume, next, label)].filter(Boolean).join(' '), cancelLabel: '반영하지 않기' });
+    const commentNote = typeof commentRunNote === 'function' ? commentRunNote(comments) : '';
+    const choice = await previewAiChange(base, next, { title: `${label} 분량 채우기 미리보기`, tabId, note: [plan.note, volumeSummaryText(volume, next, label), commentNote].filter(Boolean).join(' '), cancelLabel: '반영하지 않기' });
     if (choice === null || choice === base) return window.showToast?.(`분량 채우기를 반영하지 않았습니다. ${await keep(next)}`, 'info');
     const approved = choice === next ? choice : retimeVolumeChoice(choice, { targetMinutes, lockedBlocks: lockedSectionBlocks(mod, tabId), tabId });
     saveOpenEditsFor(mod, tabId);
     if (!isLive() || storedTabMarkdown(mod, tabId) !== base) return window.showAlert(`고르는 동안 ${label}이 바뀌어 반영하지 못했습니다. ${await keep(approved)}`);
     if (!(await commitTabChange(mod, tabId, base, approved, `${label} 분량 채우기(낭독 약 ${readAloudMinutes(approved)}분)`, '분량 채우기 전'))) return;
-    window.notifyLessonJobDone(volumeSummaryText(volume, approved, label), spokenChars(approved) >= volume.targetChars ? 'success' : 'warning');
+    const summary = volumeSummaryText(volume, approved, label);
+    const [doneText, commentWarn] = typeof withCommentNote === 'function' ? withCommentNote(summary, comments) : [summary, false];
+    window.notifyLessonJobDone(doneText, spokenChars(approved) >= volume.targetChars && !commentWarn ? 'success' : 'warning');
 }
 
 // 탭 위 '분량 채우기': 지금 학습 탭(기본학습·심화학습)에서 모자란 분량만 이어서 채운다. 시작 전에 호출 수·시간을 보이고 묻는다.

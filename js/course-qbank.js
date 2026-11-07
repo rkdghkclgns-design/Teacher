@@ -209,10 +209,12 @@ function appendQuestionsMd(md, questions) {
 
 /* ---------- CSV ---------- */
 // 스프레드시트 수식으로 실행되지 않게 막는다. 보기와 정답 칸은 '-1'이나 '='도 맞는 값이고 따옴표가 붙으면 LMS 채점이 틀리므로
-// 실행될 수 있는 수식(함수 호출, 외부 참조)만 막는다
-function csvCell(value, { answer = false } = {}) {
+// 실행될 수 있는 수식(함수 호출, 외부 참조)만 막는다. 코드 칸(code: 시작코드·테스트케이스)은 한 글자도 바뀌면 안 되므로 정답 칸처럼 다루고,
+// 첫 줄이 SQL·Lua 주석(-- 뒤 공백, 코드 주석 규칙대로 첫 줄 위에 단 주석)인 코드는 외부 참조(|)가 없으면 함수 호출이 있어도 막지 않는다
+function csvCell(value, { answer = false, code = false } = {}) {
     const text = String(value ?? '');
-    const formula = /^[=+\-@]/.test(text) && (!answer || /[(|!]/.test(text));
+    const commentFirst = code && /^--[ \t]/.test(text) && !text.includes('|');
+    const formula = /^[=+\-@]/.test(text) && !commentFirst && (!(answer || code) || /[(|!]/.test(text));
     const safe = formula ? `'${text}` : text;
     return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
@@ -220,6 +222,7 @@ function csvCell(value, { answer = false } = {}) {
 // 열은 LMS 업로드에 쓰는 develocket-slide(assets/course-model.js questionsToCsv @3a7303f)와 같다. 단원은 교과, 학습모듈은 차시다
 const QBANK_CSV_HEAD = ['문항ID', '단원', '학습모듈', '목표번호', '학습목표', '밴드', '유형', '복수정답', '문항', '보기1', '보기2', '보기3', '보기4', '보기5', '정답', '허용표기', '모범답안', '채점기준', '시작코드', '테스트케이스', '루브릭', '해설', '검수'];
 const QBANK_CSV_ANSWER_HEADS = ['보기1', '보기2', '보기3', '보기4', '보기5', '정답', '허용표기'];
+const QBANK_CSV_CODE_HEADS = ['시작코드', '테스트케이스'];
 const QBANK_CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩';
 
 function choiceNumbers(answer) {
@@ -254,7 +257,7 @@ function questionCsvRows(questions, objectives, context) {
     });
 }
 
-const csvRow = row => row.map((cell, index) => csvCell(cell, { answer: QBANK_CSV_ANSWER_HEADS.includes(QBANK_CSV_HEAD[index]) })).join(',');
+const csvRow = row => row.map((cell, index) => csvCell(cell, { answer: QBANK_CSV_ANSWER_HEADS.includes(QBANK_CSV_HEAD[index]), code: QBANK_CSV_CODE_HEADS.includes(QBANK_CSV_HEAD[index]) })).join(',');
 const toCsv = rows => `\uFEFF${[QBANK_CSV_HEAD, ...rows].map(csvRow).join('\r\n')}`;
 
 function questionsCsv(questions, objectives, context) {
@@ -348,9 +351,22 @@ async function askQuestionModel(prompt) {
 
 const withMultiNotice = stem => (LESSON_LINT_MULTI_NOTICE.test(stem) ? stem : `${stem} (모두 고르시오)`.trim());
 
+// 문항 생성 답의 본문: 답 전체를 감싼 펜스(첫 줄의 펜스와 끝 줄의 펜스, 안쪽 펜스 짝이 맞을 때)만 벗긴다. 앞 펜스가 없는 답 끝의 ```는
+// 마지막 문항 해설의 풀이 코드 블록을 닫는 펜스라 남긴다. 감싼 펜스를 닫기 전에 출력 한도로 잘렸으면(뒤 줄의 짝이 맞으면) 여는 줄만 떼고,
+// 코드 블록 안에서 끝났으면 닫는다(뒤에 넣는 문항이 코드로 들어가지 않게)
+function questionAnswerBody(text) {
+    const body = String(text || '').replace(/\r\n/g, '\n').trim();
+    const lines = body.split('\n');
+    const balanced = list => !list.reduce(nextCodeFence, 0);
+    const opened = lines.length > 1 && /^```[\w-]*$/.test(lines[0]);
+    const inner = opened && lines.length > 2 && /^```$/.test(lines[lines.length - 1]) && balanced(lines.slice(1, -1)) ? lines.slice(1, -1)
+        : opened && balanced(lines.slice(1)) ? lines.slice(1) : lines;
+    return closeOpenFence(inner.join('\n'));
+}
+
 // 모델이 쓴 태그와 달라도 사용자가 고른 목표·밴드·유형으로 맞춘다
 function parseGeneratedQuestions(text, spec) {
-    const body = String(text || '').replace(/\r\n/g, '\n').trim().replace(/^```\w*\n/, '').replace(/\n```$/, '');
+    const body = questionAnswerBody(text);
     const multi = spec.type === '객관식' && !!spec.multi;
     return lessonLintQuestions(body)
         .map(parseQuestionBlock)
@@ -739,13 +755,15 @@ async function runQuestionGenerate(mod) {
     }
 }
 
-// 생성 중에 대화상자를 닫아도 비용을 들여 만든 문항은 버리지 않는다. trackId: 만들기 시작한 갈래
+// 생성 중에 대화상자를 닫아도 비용을 들여 만든 문항은 버리지 않는다. trackId: 만들기 시작한 갈래.
+// 문항 코드에 주석을 다 넣지 못했으면(코드를 바꾼 답·서버 오류·하루 한도) 상태 글에 적는다(code-comments-tool.js questionCommentNote)
 async function writeQuestionsIfOpen(mod, moduleId, questions, trackId = 'basic') {
     const track = lessonTrack(trackId);
     const md = appendQuestionsMd(qbankMarkdown(mod, track.id), questions);
     mod.tabContents = { ...mod.tabContents, [track.bank]: md };
     await saveState();
-    if (_qbank?.moduleId === moduleId) _qbank = { ..._qbank, dirty: true, status: `${track.label} 문제은행에 ${questions.length}문항을 추가했습니다.` };
+    const note = typeof questionCommentNote === 'function' ? questionCommentNote(questions) : '';
+    if (_qbank?.moduleId === moduleId) _qbank = { ..._qbank, dirty: true, status: [`${track.label} 문제은행에 ${questions.length}문항을 추가했습니다.`, note].filter(Boolean).join(' ') };
 }
 
 function closeQbank() {

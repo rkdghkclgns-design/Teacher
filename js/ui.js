@@ -2167,7 +2167,8 @@ function buildTaskContext(taskScope, additionalContext = "") {
             // quiz: 문항(문제은행 탭·최종 평가)에서 고른 글이다(api.js runAICommand가 탭으로 정한다)
             systemInstruction = `${CONTEXT_CORE.personas.assistant}\n[규칙]\n- ${CONTEXT_CORE.rules.concise_edit}\n- 고친 글에 코드 블록이 있으면 코드 블록마다 한국어 주석을 넣고, 이미 있던 주석은 지우지 않습니다.${additionalContext.quiz ? ' 이 글은 문항(학습이해도·심화이해도·최종 평가)입니다. 주석에 정답, 출력 결과, 고칠 곳을 적지 않습니다.' : ''}`;
 
-            userPrompt = `[현재 작업: 텍스트 부분 수정]\n문맥:\n${cleanForAPI(additionalContext.context)}\n\n원본 텍스트:\n${additionalContext.selectedText}\n\n요청사항:\n${additionalContext.command}`;
+            // inCode: 고른 글이 코드 블록 안의 줄이다(api.js codeEditSpan). 답을 글 정리 없이 그 줄 자리에 넣으므로 펜스 없이 줄만 받는다
+            userPrompt = `[현재 작업: 텍스트 부분 수정]\n문맥:\n${cleanForAPI(additionalContext.context)}\n\n원본 텍스트:\n${additionalContext.selectedText}\n\n${additionalContext.inCode ? `(원본 텍스트는 ${additionalContext.codeLang ? `${additionalContext.codeLang} ` : ''}코드 블록 안의 줄입니다. 펜스(\`\`\`) 없이 고친 줄만 돌려주고, 줄마다 들여쓰기를 그대로 둡니다.)\n\n` : ''}요청사항:\n${additionalContext.command}`;
 
             break;
 

@@ -3483,7 +3483,7 @@ window.saveRawContent = function () {
     if (!edit) return;
     const { mod, tabId, rawView, value } = edit;
     if (rawBoxIsStale(edit)) return keepStoredRawTab(edit); // 칸의 옛 글로 바뀐 탭을 덮지 않는다
-    setTabMarkdown(mod, tabId, value);
+    setTabMarkdownKeyed(mod, tabId, value); // 코드 블록에 주석만 더한 글이면 교수안 원고 표시도 맞춘다(tabs.js)
     rawView.lastSaved = value; // 넣은 글이 이 칸의 새 기준이다(손대지 않으면 다시 넣지 않는다)
     rawView.storedFrom = tabSourceFor(mod, tabId);
     // 어디에서도 쓰지 않게 된 그림만 지운다(용량 확보). 교수안·편성안에 붙여 넣은 그림, 삽화·판서 영상이 쓰는 그림은 남긴다(tabs.js)
@@ -3589,12 +3589,98 @@ function wrappedInOneFence(text) {
     return /^(?:markdown|md)?$/i.test(lang) && !lines.slice(1, -1).reduce(fenceStateAfter, 0);
 }
 
-// 고른 글 고치기(edit) 답의 앞뒤 펜스: 답 전체를 감싼 펜스만 벗긴다. 고른 글도 그렇게 감싼 코드 블록이면(코드 블록을 골라 주석을 달아 달라고 했다) 펜스를 남긴다.
-// 코드 블록으로 끝나거나 시작하는 답은 감싼 것이 아니라 그대로 둔다(닫는 펜스가 지워져 뒤 섹션까지 코드가 되거나 # 주석 줄이 제목이 되지 않게)
+// 고친 글의 앞뒤를 다듬는다. 고른 글이 들여쓴 줄로 시작하면(코드 줄·들여쓴 목록) 첫 줄 들여쓰기는 두고 앞의 빈 줄과 끝 공백만 뗀다(넣을 자리가 그 들여쓰기를 지운다)
+const trimEditAnswer = (text, keepIndent) => (keepIndent ? String(text ?? '').replace(/^\s*\n/, '').trimEnd() : String(text ?? '').trim());
+
+// 답을 통째 감싼 바깥 겹(이름표 없는 ```·```markdown·```md로 열고 이름표 없는 펜스로 닫는다)을 벗긴 안쪽 글. 그런 겹이 아니면 null
+function outerFenceInner(text, keepIndent = false) {
+    const lines = String(text ?? '').trim().split(/\r?\n/);
+    if (lines.length < 2 || !/^\s*`{3,}\s*(?:markdown|md)?\s*$/i.test(lines[0]) || !/^\s*`{3,}\s*$/.test(lines[lines.length - 1])) return null;
+    return trimEditAnswer(lines.slice(1, -1).join('\n'), keepIndent);
+}
+
+// 펜스 하나로 통째 감싼 겹 수: 감싼 글이면 1, 그 바깥이 이름표 없는 ```·```markdown이고 안이 다시 통째 감싼 글이면 겹을 더 센다
+function fenceWrapDepth(text) {
+    if (!wrappedInOneFence(text)) return 0;
+    const inner = outerFenceInner(text);
+    return 1 + (inner === null ? 0 : fenceWrapDepth(inner));
+}
+
+const fenceLineCount = text => String(text ?? '').split(/\r?\n/).filter(line => /^\s*`{3,}/.test(line)).length;
+
+// 고른 글 고치기(edit) 답의 앞뒤 펜스: 답 전체를 감싼 펜스만 벗긴다. 고른 글도 감싼 코드 블록이면(코드 블록을 골라 주석을 달아 달라고 했다)
+// 답이 그 위에 한 겹 더 감쌌을 때만 바깥 한 겹을 벗긴다. 고른 글의 펜스 짝이 맞지 않으면(코드 블록 끝을 걸쳐 골랐다) 이름표 없는 ```·```markdown 감싸개 안의
+// 펜스 줄 수가 고른 글과 같을 때만 감싸개로 보고 벗긴다. 코드 블록으로 끝나거나 시작하는 답은 감싼 것이 아니라 그대로 둔다
+// (닫는 펜스가 지워져 뒤 섹션까지 코드가 되거나 # 주석 줄이 제목이 되지 않게)
 function editAnswerText(answer, selected) {
-    const text = String(answer ?? '').trim();
-    if (!wrappedInOneFence(text) || wrappedInOneFence(selected)) return text;
-    return text.split(/\r?\n/).slice(1, -1).join('\n').trim();
+    const keepIndent = /^[ \t]/.test(String(selected ?? ''));
+    const text = trimEditAnswer(answer, keepIndent);
+    if (String(selected ?? '').split(/\r?\n/).reduce(fenceStateAfter, 0)) {
+        const inner = outerFenceInner(text, keepIndent);
+        return inner !== null && fenceLineCount(inner) === fenceLineCount(selected) ? inner : text;
+    }
+    if (!wrappedInOneFence(text)) return text;
+    if (wrappedInOneFence(selected) && fenceWrapDepth(text) <= fenceWrapDepth(selected)) return text;
+    return trimEditAnswer(text.split(/\r?\n/).slice(1, -1).join('\n'), keepIndent);
+}
+
+// AI 응답의 날 글: 생각 글(thought)을 뺀 글 조각을 이어 붙인 그대로(code-comments-tool.js codeCommentAsk와 같다)
+const aiResponseText = data => (data?.candidates?.[0]?.content?.parts || []).filter(part => !part.thought).map(part => part.text || '').join('');
+
+// 고른 글 고치기의 답을 넣을 글로: 글 정리(extractText) 뒤 감싼 펜스를 벗긴다(editAnswerText).
+// 고른 글이 코드 블록 안에서 시작하면(블록 끝을 걸쳐 골랐다) 그 블록의 여는 펜스(openFence)를 답 앞에 붙여 정리해, 정리가 코드 줄을 글로 고치지 않게 한다
+// (# 줄 앞 들여쓰기 지우기·목록 줄 들여쓰기·닫는 펜스 앞 빈 줄). 붙인 펜스는 정리한 뒤 뗀다. ~~~ 블록은 정리가 ``` 만 알아 ``` 를 붙인다
+function editAnswerFromResponse(data, selected, openFence = '') {
+    if (!openFence) return editAnswerText(extractText(data), selected);
+    const prefix = openFence.startsWith('~') ? '```' : openFence;
+    const answer = editAnswerText(aiResponseText(data), selected);
+    const cleaned = extractText({ candidates: [{ content: { parts: [{ text: `${prefix}\n${answer}` }] } }] });
+    return cleaned.startsWith(`${prefix}\n`) ? trimEditAnswer(cleaned.slice(prefix.length + 1), /^[ \t]/.test(String(selected ?? ''))) : answer;
+}
+
+const lineOfOffset = (text, at) => String(text ?? '').slice(0, at).split('\n').length - 1;
+
+// 그 줄(0부터)을 코드 줄로 품은 코드 블록(code-comments.js codeCommentBlocks, ``` · ~~~. 여는·닫는 펜스 줄은 빼고). 없으면 null
+function codeBlockAtLine(text, line) {
+    if (typeof codeCommentBlocks !== 'function') return null;
+    return codeCommentBlocks(String(text ?? '')).find(item => item.openLine < line && (item.closeLine < 0 || line < item.closeLine)) || null;
+}
+
+// 고른 글이 코드 블록 안의 줄뿐인가. 그렇다면 고를 범위를 줄 단위로 넓힌 { block, start, end }(end는 줄바꿈 앞), 아니면 null.
+// 펜스 줄을 걸쳐 고른 글은 코드 블록 안의 줄이 아니다(editAnswerFromResponse가 다룬다)
+function codeEditSpan(text, selStart, selEnd) {
+    if (!(selEnd > selStart)) return null;
+    const source = String(text ?? '');
+    const block = codeBlockAtLine(source, lineOfOffset(source, selStart));
+    if (!block || (block.closeLine >= 0 && lineOfOffset(source, selEnd - 1) >= block.closeLine)) return null;
+    const close = source.indexOf('\n', selEnd - 1);
+    return { block, start: source.lastIndexOf('\n', selStart - 1) + 1, end: close < 0 ? source.length : close };
+}
+
+const CODE_FENCE_LINE = /^\s*(?:`{3,}|~{3,})/;
+
+// 코드 블록 안의 줄을 고친 답(data: AI 응답, original: 고른 줄). 글 정리(extractText)를 거치지 않은 날 글에서 앞뒤 빈 줄과 답을 감싼 펜스만 뗀다.
+// extractText는 # 줄 앞 들여쓰기·목록 줄 들여쓰기를 고쳐 코드가 바뀐다. 원래 줄에 주석만 더한 답(code-comments.js codeCommentVerify)이면
+// 원래 줄 그대로에 그 주석을 끼운 글을 넣고, 코드 줄이 바뀐 답이면 확인 창에 알린다(고쳐 달라고 한 것이 코드일 수 있어 막지는 않는다). { text, note }
+function codeEditAnswer(data, block, original) {
+    const lines = aiResponseText(data).replace(/\r\n?/g, '\n').split('\n');
+    while (lines.length && !lines[0].trim()) lines.shift();
+    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+    const mine = String(original ?? '').split('\n');
+    const wrapped = lines.length >= 2 && CODE_FENCE_LINE.test(lines[0]) && CODE_FENCE_LINE.test(lines[lines.length - 1])
+        && !CODE_FENCE_LINE.test(mine[0]) && !CODE_FENCE_LINE.test(mine[mine.length - 1]);
+    const body = wrapped ? lines.slice(1, -1) : lines;
+    if (!block.lang || typeof codeCommentVerify !== 'function') return { text: body.join('\n'), note: '' };
+    const verified = codeCommentVerify({ lang: block.lang, label: block.label, lines: mine }, body);
+    if (verified.ok) return { text: verified.code, note: '' };
+    return { text: body.join('\n'), note: `AI 답이 원래 코드 줄을 바꿨습니다(${verified.reason}). 반영하기 전에 바뀐 곳을 확인해 주세요.` };
+}
+
+// 고친 글(코드 블록 밖을 고른 답)의 주석이 모자란 코드 블록에는 주석만 더한다(code-comments-tool.js. 문항이면 문항 모드). { text, note(넣은 결과·넣지 못한 블록) }
+async function commentedEditAnswer(newText, tabId, quiz) {
+    if (typeof addGeneratedCodeComments !== 'function') return { text: newText, note: '' };
+    const { md, run } = await addGeneratedCodeComments({ md: newText, tabId, quiz, notify: false });
+    return { text: md, note: typeof commentRunNote === 'function' ? commentRunNote(run) : '' };
 }
 
 async function runAICommand() {
@@ -3699,21 +3785,26 @@ async function runAICommand() {
             if (selStart === selEnd || selStart < 0) throw new Error("수정할 텍스트를 영역 선택해주세요.");
 
             const text = rawView.value;
+            // 코드 블록 안의 줄만 골랐으면 줄 단위로 넓혀 보낸다(줄 가운데부터 바꾸면 들여쓰기가 어긋난다). 답은 글 정리를 거치지 않고 받는다
+            const code = codeEditSpan(text, selStart, selEnd);
+            if (code) [selStart, selEnd] = [code.start, code.end];
             const selectedText = text.substring(selStart, selEnd);
             const context = text.substring(Math.max(0, selStart - 300), selStart);
 
             // 문항(문제은행 탭·최종 평가)에서 고른 글이면 주석에 답을 적지 않게 묻는다(code-comments-tool.js isCodeCommentQuiz)
             const editMod = getEditingModule(target.moduleId);
             const quiz = typeof isCodeCommentQuiz === 'function' ? isCodeCommentQuiz(editMod, target.tabId) : isQuestionBankTab(target.tabId);
-            const { systemInstruction, userPrompt } = buildTaskContext('edit', { context, selectedText, command, quiz });
+            const { systemInstruction, userPrompt } = buildTaskContext('edit', { context, selectedText, command, quiz, ...(code ? { inCode: true, codeLang: code.block.label } : {}) });
 
             const res = await callGemini(TEXT_MODEL, {
                 contents: [{ parts: [{ text: userPrompt + lessonAttachmentPrompt(currentEditingModuleId) }] }],
                 systemInstruction: { parts: [{ text: systemInstruction }] }
             });
 
-            const newText = editAnswerText(extractText(res), selectedText);
-            result = { kind: 'edit', target, selStart, selEnd, selectedText, newText };
+            // 코드 블록 안에서 시작해 블록 끝을 걸쳐 고른 글은 그 블록의 여는 펜스를 붙여 정리한다(editAnswerFromResponse)
+            const openFence = code ? '' : codeBlockAtLine(text, lineOfOffset(text, selStart))?.fence || '';
+            const edited = code ? codeEditAnswer(res, code.block, selectedText) : await commentedEditAnswer(editAnswerFromResponse(res, selectedText, openFence), target.tabId, quiz);
+            result = { kind: 'edit', target, selStart, selEnd, selectedText, newText: edited.text, note: edited.note };
 
         } else if (aiCommandMode === 'image') {
             const baseText = rawView.value;
@@ -3795,7 +3886,7 @@ async function applyAiCommandResult(result) {
             window.showAlert(AI_RESULT_MOVED);
             return false;
         }
-        if (!(await confirmAiEdit(result.selectedText, result.newText))) return false;
+        if (!(await confirmAiEdit(result.selectedText, result.newText, { note: result.note || '' }))) return false;
     }
     // 미리 보는 동안 다른 작업이 글을 바꿨을 수 있어 넣기 직전의 글로 다시 만든다
     const source = storedTabMarkdown(mod, target.tabId);
@@ -3808,7 +3899,7 @@ async function applyAiCommandResult(result) {
         if (!mod.images || typeof mod.images !== 'object') mod.images = {};
         mod.images[result.imgId] = result.b64;
     }
-    setTabMarkdown(mod, target.tabId, next);
+    setTabMarkdownKeyed(mod, target.tabId, next);
     window.clearAISelection?.();
     const saved = await saveState();
     const raw = document.getElementById('raw-view');

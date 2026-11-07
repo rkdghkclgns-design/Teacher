@@ -288,6 +288,14 @@ function setTabMarkdown(mod, tabId, md) {
     mod.content = LESSON_TABS.map(tab => mod.tabContents[tab.id] || '').filter(Boolean).join('\n\n---\n\n');
 }
 
+// setTabMarkdown과 같고, 바뀐 것이 코드 블록 주석뿐이면 교수안 원고 표시도 맞춘다(code-comments-tool.js gyosuanKeyedTracks·rekeyCommentedGyosuan).
+// 주석만 더한 교안 때문에 교수안을 다시 만들라고 하지 않는다(AI 수정 제안·고른 글 AI 고치기·원문 칸 저장). 그 파일이 없으면 setTabMarkdown과 같다
+function setTabMarkdownKeyed(mod, tabId, md) {
+    const keyed = typeof gyosuanKeyedTracks === 'function' ? gyosuanKeyedTracks(mod) : [];
+    setTabMarkdown(mod, tabId, md);
+    if (typeof rekeyCommentedGyosuan === 'function') rekeyCommentedGyosuan(mod, keyed);
+}
+
 // 차시 안에서 그림(local:그림 id)을 가리킬 수 있는 글: 합친 본문, 탭 글, 두 갈래(기본학습·심화학습)의 교수안·편성안(원문 칸에 붙여 넣은 그림은 mod.images에 있다),
 // 슬라이드 화면 편집본, 부른 쪽이 더 주는 글(다시 만든 탭에 돌려 넣을 고정 섹션). 'local:'이 없는 글과 글이 아닌 값은 뺀다
 function lessonImageRefTexts(mod, extraTexts = []) {
@@ -621,9 +629,13 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             // 분량을 채운 학습 탭은 고쳐 받은 체크리스트에도 다시 보기의 옛 (⏱) 시간이 남지 않게 뗀다(lesson-volume.js)
             if (volume && typeof volumeChecklistText === 'function') resultText = volumeChecklistText(resultText, lockedBlocks);
         }
-        // 주석이 모자란 코드 블록에는 주석만 더한다(code-comments-tool.js). 자동 수정과 같은 때에, 미리보기·작업 기록·저장·그림보다 앞에서 한다(코드 블록 안이라 낭독 분량은 그대로다)
+        // 주석이 모자란 코드 블록에는 주석만 더한다(code-comments-tool.js). 자동 수정과 같은 때에, 미리보기·작업 기록·저장·그림보다 앞에서 한다(코드 블록 안이라 낭독 분량은 그대로다).
+        // 결과는 저장한 뒤 끝 알림에 적는다(다시 만들기 미리보기에서 반영하지 않으면 알리지 않는다. 중지로 남은 블록도 적는다)
+        let commentRun = null;
         if (typeof addGeneratedCodeComments === 'function' && !partialDueToError && !_tabGenStop && !volumeQuit) {
-            resultText = (await addGeneratedCodeComments({ md: resultText, tabId, quiz: isCodeCommentQuiz(mod, tabId), lockedBlocks, label: tabMeta.label, onStatus: setLoadingText, onRetry, isStopped: () => _tabGenStop, waitSignal: stopSignal })).md;
+            const commented = await addGeneratedCodeComments({ md: resultText, tabId, quiz: isCodeCommentQuiz(mod, tabId), lockedBlocks, label: tabMeta.label, onStatus: setLoadingText, onRetry, isStopped: () => _tabGenStop, waitSignal: stopSignal, notify: false });
+            resultText = commented.md;
+            commentRun = commented.run;
         }
         if (tabId === 'basicPrac' && typeof withQuestFileName === 'function') resultText = withQuestFileName(resultText, mod, subj);
         // 기존 탭을 다시 만들면 바뀐 섹션을 보고 고른다. 묶어서 생성할 때는 묻지 않고 기존 글을 히스토리에 남긴다
@@ -686,14 +698,18 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         else window.refreshLessonNav(mod);
         const info = tabVolumeInfo(volume, mod.tabContents[tabId]);
         if (!_suppressTabAlert && !opts.quiet) {
-            const doneText = tabDoneText({ label: tabMeta.label, stoppedInChunks, received: fullText.length, archivePartial, volume, info });
+            // 끝 알림에 주석 결과를 잇는다(code-comments-tool.js withCommentNote: 넣은 블록·남은 블록·중지로 못 넣은 블록)
+            const tabText = tabDoneText({ label: tabMeta.label, stoppedInChunks, received: fullText.length, archivePartial, volume, info });
+            const [doneText, commentWarn] = typeof withCommentNote === 'function' ? withCommentNote(tabText, commentRun) : [tabText, false];
             // 화면을 막지 않고 만든 작업은 끝을 알림으로 알린다. 일부가 빠진 결과와 한도로 멈춘 분량 채우기는 다시 해야 하므로 창으로 알린다
             if (partialDueToError) window.showAlert(partialError?.quota
                 ? `${tabMeta.label} 탭은 만들었지만 뒷부분을 받지 못했습니다. ${partialError.message}`
                 : `${tabMeta.label} 탭이 생성되었지만, API 호출 한도로 일부 단락이 누락되었을 수 있습니다. 잠시 후(1~2분) 다시 생성하면 전체 분량이 완성됩니다.`);
             else if (volumeHalt) window.showAlert(doneText);
-            else if (opts.background) window.notifyLessonJobDone?.(doneText, stoppedEarly || info?.short ? 'warning' : 'success');
+            else if (opts.background) window.notifyLessonJobDone?.(doneText, stoppedEarly || info?.short || commentWarn ? 'warning' : 'success');
             else window.showAlert(doneText);
+        } else if (typeof notifyCodeComments === 'function') {
+            notifyCodeComments(commentRun, tabMeta.label); // 묶어서 만들 때는 탭마다 알리지 않으므로 주석 결과만 알린다(저장한 뒤)
         }
         // short: 학습 탭이 낭독 목표에 못 미쳤다 / halt: 한도·키 문제로 분량 채우기가 멈췄다(일괄 생성도 멈춘다)
         return {
@@ -843,27 +859,32 @@ async function reinforceCurrentTab(moduleId, command = '') {
 
             const received = restoreLockedSections(extractText(data), lockedBlocks);
             const truncated = data?.candidates?.[0]?.finishReason === 'MAX_TOKENS';
-            // 주석이 모자란 코드 블록에는 주석만 더한 글을 미리 보인다(code-comments-tool.js). 그사이 중지하면 반영하지 않는다
-            const resultText = typeof addGeneratedCodeComments === 'function'
-                ? (await addGeneratedCodeComments({ md: received, tabId, quiz: isCodeCommentQuiz(mod, tabId), lockedBlocks, label: shownLabel, onStatus: window.setPipelineStatus, isStopped: () => _tabGenStop, signal: window.aiStopSignal() })).md
-                : received;
+            // 주석이 모자란 코드 블록에는 주석만 더한 글을 미리 보인다(code-comments-tool.js). 그사이 중지하면 반영하지 않는다.
+            // 결과는 미리보기 안내와 반영한 뒤의 끝 알림에 적는다(기다리는 동안 탭이 바뀌어 반영하지 않으면 알리지 않는다)
+            const commented = typeof addGeneratedCodeComments === 'function'
+                ? await addGeneratedCodeComments({ md: received, tabId, quiz: isCodeCommentQuiz(mod, tabId), lockedBlocks, label: shownLabel, onStatus: window.setPipelineStatus, isStopped: () => _tabGenStop, signal: window.aiStopSignal(), notify: false })
+                : { md: received, run: null };
+            const resultText = commented.md;
             if (_tabGenStop) return;
             // 기다리는 동안 이 탭을 고쳤으면 고친 글을 지키고, 다시 실행하게 한다
             saveOpenEditsFor(mod, tabId);
             if (storedTabMarkdown(mod, tabId) !== existingContent) return window.showAlert('고치는 동안 탭 내용이 바뀌어 반영하지 않았습니다. 다시 실행해 주세요.');
             window.setPipelineStatus('바뀐 섹션을 골라 반영해 주세요.');
+            const commentNote = typeof commentRunNote === 'function' ? commentRunNote(commented.run) : '';
             const approved = await previewAiChange(existingContent, resultText, {
                 title: `${shownLabel} AI 수정 미리보기`,
                 tabId,
                 truncated,
-                note: truncated ? '응답이 출력 한도에서 잘렸습니다. 마지막 섹션은 기본으로 고르지 않았습니다.' : ''
+                note: [truncated ? '응답이 출력 한도에서 잘렸습니다. 마지막 섹션은 기본으로 고르지 않았습니다.' : '', commentNote].filter(Boolean).join(' ')
             });
             if (approved === null) return;
 
             if (!(await commitTabChange(mod, tabId, existingContent, approved, `AI 수정 반영(탭 전체): ${reinforceCmd}`))) return;
             const commandInput = document.getElementById('ai-command-input');
             if (commandInput && commandInput.value.trim() === reinforceCmd) commandInput.value = ''; // 반영한 요청만 지운다
-            window.notifyLessonJobDone(`${shownLabel}에 AI 수정을 반영했습니다.`);
+            const applied = `${shownLabel}에 AI 수정을 반영했습니다.`;
+            const [doneText, commentWarn] = typeof withCommentNote === 'function' ? withCommentNote(applied, commented.run) : [applied, false];
+            window.notifyLessonJobDone(doneText, commentWarn ? 'warning' : 'success');
         } catch (err) {
             if (err?.name === 'AbortError') return; // 중지: 반영할 글이 없다
             console.error('[탭 전체 AI 수정] 실패:', err);

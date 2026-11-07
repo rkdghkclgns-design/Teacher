@@ -4,7 +4,7 @@
 // 실행 환경(가짜 AI·화면 흉내)은 tests/code-comments-harness.js에 있다. 키는 가짜 값만 쓰고 찍지 않는다.
 const {
     vm, assert, source, plain, reply, NOTE, HISTORY_REASON, PY, fakeElement, route, commentReply, callsOf,
-    appContext, call, lessonOf, openSubject, onlyComments, PRAC_DRAFT, LEARN_GOALS, QUESTION_MD, runner
+    appContext, call, lessonOf, openSubject, onlyComments, needsOf, PRAC_DRAFT, LEARN_GOALS, QUESTION_MD, runner
 } = require('./code-comments-harness');
 
 const { run, finish } = runner();
@@ -374,6 +374,216 @@ const sourceKey = (ctx, mod, track = 'basic') => call(ctx, 'hashSource')(call(ct
         assert.deepStrictEqual(ctx.calls.map(item => item.kind), ['other', 'comment']);
         assert.ok(ctx.previews[0].after.includes(PY(`# ${NOTE}`, 'scores = [80, 92]', `# ${NOTE}`, 'print(sum(scores) / len(scores))')), ctx.previews[0].after);
         assert.strictEqual(mod.tabContents.basicLearn, ctx.previews[0].after);
+    });
+
+    /* ---------- 2차 검토: 섹션 고치기의 코드 블록 ---------- */
+    const REVEALING = ['### 문제 1. 합계 구하기', '학습 목표 1 · 밴드 L2 · 코드제출', '', '빈칸을 채워 합계를 출력합니다.', '', '🧩 **시작 코드:**', '',
+        PY('# 반복문으로 1, 2, 3을 더합니다', 'total = 0', 'for n in [1, 2, 3]:', '    total += n  # 정답: 여기서 6이 됩니다', 'print(total)'), '',
+        '🧪 **테스트:** 입력 없음 → 6', '', '🔍 **교차 검수:** 수정 필요 - 시작 코드 주석이 정답과 출력 결과(6)를 알려 줍니다.', '', '---'].join('\n');
+    const REVIEWED = REVEALING.replace('# 정답: 여기서 6이 됩니다', '# 수를 하나씩 합계에 더합니다').replace('수정 필요 - 시작 코드 주석이 정답과 출력 결과(6)를 알려 줍니다.', '통과');
+    const DROPPED_NOTE = '코드 블록을 바꾼 답이라 섹션 1개(문제 1)는 반영하지 않았습니다. 코드 블록 안을 고칠 지적은 원문에서 고칩니다.';
+    const proposeOn = async (tabId, md, fixed) => {
+        const ctx = appContext();
+        const mod = lessonOf({ tabs: { basicLearn: `${LEARN_GOALS}\n\n## 1. 합계 (⏱ 30분)\n\n합계를 구합니다.`, [tabId]: md } });
+        openSubject(ctx, [mod]);
+        vm.runInContext(`currentLessonTab = ${JSON.stringify(tabId)};`, ctx);
+        ctx.ai = route(ctx, { fix: () => reply(fixed), comment: commentReply() });
+        call(ctx, 'runConventionCheck')(1);
+        await call(ctx, 'proposeLessonFix')();
+        return { ctx, mod };
+    };
+
+    await run('검토 V1-01: 문항의 교차 검수가 정답을 드러낸다고 지적한 주석은 코드 줄을 지킨 채 고친 답을 받고, 코드를 바꾼 섹션은 안내에 적는다', async () => {
+        const { ctx, mod } = await proposeOn('assessment', REVEALING, REVIEWED);
+        const fix = callsOf(ctx, 'fix')[0];
+        assert.ok(fix.user.includes('코드 블록은 코드 줄을 한 글자도 바꾸지 않습니다. 정답·출력 결과·고칠 곳을 드러내는 주석 줄은 고쳐도 됩니다'), fix.user);
+        assert.ok(ctx.previews[0].after.includes('    total += n  # 수를 하나씩 합계에 더합니다') && !ctx.previews[0].after.includes('정답: 여기서 6이 됩니다'), ctx.previews[0].after);
+        assert.ok(!mod.tabContents.assessment.includes('정답: 여기서 6이 됩니다'), '반영한 탭에서 정답 주석이 빠진다');
+        // 교차 검수 지적이어도 코드 줄을 바꾼 답은 받지 않고, 바뀐 것이 없는 까닭을 안내에 적는다
+        const changed = await proposeOn('assessment', REVEALING, REVIEWED.replace('total = 0', 'total = 6'));
+        assert.strictEqual(changed.ctx.previews[0].opts.note, DROPPED_NOTE);
+        assert.ok(changed.mod.tabContents.assessment.includes('total = 0'));
+        // 문항이 아닌 탭의 섹션 고치기는 지시도 그대로이고 주석 줄을 바꾼 답도 받지 않는다
+        const prose = ['## 1. 합계 구하기 (⏱ 30분)', '', '앞에서 다룬 반복문으로 합계를 구합니다.', '', PY('# 합계를 구합니다', ...SUM_CODE)].join('\n');
+        const learn = await proposeOn('basicPrac', prose, fixedSection('# 반복문으로 더합니다', ...SUM_CODE));
+        assert.ok(callsOf(learn.ctx, 'fix')[0].user.includes(FIX_CODE_LINE), '일반 탭 지시는 그대로');
+        assert.ok(learn.mod.tabContents.basicPrac.includes('앞에서 다룬'), '주석 줄을 바꾼 섹션은 받지 않는다');
+        assert.strictEqual(learn.ctx.previews[0].opts.note, '코드 블록을 바꾼 답이라 섹션 1개(1. 합계 구하기 (⏱ 30분))는 반영하지 않았습니다. 코드 블록 안을 고칠 지적은 원문에서 고칩니다.');
+        // 모듈의 확인: 주석을 뺀 코드 줄이 차례대로 같은가
+        const same = (code, answer) => call(ctx, 'codeCommentSameCode')({ lang: 'python', label: 'python', lines: code }, answer);
+        assert.ok(same(['x = 1  # 정답은 1', 'print(x)'], ['# 값을 정합니다', 'x = 1  # 시작값', 'print(x)']));
+        assert.ok(same(['# 정답: 1', 'x = 1'], ['x = 1']), '주석 줄을 지운 답');
+        assert.ok(!same(['x = 1', 'print(x)'], ['x = 2', 'print(x)']), '코드 값을 바꾼 답');
+        assert.ok(!same(['s = """', '# 문자열', '"""'], ['s = """', '# 고친 문자열', '"""']), '문자열 안의 줄은 코드다');
+        assert.ok(!same(['x = 1', '', 'y = 2'], ['x = 1', 'y = 2']), '빈 줄을 지운 답');
+    });
+
+    await run('검토 V1-02: 섹션 고치기는 닫는 펜스를 빠뜨리거나 이름표·펜스를 바꾸거나 실행 결과·json 값을 바꾼 답을 받지 않는다(자동 수정도 그런 답을 저장하지 않는다)', async () => {
+        const ctx = appContext();
+        const RESULT = ['## 2. 결과 확인 (⏱ 20분)', '', '결과를 확인합니다.', '', '```text', '6', '```'].join('\n');
+        const DOC = `${PHRASE_SECTION}\n\n${RESULT}`;
+        const lint = (md, extra = {}) => call(ctx, 'lintLessonMarkdown')(md, 'basicPrac', { codeComments: false, ...extra });
+        const mergeOn = (md, fixed, extra) => call(ctx, 'mergeFixedSections')(md, fixed, call(ctx, 'pickFixSections')(md, lint(md, extra)).targets);
+        const head = '## 1. 합계 구하기 (⏱ 30분)\n\n반복문으로 합계를 구합니다.\n\n';
+        const takes = fixed => mergeOn(DOC, fixed) !== DOC;
+        assert.ok(takes(head + PY(...SUM_CODE)), '코드 블록을 그대로 둔 답은 받는다');
+        assert.ok(!takes(head + ['```python', ...SUM_CODE].join('\n')), '닫는 펜스를 빠뜨린 답');
+        assert.ok(!takes(head + ['```text', ...SUM_CODE, '```'].join('\n')), 'python → text');
+        assert.ok(!takes(head + ['```javascript', ...SUM_CODE, '```'].join('\n')), 'python → javascript');
+        assert.ok(!takes(head + ['````python', ...SUM_CODE, '````'].join('\n')), '펜스 길이');
+        assert.ok(!takes(head + ['  ```python', ...SUM_CODE.map(line => `  ${line}`), '  ```'].join('\n')), '펜스 들여쓰기');
+        assert.ok(!takes(head + PY('total = 0', '', 'for n in [1, 2, 3]:', '    total += n', 'print(total)')), '코드 줄 사이에 빈 줄을 더한 답');
+        // 주석을 세지 않는 블록(실행 결과·json)은 값이 같아야 받는다
+        const OUT = [PHRASE_SECTION, '', '```text', '6', '```', '', '```json', '{ "start": 0 }', '```'].join('\n');
+        const keptOut = [head + PY(...SUM_CODE), '', '```text', '6', '```', '', '```json', '{ "start": 0 }', '```'].join('\n');
+        assert.strictEqual(mergeOn(OUT, keptOut.replace('```text\n6', '```text\n10')), OUT, '실행 결과 값을 바꾼 답');
+        assert.strictEqual(mergeOn(OUT, keptOut.replace('"start": 0', '"start": 100')), OUT, 'json 값을 바꾼 답');
+        assert.strictEqual(mergeOn(OUT, keptOut), keptOut, '값을 지킨 답은 받는다');
+        // 이름표를 적는 지적을 고칠 때는 이름표만 붙인 답을 받고, 그 지적이 없으면 이름표를 바꾼 것도 받지 않는다
+        const bare = ['## 1. 합계 구하기 (⏱ 30분)', '', '반복문으로 합계를 구합니다.', '', '```', ...SUM_CODE, '```'].join('\n');
+        assert.ok(lint(bare, { codeTopic: true }).some(issue => issue.msg === '코드 블록에 언어를 적습니다.'));
+        assert.notStrictEqual(mergeOn(bare, bare.replace('```\ntotal', '```python\ntotal'), { codeTopic: true }), bare, '이름표를 적는 지적');
+        const phraseBare = bare.replace('반복문으로', '앞에서 다룬 반복문으로');
+        assert.strictEqual(mergeOn(phraseBare, bare.replace('```\ntotal', '```python\ntotal')), phraseBare, '다른 지적만 고칠 때');
+        // 탭 생성의 자동 수정: 닫는 펜스를 빠뜨린 답을 저장하지 않는다(뒤 섹션이 코드 블록에 들어가 지적이 숨지 않게)
+        const gen = appContext();
+        const mod = lessonOf({ tabs: {} });
+        openSubject(gen, [mod]);
+        gen.ai = route(gen, { tab: () => reply(DOC), fix: () => reply(head + ['```python', ...SUM_CODE].join('\n')), comment: commentReply() });
+        await call(gen, 'generateTabContent')(1, 'basicPrac');
+        const saved = mod.tabContents.basicPrac;
+        assert.deepStrictEqual(plain(call(gen, 'mdSections')(saved).map(section => section.title).filter(Boolean)), ['1. 합계 구하기 (⏱ 30분)', '2. 결과 확인 (⏱ 20분)'], saved);
+        assert.ok(!gen.toasts.some(toast => toast.message === '컨벤션 필수 지적을 자동으로 고쳤습니다.'), JSON.stringify(gen.toasts));
+    });
+
+    /* ---------- 2차 검토: 고른 글 AI 고치기 ---------- */
+    // 아래 AI 명령줄의 고른 글 고치기(executeAICommand)를 원문 칸에서 고른 글로 돌린다. 확인 창은 '반영'을 누른다
+    async function editSelection(ctx, { moduleId = 1, tabId = 'basicLearn', text, from, to, command = '주석을 달아 주세요' }) {
+        const raw = fakeElement();
+        Object.assign(raw, { value: text, selectionStart: from, selectionEnd: to, lastSaved: text, storedFrom: text });
+        raw.dataset = { moduleId: String(moduleId), tabId };
+        const hidden = fakeElement();
+        hidden.classList = { add() {}, remove() {}, toggle() {}, contains: name => name === 'hidden' };
+        Object.assign(ctx.elements, { 'raw-view': raw, 'render-view': hidden, 'ai-command-send': fakeElement() });
+        ctx.elements['ai-command-input'].focus = () => {};
+        ctx.elements['ai-command-input'].value = command;
+        ctx.location = { hash: '#editor/s1' };
+        ctx.toggleEditorMode = () => {};
+        ctx.edits = [];
+        vm.runInContext(`aiCommandMode = 'edit'; currentEditingModuleId = ${JSON.stringify(moduleId)}; currentLessonTab = ${JSON.stringify(tabId)};
+            confirmAiEdit = async (before, after, opts) => { window.edits.push({ before, after, opts }); return true; };`, ctx);
+        await call(ctx, 'executeAICommand')();
+        return ctx.edits[0];
+    }
+
+    await run('검토 V1-03: 고른 글 고치기는 코드 블록을 고른 답을 한 겹 더 감싼 펜스와, 코드 블록 끝을 걸쳐 고른 글을 감싼 펜스를 벗긴다', () => {
+        const ctx = appContext();
+        // runAICommand와 같은 길: 답(AI 응답)을 정리하고 감싼 펜스를 벗긴다. 코드 블록 안에서 시작해 걸쳐 고른 글은 그 블록의 여는 펜스(```)를 넘긴다
+        const strip = (answer, selected, fence = selected.startsWith('print(total)') ? '```' : '') => call(ctx, 'editAnswerFromResponse')(reply(answer), selected, fence);
+        const code = PY('total = 0', 'for n in [1, 2, 3]:', '    total += n', 'print(total)');
+        const commented = PY('# 1부터 3까지 더해 합계를 출력합니다', 'total = 0  # 합계의 시작값', 'for n in [1, 2, 3]:  # 수를 하나씩 꺼냅니다', '    total += n  # 합계에 더합니다', 'print(total)  # 합계를 출력합니다');
+        assert.strictEqual(strip(`\`\`\`\n${commented}\n\`\`\``, code), commented, '코드 블록을 골랐고 답을 이름표 없는 ```로 한 겹 더 감쌌다');
+        assert.strictEqual(strip(`\`\`\`markdown\n${commented}\n\`\`\``, code), commented, '```markdown으로 한 겹 더');
+        assert.strictEqual(strip(commented, code), commented, '감싸지 않은 답은 그대로');
+        // 펜스 쓰는 법을 보이는 예제(```` 안에 ```python)를 고르면 같은 꼴의 답은 벗기지 않고, 그 위에 한 겹 더 감싼 답은 한 겹만 벗긴다
+        const example = ['````', code, '````'].join('\n');
+        const exampleFixed = ['````', commented, '````'].join('\n');
+        assert.strictEqual(strip(exampleFixed, example), exampleFixed, '같은 꼴의 답');
+        assert.strictEqual(strip(`\`\`\`\`\`\n${exampleFixed}\n\`\`\`\`\``, example), exampleFixed, '한 겹 더 감싼 답');
+        const across = 'print(total)\n```\n\n## 2. 결과 확인 (⏱ 20분)\n\n결과를 확인합니다.';
+        const acrossFixed = 'print(total)  # 합계를 출력합니다\n```\n\n## 2. 결과 확인 (⏱ 20분)\n\n결과를 확인합니다.';
+        assert.strictEqual(strip(`\`\`\`markdown\n${acrossFixed}\n\`\`\``, across), acrossFixed, '코드 블록 끝을 걸쳐 고른 글을 ```markdown으로 감쌌다');
+        assert.strictEqual(strip(`\`\`\`\n${acrossFixed}\n\`\`\``, across), acrossFixed, '이름표 없는 ```로 감쌌다');
+        assert.strictEqual(strip(acrossFixed, across), acrossFixed, '감싸지 않은 답은 그대로');
+        // 넣은 글의 블록과 섹션이 그대로다
+        const doc = ['## 1. 합계 구하기 (⏱ 30분)', '', '반복문으로 합계를 구합니다.', '', code, '', '## 2. 결과 확인 (⏱ 20분)', '', '결과를 확인합니다.', '', '## 3. 정리 (⏱ 10분)', '', '정리합니다.'].join('\n');
+        const place = (selected, answer) => {
+            const at = doc.indexOf(selected);
+            return call(ctx, 'placeAiEdit')(doc, { selStart: at, selEnd: at + selected.length, selectedText: selected, newText: strip(answer, selected) });
+        };
+        assert.strictEqual(place(code, `\`\`\`\n${commented}\n\`\`\``), doc.replace(code, commented));
+        assert.strictEqual(place(across, `\`\`\`markdown\n${acrossFixed}\n\`\`\``), doc.replace(across, acrossFixed));
+        // 코드 블록 안의 들여쓴 줄부터 걸쳐 고르면 정리가 # 줄 들여쓰기를 지우거나 닫는 펜스 앞에 빈 줄을 넣지 않는다
+        const tail = '    total += n\nprint(total)\n```\n\n## 2. 결과 확인 (⏱ 20분)';
+        const tailFixed = '    # 수를 하나씩 더합니다\n    total += n\nprint(total)\n```\n\n## 2. 결과 확인 (⏱ 20분)';
+        assert.strictEqual(call(ctx, 'editAnswerFromResponse')(reply(tailFixed), tail, '```'), tailFixed);
+    });
+
+    await run('검토 V1-04: 고른 글 AI 고치기·원문 칸 저장으로 코드 블록에 주석만 더해도 교수안을 다시 만들라고 하지 않는다', async () => {
+        const ctx = appContext();
+        vm.runInContext(source('gyosuan-view.js'), ctx);
+        const code = PY('total = 0', 'print(total)');
+        const learn = `## 1. 합계 (⏱ 30분)\n\n합계를 구합니다.\n\n${code}`;
+        const mod = lessonOf({ tabs: { basicLearn: learn } });
+        mod.gyosuan = gyosuanOf({ sourceKey: sourceKey(ctx, mod, 'basic') });
+        openSubject(ctx, [mod]);
+        const note = () => call(ctx, 'gyosuanNoteText')(mod, 'basic');
+        ctx.ai = route(ctx, { other: () => reply(PY('# 합계를 구해 출력합니다', 'total = 0', 'print(total)')), comment: commentReply() });
+        await editSelection(ctx, { text: learn, from: learn.indexOf(code), to: learn.indexOf(code) + code.length });
+        assert.ok(mod.tabContents.basicLearn.includes('# 합계를 구해 출력합니다'), mod.tabContents.basicLearn);
+        assert.strictEqual(mod.gyosuan.sourceKey, sourceKey(ctx, mod, 'basic'), '고른 글 고치기(주석만)');
+        assert.ok(!note().startsWith('⚠️'), note());
+        // 원문 칸에서 손으로 주석만 더해 넣어도 맞춘다. 다른 글을 고치면 다시 만들라고 둔다
+        const typed = mod.tabContents.basicLearn.replace('print(total)', 'print(total)  # 합계를 보입니다');
+        const raw = ctx.elements['raw-view'];
+        Object.assign(raw, { value: typed, lastSaved: mod.tabContents.basicLearn, storedFrom: mod.tabContents.basicLearn });
+        call(ctx, 'saveRawContent')();
+        assert.deepStrictEqual([mod.tabContents.basicLearn, mod.gyosuan.sourceKey], [typed, sourceKey(ctx, mod, 'basic')], '원문 칸 저장(주석만)');
+        const kept = mod.gyosuan.sourceKey;
+        Object.assign(raw, { value: typed.replace('합계를 구합니다.', '합계를 구하는 법을 봅니다.'), lastSaved: typed, storedFrom: typed });
+        call(ctx, 'saveRawContent')();
+        assert.deepStrictEqual([mod.gyosuan.sourceKey, note()], [kept, STALE_NOTE], '글이 바뀌면 다시 만들라고 둔다');
+    });
+
+    await run('검토 V3-2: 코드 블록 안의 줄만 골라 고치면 글 정리 없이 받아 들여쓰기·목록 줄이 그대로고, 코드 줄을 바꾼 답은 확인 창에 알린다', async () => {
+        const ctx = appContext();
+        const learn = ['## 1. 합계 (⏱ 30분)', '', '합계를 구합니다.', '', '```python', 'def total(nums):', '    result = 0', '    for n in nums:', '        result += n', '    return result', '```', '',
+            '## 2. 설정 (⏱ 10분)', '', '```yaml', 'items:', '    - sword', '    - shield', '```'].join('\n');
+        const mod = lessonOf({ tabs: { basicLearn: learn } });
+        openSubject(ctx, [mod]);
+        ctx.asks = [];
+        vm.runInContext('(() => { const stub = buildTaskContext; buildTaskContext = (task, a) => { window.asks.push(a); return stub(task, a); }; })();', ctx);
+        const body = '    result = 0\n    for n in nums:';
+        // 줄 가운데에서 골라도 줄 단위로 넓혀 보내고, 답의 첫 줄 들여쓰기를 지키며, 감싼 펜스는 벗긴다
+        ctx.ai = route(ctx, { other: () => reply(['```python', '    # 합계를 0으로 시작합니다', '    result = 0', '    # 수를 하나씩 꺼냅니다', '    for n in nums:', '```'].join('\n')) });
+        const first = await editSelection(ctx, { text: learn, from: learn.indexOf(body) + 4, to: learn.indexOf(body) + body.length - 3 });
+        assert.deepStrictEqual([ctx.asks[0].selectedText, ctx.asks[0].codeLang], [body, 'python'], '줄 단위로 넓혀 코드 블록 안의 줄이라고 알린다');
+        assert.ok(mod.tabContents.basicLearn.includes('    # 합계를 0으로 시작합니다\n    result = 0\n    # 수를 하나씩 꺼냅니다\n    for n in nums:\n        result += n'), mod.tabContents.basicLearn);
+        assert.strictEqual(first.opts?.note || '', '', '주석만 더한 답은 알릴 것이 없다');
+        // YAML 목록 줄: 들여쓰기가 2칸으로 줄지 않는다
+        const yamlLine = '    - sword';
+        ctx.calls.length = 0;
+        ctx.ai = route(ctx, { other: () => reply('    - sword  # 기본 무기입니다') });
+        const current = mod.tabContents.basicLearn;
+        await editSelection(ctx, { text: current, from: current.indexOf(yamlLine), to: current.indexOf(yamlLine) + yamlLine.length });
+        assert.ok(mod.tabContents.basicLearn.includes('items:\n    - sword  # 기본 무기입니다\n    - shield'), mod.tabContents.basicLearn);
+        // 코드 줄을 바꾼 답은 넣기 전 확인 창에 까닭을 적는다
+        const now = mod.tabContents.basicLearn;
+        const line = '        result += n';
+        ctx.ai = route(ctx, { other: () => reply('        result = result + n  # 더합니다') });
+        const swapped = await editSelection(ctx, { text: now, from: now.indexOf(line), to: now.indexOf(line) + line.length });
+        assert.ok(/^AI 답이 원래 코드 줄을 바꿨습니다/.test(swapped.opts?.note || ''), JSON.stringify(swapped.opts));
+    });
+
+    await run('검토 V2-05: 고른 글 AI 고치기의 답에 주석이 모자란 코드 블록이 있으면 주석만 더해 미리 보이고, 넣지 못하면 확인 창에 적는다', async () => {
+        const ctx = appContext();
+        const code = PY('# 합을 구합니다', 'total = 0', 'print(total)');
+        const learn = `## 1. 합계 (⏱ 30분)\n\n합계를 구합니다.\n\n${code}`;
+        const mod = lessonOf({ tabs: { basicLearn: learn, assessment: QUESTION_MD } });
+        openSubject(ctx, [mod]);
+        ctx.ai = route(ctx, { other: () => reply(PY('total = 0', 'print(total)')), comment: commentReply() });
+        const shown = await editSelection(ctx, { text: learn, from: learn.indexOf(code), to: learn.indexOf(code) + code.length, command: '코드를 다듬어 주세요' });
+        assert.deepStrictEqual(callsOf(ctx, 'comment').map(item => item.quiz), [false]);
+        assert.strictEqual(needsOf(ctx, mod.tabContents.basicLearn), 0, mod.tabContents.basicLearn);
+        assert.strictEqual(shown.after, mod.tabContents.basicLearn.slice(mod.tabContents.basicLearn.indexOf('```python')), '확인 창에 주석이 든 글을 보인다');
+        // 문제은행 탭은 문항 모드로 넣고, 넣지 못하면 확인 창에 적는다
+        const bank = mod.tabContents.assessment;
+        const start = PY('total = 0', 'print(total)');
+        ctx.calls.length = 0;
+        ctx.ai = route(ctx, { other: () => reply(start), comment: () => { throw new Error('연결이 끊겼습니다'); } });
+        const failed = await editSelection(ctx, { tabId: 'assessment', text: bank, from: bank.indexOf(start), to: bank.indexOf(start) + start.length });
+        assert.deepStrictEqual(callsOf(ctx, 'comment').map(item => item.quiz), [true], '문항 모드');
+        assert.strictEqual(failed.opts?.note, '코드 블록 1개는 주석을 다 넣지 못했습니다.');
     });
 
     finish();

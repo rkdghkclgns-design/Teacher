@@ -384,6 +384,35 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
         assert.ok(!call('questionsCsv')(questions, [], { subject: '교과', lesson: '차시', checklist: [] }).includes('위반'), '목표를 모르면 번호 범위는 보지 않는다');
     });
 
+    await run('검토 V3-5: CSV의 시작코드·테스트케이스 칸은 첫 줄이 -- 주석인 코드에 따옴표를 붙이지 않고, 실행되는 수식만 막는다', async () => {
+        const cell = call('csvCell');
+        const sql = '-- 표에서 이름을 고릅니다\nSELECT name FROM students;';
+        assert.strictEqual(cell(sql, { code: true }), `"${sql}"`, '-- 주석으로 시작하는 SQL');
+        assert.strictEqual(cell('-- 학생 수를 셉니다\nSELECT COUNT(*) FROM students;', { code: true }), '"-- 학생 수를 셉니다\nSELECT COUNT(*) FROM students;"', '함수 호출이 든 SQL도 그대로');
+        assert.strictEqual(cell('-1', { code: true }), '-1', '테스트 값');
+        assert.ok(cell('=HYPERLINK("http://x")', { code: true }).startsWith("\"'="), '실행되는 수식은 코드 칸에서도 막는다');
+        assert.ok(cell("-- x\n1+cmd|' /C calc'!A0", { code: true }).startsWith("\"'--"), '외부 참조(|)가 들면 주석으로 시작해도 막는다');
+        assert.strictEqual(cell(sql), `"'${sql}"`, '다른 칸은 그대로 막는다');
+        const q = { no: 1, type: '코드제출', band: 'L2', objective: 1, title: '이름 고르기', stem: '쿼리를 완성합니다.', choices: [], answer: '', accepted: '', rubric: '', code: sql, tests: '-- 기대 출력\nKim', explanation: '', review: '' };
+        const csv = call('questionsCsv')([q], ['목표'], { subject: '교과', lesson: '차시', lessonId: 7, checklist: [] });
+        assert.ok(csv.includes(`,"${sql}","-- 기대 출력\nKim",`), csv);
+    });
+
+    await run('검토 V3-4: 문항 생성 답이 풀이 코드 블록으로 끝나도 그 블록을 닫힌 채 읽고, 답 전체를 감싼 펜스만 벗긴다', async () => {
+        const parse = call('parseGeneratedQuestions');
+        const spec = { objective: 1, band: 'L2', type: '코드제출', multi: false, count: 1 };
+        const answer = ['### 문제 1. 합계 구하기', '학습 목표 1 · 밴드 L2 · 코드제출', '', '빈칸을 채워 합계를 출력합니다.', '', '🧩 **시작 코드:**', '', '```python', 'total = 0', 'print(total)', '```', '',
+            '🧪 **테스트:** 입력 없음 → 6', '', '📝 **해설:** 다음처럼 더합니다.', '', '```python', 'total = sum([1, 2, 3])', 'print(total)', '```'].join('\n');
+        const [q] = plain(parse(answer, spec));
+        assert.strictEqual(q.explanation, '다음처럼 더합니다.\n\n```python\ntotal = sum([1, 2, 3])\nprint(total)\n```');
+        assert.strictEqual(plain(parse(`\`\`\`\n${answer}\n\`\`\``, spec))[0].explanation, q.explanation, '답 전체를 감싼 펜스');
+        assert.strictEqual(plain(parse(`\`\`\`markdown\n${answer}\n\`\`\``, spec))[0].explanation, q.explanation, '```markdown으로 감싼 답');
+        assert.strictEqual(plain(parse(answer.replace(/\n```$/, ''), spec))[0].explanation, q.explanation, '잘려서 닫히지 않은 블록은 닫는다');
+        // 문제은행에 넣고 문항을 더 넣어도 앞 문항의 코드 블록이 뒤 문항을 삼키지 않는다
+        const md = call('appendQuestionsMd')('', [q]);
+        assert.strictEqual(call('lessonLintQuestions')(call('appendQuestionsMd')(md, [{ ...q, title: '두 번째 문항' }])).length, 2);
+    });
+
     await run('문제은행: AI 생성은 검수 지적을 한 번 고쳐 받음', async () => {
         const prompts = [];
         const aiCtx = makeContext(async (m, p) => {

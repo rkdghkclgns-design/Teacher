@@ -14,10 +14,11 @@ const WHITEBOARD_NAME_MAX = 100;
 // "3차시: 제목", "1. 교과" 같은 번호를 뗀다
 const stripLessonNumber = text => String(text || '').replace(/^\s*\d+\s*(?:차시|\.)\s*[:.)\-–]?\s*/, '').trim();
 
-// 그림(본문에 든 data: 주소 포함)·그림 틀·버튼·HTML 주석(이미지 자리 표시)은 판서 자료로 쓸 수 없어 빼고, 그림 설명과 글만 남긴다
+// 그림(본문에 든 data: 주소 포함)·그림 틀·버튼·HTML 주석(이미지 자리 표시)은 판서 자료로 쓸 수 없어 빼고, 그림 설명과 글만 남긴다.
+// 코드 블록은 떼어 두었다가 그대로 되돌린다(data.js stashCodeFences): html·xml 코드의 <!-- --> 주석과 List<int> 같은 코드 글자는 지우지 않는다
 function whiteboardPlainMarkdown(md) {
-    return String(md || '')
-        .replace(/\r\n/g, '\n')
+    const fences = typeof stashCodeFences === 'function' ? stashCodeFences(String(md || '').replace(/\r\n/g, '\n'), { keepSpaces: true }) : null;
+    const prose = (fences ? fences.text : String(md || '').replace(/\r\n/g, '\n'))
         .replace(/<!--[\s\S]*?-->/g, '')
         .replace(/!\[([^\]]*)\]\([^)]*\)/g, (_, alt) => (alt.trim() ? `(그림: ${alt.trim()})` : ''))
         .replace(/<img\b[^>]*\balt="([^"]*)"[^>]*>/gi, (_, alt) => (alt.trim() ? `(그림: ${alt.trim()})` : ''))
@@ -28,6 +29,7 @@ function whiteboardPlainMarkdown(md) {
         .replace(/^[ \t]+$/gm, '')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
+    return fences ? fences.restore(prose) : prose;
 }
 
 // 탭마다 # 제목으로 나눠, 스튜디오의 목차에서 쓸 탭만 고를 수 있게 한다

@@ -23,7 +23,20 @@ test('탭마다 # 제목으로 나누고 그림·주석은 빼며 그림 설명�
     assert.ok(md.indexOf('# 기본학습') < md.indexOf('# 학습이해도'), '탭 순서대로');
     assert.ok(!md.includes('# 기본실습'), '빈 탭은 넣지 않는다');
     assert.ok(md.includes('(그림: 루프 그림)'));
-    assert.ok(!/data:image|<!--|<img/.test(md), md);
+    assert.ok(!/data:image|<!--|<img/.test(ctx.stashCodeFences(md).text), md); // 코드 블록 밖의 글만 본다(코드의 <!-- --> 주석은 남는다)
+});
+
+test('검토 V3-1: 코드 블록 안의 html·xml 주석과 C# 제네릭 같은 코드 글자는 그대로 넘기고, 블록 밖의 주석·태그만 뺀다', () => {
+    const HTML = ['```html', '<!-- 제목 영역을 만듭니다 -->', '<h1>점수판</h1>', '<!-- 점수를 보여 줄 칸입니다 -->', '<p id="score">0</p>', '```'].join('\n');
+    const XML = ['```xml', '<!-- 게임 설정 파일입니다 -->', '<config>', '  <!-- 시작 체력입니다 -->', '  <hp>100</hp>', '</config>', '```'].join('\n');
+    const CS = ['```csharp', '// 점수 목록을 만듭니다', 'List<int> scores = new List<int>();', '```'].join('\n');
+    const body = `## 점수판 만들기\n\n<!-- [IMG: 점수판] -->\n화면에 점수를 보이는 <b>HTML</b>입니다.\n\n${HTML}\n\n설정은 XML로 둡니다.\n\n${XML}\n\n${CS}`;
+    const mod = lesson({ tabContents: { basicLearn: body } });
+    const ctx = makeContext({ mod });
+    const md = ctx.buildWhiteboardHandoff(mod, ctx.globalState.subjects[0], 1000).markdown;
+    assert.ok(md.includes(HTML) && md.includes(XML) && md.includes(CS), md);
+    assert.ok(md.includes('화면에 점수를 보이는 HTML입니다.') && !md.includes('[IMG:'), md);
+    assert.strictEqual(ctx.whiteboardPlainMarkdown(`글 <i>기울임</i>\n\n${CS}\n\n<!-- 끝 -->`), `글 기울임\n\n${CS}`);
 });
 
 test('교안이 없으면 넘기지 않고 알린다', () => {

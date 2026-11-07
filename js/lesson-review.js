@@ -72,18 +72,26 @@ function reviewSystemPrompt(tabId, quiz = false) {
 }
 
 const issueLine = issue => `- ${issue.where || '본문'}: ${issue.msg}${issue.snip ? ` (${issue.snip})` : ''}`;
+// 문제은행 문항의 AI 교차 검수 지적(lesson-lint.js lintQuestion). 문항 모드에서는 이 지적이 가리키는 주석(정답을 드러내는 주석)을 고쳐도 된다
+const isReviewIssue = issue => String(issue?.msg || '').startsWith('AI 교차 검수');
+const LESSON_LABEL_ISSUE = '코드 블록에 언어를 적습니다.';
+const LESSON_UNCLOSED_ISSUE = '닫히지 않은 코드 블록이 있습니다.';
 
-function buildFixPrompt(md, issues, plan, lockedBlocks = []) {
+// quiz: 문항 모드(code-comments-tool.js isCodeCommentQuiz). 교차 검수 지적을 고칠 때는 코드 줄만 지키고 정답을 드러내는 주석 줄은 고쳐도 된다고 적는다(mergeSectionFix가 같은 기준으로 받는다)
+function buildFixPrompt(md, issues, plan, lockedBlocks = [], { quiz = false } = {}) {
     const sections = mdSections(md);
     const targetIndexes = plan.targets.map(target => target.index);
     const reference = sections.filter((section, index) => !targetIndexes.includes(index) && REVIEW_REFERENCE_TITLE.test(section.title));
     const scoped = issues.filter(issue => issue.missing || plan.targets.some(target => target.hits.includes(issue)));
+    const codeRule = quiz && scoped.some(isReviewIssue)
+        ? '코드 블록은 코드 줄을 한 글자도 바꾸지 않습니다. 정답·출력 결과·고칠 곳을 드러내는 주석 줄은 고쳐도 됩니다(다른 주석은 그대로 둡니다).'
+        : '코드 블록은 주석을 포함해 한 글자도 바꾸지 않습니다(주석은 따로 넣습니다).';
     return [
         ['[작업] 아래 교안이 컨벤션 검수에서 지적을 받았습니다. [고칠 섹션]을 지적이 모두 해결되도록 고칩니다.',
             '- 지적과 관계없는 내용과 표현은 유지하고 분량을 줄이지 않습니다.',
             '- 고칠 섹션의 ## 제목을 그대로 쓰고, 고칠 섹션만 출력합니다. 다른 섹션은 출력하지 않습니다.',
-            // 코드 예제 규칙(시스템 글)의 '모든 코드 블록에 주석'과 어긋나지 않게, 있던 코드 블록의 주석은 따로 넣는다고 적는다(mergeFixedSections가 코드가 바뀐 섹션을 버린다)
-            '- 이미지 태그(<!-- [IMG: ... ] -->), <img>, <div>, <table>, mermaid는 바꾸지 않고, 코드 블록은 주석을 포함해 한 글자도 바꾸지 않습니다(주석은 따로 넣습니다).',
+            // 코드 예제 규칙(시스템 글)의 '모든 코드 블록에 주석'과 어긋나지 않게, 있던 코드 블록의 주석은 따로 넣는다고 적는다(mergeSectionFix가 코드가 바뀐 섹션을 버린다)
+            `- 이미지 태그(<!-- [IMG: ... ] -->), <img>, <div>, <table>, mermaid는 바꾸지 않고, ${codeRule}`,
             issues.some(issue => issue.missing) ? '- 없는 섹션을 새로 써야 하면 ## 제목과 함께 출력합니다.' : '',
             lockedBlocks.length ? `- 고정 섹션(${lockedBlocks.map(block => block.title).join(', ')})은 출력하지 않습니다.` : ''
         ].filter(Boolean).join('\n'),
@@ -125,47 +133,97 @@ function checklistLast(md, tabId) {
     return [...sections.slice(0, at), ...sections.slice(at + 1), sections[at]].map(section => section.text).join('\n\n');
 }
 
-// 고쳐 받은 섹션이 원래 섹션의 코드 블록을 지켰는가: 주석을 세는 코드 블록(code-comments.js)마다 차례대로, 같거나 주석만 더한 블록이 있어야 한다
-// (확인은 코드 주석 넣기와 같은 codeCommentVerify다). 새로 더한 코드 블록은 괜찮다. 주석 모듈이 없으면 보지 않는다
-function keepsSectionCode(before, after) {
+// 고쳐 받은 블록(next)이 원래 블록(old)을 지켰는가(code-comments.js codeCommentBlocks 결과). 펜스 글자·길이·들여쓰기가 같고, 닫혔던 블록은 닫혀 있다.
+// 주석을 세는 블록은 언어가 같고 같은 코드이거나 주석만 더한 코드여야 한다(codeCommentVerify가 다시 짠 코드가 답 그대로일 때. 빈 줄을 더하거나 줄 끝 공백만 바꿔도 받지 않는다).
+// comments: 주석만 고치거나 지운 코드도 받는다(문항의 교차 검수 지적을 고칠 때, codeCommentSameCode).
+// 세지 않는 블록(실행 결과·json·mermaid·이름표를 모르는 블록·~~~ 블록)은 이름표와 줄이 같아야 한다.
+// labels: 이름표가 없던 블록에 이름표만 붙여도 된다(이름표를 적는 지적) · closing: 닫히지 않았던 블록을 원래 줄의 앞부분까지로 닫아도 된다(닫는 지적)
+function keptSectionBlock(old, next, { comments = false, labels = false, closing = false } = {}) {
+    const sameRaw = next.raw.join('\n') === old.raw.join('\n');
+    const sameLabel = next.label.toLowerCase() === old.label.toLowerCase() || (labels && !old.label);
+    if (next.fence !== old.fence || next.indent !== old.indent) return false;
+    if (old.skip === 'unclosed') {
+        if (next.skip === 'unclosed') return sameRaw && sameLabel;
+        return closing && sameLabel && next.raw.length <= old.raw.length && next.raw.every((line, k) => line === old.raw[k]);
+    }
+    if (next.skip === 'unclosed') return false;
+    if (old.skip === 'nolabel') return sameRaw && (labels || next.skip === 'nolabel');
+    if (old.skip) return sameRaw && sameLabel && next.skip === old.skip;
+    if (next.lang !== old.lang) return false;
+    if (sameRaw) return true;
+    const verified = codeCommentVerify(old, next.lines);
+    if (verified.ok && verified.code === next.lines.join('\n')) return true;
+    return comments && typeof codeCommentSameCode === 'function' && codeCommentSameCode(old, next.lines);
+}
+
+// 고쳐 받은 섹션이 원래 섹션의 코드 블록을 지켰는가: 원래 블록마다 차례대로 지킨 블록(keptSectionBlock)이 있어야 한다.
+// 새로 더한 코드 블록은 괜찮다(그 블록의 주석은 뒤의 코드 주석 단계가 넣는다). 주석 모듈이 없으면 보지 않는다
+function keepsSectionCode(before, after, opts = {}) {
     if (typeof codeCommentBlocks !== 'function' || typeof codeCommentVerify !== 'function') return true;
     const fixed = codeCommentBlocks(after);
     let at = 0;
-    return codeCommentBlocks(before).filter(block => !block.skip).every(block => {
+    return codeCommentBlocks(before).every(block => {
         while (at < fixed.length) {
-            const next = fixed[at++];
-            if (next.raw.join('\n') === block.raw.join('\n') || codeCommentVerify(block, next.lines).ok) return true;
+            if (keptSectionBlock(block, fixed[at++], opts)) return true;
         }
         return false;
     });
 }
 
+// 섹션의 지적으로 정하는 블록 확인 너그러움(keptSectionBlock). 교차 검수 지적은 문항 모드에서만 주석을 고쳐도 된다
+const sectionCodeLeeway = (target, quiz) => ({
+    comments: !!quiz && (target.hits || []).some(isReviewIssue),
+    labels: (target.hits || []).some(issue => issue.msg === LESSON_LABEL_ISSUE),
+    closing: (target.hits || []).some(issue => issue.msg === LESSON_UNCLOSED_ISSUE)
+});
+
 // 대상 섹션만 바꾼다. 다른 제목으로 돌아온 섹션은 본문이 비슷한 대상과만 짝지어, 새 개요가 지적된 섹션을 덮어쓰지 않게 한다.
 // 짝이 없는 섹션을 받을 수 없으면 뒷부분을 나눠 쓴 응답일 수 있으므로 응답 전체를 쓰지 않는다.
-// 코드 줄이 바뀐 섹션도 쓰지 않는다(keepsSectionCode: 섹션 고치기는 코드 줄을 고치지 않고, 주석은 확인하며 넣는 코드 주석 단계가 맡는다)
-function mergeFixedSections(md, fixedMd, targets, allowNew = false) {
+// 코드 블록을 바꾼 섹션도 쓰지 않는다(keepsSectionCode: 섹션 고치기는 코드 줄을 고치지 않고, 주석은 확인하며 넣는 코드 주석 단계가 맡는다).
+// 결과 { md, dropped: [{ title, where }] } — dropped는 코드 블록을 바꿔 쓰지 않은 대상 섹션(where는 그 섹션의 지적 자리). quiz: 문항 모드
+function mergeSectionFix(md, fixedMd, targets, allowNew = false, { quiz = false } = {}) {
     const doc = mdSections(md);
     const docKeys = new Set(doc.map(section => lockTitleKey(section.title)));
     const open = [...targets];
     const extras = [];
     const replaced = new Map();
+    const take = (at, text) => {
+        const target = open.splice(at, 1)[0];
+        replaced.set(target.index, { text, target });
+    };
     mdSections(fixedMd).filter(section => section.text.trim() && (section.title || targets.some(target => !target.title))).forEach(section => {
         const at = open.findIndex(target => lockTitleKey(target.title) === lockTitleKey(section.title));
-        if (at >= 0) replaced.set(open.splice(at, 1)[0].index, section.text);
+        if (at >= 0) take(at, section.text);
         else if (!docKeys.has(lockTitleKey(section.title))) extras.push(section);
     });
     const added = [];
     extras.forEach(section => {
         const at = open.findIndex(target => isRenamedSection(target.text, section.text));
-        if (at >= 0) replaced.set(open.splice(at, 1)[0].index, section.text);
+        if (at >= 0) take(at, section.text);
         else added.push(section);
     });
-    if (added.length && !allowNew) return md;
+    if (added.length && !allowNew) return { md, dropped: [] };
+    const dropped = [];
     const base = doc.map((section, index) => {
         const next = replaced.get(index);
-        return next !== undefined && keepsSection(section.text, next) && keepsSectionCode(section.text, next) ? { ...section, text: next } : section;
+        if (next === undefined || !keepsSection(section.text, next.text)) return section;
+        if (keepsSectionCode(section.text, next.text, sectionCodeLeeway(next.target, quiz))) return { ...section, text: next.text };
+        dropped.push({ title: section.title, where: [...new Set((next.target.hits || []).map(issue => issue.where || section.title || '본문'))] });
+        return section;
     });
-    return added.reduce(insertSection, base).map(section => section.text).join('\n\n');
+    return { md: added.reduce(insertSection, base).map(section => section.text).join('\n\n'), dropped };
+}
+
+// 병합한 글만 돌려준다(mergeSectionFix의 md)
+function mergeFixedSections(md, fixedMd, targets, allowNew = false, opts = {}) {
+    return mergeSectionFix(md, fixedMd, targets, allowNew, opts).md;
+}
+
+// 코드 블록을 바꿔 반영하지 않은 섹션 안내(미리보기 안내 글). 없으면 ''
+function droppedSectionsNote(dropped) {
+    if (!Array.isArray(dropped) || !dropped.length) return '';
+    const names = [...new Set(dropped.flatMap(item => item.where))].join(', ');
+    return `코드 블록을 바꾼 답이라 섹션 ${dropped.length}개(${names})는 반영하지 않았습니다. 코드 블록 안을 고칠 지적은 원문에서 고칩니다.`;
 }
 
 function isBetterFix(before, after) {
@@ -173,19 +231,20 @@ function isBetterFix(before, after) {
     return b.required < a.required || (b.required === a.required && after.length < before.length);
 }
 
-// quiz: 문항 모드(최종 평가의 AI 수정 제안). 시스템 글에 문항 속 코드 주석 규칙을 붙인다
+// quiz: 문항 모드(문제은행 탭·최종 평가의 AI 수정 제안). 최종 평가의 시스템 글에 문항 속 코드 주석 규칙을 붙이고, 교차 검수 지적은 주석을 고친 답도 받는다.
+// 결과 { text, plan, dropped(코드 블록을 바꿔 반영하지 않은 섹션, mergeSectionFix) }
 async function requestSectionFix({ tabId, md, issues, lockedBlocks = [], onRetry = null, quiz = false }) {
     const plan = pickFixSections(md, issues, lockedBlocks);
     const needsNew = issues.some(issue => issue.missing);
-    if (!plan.targets.length && !needsNew) return { text: md, plan };
+    if (!plan.targets.length && !needsNew) return { text: md, plan, dropped: [] };
     const data = await callGemini(TEXT_MODEL, {
-        contents: [{ role: 'user', parts: [{ text: buildFixPrompt(md, issues, plan, lockedBlocks) }] }],
+        contents: [{ role: 'user', parts: [{ text: buildFixPrompt(md, issues, plan, lockedBlocks, { quiz }) }] }],
         systemInstruction: { parts: [{ text: reviewSystemPrompt(tabId, quiz) }] },
         generationConfig: { maxOutputTokens: REVIEW_MAX_OUTPUT_TOKENS }
     }, onRetry);
     if (data?.candidates?.[0]?.finishReason === 'MAX_TOKENS') throw new Error('응답이 출력 한도에서 잘렸습니다.');
-    const merged = mergeFixedSections(md, cleanFixResponse(extractText(data)), plan.targets, needsNew);
-    return { text: restoreLockedSections(merged, lockedBlocks), plan };
+    const merged = mergeSectionFix(md, cleanFixResponse(extractText(data)), plan.targets, needsNew, { quiz });
+    return { text: restoreLockedSections(merged.md, lockedBlocks), plan, dropped: merged.dropped };
 }
 
 // 생성 직후 필수 지적이 남으면 고쳐 받고, 나아졌을 때만 바꾼다. 어떤 실패도 생성 결과를 잃게 하지 않는다.
@@ -244,10 +303,8 @@ async function commitTabChange(mod, tabId, before, next, note, reason = '고치�
     }
     // 탭이 없는 최종 평가(·옛 차시)는 본문 전체를 고치므로 제목에 탭 이름을 붙이지 않는다
     await archiveContent({ title: mod.tabContents ? `${mod.title} · ${reviewTabLabel(tabId)}` : mod.title, content: before, images: mod.images, tabId, lesson: mod }, reason);
-    // 바뀐 것이 코드 블록 주석뿐이면 교수안이 교안과 어긋났다고 하지 않는다(code-comments-tool.js)
-    const keyed = typeof gyosuanKeyedTracks === 'function' ? gyosuanKeyedTracks(mod) : [];
-    setTabMarkdown(mod, tabId, next);
-    if (typeof rekeyCommentedGyosuan === 'function') rekeyCommentedGyosuan(mod, keyed);
+    // 바뀐 것이 코드 블록 주석뿐이면 교수안이 교안과 어긋났다고 하지 않는다(tabs.js setTabMarkdownKeyed)
+    setTabMarkdownKeyed(mod, tabId, next);
     mod.history = reviewHistory(mod, note);
     await saveState();
     // 그 차시(같은 객체)를 보고 있을 때만 다시 그린다. 다른 교과의 같은 번호 차시나 같은 id의 최종 평가 화면에 이 차시를 그리지 않는다
@@ -272,7 +329,7 @@ async function proposeLessonFix() {
     const quiz = typeof isCodeCommentQuiz === 'function' ? isCodeCommentQuiz(mod, tabId) : isQuestionBankTab(tabId);
     setReviewBusy(true);
     try {
-        const { text, plan } = sectionIssues.length
+        const { text, plan, dropped = [] } = sectionIssues.length
             ? await requestSectionFix({ tabId, md, issues: sectionIssues, lockedBlocks, quiz })
             : { text: md, plan: { targets: [], locked: 0, deferred: 0 } };
         const commented = canComment
@@ -282,14 +339,11 @@ async function proposeLessonFix() {
         const lockedSections = sectionIssues.length > 0 && !plan.targets.length && !sectionIssues.some(issue => issue.missing);
         const noComments = !sectionIssues.length && !commented.run; // 섹션 지적도, 보낸 주석 블록도 없다
         if (commented.md === md && (lockedSections || (noComments && commented.held > 0))) return window.showAlert('고칠 수 있는 섹션이 없습니다. 지적된 섹션이 모두 고정되어 있습니다.');
-        if (commented.md === md && noComments) {
-            const unknown = issues.some(issue => issue.sev === 'info') ? ' 이름표를 몰라 세지 못한 코드 블록은 원문에서 언어 이름을 적어 주세요.' : '';
-            return window.showAlert(`고칠 수 있는 지적이 없습니다.${unknown}`);
-        }
+        if (commented.md === md && noComments) return window.showAlert(`고칠 수 있는 지적이 없습니다.${infoIssueHint(issues)}`);
         if (commented.md === md && commented.run && !sectionIssues.length) return window.showAlert('주석을 넣지 못했습니다. AI 답이 코드를 바꿔 버렸거나 답을 받지 못했습니다. 잠시 뒤 다시 눌러 보세요.');
-        // 주석 호출이 없었어도 고정 섹션에 남긴 블록은 적는다(반영한 뒤에도 그 필수 지적이 남는 까닭)
+        // 주석 호출이 없었어도 고정 섹션에 남긴 블록은 적는다(반영한 뒤에도 그 필수 지적이 남는 까닭). 코드 블록을 바꿔 버린 섹션도 적는다(바뀐 것이 없는 까닭)
         const run = commented.run || (commented.held ? { fixed: [], remaining: 0, held: commented.held } : null);
-        const note = [fixPlanNote(plan), typeof commentRunNote === 'function' ? commentRunNote(run) : ''].filter(Boolean).join(' ');
+        const note = [fixPlanNote(plan), droppedSectionsNote(dropped), typeof commentRunNote === 'function' ? commentRunNote(run) : ''].filter(Boolean).join(' ');
         const next = await previewAiChange(md, commented.md, { title: 'AI 수정 제안', tabId, note });
         if (next !== null) await commitTabChange(mod, tabId, md, next, `AI 수정 제안 반영 (${reviewTabLabel(tabId)})`);
     } catch (err) {
@@ -338,8 +392,18 @@ function reviewLegacyBankNote(mod, tabId) {
     return note ? `<p class="text-xs text-amber-300">${escapeHtml(note)}</p>` : '';
 }
 
-// 정보(info: 이름표를 몰라 주석을 세지 못한 코드 블록)는 고칠 지적이 아니라 권장과 나눠 맨 아래에 보인다
+// 정보(info: 이름표를 몰라 주석을 세지 못한 코드 블록 · ~~~ 펜스로 쓴 코드 블록)는 고칠 지적이 아니라 권장과 나눠 맨 아래에 보인다
 const fixableIssues = issues => issues.filter(issue => issue.sev !== 'info');
+
+// 고칠 지적이 정보뿐일 때 알림에 붙이는 도움말(code-comments.js의 정보 지적)
+function infoIssueHint(issues) {
+    const info = issues.filter(issue => issue.sev === 'info');
+    const isTilde = issue => typeof CODE_COMMENT_TILDE_MSG === 'string' && issue.msg === CODE_COMMENT_TILDE_MSG;
+    return [
+        info.some(issue => !isTilde(issue)) ? ' 이름표를 몰라 세지 못한 코드 블록은 원문에서 언어 이름을 적어 주세요.' : '',
+        info.some(isTilde) ? ' ~~~ 펜스로 쓴 코드 블록은 원문에서 펜스를 ```로 바꿔 주세요.' : ''
+    ].join('');
+}
 
 function reviewIssuesHtml(issues, tabId, md, mod = null) {
     const stats = LESSON_STRUCTURED_TABS.includes(tabId) ? lessonStructureStats(md) : null;

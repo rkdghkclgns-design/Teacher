@@ -1,4 +1,4 @@
-// 코드 주석 시험이 함께 쓰는 실행 환경(tests/code-comments-flow.test.js·tests/code-comments-safety.test.js): 실제 js 파일을 화면 차례대로 vm에 싣고 AI·저장·창만 흉내 낸다.
+// 코드 주석 시험이 함께 쓰는 실행 환경(tests/code-comments-flow.test.js·tests/code-comments-safety.test.js·tests/code-comments-notice.test.js): 실제 js 파일을 화면 차례대로 vm에 싣고 AI·저장·창만 흉내 낸다.
 // AI는 가짜다: 지시의 <<<CODE n>>>…<<<END n>>>를 읽어 [블록 n] 줄의 주석 기호로 주석 줄을 붙인 답을 만든다. 키는 가짜 값만 쓰고 찍지 않는다.
 // 컨벤션 점검의 주석 지적(codeComment: true, 주석이 모자라면 sev 'bad')은 lesson-lint.js가 낸다. 그 파일이 아직 내지 않으면 같은 모양으로 붙여 쓴다(appContext)
 const fs = require('fs');
@@ -117,7 +117,12 @@ function appContext() {
         getEditingModule = (id = currentEditingModuleId) => (id === 'mainQuest' ? (globalState.subjects.find(s => s.id === currentSubjectId) || {}).mainQuest : courseData.find(m => String(m.id) === String(id)));
         processImageTags = async (mod, md) => { window.order.push('images'); return md; };
         previewAiChange = async (before, after, opts) => { window.order.push('preview'); window.previews.push({ before, after, opts }); return window.previewAnswer === undefined ? after : window.previewAnswer; };
-        archiveContent = async (mod, reason = '') => { window.archived.push({ reason, mod, entry: historyEntry(mod, { id: window.archived.length + 1, date: '오늘', reason }) }); };
+        // 작업 기록 한 칸(state.js archiveContents와 같이 그 차시가 든 교과 id를 남긴다. 탭 하나 기록은 교과를 알 때만 차시 id가 남는다)
+        archiveContent = async (mod, reason = '') => {
+            const lesson = mod.lesson && typeof mod.lesson === 'object' ? mod.lesson : mod;
+            const owner = lessonOwnerId(lesson, globalState.subjects, currentSubjectId, courseData);
+            window.archived.push({ reason, mod, entry: historyEntry(mod, { id: window.archived.length + 1, date: '오늘', reason, subjectId: owner ?? (lesson === mod ? currentSubjectId : null) }) });
+        };
         archiveContents = async (mods, reason = '') => { for (const mod of mods) await archiveContent(mod, reason); };
         renderSidebar = () => {}; renderEditor = () => { window.rendered += 1; };
         sidebarSectionHtml = (id, meta, body) => body;

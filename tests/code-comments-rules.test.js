@@ -238,6 +238,10 @@ const ALL_TABS = ['basicLearn', 'basicPrac', 'advLearn', 'advPrac', 'assessment'
         assert.ok(edit().endsWith(editRule) && edit(false).endsWith(editRule), edit());
         assert.ok(edit(true).endsWith(`${editRule} 이 글은 문항(학습이해도·심화이해도·최종 평가)입니다. 주석에 정답, 출력 결과, 고칠 곳을 적지 않습니다.`), edit(true));
         assert.ok(!edit().includes('문항의 코드라면'), '탭을 모르는 조건 문장은 없다');
+        // 코드 블록 안의 줄만 고른 글은 펜스 없이 줄만, 들여쓰기 그대로 받는다(api.js codeEditSpan)
+        const inCode = build('edit', { context: '문맥', selectedText: '    total = 0', command: '주석', inCode: true, codeLang: 'python' }).userPrompt;
+        assert.ok(inCode.includes('원본 텍스트:\n    total = 0\n\n(원본 텍스트는 python 코드 블록 안의 줄입니다. 펜스(```) 없이 고친 줄만 돌려주고, 줄마다 들여쓰기를 그대로 둡니다.)\n\n요청사항:\n주석'), inCode);
+        assert.ok(!build('edit', { context: '문맥', selectedText: '글', command: '주석' }).userPrompt.includes('코드 블록 안의 줄'), '코드 블록 밖의 글에는 붙이지 않는다');
         const quest = build('main_quest', '차시 정보').systemInstruction;
         assert.ok(quest.endsWith(`\n${QUIZ_RULE}`), quest.slice(-300));
         assert.strictEqual(`- ${call(pctx, 'QUIZ_CODE_COMMENT_RULE')}`, QUIZ_RULE, '문항 규칙과 같은 글');
@@ -267,7 +271,7 @@ const ALL_TABS = ['basicLearn', 'basicPrac', 'advLearn', 'advPrac', 'assessment'
         const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8').split(/\r?\n/);
         const at = readme.findIndex(text => text.startsWith('- **코드 예제**:'));
         assert.ok(at > 0 && readme[at + 1].startsWith('- **코드 주석**: 교안의 코드 블록에는 주석을 반드시 넣음.'), readme[at + 1]);
-        assert.ok(readme[at + 1].includes("도구의 '코드 주석 넣기'(이 차시의 모든 탭)") && readme[at + 1].endsWith('테스트: tests/code-comments.test.js, tests/code-comments-rules.test.js, tests/code-comments-flow.test.js, tests/code-comments-safety.test.js'), readme[at + 1]);
+        assert.ok(readme[at + 1].includes("도구의 '코드 주석 넣기'(이 차시의 모든 탭)") && readme[at + 1].endsWith('테스트: tests/code-comments.test.js, tests/code-comments-rules.test.js, tests/code-comments-flow.test.js, tests/code-comments-safety.test.js, tests/code-comments-notice.test.js'), readme[at + 1]);
         assert.ok(readme[at + 1].includes('교수안·슬라이드 편성안은 교수안 화면이 코드 블록을 그리지 못해 고치지 않고'), readme[at + 1]);
     });
 

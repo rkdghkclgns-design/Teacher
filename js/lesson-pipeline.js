@@ -28,13 +28,22 @@ function questionBankGaps(mod, trackId = 'basic') {
 // 두 갈래 문제은행의 빈 목표 수를 더한다(일괄 생성 대기열·전체 생성의 단계)
 const lessonQuestionGaps = mod => LESSON_TRACKS.reduce((sum, track) => sum + questionBankGaps(mod, track.id).length, 0);
 
-// 갈래마다 학습 목표에 문항이 있도록 빠진 목표의 문항을 채운다(기본학습 → 심화학습). 문제은행은 그 갈래 문제은행 탭(학습이해도·심화이해도)의 마크다운을 쓴다
+// 갈래마다 학습 목표에 문항이 있도록 빠진 목표의 문항을 채운다(기본학습 → 심화학습). 문제은행은 그 갈래 문제은행 탭(학습이해도·심화이해도)의 마크다운을 쓴다.
+// 문항 코드에 주석을 다 넣지 못한 블록이 남으면 갈래마다 한 번 알린다(code-comments-tool.js questionCommentNote)
 async function fillQuestionBank(moduleId, { isStopped = () => false, onStatus = () => {} } = {}) {
     const lesson = getEditingModule(moduleId);
     if (!lesson) return { ok: false, error: '차시를 찾지 못했습니다.' };
     for (const track of LESSON_TRACKS) {
+        let gaps = 0;
+        const noteGaps = () => {
+            const note = gaps && typeof questionCommentNote === 'function' ? questionCommentNote(gaps) : '';
+            if (note) window.showToast?.(`${track.label} 문제은행의 ${note}`, 'warning');
+        };
         for (const objective of questionBankGaps(lesson, track.id)) {
-            if (isStopped()) return { ok: false, stopped: true };
+            if (isStopped()) {
+                noteGaps();
+                return { ok: false, stopped: true };
+            }
             onStatus(`${track.label} 학습 목표 ${objective}의 문항을 만들고 있습니다...`);
             const mod = getEditingModule(moduleId);
             if (!mod) return { ok: false, error: '차시를 찾지 못했습니다.' };
@@ -42,7 +51,9 @@ async function fillQuestionBank(moduleId, { isStopped = () => false, onStatus = 
             setTabMarkdown(mod, track.bank, appendQuestionsMd(qbankMarkdown(mod, track.id), questions));
             Object.assign(mod, withHistoryNote(mod, `${track.label} 문제은행 문항 생성 (학습 목표 ${objective}, ${questions.length}개)`));
             await saveState();
+            if (typeof questionCommentGaps === 'function') gaps += questionCommentGaps(questions);
         }
+        noteGaps();
     }
     return { ok: true };
 }

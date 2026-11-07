@@ -121,7 +121,7 @@ function ownBlocks(md) {
     await run('블록 찾기: ``` 펜스·긴 펜스·안쪽 ``` 줄·닫히지 않은 블록·목록 안 들여쓴 펜스·이름표 속성·대문자', () => {
         const found = blocks(FENCE_DOC);
         assert.deepStrictEqual(found.map(b => [b.label, b.lang, b.openLine, b.closeLine]), [
-            ['Python', 'python', 6, 9], ['', null, 12, 14], ['md', null, 17, 21], ['bash', 'bash', 28, 32], ['js', 'javascript', 34, -1]
+            ['Python', 'python', 6, 9], ['js', 'javascript', 11, 15], ['md', null, 17, 21], ['bash', 'bash', 28, 32], ['js', 'javascript', 34, -1]
         ]);
         assert.deepStrictEqual(found[0].lines, ['for i in range(3):', '    print(i)']);
         assert.strictEqual(found[0].info, 'Python title="a.py"');
@@ -135,15 +135,18 @@ function ownBlocks(md) {
         assert.strictEqual(found[3].section, '2. 목록 안');
         assert.ok(found[0].context.includes('## 1. 첫 절') && found[0].context.includes('반복문을 봅니다.'), found[0].context);
         assert.ok(!found.some(b => b.label === 'npm'), '한 줄에서 여닫는 ```npm install```은 블록이 아니다');
-        // ~~~ 는 앱(stashCodeFences)과 같이 펜스로 보지 않는다. 그 안의 ``` 줄은 펜스다
-        assert.ok(!found.some(b => b.openLine === 11 || b.openLine === 15), '~~~ 는 펜스가 아니다');
-        assert.deepStrictEqual([found[1].openLine, found[1].lines, found[1].skip], [12, ['let a = 1;'], 'nolabel'], '~~~ 안의 ``` 는 앱처럼 블록을 연다');
+        // ~~~ 펜스도 화면(marked)처럼 코드 블록으로 본다. 그 안의 ``` 줄은 펜스가 아니고, 주석은 검사하지 않는다(skip 'tilde')
+        assert.deepStrictEqual([found[1].fence, found[1].lines, found[1].skip], ['~~~', ['```', 'let a = 1;', '```'], 'tilde']);
     });
 
-    await run('블록 찾기: 같은 글에서 stashCodeFences와 같은 블록을 찾는다(CRLF·특수 공백·여러 경우)', () => {
+    // ~~~ 펜스가 없는 글(FENCE_DOC에서 ~~~ 블록을 뺀 글)
+    const NO_TILDE_DOC = FENCE_DOC.replace('~~~js\n```\nlet a = 1;\n```\n~~~\n', '');
+
+    await run('블록 찾기: ~~~ 펜스가 없는 글에서는 stashCodeFences와 같은 블록을 찾는다(CRLF·특수 공백·여러 경우)', () => {
+        assert.notStrictEqual(NO_TILDE_DOC, FENCE_DOC);
         const docs = [
-            FENCE_DOC,
-            FENCE_DOC.replace(/\n/g, '\r\n'),
+            NO_TILDE_DOC,
+            NO_TILDE_DOC.replace(/\n/g, '\r\n'),
             '```python\nx = 1\n```\n글\n```\ny\n```',
             '\u00A0```js\nlet a =\u00A01;\n\u00A0```',
             '````python\n```\n````\n```\nz\n',
@@ -154,6 +157,24 @@ function ownBlocks(md) {
         const crlf = blocks('```python\r\nx = 1\r\n```\r\n');
         assert.deepStrictEqual(crlf[0].lines, ['x = 1'], '줄 끝 \\r 은 코드 줄에서 뗀다');
         assert.strictEqual(crlf[0].eol, '\r\n');
+    });
+
+    await run('검토 V2-04: ~~~ 블록 안의 ``` 줄은 코드 블록이 아니어서 고치지 않고, ~~~ 코드 블록은 주석을 넣지 않고 정보로 알린다', async () => {
+        const md = ['## 1. 코드 블록 쓰는 법 (⏱ 20분)', '', '마크다운에서 코드 블록은 펜스 세 개로 감쌉니다.', '', '~~~markdown', '```python', 'total = 0', 'print(total)', '```', '~~~', '',
+            '## 2. 두 배 찍기 (⏱ 20분)', '', '반복문으로 두 배를 찍습니다.', '', '~~~python', 'x = 10', 'for i in range(3):', '    print(x * i)', '~~~'].join('\n');
+        assert.deepStrictEqual(blocks(md).map(b => [b.label, b.lang, b.skip, b.section]), [['markdown', null, 'tilde', '1. 코드 블록 쓰는 법 (⏱ 20분)'], ['python', 'python', 'tilde', '2. 두 배 찍기 (⏱ 20분)']]);
+        assert.deepStrictEqual(plain(call('codeCommentTargets')(md)), [], '주석을 넣을 블록이 없다');
+        assert.deepStrictEqual(plain(call('codeCommentIssues')(md, { sev: 'bad' })).map(issue => [issue.sev, issue.where, issue.msg, issue.snip]), [
+            ['info', '2. 두 배 찍기 (⏱ 20분)', call('CODE_COMMENT_TILDE_MSG'), 'python']
+        ], '~~~ 코드 블록만 정보로 알리고, ~~~markdown 안의 ``` 블록은 지적하지 않는다');
+        const out = await call('codeCommentRun')({ md, ask: async () => { throw new Error('부르지 않는다'); } });
+        assert.deepStrictEqual([out.md, out.calls], [md, 0], '일괄 작업은 ~~~ 블록 안을 고치지 않는다');
+        // ~~~ 는 같은 글자로 같거나 더 길게 닫고, ``` 줄로는 닫지 않는다. ~~~ 뒤의 ``` 블록은 그대로 검사한다
+        const mixed = ['~~~~', '~~~', '```', 'x', '~~~~', '', '```python', 'print(1)', '```'].join('\n');
+        assert.deepStrictEqual(blocks(mixed).map(b => [b.openLine, b.closeLine, b.skip || 'ok']), [[0, 4, 'tilde'], [6, 8, 'ok']]);
+        assert.strictEqual(blocks('~~~python\nx = 1')[0].skip, 'unclosed');
+        // ~~~ 안의 ## 줄도 섹션 제목으로 보는 앱의 섹션 규칙(lesson-editor-tools.js mdSections)과 같게 섹션을 단다
+        assert.strictEqual(blocks(['~~~markdown', '## 예제 제목', '~~~', '', '```python', 'x = 1', '```'].join('\n'))[1].section, '예제 제목');
     });
 
     /* ---------- 주석 세기 ---------- */

@@ -172,8 +172,9 @@ const { run, finish } = runner();
         assert.ok(saved.includes('```text\n6\n```'), '실행 결과 블록은 그대로');
         onlyComments(ctx, seen[0].md, saved);
         assert.ok(ctx.loadingDuring.startsWith('기본실습 · 💬 코드 블록에 주석을 다는 중입니다 · 1/1개'), `로딩 화면에 진행을 보인다: ${ctx.loadingDuring}`);
-        assert.ok(ctx.toasts.some(toast => toast.message === '기본실습 코드 블록 1개에 주석을 넣었습니다.' && toast.kind === 'success'), JSON.stringify(ctx.toasts));
-        assert.ok(ctx.alerts.at(-1).startsWith('기본실습 탭이 생성되었습니다'), ctx.alerts.at(-1));
+        // 주석 결과는 저장한 뒤 끝 알림에 적는다(보강 단계가 따로 알리지 않는다)
+        assert.ok(!ctx.toasts.some(toast => toast.message.includes('주석을 넣었습니다')), JSON.stringify(ctx.toasts));
+        assert.strictEqual(ctx.alerts.at(-1), '기본실습 탭이 생성되었습니다. 코드 블록 1개에 주석을 넣었습니다.');
     });
 
     await run('탭 다시 만들기: 미리보기에 주석이 든 글이 가고, 고정 섹션의 블록은 보내지 않고 바이트 그대로 둔다. 코드를 바꾼 답이면 원래 코드가 남는다', async () => {
@@ -192,7 +193,7 @@ const { run, finish } = runner();
         assert.ok(!callsOf(ctx, 'comment')[0].user.includes("print('고정')"), '고정 섹션의 블록은 보내지 않는다');
         assert.strictEqual(needsOf(ctx, preview.after, block => block.section.startsWith('고정')), 0, '미리보기 글에 주석이 들어 있다');
         assert.strictEqual(mod.tabContents.basicPrac, preview.after);
-        assert.ok(ctx.toasts.some(toast => toast.message === '기본실습 코드 블록 1개에 주석을 넣었습니다. 고정 섹션의 코드 블록 1개는 고치지 않았습니다.'), JSON.stringify(ctx.toasts));
+        assert.strictEqual(ctx.alerts.at(-1), '기본실습 탭이 생성되었습니다. 코드 블록 1개에 주석을 넣었습니다. 고정 섹션의 코드 블록 1개는 고치지 않았습니다.', '반영한 뒤 끝 알림에 적는다');
         const bad = appContext();
         const fresh = lessonOf({ tabs: {} });
         openSubject(bad, [fresh]);
@@ -200,7 +201,7 @@ const { run, finish } = runner();
         await call(bad, 'generateTabContent')(1, 'basicPrac');
         assert.strictEqual(callsOf(bad, 'comment').length, 2, '코드를 바꾼 답은 버리고 한 번 더 받는다');
         assert.ok(fresh.tabContents.basicPrac.includes(PY('total = 0', 'for n in [1, 2, 3]:', '    total += n', 'print(total)')) && !fresh.tabContents.basicPrac.includes('total = 100'), '원래 코드가 남는다');
-        assert.ok(bad.toasts.some(toast => toast.kind === 'warning' && toast.message.startsWith('기본실습 코드 블록 1개는 주석을 다 넣지 못했습니다.')), JSON.stringify(bad.toasts));
+        assert.strictEqual(bad.alerts.at(-1), "기본실습 탭이 생성되었습니다. 코드 블록 1개는 주석을 다 넣지 못했습니다. 컨벤션 검수의 'AI 수정 제안'이나 도구의 '코드 주석 넣기'로 다시 넣을 수 있습니다.");
     });
 
     await run('탭 생성: 중지했거나, 일부 단락이 빠졌거나, 한도로 분량 채우기가 멈춘 글에는 주석을 보강하지 않는다', async () => {
@@ -474,7 +475,8 @@ const { run, finish } = runner();
         assert.ok(ctx.estimates[0].message.includes('최종 평가 문항의 코드에는'), '최종 평가는 문항 모드');
         assert.deepStrictEqual(callsOf(ctx, 'comment').map(item => item.quiz), [false, true], '지운 2차시는 부르지 않는다');
         assert.ok(two.tabContents.basicPrac.includes(PY('print(2)')) && !two.tabContents.basicPrac.includes(NOTE));
-        assert.deepStrictEqual(ctx.archived.map(item => [item.mod, item.reason]), [[one, HISTORY_REASON], [quest, HISTORY_REASON]]);
+        // 탭이 없는 최종 평가는 탭 하나 기록으로 남긴다(제자리로 되돌릴 수 있게. tests/code-comments-notice.test.js)
+        assert.deepStrictEqual(ctx.archived.map(item => [item.mod.lesson || item.mod, item.reason, item.mod.tabId ?? null]), [[one, HISTORY_REASON, null], [quest, HISTORY_REASON, 'basicLearn']]);
         assert.ok(quest.content.includes(PY(`# ${NOTE}`, 'total = 0', `# ${NOTE}`, 'print(total)')), quest.content);
         assert.deepStrictEqual(ctx.steps.map(step => step.label), ['코드 주석 넣기 · 1차시', '코드 주석 넣기 · 2차시', '코드 주석 넣기 · 최종 평가']);
         assert.deepStrictEqual(ctx.toasts.at(-1), { message: "코드 주석 넣기를 마쳤습니다. 코드 블록 2개에 주석을 넣었습니다(차시 1개와 최종 평가). 바꾸기 전 글은 작업 기록에 '코드 주석 넣기 전'으로 남겼습니다. 그사이 지운 차시 1개에는 주석을 넣지 않았습니다.", kind: 'warning' });

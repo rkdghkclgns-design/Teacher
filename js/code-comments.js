@@ -1,5 +1,6 @@
 // code-comments.js - 교안 코드 블록(펜스 코드)에 주석이 넉넉한지 세고, AI가 주석만 더했는지 확인해 끼워 넣는다
-// 블록은 앱이 코드 블록으로 보는 규칙(data.js fenceStateAfter, stashCodeFences와 같다)으로 찾는다. data.js를 먼저 불러야 한다.
+// 블록은 화면(marked)이 코드 블록으로 그리는 ``` · ~~~ 펜스로 찾는다(api.js pictureFenceAfter와 같다). data.js를 먼저 불러야 한다(## 섹션 제목은 data.js fenceStateAfter로 가린다).
+// ~~~ 블록은 앱의 다른 글 정리(data.js stashCodeFences·컨벤션 점검·낭독 분량)가 코드로 보지 않아 주석을 넣으면 그쪽이 글로 읽으므로, 주석을 넣지 않고 정보로 알린다.
 // 언어마다 작은 lexer로 문자열·주석·히어독·블록 글을 줄을 넘어 따라가, 주석을 넣으면 코드의 뜻이 바뀌는 자리(보호 구역)를 막는다.
 // AI 답은 원래 줄을 바이트 그대로 두고, 허용된 자리의 한 줄 주석과 줄 끝 주석만 받아 다시 짠다. 테스트: tests/code-comments.test.js
 // 확실히 읽지 못하는 곳은 막는 쪽으로 읽는다: 미심쩍은 자리에서 연 JSX는 그 안 { } 까지, 줄 끝에서 닫히지 않은 한 줄 문자열은 다음 줄 위까지 막는다.
@@ -13,6 +14,7 @@ const CODE_COMMENT_BATCH_CHARS = 12000;  // 한 번에 보내는 코드 글자 �
 const CODE_COMMENT_ZONE_NOTES = 8;       // 블록마다 알려 주는 '넣으면 안 되는 자리' 수
 const CODE_COMMENT_LINT_MSG = '코드 블록에 주석을 넣습니다.';
 const CODE_COMMENT_UNKNOWN_MSG = '이름표를 몰라 주석을 확인하지 못한 코드 블록입니다.';
+const CODE_COMMENT_TILDE_MSG = '~~~ 펜스로 쓴 코드 블록이라 주석을 확인하지 못했습니다. 펜스를 ```로 바꾸면 확인하고 주석을 넣습니다.';
 const CODE_COMMENT_RULE_DESC = '코드 첫 줄 위에 무엇을 하는 코드인지, 핵심 줄 위나 끝에 그 줄이 하는 일을 적습니다. 코드 열 줄마다 주석을 하나 이상 둡니다.';
 // 코드가 아니어서 검사하지 않는 이름표(실행 결과·다이어그램·데이터·문서)
 const CODE_COMMENT_SKIP_LABELS = new Set(['text', 'txt', 'plaintext', 'plain', 'output', 'result', 'console', 'terminal', 'log', 'mermaid', 'json', 'csv', 'tsv', 'diff', 'patch', 'markdown', 'md']);
@@ -155,24 +157,40 @@ function codeCommentMarks(lang) {
 const codeCommentNeed = codeLines => (codeLines > 0 ? Math.max(1, Math.floor(codeLines / CODE_COMMENT_LINES_PER)) : 0);
 
 /* ---------- 2. 블록 찾기 ---------- */
+// 펜스 줄 따라가기: ``` 와 ~~~ (3개 이상, 들여쓰기 허용). 여는 글자와 같은 글자로 같거나 더 길게 닫는다(api.js pictureFenceAfter와 같은 규칙).
+// 언어 칸에 `가 든 ``` 줄(```npm install```)은 인라인 코드다(data.js fenceStateAfter와 같다). 펜스 밖이면 null
+function ccFenceAfter(fence, line) {
+    const [, marks, rest] = String(line).match(/^\s*(`{3,}|~{3,})(.*?)\r?$/) || [];
+    if (!marks) return fence;
+    if (!fence) return marks[0] === '`' && rest.includes('`') ? null : { mark: marks[0], size: marks.length };
+    return marks[0] === fence.mark && marks.length >= fence.size && !rest.trim() ? null : fence;
+}
+
 // 문서의 펜스 코드 블록을 차례로. 줄 번호는 '\n'으로 나눈 문서 줄(0부터)이고, lines는 펜스 들여쓰기와 줄 끝 \r을 뗀 코드 줄이다.
-// raw는 문서에 적힌 그대로의 코드 줄(되돌릴 때 쓴다). skip: '' 검사함 · nolabel · nocode(text·mermaid…) · unknown · unclosed
+// raw는 문서에 적힌 그대로의 코드 줄(되돌릴 때 쓴다). skip: '' 검사함 · nolabel · nocode(text·mermaid…) · unknown · unclosed · tilde(~~~ 블록)
+// section은 블록을 연 자리의 ## 섹션 제목이다. 제목은 앱의 섹션 규칙(lesson-editor-tools.js mdSections, ``` 만 따라간다)과 같게 가려, 고정 섹션을 같은 곳으로 본다
 function codeCommentBlocks(md) {
     const blocks = [];
-    let fence = 0;
+    let fence = null;
+    let plain = 0;
     let open = null;
     let section = '';
     let heading = '';
     let prose = [];
     String(md ?? '').split('\n').forEach((line, no) => {
         const was = fence;
-        fence = fenceStateAfter(fence, line);
+        const wasPlain = plain;
+        fence = ccFenceAfter(fence, line);
+        plain = fenceStateAfter(plain, line);
+        const body = line.replace(/\r$/, '');
+        const sectionTitle = !wasPlain && !plain && body.match(/^##\s+(.*)/);
+        if (sectionTitle) section = sectionTitle[1].trim();
         if (!was && fence) {
-            open = { no, line, code: [] };
+            open = { no, line, code: [], section };
             return;
         }
         if (was && !fence) {
-            blocks.push(ccBlock(blocks.length, open, no, section, ccContext(heading, prose)));
+            blocks.push(ccBlock(blocks.length, open, no, ccContext(heading, prose)));
             open = null;
             prose = [];
             return;
@@ -181,10 +199,7 @@ function codeCommentBlocks(md) {
             open.code.push(line);
             return;
         }
-        // 펜스 밖 글: ## 섹션 제목(lesson-lint.js lessonCodeSections와 같은 규칙)과 앞 설명을 따라간다
-        const body = line.replace(/\r$/, '');
-        const sectionTitle = body.match(/^##\s+(.*)/);
-        if (sectionTitle) section = sectionTitle[1].trim();
+        // 펜스 밖 글: 앞 설명(가까운 제목과 단락)을 따라간다
         if (/^#{1,6}\s/.test(body)) {
             heading = body.trim();
             prose = [];
@@ -192,18 +207,19 @@ function codeCommentBlocks(md) {
             prose = [...prose, body.trim()];
         }
     });
-    if (open) blocks.push(ccBlock(blocks.length, open, -1, section, ccContext(heading, prose)));
+    if (open) blocks.push(ccBlock(blocks.length, open, -1, ccContext(heading, prose)));
     return blocks;
 }
 
-function ccBlock(index, open, closeLine, section, context) {
+function ccBlock(index, open, closeLine, context) {
     const opening = open.line.replace(/\r$/, '');
-    const [, indent, fence, rest] = opening.match(/^(\s*)(`{3,})(.*)$/);
+    const [, indent, fence, rest] = opening.match(/^(\s*)(`{3,}|~{3,})(.*)$/);
     const label = codeCommentLabel(rest);
     const lang = codeCommentLang(rest);
     const lines = open.code.map(line => ccStripIndent(line.replace(/\r$/, ''), indent));
     const lower = label.toLowerCase();
-    const skip = closeLine < 0 ? 'unclosed' : !label ? 'nolabel' : ccSkips(lower) ? 'nocode' : lang ? '' : 'unknown';
+    const section = open.section;
+    const skip = closeLine < 0 ? 'unclosed' : fence[0] === '~' ? 'tilde' : !label ? 'nolabel' : ccSkips(lower) ? 'nocode' : lang ? '' : 'unknown';
     return {
         index, lang, label, info: rest.trim(), indent, fence, openLine: open.no, closeLine, lines, raw: open.code,
         eol: open.line.endsWith('\r') ? '\r\n' : '\n', section, context, skip
@@ -1576,6 +1592,33 @@ function codeCommentVerify(block, answer) {
     return result;
 }
 
+// 주석을 뺀 코드 줄(차례대로): 주석만 든 줄은 빼고, 코드 줄은 주석 글자(사이 공백까지)를 지운 뒤 줄 끝 공백을 뗀다. 빈 줄은 남기고,
+// 맨 앞 지시 줄(#! · coding 선언)과 __END__ 뒤 데이터는 주석처럼 보여도 코드라 그대로 둔다
+function ccCodeSkeleton(key, lines, dialect) {
+    const lex = ccLexBlock(key, lines, dialect);
+    return lex.rows.flatMap((row, at) => {
+        if (row.kind === 'comment') return [];
+        const text = lines[at];
+        if (row.kind === 'directive' || row.kind === 'data' || !row.marks.length) return [text.replace(/[ \t]+$/, '')];
+        // 공백만 끼어 있는 주석 글자 자리는 한 주석이다(lexer는 주석 안의 낱말마다 자리를 남긴다)
+        const spans = row.marks.reduce((list, [from, to]) => {
+            const last = list[list.length - 1];
+            return last && !text.slice(last[1], from).trim() ? [...list.slice(0, -1), [last[0], to]] : [...list, [from, to]];
+        }, []);
+        const kept = spans.map(([from], k) => text.slice(k ? spans[k - 1][1] : 0, from)).join('') + text.slice(spans[spans.length - 1][1]);
+        return [kept.replace(/[ \t]+$/, '')];
+    });
+}
+
+// 답(answer: 글 또는 줄 배열)이 주석만 고치거나 지웠는가: 주석을 뺀 코드 줄이 차례대로 같다. 주석을 더하기만 했는지는 codeCommentVerify가 본다.
+// 문항의 교차 검수가 정답·출력 결과를 드러낸다고 지적한 주석을 고친 답을 받을 때 쓴다(lesson-review.js). 모르는 언어면 false
+function codeCommentSameCode(block, answer) {
+    const { key, dialect } = ccResolve(block?.lang, block?.label);
+    if (!key) return false;
+    const skeleton = lines => ccCodeSkeleton(key, lines, dialect).join('\n');
+    return skeleton(ccLines(Array.isArray(block?.lines) ? block.lines : [])) === skeleton(ccLines(answer));
+}
+
 /* ---------- 6. 적용 ---------- */
 // 블록 하나를 문서에 쓸 줄로: 원래 줄은 적힌 그대로, 줄 끝 주석은 원래 줄 뒤에, 더한 줄은 펜스 들여쓰기와 문서 줄끝을 붙인다
 function ccRawLines(block, items) {
@@ -1928,11 +1971,12 @@ function codeCommentPreview(md, { maxBlocks = CODE_COMMENT_BATCH_BLOCKS, maxChar
 
 // 점검: 주석이 모자란 블록을 lesson-lint 이슈 모양으로. where는 블록이 든 ## 섹션 제목(없으면 '본문'), snip은 첫 코드 줄.
 // 고치기는 일괄 작업(codeCommentRun)이 맡는다(섹션 글을 통째로 고쳐 쓰는 자동 수정이 코드를 바꾸지 않게 기본은 권장 warn).
-// 모르는 이름표의 블록은 주석을 확인하지 못했다고 정보(info)로 알린다(snip은 이름표)
+// 모르는 이름표의 블록과 ~~~ 펜스로 쓴 코드 블록(언어를 아는 것만)은 주석을 확인하지 못했다고 정보(info)로 알린다(snip은 이름표)
 function codeCommentIssues(md, { sev = 'warn' } = {}) {
     return codeCommentBlocks(md).flatMap(block => {
         const where = block.section || '본문';
         if (block.skip === 'unknown') return [{ sev: 'info', where, msg: CODE_COMMENT_UNKNOWN_MSG, snip: block.label.slice(0, 40), block: block.index, lang: null, label: block.label }];
+        if (block.skip === 'tilde' && block.lang) return [{ sev: 'info', where, msg: CODE_COMMENT_TILDE_MSG, snip: block.label.slice(0, 40), block: block.index, lang: block.lang, label: block.label }];
         if (block.skip) return [];
         const count = ccCountBlock(block);
         if (!count.short) return [];

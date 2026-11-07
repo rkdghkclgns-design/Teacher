@@ -51,14 +51,14 @@ function wordDiffHtml(beforeText, afterText) {
     return pieces.join('');
 }
 
-// 사용자가 반영을 고르면 true, 취소하면 false
-function confirmAiEdit(beforeText, afterText) {
+// 사용자가 반영을 고르면 true, 취소하면 false. note: 제목 아래 안내(코드 주석 결과·코드 줄이 바뀐 답 따위)
+function confirmAiEdit(beforeText, afterText, { note = '' } = {}) {
     return new Promise(resolve => {
         const overlay = document.createElement('div');
         overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9200]';
         overlay.innerHTML = `
             <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[640px] max-h-[80vh] flex flex-col shadow-2xl">
-                <div class="p-4 border-b border-white/10"><h2 class="text-sm font-bold text-textLight">AI 수정 미리보기</h2></div>
+                <div class="p-4 border-b border-white/10"><h2 class="text-sm font-bold text-textLight">AI 수정 미리보기</h2>${note ? `<p class="text-xs text-amber-300 mt-1">${escapeHtml(note)}</p>` : ''}</div>
                 <div class="flex-1 overflow-y-auto p-4 text-sm text-textLight leading-relaxed whitespace-pre-wrap">${wordDiffHtml(beforeText, afterText)}</div>
                 <div class="p-3 border-t border-white/10 flex justify-end gap-2">
                     <button data-diff-action="cancel" class="px-4 py-2 text-xs font-bold text-textLight bg-white/10 rounded-lg hover:bg-white/20">취소</button>

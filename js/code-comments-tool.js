@@ -3,10 +3,10 @@
 // 교수안·슬라이드 편성안은 고치지 않는다: 교수안 화면과 슬라이드 화면(js/kbuilder parseDoc·parseDeck)이 코드 블록을 몰라 줄 맨 앞의 # 주석 줄을 제목으로 읽는다.
 // 부를 때만 쓰는 앞 파일: api.js(callGemini·lessonTextParts·cleanupTargets·lessonStillLive·SAVE_AGAIN_HINT), tabs.js(setTabMarkdown·saveOpenEditsFor·aiStopSignal·refreshLessonNav),
 //   lesson-review.js(storedTabMarkdown), lesson-editor-tools.js(lockedSectionBlocks·lockTitleKey), lesson-pipeline.js(runLessonJob·updateLessonJob·notifyLessonJobDone·setPipelineStatus),
-//   state.js(archiveContent·saveState), course-meta.js(withHistoryNote), gyosuan.js(collectLessonSource·legacyLessonSource·hashSource),
+//   state.js(archiveContent·archiveContents·saveState), course-meta.js(withHistoryNote), gyosuan.js(collectLessonSource·legacyLessonSource·hashSource),
 //   course-qbank.js(serializeQuestion), lesson-lint.js(lessonLintQuestions·parseQuestionBlock), cost-estimate.js(confirmWithEstimate), course-ncs.js(textModelHasKey), data-safety.js(HISTORY_LIMIT)
 // 생성·고치기 쪽(tabs.js·api.js·lesson-volume.js·merge.js·course-qbank.js·lesson-review.js·lesson-objectives.js)은 typeof로 이 파일을 보고 부른다(캐시에 옛 파일이 남아도 화면이 깨지지 않게).
-// 테스트: tests/code-comments-flow.test.js, tests/code-comments-safety.test.js
+// 테스트: tests/code-comments-flow.test.js, tests/code-comments-safety.test.js, tests/code-comments-notice.test.js
 
 const COMMENT_TOOL_LABEL = '코드 주석 넣기';
 const COMMENT_TOOL_REASON = '코드 주석 넣기 전'; // 작업 기록에 보일 까닭
@@ -69,6 +69,27 @@ function commentRunNote(run) {
         run.remaining ? `코드 블록 ${run.remaining}개는 주석을 다 넣지 못했습니다.` : '',
         run.held ? `고정 섹션의 코드 블록 ${run.held}개는 고치지 않았습니다.` : ''
     ].filter(Boolean).join(' ');
+}
+
+// 반영을 정한 뒤 끝 알림에 붙이는 주석 결과 { text, warn }(run: codeCommentRun 결과, 없으면 빈 글). 탭 생성·분량 채우기·탭 전체 AI 수정·병합이
+// 저장하거나 반영한 다음에 쓴다(받기 전에 알리면 반영하지 않은 글의 주석도 넣었다고 알리게 된다). 중지로 보내지 못한 블록과 멈춘 오류도 적는다
+function commentDoneNote(run) {
+    if (!run) return { text: '', warn: false };
+    if (run.error) return { text: `코드 주석을 넣다가 멈췄습니다. ${run.error}`, warn: true };
+    const fixed = run.fixed?.length || 0;
+    const parts = [
+        fixed ? `코드 블록 ${fixed}개에 주석을 넣었습니다.` : '',
+        run.remaining && run.stopped ? `중지해서 코드 블록 ${run.remaining}개에는 주석을 넣지 못했습니다. 도구의 '${COMMENT_TOOL_LABEL}'로 이어서 넣을 수 있습니다.` : '',
+        run.remaining && !run.stopped ? `코드 블록 ${run.remaining}개는 주석을 다 넣지 못했습니다. 컨벤션 검수의 'AI 수정 제안'이나 도구의 '${COMMENT_TOOL_LABEL}'로 다시 넣을 수 있습니다.` : '',
+        run.held && (fixed || run.remaining) ? `고정 섹션의 코드 블록 ${run.held}개는 고치지 않았습니다.` : ''
+    ].filter(Boolean);
+    return { text: parts.join(' '), warn: !!run.remaining };
+}
+
+// 끝 알림 글에 주석 결과를 잇는다. [글, 경고인가]
+function withCommentNote(text, run) {
+    const note = commentDoneNote(run);
+    return [[text, note.text].filter(Boolean).join(' '), note.warn];
 }
 
 // 생성·고치기 뒤 알림(name: 탭 이름). 넣었으면 알리고, 남았거나 같은 오류로 멈췄으면 경고한다. 중지했거나 고칠 블록이 없으면 알리지 않는다
@@ -143,6 +164,19 @@ async function commentQuestionCode(questions) {
         console.warn('[문제은행] 문항 코드에 주석을 넣지 못해 문항을 그대로 둡니다:', err);
         return list;
     }
+}
+
+// 문항(문제은행 창·전체 생성이 만든 문항) 속 코드 블록 가운데 주석이 모자란 블록 수. 코드를 바꾼 답·서버 오류·하루 한도로 주석을 넣지 못한 블록이 남는다
+function questionCommentGaps(questions) {
+    const list = Array.isArray(questions) ? questions : [];
+    if (!list.length || typeof codeCommentTargets !== 'function' || typeof serializeQuestion !== 'function') return 0;
+    return codeCommentTargets(list.map((question, i) => serializeQuestion(question, i + 1)).join('\n\n')).length;
+}
+
+// 문항을 넣은 뒤 상태 글·알림에 붙일 글(주석을 다 넣었으면 '')
+function questionCommentNote(questions) {
+    const gaps = typeof questions === 'number' ? questions : questionCommentGaps(questions);
+    return gaps ? `문항 코드 블록 ${gaps}개에는 주석을 다 넣지 못했습니다. 문제은행 탭의 'AI 수정 제안'이나 도구의 '${COMMENT_TOOL_LABEL}'로 다시 넣을 수 있습니다.` : '';
 }
 
 /* ---------- 이미 만든 교안: 고칠 칸과 예고 ---------- */
@@ -240,12 +274,21 @@ function untouchedTaken(mod, taken) {
     return taken.filter(item => commentPartText(mod, item.part) === item.before);
 }
 
+// 쓰기 전 글을 작업 기록에 남긴다. 탭이 있는 차시는 차시 전체 한 칸(되돌리면 모든 탭이 함께 돌아온다).
+// 탭이 없는 칸(최종 평가·옛 차시의 본문)과 최종 평가의 탭은 그 칸의 탭 하나 기록으로 남긴다. 차시 전체 기록은 최종 평가와 탭 구분이 없는 차시를
+// 제자리에서 찾지 못해(data-safety.js historyRestoreTarget) 지금 연 교과에 새 차시로 되살린다. 탭 하나 기록은 그 교과의 그 칸으로 돌아간다
+function archiveBeforeComments(mod, items) {
+    if (mod.tabContents && mod.id !== 'mainQuest') return archiveContent(mod, COMMENT_TOOL_REASON);
+    const title = item => (mod.tabContents ? `${mod.title} · ${LESSON_TABS.find(tab => tab.id === item.part.id)?.label || item.part.label}` : mod.title);
+    return archiveContents(items.map(item => ({ title: title(item), content: item.before, images: mod.images, tabId: item.part.id, lesson: mod })), COMMENT_TOOL_REASON);
+}
+
 // 받은 글(taken: [{ part, before, md, remaining, blocks }])을 차시에 쓴다. 쓰기 직전에 그사이 고친 칸을 다시 보고 쓰지 않으며 센다(totals.meanwhile).
-// 쓸 칸이 있으면 차시 전체를 작업 기록 한 칸('코드 주석 넣기 전')에 남긴 뒤 쓰고(되돌리면 모든 탭이 함께 돌아온다), 주석만 더해 어긋난 교수안 원고 표시를 맞춘다.
+// 쓸 칸이 있으면 바꾸기 전 글을 작업 기록('코드 주석 넣기 전', archiveBeforeComments)에 남긴 뒤 쓰고, 주석만 더해 어긋난 교수안 원고 표시를 맞춘다.
 // 저장하지 못하면 false
 async function writeCommentedLesson(subj, mod, taken, totals) {
     const fresh = untouchedTaken(mod, taken);
-    if (fresh.length) await archiveContent(mod, COMMENT_TOOL_REASON);
+    if (fresh.length) await archiveBeforeComments(mod, fresh);
     const write = fresh.length ? untouchedTaken(mod, fresh) : []; // 기록을 남기는 동안 고친 칸도 쓰지 않는다
     totals.meanwhile += taken.length - write.length;
     if (!write.length) return true;

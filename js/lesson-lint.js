@@ -663,7 +663,7 @@ function lintCodeExamples(source, tabId, codeTopic) {
 }
 
 // 코드 블록 주석(code-comments.js codeCommentIssues): 모든 탭에서, 코드를 다루는 차시가 아니어도 본다. 실행 결과·json·mermaid 블록은 모듈이 뺀다.
-// 주석이 모자란 블록은 필수(bad)이고, 이름표를 몰라 세지 못한 블록은 정보(info)다. 지적에는 codeComment: true를 붙인다.
+// 주석이 모자란 블록은 필수(bad)이고, 이름표를 몰라 세지 못한 블록과 ~~~ 펜스로 쓴 코드 블록은 정보(info)다. 지적에는 codeComment: true를 붙인다.
 // 섹션을 통째로 고쳐 쓰는 자동 수정은 코드를 바꿀 수 있어 이 지적을 고치지 않고, 코드는 그대로 두고 주석만 더하는 도구(codeCommentRun)가 고친다.
 // code-comments.js 없이 이 파일만 실으면(시험 등) 보지 않는다. 점검이 던지면 콘솔에 남기고 이번 검수에서만 뺀다(검수 창·배지 그리기를 멈추지 않는다)
 function lintCodeComments(source) {
