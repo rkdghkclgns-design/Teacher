@@ -389,7 +389,7 @@ const BASH_BLOCK = ['```bash', 'ls \\', '  -la', '```'].join('\n');
         assert.ok(rules.code_examples.startsWith('[코드 예제 규칙]') && rules.code_examples.includes('```python'));
         assert.ok(!rules.text_emphasis.includes('단축키') && rules.text_emphasis.includes('언어를 적은 코드 블록'));
         const fewshot = call(pctx, 'CONTEXT_CORE').fewshot_cases;
-        assert.ok(!fewshot.includes('단축키') && fewshot.includes('```python\nscores = [80, 92, 75]') && fewshot.includes('```text\n82.3\n```'));
+        assert.ok(!fewshot.includes('단축키') && fewshot.includes('```python\n# 점수 목록의 평균을 구해 출력합니다\nscores = [80, 92, 75]  # 학생 세 명의 점수') && fewshot.includes('```text\n82.3\n```'));
         ['basicLearn', 'basicPrac', 'advLearn', 'advPrac'].forEach(tabId => assert.ok(call(pctx, 'buildTabRules')(tabId, []).includes('[코드 예제 규칙]'), tabId));
         assert.ok(!call(pctx, 'buildTabRules')('assessment', []).includes('[코드 예제 규칙]'), '학습이해도는 코드제출 형식을 따로 쓴다');
         assert.ok(build('module', {}).systemInstruction.includes('[코드 예제 규칙]'), '교안 전체 생성');

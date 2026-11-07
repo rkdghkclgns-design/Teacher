@@ -3,6 +3,7 @@
 
 const LESSON_LINT_VERSION_MSG = '버전 의존 정보를 본문에 쓰지 않습니다.';
 const LESSON_CODE_EXAMPLE_MSG = '코드를 설명하면 예제 코드 블록을 함께 둡니다.';
+const LESSON_CODE_COMMENT_MSG = '코드 블록에 주석을 넣습니다.'; // code-comments.js CODE_COMMENT_LINT_MSG와 같은 글(이 파일은 그 모듈 없이도 돈다)
 const LESSON_LINT_MAX_OBJECTIVES = 3;
 const LESSON_LINT_MIN_OBJECTIVE_LENGTH = 18;
 const LESSON_LINT_MIN_CHOICES = 4;
@@ -59,7 +60,9 @@ const LESSON_HEADING_PREFIX = '^(?:[^\\s\\w가-힣]+\\s*)?(?:\\d+[.)]\\s*)?';
 const LESSON_OVERVIEW_TITLE = new RegExp(`${LESSON_HEADING_PREFIX}(?:차시\\s*|수업\\s*|학습\\s*)?개요(?!서)`);
 const LESSON_FRAME_TITLE = new RegExp(`${LESSON_HEADING_PREFIX}(?:학습\\s*목표|학습\\s*후\\s*체크리스트)`);
 const LESSON_CHECK_REF = /다시\s*보기\s*:\s*([^)）]+)/;
-const LESSON_RULE_NOTE = '개요, 목표와 내용의 대응은 기본학습·심화학습 탭에만 적용합니다. 코드 블록 안의 글과 이미지 태그는 어구 검사에서 뺍니다. 코드 예제 규칙은 코드를 다루는 차시에만 검사합니다.';
+const LESSON_RULE_NOTE = '개요, 목표와 내용의 대응은 기본학습·심화학습 탭에만 적용합니다. 코드 블록 안의 글과 이미지 태그는 어구 검사에서 뺍니다. 코드 예제 규칙은 코드를 다루는 차시에만 검사합니다. 코드 블록 주석은 모든 탭에서 검사하고(실행 결과·json·mermaid 블록은 빼고), AI 수정 제안과 도구의 \'코드 주석 넣기\'가 코드는 그대로 두고 주석만 더합니다.';
+// 앞 17줄은 원본 규칙표(course-rules.js)와 같은 차례다(convention-parity.test.js는 영역·종류로 못 찾은 줄을 같은 차례의 줄과 견준다).
+// 그래서 새 줄은 그 뒤, 코드 예제 권장 두 줄 바로 앞에 둔다(끝 두 줄은 lesson-code.test.js가 본다)
 const LESSON_RULE_LIST = [
     { sev: 'bad', area: '개요', rule: '개요를 작성합니다.', desc: '이 차시를 왜 배우는지 제시합니다. 문제 상황, 해결할 일, 학습 후 가능해지는 일을 담습니다.' },
     { sev: 'bad', area: '학습 목표', rule: '학습 목표를 1개 이상 작성합니다.', desc: '교안은 학습 목표로 시작해 그 목표를 확인하며 끝납니다.' },
@@ -78,6 +81,7 @@ const LESSON_RULE_LIST = [
     { sev: 'warn', area: '모호한 표현', rule: '당연하다는 표현을 쓰지 않습니다.', desc: '「당연히」, 「물론」, 「쉽게」는 모르는 학습자를 자책하게 만듭니다.' },
     { sev: 'warn', area: '버전 의존', rule: LESSON_LINT_VERSION_MSG, desc: '툴 버전, 단축키, 메뉴 위치는 차시 메타데이터의 사용 툴과 버전이 관리합니다.' },
     { sev: 'warn', area: '교안/교수안', rule: '수업 진행은 교수안의 몫입니다.', desc: '교안은 무엇을 배울지 지정하고, 어떻게 가르칠지는 교수안에서 설계합니다.' },
+    { sev: 'bad', area: '코드 예제', rule: LESSON_CODE_COMMENT_MSG, desc: '코드 첫 줄 위에 무엇을 하는 코드인지, 핵심 줄 위나 끝에 그 줄이 하는 일을 적습니다. 코드 열 줄마다 주석을 하나 이상 둡니다. 실행 결과·json·mermaid 블록은 보지 않고, 문제은행 문항의 주석은 정답을 알려 주지 않습니다.' },
     { sev: 'warn', area: '코드 예제', rule: LESSON_CODE_EXAMPLE_MSG, desc: '코드를 말로만 설명한 섹션을 찾습니다. 무엇을 하는 코드인지, 코드 블록, 핵심 줄 설명, 실행 결과 순서로 보입니다.' },
     { sev: 'warn', area: '코드 예제', rule: '코드 블록에 언어를 적고 닫습니다.', desc: '```python처럼 언어를 적어야 이름표가 붙습니다. 닫지 않은 코드 블록은 뒤의 본문까지 코드로 보입니다.' }
 ];
@@ -518,11 +522,12 @@ function lintQuestion(q, checklist = [], objectiveCount = Infinity) {
     ].filter(Boolean);
 }
 
-// 차시 목록 배지에 쓴다. 탭마다 검사해 필수 규칙 위반만 센다.
+// 차시 목록 배지에 쓴다. 탭마다 검사해 원본 규칙표의 필수 규칙 위반만 센다.
+// 코드 블록 주석은 세지 않는다. 큰 탭에서는 주석 점검에 시간이 걸려 사이드바를 그릴 때마다 모든 차시를 보지 않는다
 function lessonRequiredIssues(mod) {
     const tabs = Object.values(mod.tabContents || {}).filter(Boolean);
     return (tabs.length ? tabs : [mod.content].filter(Boolean))
-        .flatMap(md => lintLessonMarkdown(md))
+        .flatMap(md => lintLessonMarkdown(md, undefined, { codeComments: false }))
         .filter(issue => LESSON_LINT_REQUIRED.test(issue.msg));
 }
 
@@ -656,10 +661,36 @@ function lintCodeExamples(source, tabId, codeTopic) {
     });
 }
 
-// tabId를 주면 그 탭의 구조까지 검사한다. 지적은 { sev, where, msg, snip, missing } 형식이다. missing은 없는 섹션을 새로 써야 한다는 뜻이다.
+// 코드 블록 주석(code-comments.js codeCommentIssues): 모든 탭에서, 코드를 다루는 차시가 아니어도 본다. 실행 결과·json·mermaid 블록은 모듈이 뺀다.
+// 주석이 모자란 블록은 필수(bad)이고, 이름표를 몰라 세지 못한 블록은 정보(info)다. 지적에는 codeComment: true를 붙인다.
+// 섹션을 통째로 고쳐 쓰는 자동 수정은 코드를 바꿀 수 있어 이 지적을 고치지 않고, 코드는 그대로 두고 주석만 더하는 도구(codeCommentRun)가 고친다.
+// code-comments.js 없이 이 파일만 실으면(시험 등) 보지 않는다. 점검이 던지면 콘솔에 남기고 이번 검수에서만 뺀다(검수 창·배지 그리기를 멈추지 않는다)
+function lintCodeComments(source) {
+    if (typeof codeCommentIssues !== 'function') return [];
+    let issues;
+    try {
+        issues = codeCommentIssues(source, { sev: 'bad' });
+    } catch (err) {
+        console.warn('코드 블록 주석 점검에 실패해 이번 검수에서 뺍니다.', err);
+        return [];
+    }
+    return issues.map(issue => ({
+        sev: issue.sev,
+        where: issue.where,
+        msg: issue.msg,
+        snip: Number.isFinite(issue.need)
+            ? [issue.snip, `코드 ${issue.codeLines}줄에 주석 ${issue.comments}개(${issue.need}개 필요)`].filter(Boolean).join(' · ')
+            : issue.snip,
+        codeComment: true
+    }));
+}
+
+// tabId를 주면 그 탭의 구조까지 검사한다. 지적은 { sev, where, msg, snip, missing, codeComment } 형식이다. missing은 없는 섹션을 새로 써야 한다는 뜻이고,
+// codeComment는 코드 블록 주석 지적이라는 뜻이다(lintCodeComments).
 // context.objectiveCount: 그 갈래의 학습 목표 수(qbankObjectives). 주면 문제은행 탭(학습이해도·심화이해도)의 목표 대응과 번호 범위를 검사한다.
-// context.codeTopic: 코드를 다루는 차시(lessonCodeTopic)면 코드 예제 규칙도 검사한다
-function lintLessonMarkdown(md, tabId, { objectiveCount = 0, codeTopic = false } = {}) {
+// context.codeTopic: 코드를 다루는 차시(lessonCodeTopic)면 코드 예제 규칙도 검사한다.
+// context.codeComments: false면 코드 블록 주석을 보지 않는다(기본은 모든 탭에서 본다)
+function lintLessonMarkdown(md, tabId, { objectiveCount = 0, codeTopic = false, codeComments = true } = {}) {
     const source = String(md || '').replace(/\r\n/g, '\n');
     const goals = lessonLintBullets(source, '학습\\s*목표');
     const checks = lessonLintBullets(source, '학습\\s*후\\s*체크리스트');
@@ -670,6 +701,7 @@ function lintLessonMarkdown(md, tabId, { objectiveCount = 0, codeTopic = false }
         ...lessonLintQuestions(source).flatMap(block => lintQuestionBlock(block, checks, objectiveCount || Infinity)),
         ...(LESSON_BANK_TABS.includes(tabId) ? lintObjectiveCoverage(source, objectiveCount) : []),
         ...lessonLintSections(source).flatMap(section => lintLessonPhrases(section.text, section.title)),
-        ...lintCodeExamples(source, tabId, codeTopic)
+        ...lintCodeExamples(source, tabId, codeTopic),
+        ...(codeComments ? lintCodeComments(source) : [])
     ];
 }

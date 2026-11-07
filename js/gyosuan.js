@@ -211,6 +211,7 @@ function gyosuanSystemInstruction(style) {
         '- 모호한 표현("상황에 맞게", "경우에 따라")은 판단 기준으로 바꿉니다.',
         GYOSUAN_SLIDE_SPECS[style].rule,
         '- 원고에 없는 사실은 지어내지 않습니다.',
+        '- 교수안이나 슬라이드 문구에 코드 블록을 쓰면 코드 블록마다 무엇을 하는 코드인지 한국어 주석을 넣습니다.',
         '- 지정된 출력 형식만 출력하고 머리말·맺음말을 붙이지 않습니다.'
     ].join('\n') + getReferenceContext(GYOSUAN_REFERENCE_CHARS);
 }
