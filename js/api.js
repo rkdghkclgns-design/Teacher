@@ -1311,7 +1311,8 @@ async function validateImageWithVLM(base64Image, searchIntent, context, signal =
 }
 
 // [Phase F10] 구글 Custom Search (Key 롤링 방어 적용)
-async function searchImageAPI(query) {
+// opts.quiet: 키를 다 쓴 알림(AI 그림으로 바꾼다는 말)을 띄우지 않는다. 예시 게임 그림은 AI 그림으로 바꾸지 않으므로 이 값을 준다
+async function searchImageAPI(query, { quiet = false } = {}) {
     if (!googleSearchCx || !googleSearchApiKeys || googleSearchApiKeys.length === 0) {
         return null; // 설정 안되어있으면 즉시 폴백
     }
@@ -1358,7 +1359,7 @@ async function searchImageAPI(query) {
     // 키를 다 소모했거나 검색 실패 시
     if (attempt === maxRetries) {
         console.warn(`[Search API] 등록된 ${maxRetries}개의 Key를 모두 소진했습니다.`);
-        if (window.showToast) window.showToast(`등록된 검색 API Key의 일일 한도가 모두 소진되었습니다. AI 이미지 생성으로 자동 전환합니다.`, 'error');
+        if (window.showToast && !quiet) window.showToast(`등록된 검색 API Key의 일일 한도가 모두 소진되었습니다. AI 이미지 생성으로 자동 전환합니다.`, 'error');
     }
     return null;
 }

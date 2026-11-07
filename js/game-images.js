@@ -13,6 +13,7 @@ const GAME_PICTURE_MAX_BYTES = 8 * 1024 * 1024;
 const GAME_FETCH_TIMEOUT_MS = 15000; // 요청 하나를 기다리는 시간
 const GAME_RETRY_WAITS = [1500, 4000]; // 위키미디어가 바쁘다(429·503)고 하면 쉬고 다시 묻는 시간(두 번까지)
 const GAME_RETRY_MAX_MS = 8000;
+const GAME_API_GAP_MS = 500; // 위키백과 API 요청 사이 간격(1초에 두 번까지). 한꺼번에 보내면 위키미디어가 막는다
 const GAME_SEARCH_LIMIT = 5;
 const GAME_THUMB_WIDTH = 1000;
 const GAME_CANDIDATE_TRIES = 4; // 다시 찾기 한 번에 차례로 받아 볼 그림 파일 수
@@ -24,7 +25,8 @@ const GAME_PICTURE_WORDS = ['screenshot', 'screenshots', 'gameplay', 'screen', '
 // 문서 설명이 게임인지 가르는 낱말(영어는 낱말 단위, 한국어는 글자 그대로 찾는다)
 const GAME_WORDS = ['game', 'games', 'videogame', 'videogames'];
 const GAME_NOT_WORDS = ['company', 'corporation', 'developer', 'publisher', 'designer', 'programmer', 'person', 'console', 'consoles', 'character', 'mascot', 'engine', 'genre', 'studio', 'magazine', 'award', 'awards', 'convention', 'film'];
-const GAME_NOT_WORDS_KO = ['게임기', '콘솔', '회사', '기업', '개발사', '배급사', '유통사', '캐릭터', '엔진', '장르', '인물', '디자이너', '영화', '잡지'];
+const GAME_PERSON_VIEWS = ['first', 'second', 'third']; // first-person shooter의 person은 사람 문서가 아니다
+const GAME_NOT_WORDS_KO =['게임기', '콘솔', '회사', '기업', '개발사', '배급사', '유통사', '캐릭터', '엔진', '장르', '인물', '디자이너', '영화', '잡지'];
 const GAME_CACHE_LABEL = { wikipedia: '위키백과 게임 그림', google: '웹 검색 게임 그림' };
 
 const GAME_TEXT = {
@@ -60,8 +62,10 @@ function gameArticleParts(title) {
 }
 
 // 찾는 제목과 문서 제목이 얼마나 맞는지: 3 같음 · 2 앞의 The만 다름 · 1 부제만 같음 · 0 다름
-function gameTitleScore(articleTitle, wanted) {
+// 둘 다 끝의 괄호 설명은 떼고 견준다(AI가 'StarCraft (video game)'처럼 문서 제목 그대로 보내도 맞는다)
+function gameTitleScore(articleTitle, wantedTitle) {
     const { base } = gameArticleParts(articleTitle);
+    const wanted = gameArticleParts(wantedTitle).base;
     const have = gameTitleKey(base);
     const want = gameTitleKey(wanted);
     if (!have || !want) return 0;
@@ -83,16 +87,25 @@ function gamePageIsGame(page) {
     if (!text) return false;
     const words = gameTitleKey(text).split(' ');
     const game = words.some(word => GAME_WORDS.includes(word)) || text.includes('게임');
-    const other = words.some(word => GAME_NOT_WORDS.includes(word)) || GAME_NOT_WORDS_KO.some(word => text.includes(word));
+    const notWord = (word, i) => GAME_NOT_WORDS.includes(word) && !(word === 'person' && GAME_PERSON_VIEWS.includes(words[i - 1]));
+    const other = words.some(notWord) || GAME_NOT_WORDS_KO.some(word => text.includes(word));
     return game && !other;
 }
 
-// 검색 결과 가운데 제목이 가장 잘 맞고 설명이 게임인 문서. 점수가 같으면 검색 순위가 높은 것. 없으면 null
+// 찾는 제목에 괄호 설명((1993 video game) 등)이 있을 때 문서가 그 설명과 맞는지: 2 제목 전체가 같음 · 1 설명이 듦 · 0 아님
+function gameNoteFit(articleTitle, wantedTitle) {
+    const wantNote = gameTitleKey(gameArticleParts(wantedTitle).note);
+    if (!wantNote) return 0;
+    if (gameTitleKey(articleTitle) === gameTitleKey(wantedTitle)) return 2;
+    return gameTitleKey(gameArticleParts(articleTitle).note).includes(wantNote) ? 1 : 0;
+}
+
+// 검색 결과 가운데 제목이 가장 잘 맞고 설명이 게임인 문서. 점수가 같으면 괄호 설명이 맞는 것, 그다음 검색 순위가 높은 것. 없으면 null
 function pickGameArticle(pages, wanted) {
     const ranked = (Array.isArray(pages) ? pages : [])
-        .map(page => ({ page, score: gameTitleScore(page?.title, wanted), rank: Number.isFinite(Number(page?.index)) ? Number(page.index) : 99 }))
+        .map(page => ({ page, score: gameTitleScore(page?.title, wanted), fit: gameNoteFit(page?.title, wanted), rank: Number.isFinite(Number(page?.index)) ? Number(page.index) : 99 }))
         .filter(item => item.score > 0 && gamePageIsGame(item.page))
-        .sort((a, b) => b.score - a.score || a.rank - b.rank);
+        .sort((a, b) => b.score - a.score || b.fit - a.fit || a.rank - b.rank);
     return ranked[0]?.page || null;
 }
 
@@ -192,12 +205,16 @@ async function gameFetch(url, signal, read) {
         late = true;
         stop();
     }, GAME_FETCH_TIMEOUT_MS);
+    let reached = false;
     try {
         const res = await fetch(url, { credentials: 'omit', ...(controller ? { signal: controller.signal } : {}) });
+        reached = true;
         return await read(res);
     } catch (err) {
         if (signal?.aborted) throw gameStopError();
         if (late) throw new Error('인터넷 응답이 늦어 멈췄습니다');
+        // 답을 읽지 못한 요청(브라우저는 위키미디어의 429 답을 CORS 때문에 읽지 못해 이렇게 끝난다)
+        if (!reached) throw Object.assign(new Error(`인터넷에서 답을 받지 못했습니다: ${err?.message || err}`), { name: 'GameNetworkError' });
         throw err;
     } finally {
         clearTimeout(timer);
@@ -211,16 +228,39 @@ function gameRetryDelay(res, attempt) {
     return seconds > 0 ? Math.min(seconds * 1000, GAME_RETRY_MAX_MS) : GAME_RETRY_WAITS[attempt];
 }
 
-// 요청 하나를 보내고, 위키미디어가 바쁘다고 하면 잠깐 쉬었다가 두 번까지 다시 보낸다(쉬는 동안 중지하면 AbortError). read(res)는 받은 답을 읽는다
+// ms만큼 쉰다(중지하면 AbortError)
+async function gameWait(ms, signal) {
+    if (typeof waitMs === 'function') await waitMs(ms, signal);
+    else await new Promise(resolve => setTimeout(resolve, ms));
+    if (signal?.aborted) throw gameStopError();
+}
+
+// 요청 하나를 보내고, 위키미디어가 바쁘다고 하거나(429·503) 답을 읽지 못하면(브라우저에서 본 429) 잠깐 쉬었다가 두 번까지 다시 보낸다.
+// 쉬는 동안 중지하면 AbortError. 시한(15초)을 넘긴 요청은 다시 보내지 않는다. read(res)는 받은 답을 읽는다
 async function gameFetchPolitely(url, signal, read) {
     for (let attempt = 0; ; attempt++) {
-        const outcome = await gameFetch(url, signal, async res => (
-            (res.status === 429 || res.status === 503) && attempt < GAME_RETRY_WAITS.length ? { wait: gameRetryDelay(res, attempt) } : { value: await read(res) }
-        ));
+        const retry = attempt < GAME_RETRY_WAITS.length;
+        let outcome;
+        try {
+            outcome = await gameFetch(url, signal, async res => (
+                (res.status === 429 || res.status === 503) && retry ? { wait: gameRetryDelay(res, attempt) } : { value: await read(res) }
+            ));
+        } catch (err) {
+            if (err?.name !== 'GameNetworkError' || !retry) throw err;
+            outcome = { wait: GAME_RETRY_WAITS[attempt] };
+        }
         if (!('wait' in outcome)) return outcome.value;
-        if (typeof waitMs === 'function') await waitMs(outcome.wait, signal);
-        else await new Promise(resolve => setTimeout(resolve, outcome.wait));
+        await gameWait(outcome.wait, signal);
     }
+}
+
+// 위키백과 API 요청 차례: 앞 요청과 GAME_API_GAP_MS 넘게 떨어지게 자리를 잡고 그때까지 쉰다(한 번에 그 간격까지만 쉰다)
+let gameApiNextAt = 0;
+async function gameApiPace(signal) {
+    const now = Date.now();
+    const at = Math.min(Math.max(now, gameApiNextAt), now + GAME_API_GAP_MS);
+    gameApiNextAt = at + GAME_API_GAP_MS;
+    if (at > now) await gameWait(at - now, signal);
 }
 
 // 위키백과 API GET. 값은 모두 주소 글자로 바꿔 붙이고 답의 모양을 본다
@@ -228,6 +268,8 @@ async function gameApiGet(wiki, params, signal) {
     const host = gameWikiHost(wiki);
     if (!host) throw new Error('알 수 없는 위키백과입니다');
     const query = Object.entries({ ...params, format: 'json', origin: '*' }).map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`).join('&');
+    if (signal?.aborted) throw gameStopError();
+    await gameApiPace(signal);
     return gameFetchPolitely(`https://${host}/w/api.php?${query}`, signal, async res => {
         if (!res.ok) throw new Error(`위키백과가 ${res.status}로 답했습니다`);
         const data = await res.json();
@@ -263,8 +305,10 @@ const gameArticleUrl = (wiki, page) => gameSourceUrl(page?.fullurl) || gameSourc
     || (gameWikiHost(wiki) && page?.title ? `https://${gameWikiHost(wiki)}/wiki/${encodeURIComponent(String(page.title).replace(/ /g, '_'))}` : '');
 
 // 그 위키백과에서 게임 문서 하나(제목이 맞고 설명이 게임인 문서). 없으면 null
+// 검색어에는 제목 끝의 괄호 설명((video game) 등)을 떼고 넣는다. 그 설명은 같은 이름의 문서를 고를 때 쓴다
 async function findGameArticle(wiki, title, signal) {
-    const search = wiki === 'ko' ? `${title} 게임` : `${title} video game`;
+    const base = gameArticleParts(title).base || title;
+    const search = wiki === 'ko' ? `${base} 게임` : `${base} video game`;
     const data = await gameApiGet(wiki, {
         action: 'query', generator: 'search', gsrsearch: search, gsrlimit: GAME_SEARCH_LIMIT,
         prop: 'pageimages|description|info', piprop: 'thumbnail|name', pithumbsize: GAME_THUMB_WIDTH, pilicense: 'any', inprop: 'url'
@@ -308,30 +352,44 @@ function gameCandidateScore(name, articleTitle) {
 }
 
 // 문서에 든 그림 가운데 다시 찾기 후보(래스터 그림, 아이콘·로고·svg는 뺀다). 점수가 높은 것(게임 화면·표지) 먼저, 같으면 위키백과가 돌려준 차례
-async function gameArticleFiles(wiki, title, signal) {
+async function gameArticleCandidates(wiki, title, signal) {
     const data = await gameApiGet(wiki, { action: 'query', titles: title, prop: 'images', imlimit: 50 }, signal);
     const names = gameApiPages(data).flatMap(page => (Array.isArray(page.images) ? page.images : []))
         .map(image => (typeof image?.title === 'string' ? gameFileName(image.title) : '')).filter(gameRasterFile);
     return [...new Map(names.map(name => [gameFileKey(name), name])).values()]
         .map((name, index) => ({ name, index, score: gameCandidateScore(name, title) }))
-        .sort((a, b) => b.score - a.score || a.index - b.index)
-        .map(item => item.name);
+        .sort((a, b) => b.score - a.score || a.index - b.index);
 }
+const gameArticleFiles = async (wiki, title, signal) => (await gameArticleCandidates(wiki, title, signal)).map(item => item.name);
 
-// 게임 문서의 그림: 대표 그림 → 문서의 다른 그림 차례. after: 이 파일 다음 후보부터 본다(다시 찾기) / avoid: 이 파일은 건너뛴다
+// 게임 문서의 그림: 대표 그림 → 문서의 다른 그림 차례. 대표 그림이 로고·아이콘·svg면 게임 화면·표지 후보(점수 2 이상)를 먼저 보고, 받지 못하면 대표 그림을 쓴다.
+// after: 다시 찾기. 후보 목록에서 이 파일 다음부터 보고 끝에 닿으면 목록 처음으로 돌아간다(앞쪽 후보도 차례가 온다) / avoid: 이 파일은 건너뛴다
 async function gameArticlePicture(wiki, page, { signal = null, after = '', avoid = '' } = {}) {
     const main = typeof page.pageimage === 'string' ? gameFileName(page.pageimage) : '';
     const hint = typeof page.thumbnail?.source === 'string' ? page.thumbnail.source : '';
     const skip = new Set([gameFileKey(avoid), gameFileKey(after)].filter(Boolean));
+    const tryFile = async file => {
+        skip.add(gameFileKey(file));
+        return gameFilePicture(wiki, page, file, signal, gameFileKey(file) === gameFileKey(main) ? hint : '');
+    };
+    let listed = null;
+    const candidates = async () => (listed ||= await gameArticleCandidates(wiki, page.title, signal));
     if (!after && main && !skip.has(gameFileKey(main))) {
-        const found = await gameFilePicture(wiki, page, main, signal, hint);
+        if (!gameRasterFile(main)) {
+            const better = (await candidates()).filter(item => item.score >= 2 && !skip.has(gameFileKey(item.name))).slice(0, GAME_CANDIDATE_TRIES);
+            for (const item of better) {
+                const found = await tryFile(item.name);
+                if (found) return found;
+            }
+        }
+        const found = await tryFile(main);
         if (found) return found;
-        skip.add(gameFileKey(main));
     }
-    const files = [...new Map([main, ...(await gameArticleFiles(wiki, page.title, signal))].filter(Boolean).map(name => [gameFileKey(name), name])).values()];
-    const from = after ? files.findIndex(name => gameFileKey(name) === gameFileKey(after)) + 1 : 0;
-    for (const file of files.slice(from).filter(name => !skip.has(gameFileKey(name))).slice(0, GAME_CANDIDATE_TRIES)) {
-        const found = await gameFilePicture(wiki, page, file, signal, gameFileKey(file) === gameFileKey(main) ? hint : '');
+    const names = [...new Map([gameRasterFile(main) ? main : '', ...(await candidates()).map(item => item.name)].filter(Boolean).map(name => [gameFileKey(name), name])).values()];
+    const at = after ? names.findIndex(name => gameFileKey(name) === gameFileKey(after)) : -1;
+    const order = at >= 0 ? [...names.slice(at + 1), ...names.slice(0, at)] : names;
+    for (const file of order.filter(name => !skip.has(gameFileKey(name))).slice(0, GAME_CANDIDATE_TRIES)) {
+        const found = await tryFile(file);
         if (found) return found;
     }
     return null;
@@ -360,11 +418,12 @@ const gameSearchKeysReady = () => typeof googleSearchCx !== 'undefined' && !!goo
     && typeof googleSearchApiKeys !== 'undefined' && Array.isArray(googleSearchApiKeys) && googleSearchApiKeys.length > 0;
 
 // 위키백과에서 못 찾았을 때 강사가 넣은 Google 검색 키로만 찾는다(지금 쓰는 고르기 판정을 그대로 거친다). 키가 없으면 부르지 않고 null
+// 이 길의 그림은 지금 Google 검색처럼 api.js의 중계(fetchImageAsBase64)를 거쳐 받는다. 키를 다 써도 AI 그림으로 바꾸지 않으니 그 알림은 띄우지 않는다
 async function findGamePictureByGoogle(title, { signal = null, context = '' } = {}) {
     if (!gameSearchKeysReady() || typeof searchImageAPI !== 'function') return null;
-    const name = gameTagTitle(title);
+    const name = gameArticleParts(gameTagTitle(title)).base;
     const query = `${name} video game screenshot`;
-    const result = await searchImageAPI(query);
+    const result = await searchImageAPI(query, { quiet: true });
     if (signal?.aborted) throw gameStopError();
     if (typeof result?.b64 !== 'string' || !result.b64.startsWith('data:image/')) return null;
     const verdict = typeof validateImageWithVLM === 'function'

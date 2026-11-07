@@ -347,13 +347,121 @@ async function run(name, fn) {
             };
             const found = plain(await call('findGamePicture')('Tetris'));
             assert.deepStrictEqual([found.file, found.dataUrl], ['Tetris Boxshot.jpg', dataUrl(PNG_A)], '쉬었다가 다시 물어 찾는다');
-            assert.deepStrictEqual(waits.filter(ms => ms < 10000), [3000, 4000, 8000], '알려 준 시간(8초까지) 또는 정해 둔 시간만큼 쉰다');
+            assert.deepStrictEqual(waits.filter(ms => ms > call('GAME_API_GAP_MS') && ms < 10000), [3000, 4000, 8000], '알려 준 시간(8초까지) 또는 정해 둔 시간만큼 쉰다(요청 사이 간격은 빼고 본다)');
             ctx.fetched.length = 0;
             ctx.fetchStub = async () => new Response('busy', { status: 429 });
             assert.strictEqual(await call('findGamePicture')('Tetris'), null);
             assert.strictEqual(ctx.fetched.length, 3, '처음 한 번과 다시 두 번');
         } finally {
             ctx.setTimeout = realSet;
+        }
+    });
+
+    await run('제목의 괄호 설명: AI가 문서 제목 그대로(StarCraft (video game)) 보내도 괄호를 떼고 찾고, 같은 이름이면 괄호 설명이 맞는 문서를 고른다', async () => {
+        const pick = (pages, title) => call('pickGameArticle')(pages, title)?.title || null;
+        const sc = page(10, 'StarCraft (video game)', { description: '1998 real-time strategy game', index: 2 });
+        const scSeries = page(11, 'StarCraft', { description: 'Military science fiction media franchise', index: 1 });
+        assert.strictEqual(pick([scSeries, sc], 'StarCraft (video game)'), 'StarCraft (video game)');
+        assert.strictEqual(call('gameTitleScore')('StarCraft (video game)', 'StarCraft (video game)'), 3);
+        const doom93 = page(3, 'Doom (1993 video game)', { description: '1993 video game', index: 1 });
+        const doom16 = page(2, 'Doom (2016 video game)', { description: '2016 video game', index: 2 });
+        assert.strictEqual(pick([doom93, doom16], 'Doom (2016 video game)'), 'Doom (2016 video game)', '제목 전체가 같은 문서');
+        assert.strictEqual(pick([doom93, doom16], 'Doom (2016)'), 'Doom (2016 video game)', '괄호 설명이 든 문서');
+        assert.strictEqual(pick([doom93, doom16], 'Doom'), 'Doom (1993 video game)', '괄호가 없으면 검색 순위');
+        const SC_URL = `${UP}/en/9/93/StarCraft_box_art.jpg`;
+        ctx.fetchStub = wikiStub({
+            search: { 'en:StarCraft video game': [scSeries, { ...sc, pageimage: 'StarCraft_box_art.jpg' }] },
+            info: { 'en:File:StarCraft box art.jpg': fileInfo('File:StarCraft box art.jpg', { url: SC_URL, license: 'Fair use', nonFree: true }) },
+            files: { [SC_URL]: picture(PNG_B) }
+        });
+        const found = plain(await call('findGamePicture')('StarCraft (video game)'));
+        assert.deepStrictEqual([found.page, found.name, found.file, found.dataUrl], ['StarCraft (video game)', 'StarCraft', 'StarCraft box art.jpg', dataUrl(PNG_B)]);
+        assert.strictEqual(new URL(ctx.fetched[0].url).searchParams.get('gsrsearch'), 'StarCraft video game', '검색어에는 괄호 설명을 떼고 넣는다');
+    });
+
+    await run('설명 거르기: first-person·third-person 슈팅 게임은 게임 문서로 보고, 사람 문서는 여전히 뺀다', async () => {
+        const isGame = item => call('gamePageIsGame')(item);
+        assert.strictEqual(isGame({ title: 'Doom (1993 video game)', description: 'First-person shooter game' }), true);
+        assert.strictEqual(isGame({ title: 'Gears of War', description: '2006 third-person shooter video game' }), true);
+        assert.strictEqual(isGame({ title: 'Gamer', description: 'Person who plays video games' }), false, '사람 문서');
+        const pick = (pages, title) => call('pickGameArticle')(pages, title)?.title || null;
+        const cs = page(20, 'Counter-Strike (video game)', { description: '2000 first-person shooter video game', index: 1 });
+        const series = page(21, 'Counter-Strike', { description: 'Series of first-person shooter video games', index: 2 });
+        assert.strictEqual(pick([cs, series], 'Counter-Strike'), 'Counter-Strike (video game)', '게임 문서를 시리즈 문서보다 먼저(검색 순위)');
+        assert.strictEqual(pick([page(3, 'Doom (1993 video game)', { description: 'First-person shooter game' }), page(2, 'Doom (2016 video game)', { description: 'First-person shooter' })], 'Doom'), 'Doom (1993 video game)');
+    });
+
+    await run('답을 읽지 못함: 브라우저가 위키미디어의 429 답을 읽지 못해 요청이 실패하면(TypeError) 쉬었다가 두 번까지 다시 묻는다', async () => {
+        const waits = [];
+        const realSet = ctx.setTimeout;
+        ctx.setTimeout = (fn, ms) => { waits.push(ms); return realSet(fn, ms); };
+        try {
+            let broken = 0;
+            const stub = wikiStub(TETRIS_STUB);
+            ctx.fetchStub = async (url, init) => {
+                if (new URL(url).searchParams.get('generator') === 'search' && broken < 1) { broken += 1; throw new TypeError('Failed to fetch'); }
+                if (url === TETRIS_MAIN_URL && broken < 2) { broken += 1; throw new TypeError('Failed to fetch'); }
+                return stub(url, init);
+            };
+            const found = plain(await call('findGamePicture')('Tetris'));
+            assert.deepStrictEqual([found.file, found.dataUrl], ['Tetris Boxshot.jpg', dataUrl(PNG_A)], '쉬었다가 다시 물어 찾는다');
+            assert.deepStrictEqual(waits.filter(ms => ms > call('GAME_API_GAP_MS') && ms < 10000), [1500, 1500], '정해 둔 시간만큼 쉰다');
+            ctx.fetched.length = 0;
+            ctx.fetchStub = async () => { throw new TypeError('Failed to fetch'); };
+            assert.strictEqual(await call('findGamePicture')('Tetris'), null);
+            assert.strictEqual(ctx.fetched.length, 3, '처음 한 번과 다시 두 번');
+        } finally {
+            ctx.setTimeout = realSet;
+        }
+    });
+
+    await run('요청 간격: 위키백과 API 요청을 잇달아 보내지 않고 사이에 0.5초까지 쉰다', async () => {
+        const waits = [];
+        const realSet = ctx.setTimeout;
+        ctx.setTimeout = (fn, ms) => { waits.push(ms); return realSet(fn, ms); };
+        try {
+            ctx.fetchStub = wikiStub(TETRIS_STUB);
+            assert.ok(await call('findGamePicture')('Tetris'));
+            const gap = call('GAME_API_GAP_MS');
+            assert.ok(gap >= 500 && waits.some(ms => ms > 0 && ms <= gap), `검색과 파일 정보 요청 사이에 쉰다: ${waits}`);
+        } finally {
+            ctx.setTimeout = realSet;
+        }
+    });
+
+    await run('대표 그림이 로고면: 게임 화면·표지 후보를 먼저 넣고, 받지 못하면 로고를 쓴다', async () => {
+        const LOGO_THUMB = `${UP}/en/thumb/1/10/Tetris_logo_2019.svg/1000px-Tetris_logo_2019.svg.png`;
+        const SHOT_URL = `${UP}/commons/5/55/Tetris_screenshot.png`;
+        const logoPage = page(30474, 'Tetris', { description: '1985 video game', pageimage: 'Tetris_logo_2019.svg', thumbnail: { source: LOGO_THUMB } });
+        const stub = {
+            search: { 'en:Tetris video game': [logoPage] },
+            images: { 'en:Tetris': ['Alexey Pajitnov.jpg', 'Tetris logo 2019.svg', 'Tetris (Elektronika 60) screenshot.png'] },
+            info: {
+                'en:File:Tetris logo 2019.svg': fileInfo('File:Tetris logo 2019.svg', { url: `${UP}/en/1/10/Tetris_logo_2019.svg`, thumburl: LOGO_THUMB, license: 'Public domain' }),
+                'en:File:Tetris (Elektronika 60) screenshot.png': fileInfo('File:Tetris (Elektronika 60) screenshot.png', { url: SHOT_URL, license: 'CC BY-SA 4.0' })
+            },
+            files: { [LOGO_THUMB]: picture(PNG_A), [SHOT_URL]: picture(PNG_B) }
+        };
+        ctx.fetchStub = wikiStub(stub);
+        const shot = plain(await call('findGamePicture')('Tetris'));
+        assert.deepStrictEqual([shot.file, shot.dataUrl, shot.license], ['Tetris (Elektronika 60) screenshot.png', dataUrl(PNG_B), 'CC BY-SA 4.0 라이선스']);
+        ctx.fetchStub = wikiStub({ ...stub, files: { [LOGO_THUMB]: picture(PNG_A) } });
+        const logo = plain(await call('findGamePicture')('Tetris'));
+        assert.deepStrictEqual([logo.file, logo.dataUrl], ['Tetris logo 2019.svg', dataUrl(PNG_A)], '다른 그림을 받지 못하면 로고를 쓴다');
+    });
+
+    await run('Google 키를 다 쓰면: 예시 게임 그림 길은 AI 그림으로 바꾼다는 알림을 띄우지 않는다(보통 그림 검색은 그대로 알린다)', async () => {
+        vm.runInContext("googleSearchCx = 'FAKE-CX'; googleSearchApiKeys = ['FAKE-KEY-1', 'FAKE-KEY-2']; currentSearchKeyIndex = 0;", ctx);
+        try {
+            ctx.fetchStub = async url => (new URL(url).hostname === 'www.googleapis.com' ? new Response('quota', { status: 429 }) : wikiStub({})(url));
+            assert.strictEqual(await call('findGamePictureByGoogle')('Mystery Game'), null);
+            assert.strictEqual(ctx.fetched.filter(item => new URL(item.url).hostname === 'www.googleapis.com').length, 2, '키마다 한 번');
+            assert.ok(!ctx.toasts.some(text => text.includes('AI 이미지 생성')), ctx.toasts.join(' / '));
+            ctx.toasts.length = 0;
+            await call('searchImageAPI')('puzzle board');
+            assert.ok(ctx.toasts.some(text => text.includes('AI 이미지 생성으로 자동 전환')), '보통 그림 검색은 그대로 알린다');
+        } finally {
+            vm.runInContext("googleSearchCx = ''; googleSearchApiKeys = []; currentSearchKeyIndex = 0;", ctx);
         }
     });
 
@@ -546,14 +654,22 @@ async function run(name, fn) {
         assert.deepStrictEqual(['a.svg', 'b.tif', 'Game Boy icon.png', 'Commons-logo.png', 'Nintendo wordmark.png', 'noext', '.png'].map(raster), [false, false, false, false, false, false, false]);
     });
 
-    await run('다시 찾기: 문서의 마지막 그림이면 다시 검색해 대표 그림으로 돌아가고, 같은 그림밖에 없으면 그대로 두고 알린다', async () => {
+    await run('다시 찾기: 문서의 마지막 후보면 목록 처음으로 돌아가고, 다른 후보를 받지 못하면 다시 검색해 대표 그림으로, 같은 그림밖에 없으면 그대로 두고 알린다', async () => {
         const mod = framedLesson('Alexey Pajitnov.jpg', dataUrl(JPEG_A, 'image/jpeg'));
         ctx.fetchStub = wikiStub(REDO_STUB);
         const { button } = frameButton({ gameWiki: 'en', gamePage: 'Tetris', gameFile: 'Alexey Pajitnov.jpg' });
         await call('regenerateGamePicture')(button, 'game: Tetris', 'img_1');
-        assert.ok(ctx.fetched.some(item => new URL(item.url).searchParams.get('generator') === 'search'), '후보를 다 보면 다시 검색한다');
+        assert.ok(!ctx.fetched.some(item => new URL(item.url).searchParams.get('generator') === 'search'), '목록 앞쪽 후보가 있으면 다시 검색하지 않는다');
         assert.strictEqual(mod.images.img_1, dataUrl(PNG_A));
         assert.ok(mod.tabContents.basicLearn.includes('data-game-file="Tetris Boxshot.jpg"'));
+        reset();
+        const lone = framedLesson('Alexey Pajitnov.jpg', dataUrl(JPEG_A, 'image/jpeg'));
+        const { 'en:File:Tetris NES gameplay.png': unused, ...noNesInfo } = REDO_STUB.info;
+        ctx.fetchStub = wikiStub({ ...REDO_STUB, info: noNesInfo, images: { 'en:Tetris': ['Tetris NES gameplay.png', 'Alexey Pajitnov.jpg'] } });
+        await call('regenerateGamePicture')(frameButton({ gameWiki: 'en', gamePage: 'Tetris', gameFile: 'Alexey Pajitnov.jpg' }).button, 'game: Tetris', 'img_1');
+        assert.ok(ctx.fetched.some(item => new URL(item.url).searchParams.get('generator') === 'search'), '다른 후보를 받지 못하면 다시 검색한다');
+        assert.strictEqual(lone.images.img_1, dataUrl(PNG_A));
+        assert.ok(lone.tabContents.basicLearn.includes('data-game-file="Tetris Boxshot.jpg"'));
         reset();
         const same = framedLesson('Tetris Boxshot.jpg');
         ctx.fetchStub = wikiStub({ ...TETRIS_STUB, images: { 'en:Tetris': ['Tetris Boxshot.jpg'] } });
@@ -561,6 +677,29 @@ async function run(name, fn) {
         await call('regenerateGamePicture')(frameButton({ gameWiki: 'en', gamePage: 'Tetris', gameFile: 'Tetris Boxshot.jpg' }).button, 'game: Tetris', 'img_1');
         assert.deepStrictEqual(ctx.alerts, ['이 게임의 다른 그림을 인터넷에서 찾지 못했습니다. 지금 그림은 그대로 둡니다.']);
         assert.strictEqual(same.tabContents.basicLearn, before);
+    });
+
+    await run('다시 찾기: 지금 그림이 후보 목록 가운데에 있으면 다음 후보를 보고, 끝에 닿으면 목록 앞쪽의 게임 화면으로 돌아간다', async () => {
+        const at = name => `${UP}/en/p/${encodeURIComponent(name.replace(/ /g, '_'))}`;
+        const names = ['Pac-Man gameplay.png', 'Pac-Man cabinet.jpg', 'Pac flyer.png', 'Namco logo.png', 'TOMY handheld.jpg'];
+        const bytes = { 'Pac-Man gameplay.png': PNG_B, 'Pac-Man cabinet.jpg': JPEG_A, 'Pac flyer.png': GIF_A, 'TOMY handheld.jpg': PNG_A };
+        const pac = page(40, 'Pac-Man', { description: '1980 video game', pageimage: 'Pac_flyer.png' });
+        ctx.fetchStub = wikiStub({
+            search: { 'en:Pac-Man video game': [pac] },
+            images: { 'en:Pac-Man': names },
+            info: Object.fromEntries(Object.keys(bytes).map(name => [`en:File:${name}`, fileInfo(`File:${name}`, { url: at(name), license: 'Fair use', nonFree: true })])),
+            files: Object.fromEntries(Object.entries(bytes).map(([name, data]) => [at(name), picture(data, name.endsWith('.jpg') ? 'image/jpeg' : (name.endsWith('.gif') ? 'image/gif' : 'image/png'))]))
+        });
+        const frame = file => call('gameImageWrapperHtml')('img_1', 'game: Pac-Man', { vendor: 'wikipedia', wiki: 'en', page: 'Pac-Man', name: 'Pac-Man', file, pageUrl: 'https://en.wikipedia.org/wiki/Pac-Man', license: '공정 이용 이미지', nonFree: true });
+        const mod = openLesson(`## 1. 아케이드\n\n팩맨 설명입니다.\n\n${frame('Pac flyer.png')}\n\n뒤 글입니다.`, { images: { img_1: dataUrl(GIF_A, 'image/gif') } });
+        const click = file => call('regenerateGamePicture')(frameButton({ gameWiki: 'en', gamePage: 'Pac-Man', gameFile: file }).button, 'game: Pac-Man', 'img_1');
+        await click('Pac flyer.png');
+        assert.ok(mod.tabContents.basicLearn.includes('data-game-file="TOMY handheld.jpg"'), '대표 그림 다음 후보');
+        await click('TOMY handheld.jpg');
+        assert.ok(mod.tabContents.basicLearn.includes('data-game-file="Pac-Man gameplay.png"'), '끝에 닿으면 목록 처음(게임 화면)으로 돌아간다');
+        assert.strictEqual(mod.images.img_1, dataUrl(PNG_B));
+        assert.ok(!ctx.fetched.some(item => new URL(item.url).searchParams.get('generator') === 'search'), '목록 안에서 돌면 다시 검색하지 않는다');
+        assert.deepStrictEqual(ctx.alerts, []);
     });
 
     await run("다시 찾기: 찾는 동안 그 차시를 지우면 넣지 않고, 못 찾은 게임 자리의 '다시 검색'은 위키백과 그림 칸으로 바꾼다", async () => {
