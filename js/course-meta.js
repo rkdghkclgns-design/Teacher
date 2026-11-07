@@ -753,6 +753,7 @@ async function saveLessonMeta() {
     const dialog = document.getElementById('lesson-meta-dialog');
     const title = document.getElementById('meta-title').value.trim();
     if (metaTitleBlocked(title, mod)) return;
+    if (typeof warnInvalidPracticeFields === 'function' && warnInvalidPracticeFields('meta')) return; // 받을 수 없는 실습 시간은 저장하지 않고 알린다(course-design.js)
     const next = {
         title,
         category: document.getElementById('meta-category').value.trim(),

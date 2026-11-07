@@ -1753,14 +1753,98 @@ function codeTopicPrompt(tabId) {
           '- 학습 목표, 개요, 학습 후 체크리스트에는 코드를 넣지 않습니다.');
 }
 
-// 기본 학습의 분량 규칙(낭독 기준). 탭 생성·이어쓰기·교안 전체 생성이 같은 말로 준다(lesson-lint.js READ_CHARS_PER_MINUTE)
-function basicLearnVolumeRule(minutes = BASIC_LEARN_MIN_MINUTES) {
+// 학습 탭(기본학습·심화학습)의 분량 규칙(낭독 기준). 탭 생성·이어쓰기·교안 전체 생성이 같은 말로 준다(lesson-lint.js READ_CHARS_PER_MINUTE)
+function basicLearnVolumeRule(minutes = LEARN_TARGET_MINUTES) {
     const perMinute = READ_CHARS_PER_MINUTE;
     const chars = (minutes * perMinute).toLocaleString('ko-KR');
     return `- 분량은 강사가 소리 내어 읽는 본문 글자 수(공백 포함)로 셉니다. 1분에 ${perMinute}자를 읽으므로 ${minutes}분은 ${chars}자 이상입니다.\n` +
         '- 코드 블록, 표, mermaid 다이어그램, 이미지 태그, 마크다운·HTML 기호는 분량에 들어가지 않습니다. 코드를 설명하는 문장은 분량에 들어갑니다.\n' +
         `- 각 ## 제목 끝에 (⏱ N분)을 적고 합계가 ${minutes}분 이상 ${minutes + BASIC_LEARN_LABEL_SLACK}분 이하가 되게 합니다. 완성된 탭에서 ## 섹션 하나의 본문은 (⏱ N분) × ${perMinute}자 이상입니다(예: (⏱ 60분)이면 ${(60 * perMinute).toLocaleString('ko-KR')}자 이상).\n` +
         '- 분량을 맞추려고 섹션을 생략하거나 요약하지 않고, 같은 내용을 되풀이해 늘리지 않습니다. 강의 대본처럼 말을 걸지 않고 교안 문체를 유지합니다.';
+}
+
+// 심화 학습 탭의 역할. 탭 이어쓰기와 분량 보강이 같은 말로 준다(탭 생성 지시는 첫 줄에 같은 뜻을 쓴다)
+const ADV_LEARN_ROLE = '이 탭은 "심화 학습"입니다. 기본 학습의 개념을 다시 풀어 설명하지 않고, 그 개념을 더 깊이 파고드는 고급 이론, 업계 사례, 실무적 분석을 씁니다. 실습, 평가, 강사 가이드는 쓰지 않습니다.';
+
+// 심화 학습 탭 작성 지시: 심화 역할 + 낭독 minutes분(기본 학습과 같은 낭독 규칙과 구조 최소치)
+function advLearnTabPrompt(minutes) {
+    return '이 교안의 "심화 학습" 영역을 작성하세요. 기본 학습의 개념을 더 깊이 파고들어 고급 이론, 업계 사례, 실무적 분석을 제공하세요. 실습, 평가, 강사 가이드는 다른 탭에서 작성하므로 여기서는 절대 포함하지 마세요.\n' +
+        `[시간 배분 — 이 탭 하나가 곧 ${minutes}분 심화 과정입니다]\n` +
+        `이 "심화 학습" 탭 하나가 강사가 소리 내어 읽으며 강의할 때 ${minutes}분이 걸리는 완결된 심화 교안입니다. 기본 학습에서 다룬 개념을 다시 풀어 설명하지 말고, 이 탭만으로 ${minutes}분 심화 학습 내용이 끝까지 이어지도록 작성하세요.\n` +
+        '시간을 채우기 위해 각 주제를 고급 이론, 업계 사례, 실무 분석, 전문가 관점으로 충분히 깊고 상세하게 풀어쓰세요. 결론만 나열하지 말고 "왜 그런지"와 판단 근거까지 설명하세요.\n\n' +
+        '[분량 규칙 — 낭독 기준, 절대 준수]\n' + basicLearnVolumeRule(minutes) + '\n' +
+        '- ## 대주제 최소 8개, ### 소주제 최소 16개.\n' +
+        '- 각 소주제마다 심화 분석, 실무 사례, 전문가 관점을 포함하고 본문 설명 단락을 최소 3개 씁니다.\n' +
+        '- 표(Table) 최소 6개, mermaid 다이어그램 최소 3개. 표와 다이어그램은 설명 문장을 대신하지 않습니다.\n' +
+        '- 출력 한도 안에서 학습 목표부터 "## ✅ 학습 후 체크리스트"까지 모든 섹션을 끝까지 쓰는 것을 먼저 지킵니다. 섹션마다 설명 글을 최소 2,500자 쓰고, 출력 한도가 남으면 섹션을 더 깊게 씁니다. 목표 분량에 못 미친 섹션은 생성 뒤 섹션별로 이어서 보강합니다.\n\n' +
+        '[분할 출력 규칙 — 절대 준수]\n' +
+        '- 내용이 매우 길어 한 번에 다 출력하지 못할 수 있습니다.\n' +
+        '- 모든 섹션을 끝까지 완성했다면 문서 맨 끝에 <!-- END -->를 붙이세요.\n' +
+        '- 출력 한도에 도달하면 자연스러운 문단/섹션 끝에서 멈추고 <!-- CONTINUE -->를 붙이세요. 문장 중간이나 코드 블록 안에서 끊지 마세요.';
+}
+
+// 실습 탭(기본실습·심화실습) 지시의 시간·분량 값. 강사가 실습 시간을 정했으면 그 시간에 맞춘 최소치(lesson-lint.js practiceVolumeSpec),
+// 정하지 않았으면 예전 지시와 한 글자도 다르지 않은 값(90~120분, 8,000자·250줄, 파트 3개, 과제 3개·프로젝트 2개)
+function practicePromptValues(tabId, minutes) {
+    const spec = typeof practiceVolumeSpec === 'function' ? practiceVolumeSpec(tabId, minutes) : null;
+    if (!spec) return { time: '90~120분', total: '90~120분', chars: '8,000', lines: '250', parts: '3', tasks: tabId === 'advPrac' ? '2' : '3' };
+    return { time: `${spec.minutes}분`, total: `정확히 ${spec.minutes}분`, chars: spec.chars.toLocaleString('ko-KR'), lines: spec.lines.toLocaleString('ko-KR'), parts: String(spec.parts), tasks: String(spec.tasks) };
+}
+
+// 기본 실습 탭 작성 지시. minutes: 강사가 정한 실습 시간(정하지 않았으면 0)
+function basicPracTabPrompt(minutes) {
+    const v = practicePromptValues('basicPrac', minutes);
+    return '이 교안의 "기본 실습" 영역을 작성하세요. 학생이 핵심 내용을 직접 체험하는 실습 과제를 설계하세요.\n' +
+        `[시간 배분 — 이 탭: ${v.time}]\n` +
+        `이 탭은 "기본 학습" 본과정을 보완하는 독립 기본 실습 모듈로, ${v.time} 분량입니다.\n` +
+        `각 ## 제목 끝에 (⏱ N분)을 명시하고, 합계가 ${v.total}이 되게 하세요.\n\n` +
+        '[분량 규칙 — 절대 준수]\n' +
+        `- 순수 텍스트(마크다운 서식 제외) 최소 ${v.chars}자 이상.\n` +
+        `- 마크다운 줄 수 기준 최소 ${v.lines}줄 이상.\n` +
+        `- ## 대주제(실습 파트) 최소 ${v.parts}개.\n` +
+        '- 짧은 교안은 불합격 처리됩니다.\n\n' +
+        '[필수 포함 항목]\n' +
+        '- 실습 목표 및 개요 (기본학습에서 배운 핵심 개념과 연결)\n' +
+        `- 실습 과제 최소 ${v.tasks}개 (각 과제에 아래 항목 모두 포함):\n` +
+        '  * 과제 제목, 과제 설명 (상세하게)\n' +
+        '  * 단계별 수행 절차 (Step-by-Step, 최소 5단계)\n' +
+        '  * ⏱️ 예상 소요시간, 🎚️ 난이도(초급)\n' +
+        '  * 예시 결과물 또는 기대 산출물 설명\n' +
+        '  * 평가 기준 (체크리스트 또는 루브릭)\n' +
+        '- 실습 중 자주 하는 실수 및 해결 가이드';
+}
+
+// 심화 실습 탭 작성 지시. minutes: 강사가 정한 실습 시간(정하지 않았으면 0)
+function advPracTabPrompt(minutes) {
+    const v = practicePromptValues('advPrac', minutes);
+    return '이 교안의 "심화 실습" 영역을 작성하세요. 도전적이고 창의적인 프로젝트형 과제를 설계하세요.\n' +
+        `[시간 배분 — 이 탭: ${v.time}]\n` +
+        `이 탭은 "기본 학습" 본과정을 보완하는 독립 심화 실습 모듈로, ${v.time} 분량입니다.\n` +
+        `각 ## 제목 끝에 (⏱ N분)을 명시하고, 합계가 ${v.total}이 되게 하세요.\n\n` +
+        '[분량 규칙 — 절대 준수]\n' +
+        `- 순수 텍스트(마크다운 서식 제외) 최소 ${v.chars}자 이상.\n` +
+        `- 마크다운 줄 수 기준 최소 ${v.lines}줄 이상.\n` +
+        `- ## 대주제(실습 파트) 최소 ${v.parts}개.\n` +
+        '- 짧은 교안은 불합격 처리됩니다.\n\n' +
+        '[필수 포함 항목]\n' +
+        '- 심화 실습 목표 및 개요 (심화학습에서 배운 고급 개념과 연결)\n' +
+        `- 프로젝트형 실습 과제 최소 ${v.tasks}개 (각 과제에 아래 항목 모두 포함):\n` +
+        '  * 프로젝트 제목, 시나리오 설명 (실무 상황 기반)\n' +
+        '  * 단계별 수행 절차 (Step-by-Step, 최소 7단계)\n' +
+        '  * ⏱️ 예상 소요시간, 🎚️ 난이도(중급~고급)\n' +
+        '  * 예시 결과물 또는 기대 산출물 설명\n' +
+        '  * 평가 기준 (100점 만점 루브릭: S/A/B/C/F)\n' +
+        '- 도전 과제 또는 보너스 미션 1개\n' +
+        '- 팀 프로젝트 진행 시 역할 분배 가이드';
+}
+
+// 탭 이어쓰기의 분량·시간 지시. 학습 탭은 첫 청크와 같은 낭독 기준(심화학습은 역할도 함께), 실습 시간을 정한 실습 탭은 그 시간. 그 밖에는 ''(예전과 같다)
+function tabContinueVolumeRule(tabId, { targetMinutes = 0, practiceMinutes = 0 } = {}) {
+    if (tabId === 'basicLearn' || tabId === 'advLearn') {
+        return '- 분량 기준은 첫 청크와 같습니다. 남은 섹션을 요약하지 않습니다.\n' + basicLearnVolumeRule(targetMinutes || LEARN_TARGET_MINUTES) + '\n' + (tabId === 'advLearn' ? `- ${ADV_LEARN_ROLE}\n` : '');
+    }
+    const spec = typeof practiceVolumeSpec === 'function' ? practiceVolumeSpec(tabId, practiceMinutes) : null;
+    return spec ? `- 이 탭은 ${spec.minutes}분 실습입니다. 이어 쓰는 ## 제목에도 (⏱ N분)을 적고, 앞 청크까지 모든 (⏱ N분)의 합계가 정확히 ${spec.minutes}분이 되게 합니다.\n` : '';
 }
 
 // 탭별 규칙 필터링 — 학습탭에 실습/평가/강사가이드 혼입 방지. 학습이해도는 코드제출 문항 형식을 따로 쓰므로 코드 예제 규칙을 뺀다
@@ -1951,7 +2035,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
                 '- 교안 전체를 한 번에 작성하세요. 단, 출력이 길어져 중간에 잘릴 경우를 대비하여 다음 규칙을 따르세요.\n' +
                 '- 모든 섹션을 완전히 작성한 경우: 문서의 맨 마지막에 <!-- END -->를 붙이세요.\n' +
                 '- 출력 한도에 도달하여 교안이 미완성인 경우: 자연스러운 문단/섹션 끝에서 멈추고 <!-- CONTINUE -->를 붙이세요. 문장 중간이나 코드 블록 안에서 끊지 마세요.';
-            systemInstruction += '\n\n[기본 학습 분량 — 낭독 기준, 절대 준수]\n' + basicLearnVolumeRule(additionalContext.targetMinutes || BASIC_LEARN_MIN_MINUTES) + '\n- 출력 한도 안에서 학습 목표부터 모든 섹션을 끝까지 쓰는 것을 먼저 지킵니다. 핵심 내용 섹션마다 설명 글을 최소 2,500자 쓰고, 목표 분량에 못 미친 핵심 내용 섹션은 생성 뒤 섹션별로 이어서 보강합니다.';
+            systemInstruction += '\n\n[기본 학습 분량 — 낭독 기준, 절대 준수]\n' + basicLearnVolumeRule(additionalContext.targetMinutes || LEARN_TARGET_MINUTES) + '\n- 출력 한도 안에서 학습 목표부터 모든 섹션을 끝까지 쓰는 것을 먼저 지킵니다. 핵심 내용 섹션마다 설명 글을 최소 2,500자 쓰고, 목표 분량에 못 미친 핵심 내용 섹션은 생성 뒤 섹션별로 이어서 보강합니다.';
 
 
 
@@ -2007,7 +2091,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
                 '- 이전에 작성한 내용을 절대 반복하지 마세요. 중복 헤딩이나 중복 문단을 생성하면 안 됩니다.\n' +
                 '- 이전 내용의 마지막 헤딩/문단을 확인하고, 그 다음 섹션부터 자연스럽게 연결하세요.\n' +
                 '- 교안 구조에서 아직 작성되지 않은 남은 섹션을 모두 완성하세요.\n' +
-                '- 아래 분량 기준을 채울 때까지 앞 청크와 같은 깊이로 이어 쓰고, 남은 섹션을 요약하지 않습니다.\n' + basicLearnVolumeRule(additionalContext.targetMinutes || BASIC_LEARN_MIN_MINUTES) + '\n' +
+                '- 아래 분량 기준을 채울 때까지 앞 청크와 같은 깊이로 이어 쓰고, 남은 섹션을 요약하지 않습니다.\n' + basicLearnVolumeRule(additionalContext.targetMinutes || LEARN_TARGET_MINUTES) + '\n' +
                 '- 모든 내용을 마쳤으면 문서 끝에 <!-- END -->를 붙이세요. 아직 더 남았으면 자연스러운 문단/섹션 끝에서 멈추고 <!-- CONTINUE -->를 붙이세요. 문장 중간이나 코드 블록 안에서 끊지 마세요.';
 
             if (additionalContext.hasMainQuest) {
@@ -2052,7 +2136,8 @@ function buildTaskContext(taskScope, additionalContext = "") {
 
         // ─── 탭별 교안 생성 ───
         case 'tab_content': {
-            const learnMinutes = additionalContext.targetMinutes || BASIC_LEARN_MIN_MINUTES; // 기본 학습의 낭독 목표(분)
+            const learnMinutes = additionalContext.targetMinutes || LEARN_TARGET_MINUTES; // 학습 탭(기본학습·심화학습)의 낭독 목표(분)
+            const practiceMinutes = additionalContext.practiceMinutes || 0; // 강사가 정한 실습 시간(분, 정하지 않았으면 0)
             systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildTabRules(additionalContext.tabId, additionalContext.keyConcepts)}`;
 
             // 분할 생성 지시 — 긴 탭(특히 기본 학습 480분)이 중간에 잘리는 것을 방지
@@ -2075,53 +2160,11 @@ function buildTaskContext(taskScope, additionalContext = "") {
                     '- 내용이 매우 길어 한 번에 다 출력하지 못할 수 있습니다.\n' +
                     '- 모든 섹션을 끝까지 완성했다면 문서 맨 끝에 <!-- END -->를 붙이세요.\n' +
                     '- 출력 한도에 도달하면 자연스러운 문단/섹션 끝에서 멈추고 <!-- CONTINUE -->를 붙이세요. 문장 중간이나 코드 블록 안에서 끊지 마세요.',
-                basicPrac: '이 교안의 "기본 실습" 영역을 작성하세요. 학생이 핵심 내용을 직접 체험하는 실습 과제를 설계하세요.\n' +
-                    '[시간 배분 — 이 탭: 90~120분]\n' +
-                    '이 탭은 "기본 학습" 본과정을 보완하는 독립 기본 실습 모듈로, 90~120분 분량입니다.\n' +
-                    '각 ## 제목 끝에 (⏱ N분)을 명시하고, 합계가 90~120분이 되게 하세요.\n\n' +
-                    '[분량 규칙 — 절대 준수]\n' +
-                    '- 순수 텍스트(마크다운 서식 제외) 최소 8,000자 이상.\n' +
-                    '- 마크다운 줄 수 기준 최소 250줄 이상.\n' +
-                    '- ## 대주제(실습 파트) 최소 3개.\n' +
-                    '- 짧은 교안은 불합격 처리됩니다.\n\n' +
-                    '[필수 포함 항목]\n' +
-                    '- 실습 목표 및 개요 (기본학습에서 배운 핵심 개념과 연결)\n' +
-                    '- 실습 과제 최소 3개 (각 과제에 아래 항목 모두 포함):\n' +
-                    '  * 과제 제목, 과제 설명 (상세하게)\n' +
-                    '  * 단계별 수행 절차 (Step-by-Step, 최소 5단계)\n' +
-                    '  * ⏱️ 예상 소요시간, 🎚️ 난이도(초급)\n' +
-                    '  * 예시 결과물 또는 기대 산출물 설명\n' +
-                    '  * 평가 기준 (체크리스트 또는 루브릭)\n' +
-                    '- 실습 중 자주 하는 실수 및 해결 가이드',
-                advLearn: '이 교안의 "심화 학습" 영역을 작성하세요. 기본 학습의 개념을 더 깊이 파고들어 고급 이론, 업계 사례, 실무적 분석을 제공하세요. 실습, 평가, 강사 가이드는 다른 탭에서 작성하므로 여기서는 절대 포함하지 마세요.\n' +
-                    '[시간 배분 — 이 탭: 90~120분]\n' +
-                    '이 탭은 "기본 학습" 본과정 이후 진행하는 독립 심화 학습 모듈로, 90~120분 분량입니다.\n' +
-                    '각 ## 제목 끝에 (⏱ N분)을 명시하고, 합계가 90~120분이 되게 하세요.\n\n' +
-                    '[분량 규칙 — 절대 준수]\n' +
-                    '- 순수 텍스트(마크다운 서식 제외) 최소 12,000자 이상.\n' +
-                    '- 마크다운 줄 수 기준 최소 350줄 이상.\n' +
-                    '- ## 대주제 최소 3개, ### 소주제 최소 6개.\n' +
-                    '- 각 소주제마다 심화 분석, 실무 사례, 전문가 관점을 포함.\n' +
-                    '- 짧은 교안은 불합격 처리됩니다.',
-                advPrac: '이 교안의 "심화 실습" 영역을 작성하세요. 도전적이고 창의적인 프로젝트형 과제를 설계하세요.\n' +
-                    '[시간 배분 — 이 탭: 90~120분]\n' +
-                    '이 탭은 "기본 학습" 본과정을 보완하는 독립 심화 실습 모듈로, 90~120분 분량입니다.\n' +
-                    '각 ## 제목 끝에 (⏱ N분)을 명시하고, 합계가 90~120분이 되게 하세요.\n\n' +
-                    '[분량 규칙 — 절대 준수]\n' +
-                    '- 순수 텍스트(마크다운 서식 제외) 최소 8,000자 이상.\n' +
-                    '- 마크다운 줄 수 기준 최소 250줄 이상.\n' +
-                    '- ## 대주제(실습 파트) 최소 3개.\n' +
-                    '- 짧은 교안은 불합격 처리됩니다.\n\n' +
-                    '[필수 포함 항목]\n' +
-                    '- 심화 실습 목표 및 개요 (심화학습에서 배운 고급 개념과 연결)\n' +
-                    '- 프로젝트형 실습 과제 최소 2개 (각 과제에 아래 항목 모두 포함):\n' +
-                    '  * 프로젝트 제목, 시나리오 설명 (실무 상황 기반)\n' +
-                    '  * 단계별 수행 절차 (Step-by-Step, 최소 7단계)\n' +
-                    '  * ⏱️ 예상 소요시간, 🎚️ 난이도(중급~고급)\n' +
-                    '  * 예시 결과물 또는 기대 산출물 설명\n' +
-                    '  * 평가 기준 (100점 만점 루브릭: S/A/B/C/F)\n' +
-                    '- 도전 과제 또는 보너스 미션 1개\n' +
-                    '- 팀 프로젝트 진행 시 역할 분배 가이드',
+                // 실습 탭은 강사가 실습 시간을 정하면 그 시간에 맞춘 시간·분량 기준을 쓰고, 정하지 않으면 예전 지시 그대로다
+                basicPrac: basicPracTabPrompt(practiceMinutes),
+                // 심화 학습은 기본 학습처럼 이 탭 하나가 낭독 480분이다(심화 역할은 그대로)
+                advLearn: advLearnTabPrompt(learnMinutes),
+                advPrac: advPracTabPrompt(practiceMinutes),
                 assessment: '이 교안의 "학습 이해도 점검" 영역을 작성하세요.\n' +
                     '[시간 배분 — 이 탭: 30~60분]\n' +
                     '이 탭은 "기본 학습" 본과정의 이해도를 점검하는 독립 평가 모듈로, 30~60분 분량입니다.\n\n' +
@@ -2170,7 +2213,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
                 '- 이 탭의 성격에 맞지 않는 섹션을 새로 만들지 마세요. (학습 탭에 채점 루브릭·퀴즈를 추가하지 말 것)\n' +
                 '- 이미지 태그 형식도 이전 청크와 동일하게 유지하세요.\n' +
                 (learningTab ? '- "## ✅ 학습 후 체크리스트"는 모든 본문 섹션을 다 쓴 뒤 문서 맨 끝에 한 번만 둡니다. [지금까지 쓴 ## 제목]에 이미 있으면 다시 쓰지 않습니다.\n' : '') +
-                (additionalContext.tabId === 'basicLearn' ? '- 분량 기준은 첫 청크와 같습니다. 남은 섹션을 요약하지 않습니다.\n' + basicLearnVolumeRule(additionalContext.targetMinutes || BASIC_LEARN_MIN_MINUTES) + '\n' : '') +
+                tabContinueVolumeRule(additionalContext.tabId, additionalContext) +
                 '- 아래 "이전 작성 내용"의 마지막 지점부터 이어서 작성하세요. 절대 처음부터 다시 쓰지 마세요.\n' +
                 '- 이미 작성된 내용을 반복하지 마세요. 중복 헤딩이나 중복 문단을 생성하면 안 됩니다.\n' +
                 '- 이전 내용의 마지막 헤딩/문단을 확인하고, 그 다음 섹션부터 자연스럽게 연결하세요.\n' +
@@ -2186,16 +2229,18 @@ function buildTaskContext(taskScope, additionalContext = "") {
             break;
         }
 
-        // ─── 기본 학습 분량 보강: 섹션 하나 끝에 이어 붙일 새 ### 소주제 (lesson-volume.js) ───
+        // ─── 학습 탭(기본학습·심화학습) 분량 보강: 섹션 하나 끝에 이어 붙일 새 ### 소주제 (lesson-volume.js) ───
         case 'volume_expand': {
             const a = additionalContext;
-            const minutes = a.targetMinutes || BASIC_LEARN_MIN_MINUTES;
+            const minutes = a.targetMinutes || LEARN_TARGET_MINUTES;
+            const advanced = a.tabId === 'advLearn'; // 심화학습은 심화 역할과 흐름(고급 이론 → 업계 사례 → 실무 분석)을 준다. 기본학습 지시는 예전 그대로다
             systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildTabRules(a.tabId, [], { exclude: ['markdown_structure', 'time_allocation', 'learning_checklist', 'image_tags', 'mermaid_rules'], fewshot: false })}` +
                 '\n\n[분량 보강 규칙 — 절대 준수]\n' +
                 '- 이미 작성한 교안 섹션 하나를 더 깊고 길게 만드는 작업입니다. [보강할 섹션] 끝에 이어 붙일 새 ### 소주제만 출력합니다.\n' +
                 '- ## 제목, 학습 목표, 개요, 학습 후 체크리스트는 출력하지 않습니다. 다른 섹션의 내용도 쓰지 않습니다.\n' +
                 '- [보강할 섹션]에 이미 있는 소주제 제목, 설명, 예시, 문장을 되풀이하지 않습니다. 같은 개념은 원리와 이유, 단계별 풀이, 비교, 흔한 오해와 바로잡기, 적용 사례, 판단 기준처럼 새 각도에서 더 깊이 설명합니다.\n' +
-                '- 새 소주제는 "### ■ 제목"으로 시작하고 개념 정의 → 이론 설명 → 구체적 예시 → 사례 분석 흐름을 따릅니다. 소주제 제목에는 (⏱ N분)을 붙이지 않습니다.\n' +
+                `- 새 소주제는 "### ■ 제목"으로 시작하고 ${advanced ? '고급 이론 → 업계 사례 → 실무 분석' : '개념 정의 → 이론 설명 → 구체적 예시 → 사례 분석'} 흐름을 따릅니다. 소주제 제목에는 (⏱ N분)을 붙이지 않습니다.\n` +
+                (advanced ? `- ${ADV_LEARN_ROLE}\n` : '') +
                 '- 이 섹션이 속한 학습 목표 범위 안에서만 씁니다. 다른 학습 목표의 내용이나 새 주제를 끌어오지 않습니다.\n' +
                 '- 분량은 소리 내어 읽는 본문 글자 수(공백 포함)로 셉니다. 코드 블록, 표, mermaid, 이미지 태그는 분량에 들어가지 않습니다. 이미지 태그와 mermaid는 새로 넣지 않고, 표는 소주제마다 하나까지만 씁니다.\n' +
                 '- 같은 교안의 다른 부분을 가리킬 때도 "앞에서", "앞서", "이전 시간", "다음 시간"을 쓰지 않고 그 개념의 이름을 직접 씁니다.\n' +

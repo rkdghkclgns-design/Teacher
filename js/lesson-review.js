@@ -266,16 +266,28 @@ function reviewIssueGroup(label, tone, issues) {
     return `<section><h3 class="text-xs font-bold ${tone} mb-1">${label} ${issues.length}건</h3><ul class="space-y-1">${issues.map(reviewIssueRow).join('')}</ul></section>`;
 }
 
-// 기본 학습은 낭독 분량도 보인다(탭 위 표시와 같은 저장 글로 센다)
+// 학습 탭(기본학습·심화학습)은 낭독 분량도 보인다(탭 위 표시와 같은 저장 글로 센다)
 function reviewVolumeStat(mod, tabId, md) {
-    if (tabId !== 'basicLearn' || !mod || mod.id === 'mainQuest' || typeof readAloudMinutes !== 'function') return '';
-    return ` · 낭독 약 ${readAloudMinutes(storedTabMarkdown(mod, tabId) || md)}분(목표 ${basicLearnTargetMinutes(mod)}분)`;
+    if (!fillsLearnVolume(mod, tabId) || typeof readAloudMinutes !== 'function') return '';
+    return ` · 낭독 약 ${readAloudMinutes(storedTabMarkdown(mod, tabId) || md)}분(목표 ${learnTargetMinutes(mod, tabId)}분)`;
+}
+
+// 실습 탭은 실습 시간을 보인다(차시 값 → 과정 기본값 → 기본 90~120분). 정한 시간이 있으면 ## 제목 (⏱ N분) 합계와 견주고 10%보다 벗어나면 알린다(lesson-lint.js)
+function reviewPracticeStat(mod, tabId, md) {
+    if (!mod || mod.id === 'mainQuest' || !practiceKeyOf(tabId)) return '';
+    const { minutes, from } = lessonPracticeTime(mod, tabId);
+    if (!minutes) return '<p class="text-xs text-textMuted">실습 시간: 정하지 않음(기본 90~120분)</p>';
+    const check = practiceTimeCheck(md, minutes);
+    const sum = check.labelled ? `(⏱) 합계 ${check.sum}분` : '(⏱) 시간 표시 없음';
+    const note = check.ok ? '' : check.labelled ? ' · 정한 시간과 10% 넘게 차이 납니다. ## 제목의 시간을 확인해 주세요.' : ' · ## 제목마다 (⏱ N분)을 적어 주세요.';
+    return `<p class="text-xs ${check.ok ? 'text-textMuted' : 'text-amber-300'}">실습 시간 ${minutes}분${from === 'course' ? '(과정 기본값)' : ''} · ${sum}${note}</p>`;
 }
 
 function reviewIssuesHtml(issues, tabId, md, mod = null) {
     const stats = LESSON_STRUCTURED_TABS.includes(tabId) ? lessonStructureStats(md) : null;
     return `
         ${stats ? `<p class="text-xs text-textMuted">학습 목표 ${stats.objectives}개 · 내용 섹션 ${stats.sections}개 · 체크리스트 ${stats.checklist}개${reviewVolumeStat(mod, tabId, md)}</p>` : ''}
+        ${reviewPracticeStat(mod, tabId, md)}
         ${issues.length ? '' : '<p class="text-xs text-emerald-300">콘텐츠 업무 설계 규칙에 어긋난 곳이 없습니다.</p>'}
         ${reviewIssueGroup('필수', 'text-rose-300', issues.filter(issue => issue.sev === 'bad'))}
         ${reviewIssueGroup('권장', 'text-amber-300', issues.filter(issue => issue.sev !== 'bad'))}`;

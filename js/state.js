@@ -168,6 +168,11 @@ function sanitizeState(state) {
     state.courseId = isSafeStateId(state.courseId) ? state.courseId : "course_" + Date.now();
     state.courseTitle = stateText(state.courseTitle) || "새 과정";
     if (state.courseField !== undefined) state.courseField = stateText(state.courseField);
+    // 과정 기본 생성 옵션: 객체가 아니면 지우고, 실습 시간은 받을 수 있는 값(10~600분, 10분 단위)만 남긴다(data-safety.js safeGenOptions)
+    if (isObject(state.courseDesign) && state.courseDesign.genOptions !== undefined) {
+        if (isObject(state.courseDesign.genOptions)) state.courseDesign.genOptions = safeGenOptions(state.courseDesign.genOptions);
+        else delete state.courseDesign.genOptions;
+    }
     state.subjects = Array.isArray(state.subjects) ? state.subjects.filter(s => s && typeof s === 'object') : [];
 
     const subjectIds = new Set();

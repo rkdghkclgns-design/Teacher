@@ -672,7 +672,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
     // 시작한 교과와 기본 학습 분량 채우기(lesson-volume.js)에 붙일 참고 자료는 기다리기 전에 잡아 둔다
     const subj = globalState.subjects.find(s => s.id === currentSubjectId);
     const volumeSnap = moduleId !== 'mainQuest' && typeof ensureSpokenVolume === 'function' ? volumeSnapshot(mod) : null;
-    const targetMinutes = basicLearnTargetMinutes(mod); // 기본 학습의 낭독 목표(분)
+    const targetMinutes = learnTargetMinutes(mod, 'basicLearn'); // 기본 학습의 낭독 목표(분, 늘 480분)
 
     // [재생성 중복 방지] 재생성인 경우 기존 tabContents·images 초기화
     // 이전엔 status==='done'이면 tabContents가 남아있어 5탭 자동생성이 스킵되고
@@ -987,8 +987,9 @@ function moduleGenerationEstimate(mod) {
             qbank: true,
             art: typeof lessonWantsArt === 'function' && lessonWantsArt(mod),
             ncs: typeof needsElementAutoAssign === 'function' && needsElementAutoAssign(mod),
-            fillsVolume: mod.id !== 'mainQuest', // 최종 평가는 기본학습 분량을 채우지 않는다
-            volumeMinutes: lessonVolumeMinutes(mod)
+            fillsVolume: mod.id !== 'mainQuest', // 최종 평가는 학습 탭 분량을 채우지 않는다
+            volumeMinutes: lessonVolumeMinutes(mod),
+            practiceMinutes: typeof lessonPracticeWork === 'function' ? lessonPracticeWork(mod) : {} // 실습 시간을 정한 실습 탭은 이어쓰기 호출이 늘어난다
         }, currentEstimateSettings().imageAmount));
     } catch (err) {
         console.warn('[미리 보기] 교안 생성 예고를 만들지 못했습니다:', err);
@@ -2882,9 +2883,11 @@ window.cancelFileUpload = function (moduleId) {
 }
 
 // 머리줄의 탭 생성 단추(이 탭 생성·전체 생성). 탭이 없는 최종 평가에는 두지 않는다(새 탭이 본문을 버린다. 최종 평가는 차시 목록의 카드에서 만든다)
+// 실습 탭에서는 이 탭 생성 앞에 '실습 시간 N분' 단추를 둔다(course-design.js practiceTimeButtonHtml)
 function tabGenerateButtonsHtml(mod, tabless) {
     if (tabless) return '';
-    return `
+    const practice = typeof practiceTimeButtonHtml === 'function' ? practiceTimeButtonHtml(mod, currentLessonTab) : '';
+    return `${practice}
                     <button id="lesson-tab-generate" onclick="runTabJob('${mod.id}', currentLessonTab)"
                         class="px-2.5 py-1.5 text-[0.6875rem] font-bold text-accent bg-accent/10 border border-accent/30 rounded hover:bg-accent/20 transition-colors flex items-center gap-1 shrink-0">
                         <i class="ph-bold ph-sparkle"></i> 이 탭 생성
@@ -2904,11 +2907,13 @@ function emptyTabPromptHtml(mod, tabless) {
     const hint = tabless ? '아래 버튼을 눌러 AI로 최종 평가를 만드세요.' : `아래 버튼을 눌러 AI로 «${tabLabel}» 탭 교안을 생성하세요.`;
     const action = tabless ? 'promptAndGenerateMainQuest()' : `runTabJob('${mod.id}', currentLessonTab)`;
     const label = tabless ? '최종 평가 만들기' : `«${tabLabel}» 탭 생성하기`;
-    // 차시의 기본학습은 낭독 목표 분량까지 채우느라 오래 걸린다(시작 전에 호출 수·시간을 보이고 묻는다, lesson-pipeline.js runTabJob)
-    const fills = !tabless && mod.id !== 'mainQuest' && currentLessonTab === 'basicLearn';
+    // 차시의 학습 탭(기본학습·심화학습)은 낭독 목표 분량까지 채우느라 오래 걸린다(시작 전에 호출 수·시간을 보이고 묻는다, lesson-pipeline.js runTabJob)
+    const fills = !tabless && typeof fillsLearnVolume === 'function' && fillsLearnVolume(mod, currentLessonTab);
     const wait = fills
-        ? `기본학습은 강사가 소리 내어 읽어도 ${typeof lessonVolumeMinutes === 'function' ? lessonVolumeMinutes(mod) : 480}분이 걸리는 분량까지 채우느라 20분 넘게 걸릴 수 있습니다. 시작하기 전에 AI 호출 수와 걸리는 시간을 먼저 보여 드립니다.`
+        ? `${tabLabel}은 강사가 소리 내어 읽어도 ${typeof lessonVolumeMinutes === 'function' ? lessonVolumeMinutes(mod, currentLessonTab) : 480}분이 걸리는 분량까지 채우느라 20분 넘게 걸릴 수 있습니다. 시작하기 전에 AI 호출 수와 걸리는 시간을 먼저 보여 드립니다.`
         : '생성에는 수십 초가 걸릴 수 있습니다.';
+    // 실습 탭은 만들기 단추 아래에 실습 시간을 보이고 바꿀 수 있게 한다(course-design.js)
+    const practice = !tabless && typeof practiceTimeButtonHtml === 'function' ? practiceTimeButtonHtml(mod, currentLessonTab, 'empty') : '';
     return `
             <div class="flex flex-col items-center justify-center text-center py-20 px-6 select-none">
                 <div class="w-16 h-16 mb-5 flex items-center justify-center rounded-2xl bg-accent/10 text-accent text-3xl">
@@ -2919,7 +2924,7 @@ function emptyTabPromptHtml(mod, tabless) {
                 <button onclick="${action}"
                     class="px-5 py-2.5 text-sm font-bold text-white bg-accent rounded-lg hover:bg-accentHover transition-colors flex items-center gap-2 shadow-sm hover:-translate-y-0.5">
                     <i class="ph-bold ph-lightning"></i> ${label}
-                </button>
+                </button>${practice}
             </div>`;
 }
 

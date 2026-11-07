@@ -875,7 +875,7 @@ async function run(name, fn) {
         }
         assert.strictEqual(asked.length, 1);
         const box = asked[0].opts.estimateHtml;
-        assert.ok(box.includes('미리 보기') && box.includes('글: AI 호출 약') && box.includes('그림: 약 15장') && box.includes('걸리는 시간'), box);
+        assert.ok(box.includes('미리 보기') && box.includes('글: AI 호출 약') && box.includes('그림: 약 18장') && box.includes('걸리는 시간'), box); // 심화학습도 기본학습처럼 ## 섹션 6개에 그림을 센다
         assert.strictEqual(asked[0].opts.okLabel, '모두 다시 생성', '다시 만들기 경고와 함께 보인다');
         assert.ok(asked[0].opts.warning);
     });

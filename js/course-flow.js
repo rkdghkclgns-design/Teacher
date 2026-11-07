@@ -42,12 +42,22 @@ async function generateLesson(item, attempt, isStopped, onRetry) {
     await waitBeforeRetry(isStopped);
     if (isStopped()) return first;
     const second = await attemptSafely(attempt, item, 2);
-    const short = second.short ? second : first.short ? first : null; // 첫 시도에서 만든 기본 학습이 짧았으면 다시 해도 그 탭은 그대로다
-    return { ...second, partial: !!(first.partial || second.partial), ...(short ? { short: true, readMinutes: short.readMinutes } : {}) };
+    return { ...second, partial: !!(first.partial || second.partial), ...shortOfAttempts(first, second) };
 }
 
-// 기본 학습이 낭독 목표에 못 미친 차시는 따로 모은다(그 차시의 '분량 채우기'로 늘린다)
-const withShortLesson = (list, item, result) => (result.short ? [...(list || []), { ...item, readMinutes: result.readMinutes }] : list);
+// 두 시도에서 낭독 목표에 못 미친 학습 탭을 합친다. 첫 시도에서 만든 학습 탭이 짧았으면 다시 해도 그 탭은 그대로다(다시 시도는 빈 탭만 만든다)
+function shortOfAttempts(first, second) {
+    const short = second.short ? second : first.short ? first : null;
+    if (!short) return {};
+    const tabs = [...(first.shortTabs || []), ...(second.shortTabs || [])].filter((tab, i, all) => all.findIndex(other => other.tabId === tab.tabId) === i);
+    return { short: true, readMinutes: short.readMinutes, ...(tabs.length ? { shortTabs: tabs } : {}) };
+}
+
+// 학습 탭(기본학습·심화학습)이 낭독 목표에 못 미친 차시는 따로 모은다(그 탭의 '분량 채우기'로 늘린다). shortTabs: 모자란 탭마다 { tabId, label, readMinutes }
+const withShortLesson = (list, item, result) => (result.short ? [...(list || []), { ...item, readMinutes: result.readMinutes, ...(result.shortTabs ? { shortTabs: result.shortTabs } : {}) }] : list);
+
+// 일괄 생성 보고에 보일 모자란 학습 탭과 낭독 시간
+const shortLessonText = item => (item.shortTabs?.length ? item.shortTabs.map(tab => `${tab.label} 낭독 약 ${tab.readMinutes}분`).join(' · ') : `낭독 약 ${item.readMinutes}분`);
 
 function recordLessonResult(report, item, result) {
     const partial = result.partial ? [...report.partial, item] : report.partial;
@@ -162,7 +172,7 @@ async function fillRunLesson(item, run, key) {
     const needsGyosuan = lessonNeedsGyosuan(getEditingModule(item.lessonId));
     const gyosuan = needsGyosuan ? await runGyosuanGeneration(item.lessonId, { onStatus: setLessonRunStatus }) : { ok: true };
     const partial = !!(tabs.partial || gyosuan.partial);
-    const short = tabs.short ? { short: true, readMinutes: tabs.readMinutes } : {}; // 기본 학습이 낭독 목표에 못 미쳤으면 보고에 남긴다
+    const short = tabs.short ? { short: true, readMinutes: tabs.readMinutes, ...(tabs.shortTabs ? { shortTabs: tabs.shortTabs } : {}) } : {}; // 학습 탭이 낭독 목표에 못 미쳤으면 보고에 남긴다
     if (!gyosuan.ok) return { ok: false, stopped: gyosuan.stopped, error: gyosuan.error, partial, ...short };
     return { ...(await fillQuestionBank(item.lessonId, { isStopped: () => run.stopped, onStatus: setLessonRunStatus })), partial, ...short };
 }
@@ -213,7 +223,7 @@ function lessonRunQueueHtml(queue, uploaded) {
 
 function lessonRunIntroHtml(queue, uploaded, withGyosuan = false) {
     return `
-        <p class="text-xs text-textLight">내용이 비어 있는 탭만 차례로 생성합니다. 이미 있는 탭은 그대로 둡니다. 차시마다 몇 분 걸릴 수 있습니다. 교안을 만든 차시에는 NCS 능력단위요소도 확정 전 상태로 배정합니다. 기본학습은 낭독 480분 분량을 채우느라 차시마다 20분 넘게 걸릴 수 있습니다.</p>
+        <p class="text-xs text-textLight">내용이 비어 있는 탭만 차례로 생성합니다. 이미 있는 탭은 그대로 둡니다. 차시마다 몇 분 걸릴 수 있습니다. 교안을 만든 차시에는 NCS 능력단위요소도 확정 전 상태로 배정합니다. 기본학습과 심화학습은 각각 낭독 480분 분량을 채우느라 차시마다 40분 넘게 걸릴 수 있습니다. 실습 탭은 정한 실습 시간(정하지 않으면 90~120분) 분량으로 만듭니다.</p>
         <div id="lesson-run-queue" class="space-y-2">${lessonRunQueueHtml(queue, uploaded)}</div>
         <div id="lesson-run-estimate"></div>
         <label class="flex items-start gap-2 text-xs text-textLight">
@@ -258,8 +268,8 @@ function lessonRunReportHtml(report, { trashed = 0, imageNote = '', restored = 0
         ${report.halted ? '<p class="text-xs text-amber-300">남은 차시도 같은 까닭으로 만들 수 없어 일괄 생성을 멈췄습니다. 아래 실패 까닭을 해결한 뒤 다시 실행해 주세요.</p>' : ''}
         ${lessonRunListHtml('실패해서 건너뛴 차시', report.failed, item => item.error)}
         ${lessonRunListHtml('일부 단락이 누락되었을 수 있는 차시', report.partial)}
-        ${lessonRunListHtml('기본학습 분량이 목표에 못 미친 차시', report.short || [], item => `낭독 약 ${item.readMinutes}분`)}
-        ${(report.short || []).length ? "<p class=\"text-xs text-textMuted\">그 차시의 기본학습 탭 위 '분량 채우기'로 이어서 늘릴 수 있습니다.</p>" : ''}
+        ${lessonRunListHtml('낭독 분량이 목표에 못 미친 차시', report.short || [], shortLessonText)}
+        ${(report.short || []).length ? "<p class=\"text-xs text-textMuted\">그 차시의 모자란 탭(기본학습·심화학습) 위 '분량 채우기'로 이어서 늘릴 수 있습니다.</p>" : ''}
         ${restored > 0 ? `<p class="text-xs text-textMuted">탭을 하나도 만들지 못한 차시 ${restored}개는 지우기 전 내용으로 되돌렸습니다.</p>` : ''}
         ${unfinished ? '<p class="text-xs text-textMuted">만든 내용은 저장했습니다. 다시 실행하면 남은 탭부터 이어서 생성합니다.</p>' : ''}
         ${lessonRunTrashNote(trashed)}
@@ -312,7 +322,8 @@ window.openLessonRun = function (scope) {
 };
 
 // 대기열의 차시마다 할 일을 더한다(빈 탭, 교수안·문제은행, 삽화). 예고에 쓴다(cost-estimate.js)
-function lessonRunWork(queue, { withGyosuan, overwrite, art }) {
+// genOptions: 창에 적은 과정 기본 생성 옵션(시작할 때 저장한다). 실습 시간을 정한 실습 탭은 이어쓰기 호출을 더 센다
+function lessonRunWork(queue, { withGyosuan, overwrite, art, genOptions }) {
     const imageAmount = currentEstimateSettings().imageAmount;
     return sumWork(queue.map(item => {
         const lesson = (item.subject.lessons || []).find(entry => entry.id === item.lessonId) || {};
@@ -322,14 +333,15 @@ function lessonRunWork(queue, { withGyosuan, overwrite, art }) {
             gyosuan: withGyosuan && (overwrite || lessonNeedsGyosuan(lesson)),
             qbank: withGyosuan && (overwrite || questionBankGaps(lesson).length > 0),
             art: art && tabs.length > 0,
-            volumeMinutes: lessonVolumeMinutes(lesson) // 차시 시간이 480분보다 긴 차시는 그만큼 분량 보강이 늘어난다
+            volumeMinutes: lessonVolumeMinutes(lesson), // 학습 탭의 낭독 목표(차시 시간과 관계없이 480분)
+            practiceMinutes: lessonPracticeWork(lesson, genOptions)
         }, imageAmount);
     }));
 }
 
 function refreshLessonRunQueue(scope) {
     const checked = id => !!document.getElementById(id)?.checked;
-    const options = { withGyosuan: checked('lesson-run-gyosuan'), overwrite: checked('lesson-run-overwrite'), art: checked('lesson-run-art') };
+    const options = { withGyosuan: checked('lesson-run-gyosuan'), overwrite: checked('lesson-run-overwrite'), art: checked('lesson-run-art'), genOptions: readLessonGenFields('run') };
     const pending = pendingLessons(runSubjects(scope), options.withGyosuan, options.overwrite);
     const queue = pending.filter(item => !item.uploaded);
     document.getElementById('lesson-run-queue').innerHTML = lessonRunQueueHtml(queue, pending.filter(item => item.uploaded));
@@ -339,7 +351,7 @@ function refreshLessonRunQueue(scope) {
 }
 
 function onLessonRunChange(event, scope) {
-    if (['lesson-run-gyosuan', 'lesson-run-overwrite', 'lesson-run-art'].includes(event.target.id)) refreshLessonRunQueue(scope);
+    if (['lesson-run-gyosuan', 'lesson-run-overwrite', 'lesson-run-art', 'run-gen-basicPracMinutes', 'run-gen-advPracMinutes'].includes(event.target.id)) refreshLessonRunQueue(scope);
 }
 
 function onLessonRunClick(event) {
@@ -382,6 +394,7 @@ async function startLessonRun(scope, button = null) {
     const withGyosuan = !!document.getElementById('lesson-run-gyosuan')?.checked;
     const overwrite = !!document.getElementById('lesson-run-overwrite')?.checked;
     const art = !!document.getElementById('lesson-run-art')?.checked;
+    if (typeof warnInvalidPracticeFields === 'function' && warnInvalidPracticeFields('run')) return; // 받을 수 없는 실습 시간이면 시작하지 않고 알린다(course-design.js)
     if (overwrite) {
         if (button) button.disabled = true;
         let ok = false;

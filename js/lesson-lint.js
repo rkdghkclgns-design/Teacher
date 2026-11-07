@@ -150,17 +150,108 @@ function closeOpenFence(md) {
 }
 
 /* ---------- 낭독 분량 ---------- */
-// 강사가 소리 내어 읽는 속도(공백 포함 1분에 250자)와 기본 학습의 최소 낭독 시간. (⏱ N분) 합계는 목표보다 30분까지 길어도 된다
+// 강사가 소리 내어 읽는 속도(공백 포함 1분에 250자)와 학습 탭(기본학습·심화학습)의 낭독 시간. (⏱ N분) 합계는 목표보다 30분까지 길어도 된다
 const READ_CHARS_PER_MINUTE = 250;
-const BASIC_LEARN_MIN_MINUTES = 480;
+const LEARN_TARGET_MINUTES = 480;
+const BASIC_LEARN_MIN_MINUTES = LEARN_TARGET_MINUTES; // 예전 이름. 같은 값이다(새 코드는 LEARN_TARGET_MINUTES를 쓴다)
 const BASIC_LEARN_LABEL_SLACK = 30;
+const LEARN_VOLUME_TABS = ['basicLearn', 'advLearn']; // 낭독 분량까지 채우는 학습 탭
 const SPOKEN_SKIP_LINE = /^\s*\|.*\|\s*$|class="image-(?:wrapper|placeholder)"/; // 파이프 표 줄과 저장된 그림 칸 줄(다시 찾기 버튼·그림 설명까지)
 const SPOKEN_MARKS = /[■▣□▪◆●▶►•※]|\p{Extended_Pictographic}|\uFE0F|\u200D/gu; // 소리 내어 읽지 않는 장식 기호와 그림 문자
 
-// 기본 학습의 목표 낭독 시간(분). 차시 시간(course-design.js lessonMinutes)이 480분보다 길면 그 시간이다
+// 학습 탭(기본학습·심화학습)의 목표 낭독 시간(분). 차시 시간이 길어도 짧아도 늘 480분이다. 다른 탭은 0(분량을 채우지 않는다)
+function learnTargetMinutes(mod, tabId = 'basicLearn') {
+    return LEARN_VOLUME_TABS.includes(tabId) ? LEARN_TARGET_MINUTES : 0;
+}
+
+// 기본 학습의 목표 낭독 시간(분). learnTargetMinutes(mod, 'basicLearn')과 같다
 function basicLearnTargetMinutes(mod) {
-    const own = mod && typeof lessonMinutes === 'function' ? Number(lessonMinutes(mod)) || 0 : 0;
-    return Math.max(BASIC_LEARN_MIN_MINUTES, own);
+    return learnTargetMinutes(mod, 'basicLearn');
+}
+
+// 그 차시의 그 탭을 낭독 목표 분량까지 채우는가. 학습 탭만 채우고 최종 평가는 채우지 않는다
+function fillsLearnVolume(mod, tabId) {
+    return !!mod && mod.id !== 'mainQuest' && learnTargetMinutes(mod, tabId) > 0;
+}
+
+/* ---------- 실습 시간 ---------- */
+// 강사가 정하는 실습 탭 시간(분). 생성 옵션(과정 기본값 globalState.courseDesign.genOptions, 차시 mod.gen)에 탭마다 이 키로 둔다
+const PRACTICE_MINUTE_KEYS = { basicPrac: 'basicPracMinutes', advPrac: 'advPracMinutes' };
+const PRACTICE_MINUTES_RANGE = { min: 10, max: 600, step: 10 };
+const PRACTICE_MINUTES_PER_CHUNK = 90; // 실습 시간을 정한 실습 탭은 이 분마다 이어쓰기 청크를 하나씩 더 허용한다
+const PRACTICE_LABEL_TOLERANCE = 0.1;  // ## 제목 (⏱ N분) 합계가 실습 시간에서 이 비율보다 벗어나면 알린다
+const PRACTICE_TIME_LABEL = /⏱\S*\s*(?:약\s*)?(\d+)\s*분/;
+const TAB_CHUNK_LIMITS = { learn: 6, other: 3 }; // 탭 생성의 이어쓰기 상한(청크 수)
+
+// 실습 탭의 생성 옵션 키. 실습 탭이 아니면 ''(constructor 같은 이름도 실습 탭으로 보지 않는다)
+const practiceKeyOf = tabId => (Object.prototype.hasOwnProperty.call(PRACTICE_MINUTE_KEYS, tabId) ? PRACTICE_MINUTE_KEYS[tabId] : '');
+
+// 실습 시간 값(분). 10~600분 사이 10분 단위 정수만 받고, 그 밖의 값(빈 값·글자·소수·범위 밖·객체)은 null(정하지 않음)
+function practiceMinutesValue(value) {
+    if (typeof value !== 'number' && typeof value !== 'string') return null;
+    if (typeof value === 'string' && !value.trim()) return null;
+    const minutes = Number(value);
+    const { min, max, step } = PRACTICE_MINUTES_RANGE;
+    return Number.isInteger(minutes) && minutes >= min && minutes <= max && minutes % step === 0 ? minutes : null;
+}
+
+// 그 차시 실습 탭의 시간: { minutes, from }. 차시에서 정한 값(from 'lesson'), 없으면 과정 기본값('course'), 둘 다 없으면 0('', 지시문의 기본 90~120분).
+// 실습 탭이 아니거나 최종 평가면 0. courseOptions: 과정 기본값 대신 볼 값(저장하기 전의 일괄 생성 창 칸)
+function lessonPracticeTime(mod, tabId, courseOptions) {
+    const key = practiceKeyOf(tabId);
+    if (!key || !mod || mod.id === 'mainQuest') return { minutes: 0, from: '' };
+    const own = practiceMinutesValue(mod.gen?.[key]);
+    if (own) return { minutes: own, from: 'lesson' };
+    const course = courseOptions !== undefined ? courseOptions : (typeof globalState !== 'undefined' && globalState ? globalState.courseDesign?.genOptions : null);
+    const fallback = practiceMinutesValue(course?.[key]);
+    return fallback ? { minutes: fallback, from: 'course' } : { minutes: 0, from: '' };
+}
+
+function lessonPracticeMinutes(mod, tabId, courseOptions) {
+    return lessonPracticeTime(mod, tabId, courseOptions).minutes;
+}
+
+// 실습 시간 N분에 맞춘 실습 탭의 최소 분량: 글자 max(2,000, N×75를 백 단위로 반올림), 줄 round(N×2.4),
+// 과제 수(기본실습 clamp(round(N/35), 1, 8)개·단계 5개, 심화실습 clamp(round(N/50), 1, 6)개·단계 7개), ## 파트 min(3, 과제 수)개. 정하지 않았으면 null
+function practiceVolumeSpec(tabId, minutes) {
+    const n = practiceMinutesValue(minutes);
+    if (!n || !practiceKeyOf(tabId)) return null;
+    const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
+    const advanced = tabId === 'advPrac';
+    const tasks = advanced ? clamp(Math.round(n / 50), 1, 6) : clamp(Math.round(n / 35), 1, 8);
+    return { minutes: n, chars: Math.max(2000, Math.round(n * 75 / 100) * 100), lines: Math.round(n * 2.4), tasks, steps: advanced ? 7 : 5, parts: Math.min(3, tasks) };
+}
+
+// 탭 생성의 이어쓰기 상한(청크 수). 학습 탭은 6, 실습 시간을 정한 실습 탭은 max(3, ⌈N÷90⌉)(6까지), 나머지는 3
+function tabChunkLimit(tabId, practiceMinutes = 0) {
+    if (LEARN_VOLUME_TABS.includes(tabId)) return TAB_CHUNK_LIMITS.learn;
+    const minutes = practiceKeyOf(tabId) ? practiceMinutesValue(practiceMinutes) : null;
+    if (!minutes) return TAB_CHUNK_LIMITS.other;
+    return Math.min(TAB_CHUNK_LIMITS.learn, Math.max(TAB_CHUNK_LIMITS.other, Math.ceil(minutes / PRACTICE_MINUTES_PER_CHUNK)));
+}
+
+// ## 제목(코드 블록 밖)의 (⏱ N분) 분 목록. 시간 표시가 없는 제목은 뺀다
+function practiceLabelMinutes(md) {
+    return lessonLintSections(String(md || '').replace(/\r\n/g, '\n'))
+        .map(section => Number((section.title.match(PRACTICE_TIME_LABEL) || [])[1]) || 0)
+        .filter(minutes => minutes > 0);
+}
+
+// 실습 탭의 (⏱ N분) 합계가 정한 실습 시간에 맞는지: { minutes, sum, labelled, ok }. 시간 표시가 없거나 10%보다 벗어나면 ok가 아니다. 정하지 않았으면 null
+function practiceTimeCheck(md, minutes) {
+    const target = practiceMinutesValue(minutes);
+    if (!target) return null;
+    const labels = practiceLabelMinutes(md);
+    const sum = labels.reduce((total, value) => total + value, 0);
+    return { minutes: target, sum, labelled: labels.length, ok: labels.length > 0 && Math.abs(sum - target) <= target * PRACTICE_LABEL_TOLERANCE };
+}
+
+// 정한 실습 시간과 (⏱ N분) 합계가 맞지 않을 때 알릴 글. 맞거나 정하지 않았으면 ''
+function practiceTimeNote(md, minutes, label = '실습 탭') {
+    const check = practiceTimeCheck(md, minutes);
+    if (!check || check.ok) return '';
+    if (!check.labelled) return `${label}의 ## 제목에 (⏱ N분) 시간 표시가 없어 정한 실습 시간 ${check.minutes}분에 맞는지 알 수 없습니다. 제목마다 걸리는 시간을 적어 확인해 주세요.`;
+    return `${label}의 ## 제목 시간(⏱) 합계가 ${check.sum}분으로, 정한 실습 시간 ${check.minutes}분과 10% 넘게 차이 납니다. 제목의 시간을 확인해 주세요.`;
 }
 
 // open(전역 정규식)이 찾은 자리부터 그 뒤 첫 close(전역 정규식)까지를 빈칸 하나로 바꾼다. 닫지 않은 자리가 나오면 거기서 멈춘다(뒤의 자리도 닫을 곳이 없다).
@@ -228,7 +319,7 @@ function lintChecklistRefs(titles, checks) {
         : unknown;
 }
 
-// 학습 탭은 ## 대주제가 목표보다 많으므로(기본학습은 최소 8개) 개수가 같은지가 아니라 목표마다 섹션이 있는지를 본다.
+// 학습 탭은 ## 대주제가 목표보다 많으므로(기본학습·심화학습은 최소 8개) 개수가 같은지가 아니라 목표마다 섹션이 있는지를 본다.
 // 어느 섹션이 어느 목표에 속하는지는 체크리스트의 "다시 보기"와 수동 검수로 확인한다.
 function lintLessonStructure(source, goals, checks) {
     const titles = lessonLintSections(source).map(section => section.title).filter(Boolean);

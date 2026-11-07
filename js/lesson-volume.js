@@ -1,7 +1,7 @@
-// lesson-volume.js - 기본 학습을 강사가 소리 내어 읽어도 목표 시간(최소 480분)이 차는 분량까지 섹션마다 나눠 채운다
+// lesson-volume.js - 학습 탭(기본학습·심화학습)을 강사가 소리 내어 읽어도 목표 시간(480분)이 차는 분량까지 섹션마다 나눠 채운다
 // 초안을 받은 뒤 목표에 못 미친 내용 섹션 끝에 새 ### 소주제를 이어 붙인다. 있던 글·고정 섹션·학습 목표·개요·체크리스트·그림 자리는 그대로 둔다.
-// 분량은 lesson-lint.js spokenChars로 센다(공백 포함 1분에 250자, 코드·표·그림·서식 기호 제외).
-// 탭 생성(tabs.js generateTabContent)·교안 전체 생성(api.js generateModuleContent)·탭 위 '분량 채우기'가 쓴다. 테스트: tests/lesson-volume.test.js
+// 분량은 lesson-lint.js spokenChars로 센다(공백 포함 1분에 250자, 코드·표·그림·서식 기호 제외). 목표는 lesson-lint.js learnTargetMinutes.
+// 탭 생성(tabs.js generateTabContent)·교안 전체 생성(api.js generateModuleContent)·탭 위 '분량 채우기'가 쓴다. 테스트: tests/lesson-volume.test.js, tests/tab-time.test.js
 
 const VOLUME_REQUEST_MIN = 3000;      // 한 번에 부탁하는 낭독 글자 수(공백 포함)
 const VOLUME_REQUEST_MAX = 12000;
@@ -25,13 +25,15 @@ const VOLUME_MIN_NEED = 1500;         // 한 번에 채우려는 최소 글자 �
 const VOLUME_TIME_UNIT = 5;           // (⏱ N분)은 5분 단위로 다시 매긴다
 const VOLUME_REFERENCE_CHARS = 4000;  // 보강 호출에 붙이는 참고 자료 길이
 const VOLUME_MAX_OUTPUT_TOKENS = 65536;
-const VOLUME_DEFAULT_GOAL = Math.ceil(BASIC_LEARN_MIN_MINUTES * READ_CHARS_PER_MINUTE * VOLUME_MARGIN);
+const VOLUME_DEFAULT_GOAL = Math.ceil(LEARN_TARGET_MINUTES * READ_CHARS_PER_MINUTE * VOLUME_MARGIN);
 const VOLUME_TIME_LABEL = /\(\s*⏱[^)]*\)|⏱\S*\s*(?:약\s*)?\d+\s*분/;
 const VOLUME_IMAGE_TAG = /<!--\s*\[IMG:[\s\S]*?-->/g;
 const VOLUME_QUEST_HEADING = /^#\s.*일일\s*퀘스트/; // 교안 전체 생성이 본문 뒤에 붙이는 '# ⚔️ 일일 퀘스트 (실습 과제)'
 // 늘리지 않는 섹션: 실습·심화·일일 퀘스트·과제·평가로 시작하거나, 루브릭·채점이 들거나, 요약·정리·마무리로 끝나는 제목.
-// '기획 문서로 정리'처럼 을·를·로·에 뒤의 정리는 하는 일을 말하는 내용 섹션이므로 늘린다
+// '기획 문서로 정리'처럼 을·를·로·에 뒤의 정리는 하는 일을 말하는 내용 섹션이므로 늘린다.
+// 심화학습 탭은 탭 전체가 심화 내용이라 '심화'로 시작하는 섹션도 늘린다(VOLUME_SKIP_TITLE_ADV)
 const VOLUME_SKIP_TITLE = new RegExp(`${LESSON_HEADING_PREFIX}(?:실습|심화|일일\\s*퀘스트|과제|평가)|루브릭|채점|(?<![을를로에]\\s?)(?:요약|정리|마무리)$`);
+const VOLUME_SKIP_TITLE_ADV = new RegExp(`${LESSON_HEADING_PREFIX}(?:실습|일일\\s*퀘스트|과제|평가)|루브릭|채점|(?<![을를로에]\\s?)(?:요약|정리|마무리)$`);
 const VOLUME_CHIP_TITLE = `강사가 소리 내어 읽는 시간을 1분에 ${READ_CHARS_PER_MINUTE}자(공백 포함)로 셌습니다. 코드·표·그림·다이어그램·서식 기호는 세지 않습니다.`;
 const VOLUME_CHIP_CLASS = 'ml-2 shrink-0 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[0.6875rem] font-bold whitespace-nowrap';
 const VOLUME_CHIP_TONES = { short: 'bg-amber-50 text-amber-700 border-amber-300', done: 'bg-emerald-50 text-emerald-700 border-emerald-300' };
@@ -63,11 +65,12 @@ function volumeQuestStart(sections) {
     return at < 0 ? sections.length : at;
 }
 
-// 늘릴 수 있는 내용 섹션: 제목이 있고, 학습 목표·개요·체크리스트·고정·실습·요약 섹션이 아니며, # 제목을 품지 않는다
-function isVolumeContentSection(section, lockedKeys = new Set()) {
+// 늘릴 수 있는 내용 섹션: 제목이 있고, 학습 목표·개요·체크리스트·고정·실습·요약 섹션이 아니며, # 제목을 품지 않는다. tabId: 채우는 탭
+function isVolumeContentSection(section, lockedKeys = new Set(), tabId = 'basicLearn') {
     const title = volumeCleanTitle(section.title);
     if (!title || LESSON_FRAME_TITLE.test(title) || LESSON_OVERVIEW_TITLE.test(title)) return false;
-    if (lockedKeys.has(lockTitleKey(section.title)) || VOLUME_SKIP_TITLE.test(title)) return false;
+    const skip = tabId === 'advLearn' ? VOLUME_SKIP_TITLE_ADV : VOLUME_SKIP_TITLE;
+    if (lockedKeys.has(lockTitleKey(section.title)) || skip.test(title)) return false;
     return !hasTopHeading(section.text);
 }
 
@@ -92,11 +95,11 @@ function volumeRequestSize(need, ratio = VOLUME_START_RATIO) {
 
 // 다음에 늘릴 섹션. 가장 많이 모자란 섹션을 고른다. 코드 차시에서 코드를 설명하는데 예제가 없는 섹션은 목표를 채운 뒤에도 한 번 먼저 고른다.
 // avoid: 방금 늘지 않은 섹션. 다른 섹션이 있으면 바로 다시 고르지 않는다(한 섹션의 잇단 실패로 채우기 전체가 멈추지 않게). 고를 섹션이 없거나 목표를 채웠으면 null
-function volumePlan(md, { goal = VOLUME_DEFAULT_GOAL, lockedKeys = new Set(), failures = new Map(), codeTopic = false, codeTried = new Set(), ratio = VOLUME_START_RATIO, avoid = null } = {}) {
+function volumePlan(md, { goal = VOLUME_DEFAULT_GOAL, lockedKeys = new Set(), failures = new Map(), codeTopic = false, codeTried = new Set(), ratio = VOLUME_START_RATIO, avoid = null, tabId = 'basicLearn' } = {}) {
     const rows = mdSections(md).map((section, index) => ({ ...section, index, key: lockTitleKey(section.title), spoken: spokenChars(section.text) }));
     const total = rows.reduce((sum, row) => sum + row.spoken, 0);
     const quest = volumeQuestStart(rows);
-    const candidates = rows.filter(row => row.index < quest && isVolumeContentSection(row, lockedKeys) && (failures.get(row.key) || 0) < VOLUME_SECTION_FAILS);
+    const candidates = rows.filter(row => row.index < quest && isVolumeContentSection(row, lockedKeys, tabId) && (failures.get(row.key) || 0) < VOLUME_SECTION_FAILS);
     const open = candidates.length ? volumeDeficits(candidates, total, goal) : [];
     const codeFirst = codeTopic ? open.find(row => !codeTried.has(row.key) && !lessonHasCodeExample(row.text) && lessonCodeSignals(row.text)) : null;
     if (!open.length || (total >= goal && !codeFirst)) return null;
@@ -224,10 +227,10 @@ const volumeLabelSum = md => mdSections(md).reduce((sum, section) => sum + volum
 
 // 내용 섹션의 (⏱ N분)을 낭독 길이에 맞춰 다시 매긴다. 학습 목표·개요·체크리스트·고정·실습·요약 섹션의 라벨은 그대로 두고,
 // 목표 시간에서 그 합을 뺀 시간을 낭독 글자 비율로 5분 단위로 나눈다(섹션마다 5분 이상). 남은 시간은 5분 단위로 올려 라벨 합계가 목표 시간 이상이 된다
-function retimeSections(md, targetMinutes, lockedKeys = new Set()) {
+function retimeSections(md, targetMinutes, lockedKeys = new Set(), tabId = 'basicLearn') {
     const sections = mdSections(md).map((section, index) => ({ ...section, index }));
     const quest = volumeQuestStart(sections);
-    const open = sections.filter(section => section.index < quest && isVolumeContentSection(section, lockedKeys));
+    const open = sections.filter(section => section.index < quest && isVolumeContentSection(section, lockedKeys, tabId));
     if (!open.length) return md;
     const openIndexes = new Set(open.map(section => section.index));
     const kept = sections.filter(section => !openIndexes.has(section.index)).reduce((sum, section) => sum + volumeTitleMinutes(section.title), 0);
@@ -247,7 +250,7 @@ function volumeSnapshot(mod) {
 }
 
 function volumeJob({ md = '', mod = null, tabId = 'basicLearn', lockedBlocks = [], targetMinutes = 0, codeTopic = false, referenceContext = '', attachmentPrompt = '', fromUpload = false, isStopped, isLive, onStatus, onRetry = null, waitSignal = null } = {}) {
-    const minutes = Number(targetMinutes) > 0 ? Number(targetMinutes) : basicLearnTargetMinutes(mod);
+    const minutes = Number(targetMinutes) > 0 ? Number(targetMinutes) : learnTargetMinutes(mod, tabId) || LEARN_TARGET_MINUTES;
     const targetChars = minutes * READ_CHARS_PER_MINUTE;
     const blocks = Array.isArray(lockedBlocks) ? lockedBlocks.filter(block => block && typeof block.text === 'string') : [];
     return {
@@ -342,7 +345,7 @@ async function volumeLoop(job) {
     while (true) {
         if (job.isStopped()) return volumeStop(job);
         if (!job.isLive()) return volumeGone(job);
-        const plan = volumePlan(job.md, { goal: job.goal, lockedKeys: job.lockedKeys, failures: job.failures, codeTopic: job.codeTopic, codeTried: job.codeTried, ratio: volumeRatio(job), avoid: job.lastFailed });
+        const plan = volumePlan(job.md, { goal: job.goal, lockedKeys: job.lockedKeys, failures: job.failures, codeTopic: job.codeTopic, codeTried: job.codeTried, ratio: volumeRatio(job), avoid: job.lastFailed, tabId: job.tabId });
         if (!plan) return spokenChars(job.md) >= job.goal ? 'target' : 'none';
         if (job.calls >= job.cap) return 'cap';
         if (job.calls > 0) await waitMs(VOLUME_COOLDOWN_MS, job.waitSignal);
@@ -370,7 +373,7 @@ function volumeFinalText(job) {
     let md = job.md;
     if (!job.stopped && (job.added > 0 || !labelsFit)) {
         try {
-            md = retimeSections(md, job.targetMinutes, job.lockedKeys);
+            md = retimeSections(md, job.targetMinutes, job.lockedKeys, job.tabId);
         } catch (err) {
             console.warn('[분량 채우기] (⏱) 시간을 다시 매기지 못해 그대로 둡니다:', err);
         }
@@ -401,18 +404,18 @@ function rebaseVolumeParts(current, parts, { targetMinutes, lockedBlocks = [], t
 }
 
 // 미리 보기에서 섹션을 골라 반영한 글은 (⏱) 합계가 목표에서 벗어날 수 있어 고른 글로 다시 매긴다(고정 섹션의 라벨은 그대로)
-function retimeVolumeChoice(md, { targetMinutes, lockedBlocks = [] } = {}) {
+function retimeVolumeChoice(md, { targetMinutes, lockedBlocks = [], tabId = 'basicLearn' } = {}) {
     const sum = volumeLabelSum(md);
     if (sum >= targetMinutes && sum <= targetMinutes + BASIC_LEARN_LABEL_SLACK) return md;
     try {
-        return retimeSections(md, targetMinutes, new Set(lockedBlocks.map(block => lockTitleKey(block.title))));
+        return retimeSections(md, targetMinutes, new Set(lockedBlocks.map(block => lockTitleKey(block.title))), tabId);
     } catch (err) {
         console.warn('[분량 채우기] 고른 글의 (⏱) 시간을 다시 매기지 못해 그대로 둡니다:', err);
         return md;
     }
 }
 
-// 기본 학습 글(md)을 낭독 목표 분량까지 채운 결과를 돌려준다. 차시(mod)에는 쓰지 않고(부른 쪽이 저장한다) 어떤 실패도 던지지 않는다.
+// 학습 탭 글(md)을 낭독 목표 분량까지 채운 결과를 돌려준다. 차시(mod)에는 쓰지 않고(부른 쪽이 저장한다) 어떤 실패도 던지지 않는다.
 // 중지·차시가 사라짐(isLive)·한도와 키 문제·호출 상한·잇단 실패·늘릴 섹션 없음에서 멈춘다.
 // 결과: { md, spoken, minutes, targetMinutes, targetChars, calls, added, short, stopped, gone, error, reason, parts(붙인 소주제 [{ key, text }]) }
 async function ensureSpokenVolume(options = {}) {
@@ -433,44 +436,45 @@ window.isVolumeFilling = () => _volumeRunning > 0;
 /* ---------- 탭 위 표시와 '분량 채우기' ---------- */
 const VOLUME_UNAPPLIED_REASON = '분량 채우기 결과(반영 안 함)';
 
-function volumeChipButton(mod) {
-    return `<button type="button" data-volume-lesson="${escapeHtml(String(mod.id))}" onclick="fillLessonVolume(this.dataset.volumeLesson)" class="px-1.5 py-0.5 rounded bg-amber-500 text-white hover:bg-amber-600 transition-colors" title="모자란 섹션마다 새 소주제를 이어 붙여 목표 분량까지 채웁니다">분량 채우기</button>`;
+// tabId는 학습 탭 id(basicLearn·advLearn)만 온다(syncVolumeChip이 fillsLearnVolume으로 고른다)
+function volumeChipButton(mod, tabId = 'basicLearn') {
+    return `<button type="button" data-volume-lesson="${escapeHtml(String(mod.id))}" data-volume-tab="${escapeHtml(tabId)}" onclick="fillLessonVolume(this.dataset.volumeLesson, this.dataset.volumeTab)" class="px-1.5 py-0.5 rounded bg-amber-500 text-white hover:bg-amber-600 transition-colors" title="모자란 섹션마다 새 소주제를 이어 붙여 목표 분량까지 채웁니다">분량 채우기</button>`;
 }
 
-// 기본학습 탭에 보이는 글: 저장된 글에서 화면이 숨기는 첫머리(앞 그림·시간표·특징 목록)를 뺀다(lesson-opening.js).
+// 학습 탭에 보이는 글: 저장된 글에서 화면이 숨기는 첫머리(앞 그림·시간표·특징 목록)를 뺀다(lesson-opening.js).
 // 다른 탭에만 글이 있는 차시의 비운 기본학습은 빈 글이다(lesson-review.js storedTabMarkdown)
-function volumeShownText(mod) {
-    const stored = String(storedTabMarkdown(mod, 'basicLearn') || '');
+function volumeShownText(mod, tabId = 'basicLearn') {
+    const stored = String(storedTabMarkdown(mod, tabId) || '');
     return typeof cleanLessonOpening === 'function' ? cleanLessonOpening(stored) : stored;
 }
 
-// 탭 위 '낭독 약 N분 / 목표 480분'. 기본 학습 탭을 볼 때만 보이고(최종 평가와 교수안·슬라이드·문제은행 화면에서는 숨긴다) 모자라면 '분량 채우기'를 붙인다.
+// 탭 위 '낭독 약 N분 / 목표 480분'. 학습 탭(기본학습·심화학습)을 볼 때만 보이고(최종 평가와 교수안·슬라이드·문제은행 화면에서는 숨긴다) 모자라면 '분량 채우기'를 붙인다.
 // 분은 내림이라 모자란 글이 목표 시간으로 보이지 않는다(lesson-lint.js readAloudMinutes)
 window.syncVolumeChip = function (mod = getEditingModule()) {
     const chip = document.getElementById('lesson-volume-chip');
     if (!chip) return;
     const panelOpen = typeof _lessonPanel !== 'undefined' && !!_lessonPanel;
     const tab = typeof currentLessonTab !== 'undefined' ? currentLessonTab : '';
-    const md = mod && mod.id !== 'mainQuest' && !panelOpen && tab === 'basicLearn' ? volumeShownText(mod) : '';
+    const md = !panelOpen && fillsLearnVolume(mod, tab) ? volumeShownText(mod, tab) : '';
     if (!md.trim()) {
         chip.className = 'hidden';
         chip.innerHTML = '';
         return;
     }
     const spoken = spokenChars(md);
-    const target = basicLearnTargetMinutes(mod);
+    const target = learnTargetMinutes(mod, tab);
     const short = spoken < target * READ_CHARS_PER_MINUTE;
     chip.className = `${VOLUME_CHIP_CLASS} ${short ? VOLUME_CHIP_TONES.short : VOLUME_CHIP_TONES.done}`;
     chip.title = VOLUME_CHIP_TITLE;
-    chip.innerHTML = `<span>낭독 약 ${readAloudMinutes(md)}분 / 목표 ${target}분</span>${short ? volumeChipButton(mod) : ''}`;
+    chip.innerHTML = `<span>낭독 약 ${readAloudMinutes(md)}분 / 목표 ${target}분</span>${short ? volumeChipButton(mod, tab) : ''}`;
 };
 
-// '분량 채우기'가 끝난 뒤 알릴 글. md: 반영할 글
-function volumeSummaryText(volume, md) {
+// '분량 채우기'가 끝난 뒤 알릴 글. md: 반영할 글, label: 채운 탭 이름(기본학습·심화학습)
+function volumeSummaryText(volume, md, label = reviewTabLabel('basicLearn')) {
     const minutes = readAloudMinutes(md);
-    if (spokenChars(md) >= volume.targetChars) return `기본학습을 낭독 약 ${minutes}분(목표 ${volume.targetMinutes}분)까지 채웠습니다.`;
+    if (spokenChars(md) >= volume.targetChars) return `${label}을 낭독 약 ${minutes}분(목표 ${volume.targetMinutes}분)까지 채웠습니다.`;
     return [
-        `기본학습은 낭독 약 ${minutes}분으로 목표 ${volume.targetMinutes}분에 못 미칩니다.`,
+        `${label}은 낭독 약 ${minutes}분으로 목표 ${volume.targetMinutes}분에 못 미칩니다.`,
         volume.stopped ? '중지해서 받은 데까지만 붙였습니다.' : '',
         volume.error?.message || '',
         volume.reason === 'none' ? '고정 섹션과 실습·요약 섹션은 늘리지 않습니다.' : '',
@@ -487,18 +491,19 @@ function volumeCallEstimate(md, targetMinutes) {
 }
 
 // 반영하지 않은 채운 글을 작업 기록에 남긴다(다시 채우지 않아도 그 글로 되돌릴 수 있게). 남긴 곳을 알리는 글을 돌려준다
-async function keepVolumeText(mod, md) {
-    await archiveContent({ title: mod.tabContents ? `${mod.title} · ${reviewTabLabel('basicLearn')}` : mod.title, content: md, images: mod.images, tabId: 'basicLearn', lesson: mod }, VOLUME_UNAPPLIED_REASON);
+async function keepVolumeText(mod, md, tabId = 'basicLearn') {
+    await archiveContent({ title: mod.tabContents ? `${mod.title} · ${reviewTabLabel(tabId)}` : mod.title, content: md, images: mod.images, tabId, lesson: mod }, VOLUME_UNAPPLIED_REASON);
     return `채운 글은 작업 기록에 '${VOLUME_UNAPPLIED_REASON}'으로 남겼습니다.`;
 }
 
 // 진행 막대 안에서 채운다. 늘린 소주제가 있으면 컨벤션 필수 지적을 고쳐 받고, 바뀐 섹션을 골라 반영한다(이전 글은 작업 기록에 '분량 채우기 전'으로 남는다). 그림은 만들지 않는다.
-// 다른 교과로 옮겨도 그 차시에 반영한다. 채우는 동안 기본학습이 바뀌었으면(그림 지우기·두 번 눌러 고치기·원문 칸 등) 늘린 소주제를 지금 글에 이어 붙인다.
-// 반영하지 못하거나 반영하지 않기를 고른 채운 글은 작업 기록에 남긴다
-async function fillVolumeJob({ mod, subj, before, snapshot }) {
-    const tabId = 'basicLearn';
-    const targetMinutes = basicLearnTargetMinutes(mod);
+// 다른 교과로 옮겨도 그 차시에 반영한다. 채우는 동안 그 학습 탭이 바뀌었으면(그림 지우기·두 번 눌러 고치기·원문 칸 등) 늘린 소주제를 지금 글에 이어 붙인다.
+// 반영하지 못하거나 반영하지 않기를 고른 채운 글은 작업 기록에 남긴다. tabId: 채우는 학습 탭(기본학습·심화학습)
+async function fillVolumeJob({ mod, subj, before, snapshot, tabId = 'basicLearn' }) {
+    const label = reviewTabLabel(tabId);
+    const targetMinutes = learnTargetMinutes(mod, tabId);
     const lockedBlocks = lockedSectionBlocks(mod, tabId);
+    const keep = md => keepVolumeText(mod, md, tabId);
     const isStopped = () => !!window.isTabGenerationStopped?.();
     const isLive = () => !subj || typeof lessonStillLive !== 'function' || lessonStillLive(subj, mod);
     const volume = await ensureSpokenVolume({
@@ -506,47 +511,49 @@ async function fillVolumeJob({ mod, subj, before, snapshot }) {
         isStopped, isLive, onStatus: window.setPipelineStatus, waitSignal: window.aiStopSignal?.() || null
     });
     const gone = '차시가 지워졌거나 불러온 내용으로 바뀌어 분량 채우기를';
-    if (volume.gone) return window.showAlert(`${gone} 멈췄습니다.${volume.added ? ` ${await keepVolumeText(mod, volume.md)}` : ''}`);
+    if (volume.gone) return window.showAlert(`${gone} 멈췄습니다.${volume.added ? ` ${await keep(volume.md)}` : ''}`);
     // 늘린 소주제가 없으면 고쳐 받지 않는다(있던 글만 고치는 호출이 된다). 중지·한도·키 문제·다시 보내도 같은 오류로 멈췄을 때도
     const fixable = volume.added > 0 && !volume.stopped && !isVolumeHalt(volume.error);
     const filled = fixable
         ? await autoFixGeneratedTab({ tabId, md: volume.md, lockedBlocks, onStatus: window.setPipelineStatus, rounds: VOLUME_FIX_ROUNDS, minSpokenChars: volume.targetChars, isStopped })
         : volume.md;
-    if (!isLive()) return window.showAlert(`${gone} 반영하지 못했습니다. ${await keepVolumeText(mod, filled)}`);
+    if (!isLive()) return window.showAlert(`${gone} 반영하지 못했습니다. ${await keep(filled)}`);
     saveOpenEditsFor(mod, tabId); // 열어 둔 원문 칸의 글을 먼저 넣는다(미리 보기의 단추를 누르며 칸을 벗어나 넣으면 반영을 막는다)
     const current = String(storedTabMarkdown(mod, tabId) || '');
     let [base, next, rebaseNote] = [before, filled, ''];
     if (current !== before) {
         const rebased = rebaseVolumeParts(current, volume.parts, { targetMinutes, lockedBlocks: lockedSectionBlocks(mod, tabId), tabId, stopped: volume.stopped });
-        if (rebased === null) return window.showAlert(`채우는 동안 기본학습의 섹션 제목이 바뀌어 늘린 소주제를 붙일 자리를 찾지 못했습니다. ${await keepVolumeText(mod, filled)}`);
-        [base, next, rebaseNote] = [current, rebased, '채우는 동안 기본학습이 바뀌어, 늘린 소주제를 지금 글에 이어 붙였습니다(자동 수정은 반영하지 않았습니다).'];
+        if (rebased === null) return window.showAlert(`채우는 동안 ${label}의 섹션 제목이 바뀌어 늘린 소주제를 붙일 자리를 찾지 못했습니다. ${await keep(filled)}`);
+        [base, next, rebaseNote] = [current, rebased, `채우는 동안 ${label}이 바뀌어, 늘린 소주제를 지금 글에 이어 붙였습니다(자동 수정은 반영하지 않았습니다).`];
     }
-    if (next === base) return window.showAlert(volumeSummaryText(volume, next));
+    if (next === base) return window.showAlert(volumeSummaryText(volume, next, label));
     window.setPipelineStatus('바뀐 섹션을 골라 반영해 주세요.');
-    const choice = await previewAiChange(base, next, { title: '기본학습 분량 채우기 미리보기', tabId, note: [rebaseNote, volumeSummaryText(volume, next)].filter(Boolean).join(' '), cancelLabel: '반영하지 않기' });
-    if (choice === null || choice === base) return window.showToast?.(`분량 채우기를 반영하지 않았습니다. ${await keepVolumeText(mod, next)}`, 'info');
-    const approved = choice === next ? choice : retimeVolumeChoice(choice, { targetMinutes, lockedBlocks: lockedSectionBlocks(mod, tabId) });
+    const choice = await previewAiChange(base, next, { title: `${label} 분량 채우기 미리보기`, tabId, note: [rebaseNote, volumeSummaryText(volume, next, label)].filter(Boolean).join(' '), cancelLabel: '반영하지 않기' });
+    if (choice === null || choice === base) return window.showToast?.(`분량 채우기를 반영하지 않았습니다. ${await keep(next)}`, 'info');
+    const approved = choice === next ? choice : retimeVolumeChoice(choice, { targetMinutes, lockedBlocks: lockedSectionBlocks(mod, tabId), tabId });
     saveOpenEditsFor(mod, tabId);
-    if (!isLive() || storedTabMarkdown(mod, tabId) !== base) return window.showAlert(`고르는 동안 기본학습이 바뀌어 반영하지 못했습니다. ${await keepVolumeText(mod, approved)}`);
-    if (!(await commitTabChange(mod, tabId, base, approved, `기본학습 분량 채우기(낭독 약 ${readAloudMinutes(approved)}분)`, '분량 채우기 전'))) return;
-    window.notifyLessonJobDone(volumeSummaryText(volume, approved), spokenChars(approved) >= volume.targetChars ? 'success' : 'warning');
+    if (!isLive() || storedTabMarkdown(mod, tabId) !== base) return window.showAlert(`고르는 동안 ${label}이 바뀌어 반영하지 못했습니다. ${await keep(approved)}`);
+    if (!(await commitTabChange(mod, tabId, base, approved, `${label} 분량 채우기(낭독 약 ${readAloudMinutes(approved)}분)`, '분량 채우기 전'))) return;
+    window.notifyLessonJobDone(volumeSummaryText(volume, approved, label), spokenChars(approved) >= volume.targetChars ? 'success' : 'warning');
 }
 
-// 탭 위 '분량 채우기': 지금 기본 학습에서 모자란 분량만 이어서 채운다. 시작 전에 호출 수·시간을 보이고 묻는다
-window.fillLessonVolume = async function (id) {
+// 탭 위 '분량 채우기': 지금 학습 탭(기본학습·심화학습)에서 모자란 분량만 이어서 채운다. 시작 전에 호출 수·시간을 보이고 묻는다.
+// tabId는 화면의 단추가 넘긴 값이라 학습 탭인지 다시 본다(아니면 하지 않는다)
+window.fillLessonVolume = async function (id, tabId = 'basicLearn') {
     const mod = getEditingModule(id);
-    if (!mod || mod.id === 'mainQuest') return;
+    if (!fillsLearnVolume(mod, tabId)) return;
     if (window.isLessonPipelineRunning?.()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
-    saveOpenEditsFor(mod, 'basicLearn');
-    const current = String(storedTabMarkdown(mod, 'basicLearn') || '');
-    if (!current.trim()) return window.showAlert('먼저 기본학습 탭을 생성해 주세요.');
-    const target = basicLearnTargetMinutes(mod);
-    const message = `기본학습은 지금 낭독 약 ${readAloudMinutes(volumeShownText(mod))}분입니다. 목표 ${target}분이 될 때까지 모자란 내용 섹션 끝에 새 소주제를 이어 붙이고, 각 ## 제목의 시간(⏱)을 낭독 길이에 맞춰 다시 매깁니다. 컨벤션 필수 지적이 남은 섹션은 AI가 고쳐 쓸 수 있습니다. 끝나면 바뀐 섹션을 골라 반영하고, 채우기 전 글은 작업 기록에 남습니다.`;
-    const work = { volume: 1, volumeCalls: volumeCallEstimate(current, target), volumeMinutes: target };
-    if (!(await confirmWithEstimate(message, work, { title: '기본학습 분량 채우기', okLabel: '분량 채우기' }))) return;
+    const label = reviewTabLabel(tabId);
+    saveOpenEditsFor(mod, tabId);
+    const current = String(storedTabMarkdown(mod, tabId) || '');
+    if (!current.trim()) return window.showAlert(`먼저 ${label} 탭을 생성해 주세요.`);
+    const target = learnTargetMinutes(mod, tabId);
+    const message = `${label}은 지금 낭독 약 ${readAloudMinutes(volumeShownText(mod, tabId))}분입니다. 목표 ${target}분이 될 때까지 모자란 내용 섹션 끝에 새 소주제를 이어 붙이고, 각 ## 제목의 시간(⏱)을 낭독 길이에 맞춰 다시 매깁니다. 컨벤션 필수 지적이 남은 섹션은 AI가 고쳐 쓸 수 있습니다. 끝나면 바뀐 섹션을 골라 반영하고, 채우기 전 글은 작업 기록에 남습니다.`;
+    const work = { volume: 1, volumeCalls: volumeCallEstimate(current, target), volumeMinutes: target, ...(tabId === 'advLearn' ? { volumeAdv: 1 } : {}) };
+    if (!(await confirmWithEstimate(message, work, { title: `${label} 분량 채우기`, okLabel: '분량 채우기' }))) return;
     if (getEditingModule(id) !== mod) return;
-    saveOpenEditsFor(mod, 'basicLearn'); // 묻는 동안 고친 글도 넣고 시작한다
+    saveOpenEditsFor(mod, tabId); // 묻는 동안 고친 글도 넣고 시작한다
     const subj = globalState.subjects.find(item => item.id === currentSubjectId);
-    const job = { mod, subj, before: String(storedTabMarkdown(mod, 'basicLearn') || ''), snapshot: volumeSnapshot(mod) };
-    await window.runLessonJob(mod.id, { label: '기본학습 분량 채우기', current: 'basicLearn', alerts: true }, () => fillVolumeJob(job));
+    const job = { mod, subj, tabId, before: String(storedTabMarkdown(mod, tabId) || ''), snapshot: volumeSnapshot(mod) };
+    await window.runLessonJob(mod.id, { label: `${label} 분량 채우기`, current: tabId, alerts: true }, () => fillVolumeJob(job));
 };

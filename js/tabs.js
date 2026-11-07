@@ -94,6 +94,7 @@ function applyLessonPanel(mod) {
     applyViewMode(_lessonPanel === 'gyosuan' ? 'instructor' : 'student');
     window.syncLessonPanelView();
     document.getElementById('lesson-tab-generate')?.classList.toggle('hidden', !!_lessonPanel);
+    document.getElementById('lesson-practice-time')?.classList.toggle('hidden', !!_lessonPanel); // 실습 탭의 실습 시간 단추(course-design.js)
     document.getElementById('ai-command-bar')?.classList.toggle('hidden', !!_lessonPanel);
     document.getElementById('lesson-edit-hint')?.classList.toggle('hidden', !!_lessonPanel || !!window.lessonEditHintHidden?.());
     if (_lessonPanel === 'qbank') window.openQuestionBank(mod.id, { inline: true });
@@ -276,6 +277,12 @@ function warnUncoveredObjectives(mod, md) {
     if (issue) window.showToast?.(`학습이해도 점검: ${issue.snip}. 문제은행에서 그 목표로 문항을 만들어 채우세요.`, 'warning');
 }
 
+// 강사가 실습 시간을 정한 실습 탭은 ## 제목의 (⏱ N분) 합계가 그 시간에서 10%보다 벗어나거나 시간 표시가 없으면 생성 직후 한 번 알린다(막지 않는다, lesson-lint.js)
+function warnPracticeTime(minutes, md, label) {
+    const note = minutes ? practiceTimeNote(md, minutes, label) : '';
+    if (note) window.showToast?.(note, 'warning');
+}
+
 // 학습이해도 문항을 문제은행에서 바로 쓰도록 목표 번호를 함께 준다. 목표가 기본 문제 수보다 많으면 목표 수만큼 낸다
 function assessmentObjectivePrompt(mod, tabId) {
     if (tabId !== 'assessment' || typeof qbankObjectives !== 'function') return '';
@@ -285,7 +292,7 @@ function assessmentObjectivePrompt(mod, tabId) {
     return `\n\n[학습 목표 목록 — 문제마다 이 번호를 쓰고, 모든 목표를 1문제 이상 묻습니다. 문제는 ${count}개 이상 냅니다]\n${goals.map((goal, i) => `${i + 1}. ${goal}`).join('\n')}`;
 }
 
-// 탭 생성 끝 알림 글. 분량 채우기를 거친 기본 학습은 낭독 분량을 함께 알린다
+// 탭 생성 끝 알림 글. 분량 채우기를 거친 학습 탭은 낭독 분량을 함께 알린다
 // volume: lesson-volume.js 결과 / info: 저장한 글의 { minutes, targetMinutes, short }
 function tabDoneText({ label, stoppedInChunks, received, archivePartial, volume, info }) {
     const archived = archivePartial ? ' 이전 내용은 작업 기록에 남겼습니다.' : '';
@@ -301,17 +308,17 @@ function tabDoneText({ label, stoppedInChunks, received, archivePartial, volume,
     return `${label} 탭이 생성되었습니다.`;
 }
 
-// 저장한 기본 학습의 낭독 분량. 분량 채우기를 하지 않은 탭은 null. 분은 내림이다(lesson-lint.js readAloudMinutes)
+// 저장한 학습 탭의 낭독 분량. 분량 채우기를 하지 않은 탭은 null. 분은 내림이다(lesson-lint.js readAloudMinutes)
 function tabVolumeInfo(volume, md) {
     if (!volume) return null;
     const spoken = spokenChars(md);
     return { minutes: readAloudMinutes(md), targetMinutes: volume.targetMinutes, short: spoken < volume.targetChars };
 }
 
-// 분량을 채운 기본 학습을 차시에 넣지 못했을 때(차시가 지워졌거나 불러온 내용으로 바뀜) 작업 기록에 남긴다. 알림에 붙일 글을 돌려준다
-async function keepFilledTab(mod, volume, md) {
+// 분량을 채운 학습 탭을 차시에 넣지 못했을 때(차시가 지워졌거나 불러온 내용으로 바뀜) 작업 기록에 남긴다. 알림에 붙일 글을 돌려준다
+async function keepFilledTab(mod, volume, md, tabId) {
     if (!volume || typeof keepVolumeText !== 'function' || !String(md || '').trim()) return '';
-    return ` ${await keepVolumeText(mod, md)}`;
+    return ` ${await keepVolumeText(mod, md, tabId)}`;
 }
 
 // opts.quiet: 알림 없이 결과만 돌려준다 / opts.onStatus: 진행 문구를 받는다 (일괄 생성용)
@@ -338,8 +345,8 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         .join('\n');
 
     const subj = globalState.subjects.find(s => s.id === currentSubjectId);
-    // 기본 학습은 초안 뒤 낭독 목표 분량까지 채운다(lesson-volume.js). 그때 붙일 참고 자료는 기다리기 전에 잡아 둔다
-    const volumeSnap = tabId === 'basicLearn' && mod.id !== 'mainQuest' && typeof ensureSpokenVolume === 'function' ? volumeSnapshot(mod) : null;
+    // 학습 탭(기본학습·심화학습)은 초안 뒤 낭독 목표 분량까지 채운다(lesson-volume.js). 그때 붙일 참고 자료는 기다리기 전에 잡아 둔다
+    const volumeSnap = fillsLearnVolume(mod, tabId) && typeof ensureSpokenVolume === 'function' ? volumeSnapshot(mod) : null;
     const baseArgs = {
         title: mod.title,
         description: mod.description,
@@ -350,7 +357,8 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         hasMainQuest: !!subj?.mainQuest,
         mainQuestText: subj?.mainQuest?.description || '',
         codeTopic: lessonCodeTopic(mod), // 코드를 다루는 차시면 설명마다 예제 코드 블록을 쓰게 한다
-        targetMinutes: basicLearnTargetMinutes(mod) // 기본 학습의 낭독 목표(분)
+        targetMinutes: learnTargetMinutes(mod, tabId), // 학습 탭의 낭독 목표(분, 다른 탭은 0)
+        practiceMinutes: lessonPracticeMinutes(mod, tabId) // 강사가 정한 실습 시간(분, 정하지 않았거나 실습 탭이 아니면 0)
     };
     const { systemInstruction, userPrompt } = buildTaskContext('tab_content', baseArgs);
 
@@ -377,11 +385,11 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             }
         };
 
-        // ─── CONTINUE/END 분할 생성 루프 (긴 탭, 특히 기본 학습 480분이 잘리지 않도록) ───
+        // ─── CONTINUE/END 분할 생성 루프 (긴 탭, 특히 학습 탭 480분이 잘리지 않도록) ───
         const CONTINUE_MARKER = '<!-- CONTINUE -->';
         const END_MARKER = '<!-- END -->';
-        // 기본 학습은 분량이 가장 크므로 더 많은 청크 허용
-        const MAX_CHUNKS = tabId === 'basicLearn' ? 6 : 3;
+        // 학습 탭은 분량이 가장 커서 청크를 더 허용하고, 실습 시간을 정한 실습 탭은 시간에 맞춰 늘린다(lesson-lint.js tabChunkLimit)
+        const MAX_CHUNKS = tabChunkLimit(tabId, baseArgs.practiceMinutes);
 
         setLoadingText(`📝 ${tabMeta.label} 작성 중입니다... (1/${MAX_CHUNKS} 단락)`);
 
@@ -472,7 +480,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         resultText = cleanLessonOpening(restoreLockedSections(resultText, lockedBlocks));
         if (typeof checklistLast === 'function') resultText = checklistLast(resultText, tabId);
         if (!resultText.trim()) throw new Error('AI 응답이 비어 있습니다.');
-        // 기본 학습은 모자란 섹션마다 새 소주제를 이어 붙여 낭독 목표 분량까지 채운다. 그림 자리는 초안에만 미리 넣는다(붙인 소주제에는 넣지 않는다)
+        // 학습 탭은 모자란 섹션마다 새 소주제를 이어 붙여 낭독 목표 분량까지 채운다. 그림 자리는 초안에만 미리 넣는다(붙인 소주제에는 넣지 않는다)
         const volume = volumeSnap && !partialDueToError && !_tabGenStop ? await ensureSpokenVolume({
             ...volumeSnap, md: window.autoInjectImageTags ? window.autoInjectImageTags(resultText) : resultText, mod, tabId, lockedBlocks,
             targetMinutes: baseArgs.targetMinutes, codeTopic: baseArgs.codeTopic, isStopped: () => _tabGenStop,
@@ -480,7 +488,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         }) : null;
         // 채우는 동안이나 채운 뒤(고치기·미리 보기·그림)에 차시를 지웠거나 백업·PC 폴더를 불러왔다. 그 차시에 쓰지 않고 채운 글은 작업 기록에 남긴다
         const lessonGone = async md => {
-            const goneText = `차시가 지워졌거나 불러온 내용으로 바뀌어 ${tabMeta.label} 만들기를 멈췄습니다.${await keepFilledTab(mod, volume, md)}`;
+            const goneText = `차시가 지워졌거나 불러온 내용으로 바뀌어 ${tabMeta.label} 만들기를 멈췄습니다.${await keepFilledTab(mod, volume, md, tabId)}`;
             if (!_suppressTabAlert && !opts.quiet) window.showAlert(goneText); // 탭 모두 다시 만들기는 끝에 한 번만 알린다
             return { ok: false, error: goneText };
         };
@@ -512,12 +520,12 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
                 note: truncated ? '끝까지 받지 못한 글입니다. 마지막 섹션은 기본으로 고르지 않았습니다.' : stoppedNote || '새 글에 없는 이전 섹션은 기본으로 지웁니다. 이전 글은 작업 기록에 남습니다.'
             });
             if (resultText === null || resultText.trim() === previous.trim()) {
-                // 분량을 채우느라 오래 걸린 기본학습은 반영하지 않아도 작업 기록에 남긴다(다시 만들지 않아도 그 글로 되돌릴 수 있게)
-                if (volume && typeof keepVolumeText === 'function') window.showToast?.(`${tabMeta.label} 다시 만들기를 반영하지 않았습니다. ${await keepVolumeText(mod, generated)}`, 'info');
+                // 분량을 채우느라 오래 걸린 학습 탭은 반영하지 않아도 작업 기록에 남긴다(다시 만들지 않아도 그 글로 되돌릴 수 있게)
+                if (volume && typeof keepVolumeText === 'function') window.showToast?.(`${tabMeta.label} 다시 만들기를 반영하지 않았습니다. ${await keepVolumeText(mod, generated, tabId)}`, 'info');
                 return { ok: true, cancelled: true };
             }
             // 섹션을 골라 반영하면 (⏱) 합계가 목표에서 벗어날 수 있어 고른 글로 다시 매긴다(lesson-volume.js)
-            if (volume && resultText !== generated && typeof retimeVolumeChoice === 'function') resultText = retimeVolumeChoice(resultText, { targetMinutes: volume.targetMinutes, lockedBlocks });
+            if (volume && resultText !== generated && typeof retimeVolumeChoice === 'function') resultText = retimeVolumeChoice(resultText, { targetMinutes: volume.targetMinutes, lockedBlocks, tabId });
             if (!opts.background) document.getElementById('editor-loading').style.display = 'flex'; // 막지 않는 작업은 진행 막대가 이어서 보인다
         }
         if (!lessonHere()) return lessonGone(resultText);
@@ -550,6 +558,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             }
         }
         if (!lessonHere()) return lessonGone(mod.tabContents[tabId]); // 그림을 그리는 동안 차시가 바뀌었다(그 차시는 이제 저장된 작업에 없다)
+        if (!stoppedEarly && !partialDueToError) warnPracticeTime(baseArgs.practiceMinutes, mod.tabContents[tabId], tabMeta.label); // 끝까지 받은 실습 탭만 시간 합계를 본다
 
         await saveState();
         renderSidebar();
@@ -566,7 +575,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             else if (opts.background) window.notifyLessonJobDone?.(doneText, stoppedEarly || info?.short ? 'warning' : 'success');
             else window.showAlert(doneText);
         }
-        // short: 기본 학습이 낭독 목표에 못 미쳤다 / halt: 한도·키 문제로 분량 채우기가 멈췄다(일괄 생성도 멈춘다)
+        // short: 학습 탭이 낭독 목표에 못 미쳤다 / halt: 한도·키 문제로 분량 채우기가 멈췄다(일괄 생성도 멈춘다)
         return {
             ok: true, partial: partialDueToError || stoppedEarly,
             ...(info?.short ? { short: true, readMinutes: info.minutes, targetMinutes: info.targetMinutes } : {}),
@@ -601,7 +610,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
 // 교안 탭을 모두 다시 만든다. 화면을 막지 않고 진행 막대에서 탭 순서·걸린 시간·중지를 보여 주며, 이전 글은 히스토리에 남긴다
 async function generateAllTabs(moduleId) {
     const failed = [];
-    const short = []; // 기본 학습이 낭독 목표에 못 미친 탭
+    const short = []; // 학습 탭이 낭독 목표에 못 미친 탭
     let halted = null; // 한도·키 문제로 멈췄으면 그 안내
     // 시작한 교과의 그 차시만 다시 만든다. 탭마다 차시를 id로 다시 찾으므로, 다른 교과로 옮기거나 차시가 바뀌면
     // (최종 평가는 모든 교과가 같은 id) 그 교과의 차시를 다시 만들지 않게 다음 탭으로 가지 않고 멈춘다
@@ -638,6 +647,12 @@ async function generateAllTabs(moduleId) {
     window.notifyLessonJobDone('교안 탭을 모두 다시 만들었습니다. 이전 글은 작업 기록에 남았습니다.');
 }
 
+// 낭독 목표에 못 미친 학습 탭을 모은다(일괄 생성 보고에 탭마다 보인다). readMinutes는 처음 모자란 탭의 낭독 시간이다
+function withShortTab(short, tabId, result) {
+    const label = LESSON_TABS.find(tab => tab.id === tabId)?.label || tabId;
+    return { short: true, readMinutes: short.readMinutes ?? result.readMinutes, shortTabs: [...(short.shortTabs || []), { tabId, label, readMinutes: result.readMinutes }] };
+}
+
 // 일괄 생성용: 빈 탭만 순서대로 채운다. 있는 탭은 건드리지 않고 첫 실패에서 멈춰 결과를 돌려준다.
 // lockedByTab: 덮어쓰기로 비우기 전에 챙겨 둔 고정 섹션
 async function fillMissingTabs(moduleId, { isStopped = () => false, onTab = () => {}, onStatus, lockedByTab = {} } = {}) {
@@ -646,15 +661,15 @@ async function fillMissingTabs(moduleId, { isStopped = () => false, onTab = () =
     migrateMonolithicContent(mod); // 탭을 저장하면 mod.content를 다시 쓰므로 옛 단일 본문을 먼저 옮긴다
     const missing = lessonMissingTabs(mod);
     let partial = false;
-    let short = {}; // 기본 학습이 낭독 목표에 못 미쳤으면 { short: true, readMinutes }
+    let short = {}; // 학습 탭이 낭독 목표에 못 미쳤으면 { short: true, readMinutes, shortTabs }
     for (let i = 0; i < missing.length; i++) {
         if (isStopped()) return { ok: false, stopped: true, partial, ...short };
         onTab(LESSON_TABS.find(tab => tab.id === missing[i]), i, missing.length);
         const result = await generateTabContent(moduleId, missing[i], { quiet: true, onStatus, lockedBlocks: lockedByTab[missing[i]] });
-        if (result.short) short = { short: true, readMinutes: result.readMinutes };
+        if (result.short) short = withShortTab(short, missing[i], result);
         if (!result.ok) return { ok: false, partial, ...short, error: result.error, stopped: !!result.stopped, noRetry: !!result.noRetry, halt: !!result.halt };
         partial = partial || !!result.partial;
-        // 기본 학습은 저장했지만 분량 채우기가 하루 한도·키 문제로 멈췄다. 남은 탭과 다음 차시도 같은 까닭으로 실패하므로 일괄 생성을 멈춘다
+        // 학습 탭은 저장했지만 분량 채우기가 하루 한도·키 문제로 멈췄다. 남은 탭과 다음 차시도 같은 까닭으로 실패하므로 일괄 생성을 멈춘다
         if (result.halt) return { ok: false, partial, ...short, halt: true, error: result.error };
         await new Promise(r => setTimeout(r, 2000));
     }

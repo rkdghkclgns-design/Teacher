@@ -179,11 +179,11 @@ async function run(name, fn) {
         assert.strictEqual(call(pure, 'spokenChars')('<div class="image-placeholder"><span>그림 자리</span> <button>🔄 다시 검색</button></div>\n\n본문'), 2, '그림 자리 줄도 세지 않는다');
     });
 
-    await run('목표 낭독 시간: 최소 480분이고 차시 시간이 더 길면 그 시간이다', () => {
+    await run('목표 낭독 시간: 차시 시간과 관계없이 늘 480분이다(차시 시간이 더 길어도 늘리지 않는다)', () => {
         const target = call(pure, 'basicLearnTargetMinutes');
         assert.strictEqual(target({}), 480);
         assert.strictEqual(target({ hours: 2, minutes: 120 }), 480, '과정 설계의 2시간 차시도 480분');
-        assert.strictEqual(target({ hours: 10 }), 600);
+        assert.strictEqual(target({ hours: 10 }), 480, '10시간 차시도 480분');
         assert.strictEqual(target(null), 480);
     });
 
@@ -520,7 +520,7 @@ async function run(name, fn) {
         assert.deepStrictEqual([report.halted, report.stopped, report.failed.length, report.left.length, report.short.length], [true, true, 1, 1, 1]);
         assert.strictEqual(report.short[0].readMinutes, filled.readMinutes);
         const html = call(batch, 'lessonRunReportHtml')(report);
-        assert.ok(html.includes('기본학습 분량이 목표에 못 미친 차시 1개') && html.includes(`낭독 약 ${filled.readMinutes}분`) && html.includes("'분량 채우기'"), html);
+        assert.ok(html.includes('낭독 분량이 목표에 못 미친 차시 1개') && html.includes(`기본학습 낭독 약 ${filled.readMinutes}분`) && html.includes("'분량 채우기'"), html);
     });
 
     await run('탭 생성: 분량 채우기 중에 중지하면 받은 데까지 저장하고 고치기·그림 없이 중단을 알린다', async () => {
@@ -654,9 +654,9 @@ async function run(name, fn) {
         assert.ok(ctx.toasts.at(-1).message.includes('기본학습(낭독 약 420분)') && ctx.toasts.at(-1).kind === 'warning', JSON.stringify(ctx.toasts.at(-1)));
     });
 
-    await run('일괄 생성 안내: 기본학습 분량 때문에 오래 걸린다고 알린다', () => {
+    await run('일괄 생성 안내: 기본학습·심화학습 분량 때문에 오래 걸린다고 알린다', () => {
         const ctx = genContext();
-        assert.ok(call(ctx, 'lessonRunIntroHtml')([], [], false).includes('기본학습은 낭독 480분 분량을 채우느라 차시마다 20분 넘게 걸릴 수 있습니다.'));
+        assert.ok(call(ctx, 'lessonRunIntroHtml')([], [], false).includes('기본학습과 심화학습은 각각 낭독 480분 분량을 채우느라 차시마다 40분 넘게 걸릴 수 있습니다.'));
         const plainReport = call(ctx, 'lessonRunReportHtml')({ done: [], partial: [], failed: [], left: [], stopped: false });
         assert.ok(!plainReport.includes('분량'), '모자란 차시가 없으면 그 줄도 없다');
     });
@@ -702,11 +702,12 @@ async function run(name, fn) {
         const gyosuan = brief(lesson);
         assert.ok(gyosuan.includes('120분') && gyosuan.includes('비례해 줄이세요') && gyosuan.includes('(10분)') && gyosuan.includes('[진행 단계]\n'), gyosuan);
         assert.strictEqual(brief(lesson, 'basicPrac'), gyosuan);
-        assert.ok(brief({ minutes: 600, hours: 10 }, 'basicLearn').includes('낭독 600분(공백 포함 약 150,000자)'));
+        const tenHours = brief({ minutes: 600, hours: 10 }, 'basicLearn');
+        assert.ok(tenHours.includes('낭독 480분(공백 포함 약 120,000자)') && !tenHours.includes('낭독 600분'), '10시간 차시도 낭독 480분');
         const gen = { gen: { length: '길게 (약 1,500자)', level: '실무 경험자' } };
         assert.ok(!call(pure, 'lessonGenBrief')(gen, 'basicLearn').includes('섹션 하나당 분량') && call(pure, 'lessonGenBrief')(gen, 'basicLearn').includes('실무 경험자'));
         assert.ok(call(pure, 'lessonGenBrief')(gen, 'basicPrac').includes('섹션 하나당 분량: 길게 (약 1,500자)'));
-        assert.ok(call(pure, 'lessonGenFieldsHtml')('run').includes('섹션당 분량(기본학습 제외)'));
+        assert.ok(call(pure, 'lessonGenFieldsHtml')('run').includes('섹션당 분량(기본·심화학습 제외)'));
     });
 
     /* ---------- 탭 위 표시와 분량 채우기 ---------- */
@@ -918,13 +919,13 @@ async function run(name, fn) {
         assert.deepStrictEqual([measured.minutesLow, measured.minutesHigh], [10, 22], '2×20초 + 27×30초 + 4초');
         const note = vm.runInContext('estimateNote', ectx);
         assert.ok(note(summary(), 'gemini-3.8-flash').includes('기본학습은 낭독 480분(공백 포함 약 120,000자)이 될 때까지') && note(summary(), 'gemini-3.8-flash').includes('긴 호출이 약 27번'));
-        // 차시 시간이 긴 차시는 목표와 호출 상한이 늘고, 여러 차시는 차시마다의 수와 가장 긴 목표를 보인다. 지금 글로 센 분량 채우기는 그 수를 쓴다
+        // 낭독 목표를 직접 주면 그 목표로 상한을 세고, 여러 탭은 탭 수와 모두 더한 긴 호출 수와 가장 긴 목표를 보인다. 지금 글로 센 분량 채우기는 그 수를 쓴다
         const long = plain(work({ tabs: ['basicLearn'], volumeMinutes: 600 }, 'section', 0));
         assert.deepStrictEqual([long.volumeCalls, long.volumeMinutes], [33, 600], '600분이면 상한 30번 + 자동 수정 3번');
         const both = plain(vm.runInContext('sumWork', ectx)([plain(work({ tabs: ['basicLearn'] }, 'section', 0)), long]));
         assert.deepStrictEqual([both.volume, both.volumeCalls, both.volumeMinutes], [2, 60, 600]);
         const twoNote = note(plain(vm.runInContext('estimateSummary', ectx)(both, { model: 'gemini-3.8-flash', timings: {} })), 'gemini-3.8-flash');
-        assert.ok(twoNote.includes('낭독 600분(공백 포함 약 150,000자)') && twoNote.includes('차시마다 긴 호출이 약 30번'), twoNote);
+        assert.ok(twoNote.includes('기본학습은 탭마다 낭독 600분(공백 포함 약 150,000자)') && twoNote.includes('탭 2개에 긴 호출이 약 60번'), twoNote);
         assert.ok(note(summary({}, { volumeCalls: 4, volumeMinutes: 480 }), 'gemini-3.8-flash').includes('긴 호출이 약 4번'), '거의 찬 기본학습은 적게 센다');
         assert.ok(!vm.runInContext('estimateNote', ectx)(plain(vm.runInContext('estimateSummary', ectx)({ tabs: 1 }, { model: 'gemini-3.8-flash', timings: {} })), 'gemini-3.8-flash').includes('낭독'));
         const lexport = { console, window: {}, document: {}, LESSON_TABS: [] };

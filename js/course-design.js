@@ -16,6 +16,13 @@ const DESIGN_SAMPLE_TOPIC = '주제 입력: 생성형 AI와 UGC 산업의 이해
 const LESSON_OBJECTIVE_COUNTS = ['1', '2', '3'];
 const LESSON_LEVELS = ['비전공 입문', '기초 문법 이수', '실무 경험자'];
 const LESSON_LENGTHS = ['짧게 (약 400자)', '보통 (약 800자)', '길게 (약 1,500자)'];
+// 실습 시간 칸(차시 정보·일괄 생성 창). 키는 lesson-lint.js PRACTICE_MINUTE_KEYS와 같고 값은 10~600분, 10분 단위 정수다
+const LESSON_PRACTICE_FIELDS = [
+    { tab: 'basicPrac', key: 'basicPracMinutes', label: '기본실습 시간(분)', name: '기본실습' },
+    { tab: 'advPrac', key: 'advPracMinutes', label: '심화실습 시간(분)', name: '심화실습' }
+];
+const LESSON_GEN_KEYS = ['objectives', 'level', 'length', ...LESSON_PRACTICE_FIELDS.map(field => field.key)]; // 차시 정보 창이 읽는 칸 순서
+const PRACTICE_INPUT_HINT = '실습 시간은 10~600분 사이에서 10분 단위로 적습니다. 차시에도 과정에도 정하지 않으면 90~120분으로 만듭니다.';
 
 let _designDraft = null;
 let _designRun = 0;
@@ -267,6 +274,50 @@ window.updateLessonHours = async function (id, value) {
     if (next && lessonMissingTabs(mod).length < LESSON_TABS.length) window.showToast?.('이미 만든 교안은 바뀌지 않습니다. 새 시간에 맞추려면 다시 생성해주세요.', 'warning');
 };
 
+/* ---------- 실습 시간 ---------- */
+const PRACTICE_BUTTON_CLASS = {
+    header: 'px-2.5 py-1.5 text-[0.6875rem] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded hover:bg-emerald-100 transition-colors flex items-center gap-1 shrink-0 mr-1 whitespace-nowrap',
+    empty: 'mt-3 px-3 py-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors flex items-center gap-1'
+};
+
+// 과정 기본 실습 시간(분). 정하지 않았으면 0
+const coursePracticeMinutes = key => practiceFieldValue(globalState.courseDesign?.genOptions?.[key]) || 0;
+
+// 실습 탭의 '실습 시간 N분' 단추. place: 'header'(이 탭 생성 옆) | 'empty'(빈 탭 안내의 만들기 단추 아래). 누르면 이 차시의 실습 시간을 바꾼다(changePracticeMinutes).
+// 보이는 시간은 차시 값 → 과정 기본값 → 기본 90~120분 순서다. 실습 탭이 아니거나 최종 평가면 ''
+function practiceTimeButtonHtml(mod, tabId, place = 'header') {
+    const field = LESSON_PRACTICE_FIELDS.find(item => item.tab === tabId);
+    if (!field || !mod || mod.id === 'mainQuest' || typeof lessonPracticeTime !== 'function') return '';
+    const { minutes, from } = lessonPracticeTime(mod, tabId);
+    const text = minutes ? `실습 시간 ${minutes}분${from === 'course' ? '(과정 기본값)' : ''}` : '실습 시간 기본 90~120분';
+    const tip = { lesson: '이 차시에서 정한 실습 시간입니다. 눌러서 바꿉니다', course: '과정 기본값입니다. 눌러서 이 차시만 바꿉니다' }[from] || '정하지 않으면 90~120분으로 만듭니다. 눌러서 이 차시의 실습 시간을 정합니다';
+    const id = place === 'header' ? 'id="lesson-practice-time" ' : '';
+    return `<button type="button" ${id}data-practice-lesson="${escapeHtml(String(mod.id))}" data-practice-tab="${field.tab}" onclick="changePracticeMinutes(this.dataset.practiceLesson, this.dataset.practiceTab)" title="${escapeHtml(tip)}" class="${PRACTICE_BUTTON_CLASS[place] || PRACTICE_BUTTON_CLASS.header}"><i class="ph-bold ph-timer"></i> ${escapeHtml(text)}</button>`;
+}
+
+// 이 차시의 실습 시간을 바꾼다(앱 입력 창). 비우면 이 차시에서 정한 값을 지운다(과정 기본값, 없으면 90~120분으로 만든다). 10~600분, 10분 단위만 받는다
+window.changePracticeMinutes = async function (moduleId, tabId) {
+    const field = LESSON_PRACTICE_FIELDS.find(item => item.tab === tabId);
+    const mod = getEditingModule(moduleId);
+    if (!field || !mod || mod.id === 'mainQuest' || typeof lessonPracticeTime !== 'function') return;
+    const { minutes, from } = lessonPracticeTime(mod, tabId);
+    const course = coursePracticeMinutes(field.key);
+    const fallback = course ? `과정 기본값 ${course}분` : '기본 90~120분';
+    const answer = await window.promptAsync(`이 차시 ${field.name}의 실습 시간을 분으로 적어 주세요. 10분에서 600분 사이, 10분 단위입니다.\n비워 두면 ${fallback}으로 만듭니다. 바꾼 시간은 다음에 ${field.name}을 만들 때부터 씁니다.`,
+        { title: `${field.name} 시간`, okLabel: '저장', placeholder: course ? String(course) : '예: 120', value: from === 'lesson' ? String(minutes) : '' });
+    if (answer === null || answer === undefined) return;
+    if (getEditingModule(moduleId) !== mod) return window.showToast?.('묻는 동안 차시가 바뀌어 실습 시간을 바꾸지 않았습니다.', 'warning');
+    const text = String(answer).trim();
+    const value = text ? practiceFieldValue(text) : null;
+    if (text && !value) return window.showToast?.(`${field.name} 시간은 10분에서 600분 사이에서 10분 단위로 적어 주세요(예: 120).`, 'warning');
+    if (practiceFieldValue(mod.gen?.[field.key]) === value) return;
+    Object.assign(mod, { gen: withGenOption(mod.gen, field.key, value) }, withHistoryNote(mod, value ? `${field.name} 시간 ${value}분으로 정함` : `${field.name} 시간 정한 값 지움`));
+    await saveState();
+    if (getEditingModule() === mod) renderEditor(mod);
+    const made = String(mod.tabContents?.[tabId] || '').trim() ? ` 이미 만든 ${field.name}은 바뀌지 않습니다. 새 시간에 맞추려면 '이 탭 생성'으로 다시 만드세요.` : '';
+    window.showToast?.(`${value ? `${field.name} 시간을 ${value}분으로 정했습니다.` : `${field.name}에서 정한 시간을 지웠습니다. ${fallback}으로 만듭니다.`}${made}`, 'success');
+};
+
 // 차시에 툴을 따로 적지 않으면 과정 공통 사용 툴을 쓴다
 function lessonTools(mod) {
     return mod.tools?.length ? mod.tools : (globalState.courseDesign?.tools || []);
@@ -278,13 +329,16 @@ function lessonGenOptions(mod) {
     return { ...globalState.courseDesign?.genOptions, ...own };
 }
 
-// 기본 학습은 낭독 분량 규칙을 따르므로 섹션당 분량 옵션을 넣지 않는다
+// 낭독 분량을 채우는 학습 탭(기본학습·심화학습)인가. lesson-lint.js LEARN_VOLUME_TABS를 따르고, 그 파일을 싣지 않은 화면에서도 두 탭으로 본다
+const isLearnTab = tabId => (typeof LEARN_VOLUME_TABS !== 'undefined' ? LEARN_VOLUME_TABS : ['basicLearn', 'advLearn']).includes(tabId);
+
+// 학습 탭(기본학습·심화학습)은 낭독 분량 규칙을 따르므로 섹션당 분량 옵션을 넣지 않는다
 function lessonGenLines(mod, tabId = '') {
     const { objectives, level, length } = lessonGenOptions(mod);
     return [
         objectives ? `- 학습 목표 수: ${objectives}개 (정해 둔 학습 목표와 수가 다르면 묶거나 나누어 맞춥니다)` : '',
         level ? `- 학습자 수준: ${level}` : '',
-        length && tabId !== 'basicLearn' ? `- 학습 내용 섹션 하나당 분량: ${length}` : ''
+        length && !isLearnTab(tabId) ? `- 학습 내용 섹션 하나당 분량: ${length}` : ''
     ].filter(Boolean).join('\n');
 }
 
@@ -294,43 +348,87 @@ function lessonGenBrief(mod, tabId = '') {
     return options ? `\n\n[생성 옵션 — 반드시 반영]\n${options}` : '';
 }
 
+// 실습 시간 값(lesson-lint.js practiceMinutesValue). 그 파일을 싣지 않은 화면에서는 null
+const practiceFieldValue = value => (typeof practiceMinutesValue === 'function' ? practiceMinutesValue(value) : null);
+
 function lessonGenFieldsHtml(prefix, values = {}) {
+    const current = values && typeof values === 'object' ? values : {};
     const select = (key, label, options, unit = '') => `
         <label class="flex-1 min-w-0 text-[0.6875rem] font-bold text-textMuted">${label}
             <select id="${prefix}-gen-${key}" class="block w-full mt-1 px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white">
                 <option value="">지정 안 함</option>
-                ${options.map(option => `<option value="${escapeHtml(option)}" ${values[key] === option ? 'selected' : ''}>${escapeHtml(option)}${unit}</option>`).join('')}
+                ${options.map(option => `<option value="${escapeHtml(option)}" ${current[key] === option ? 'selected' : ''}>${escapeHtml(option)}${unit}</option>`).join('')}
             </select>
         </label>`;
-    return `<div class="flex gap-2">${select('objectives', '학습 목표 수', LESSON_OBJECTIVE_COUNTS, '개')}${select('level', '학습자 수준', LESSON_LEVELS)}${select('length', '섹션당 분량(기본학습 제외)', LESSON_LENGTHS)}</div>`;
+    const minutes = field => `
+        <label class="flex-1 min-w-0 text-[0.6875rem] font-bold text-textMuted">${field.label}
+            <input id="${prefix}-gen-${field.key}" type="number" min="10" max="600" step="10" inputmode="numeric" value="${escapeHtml(String(practiceFieldValue(current[field.key]) || ''))}" placeholder="90~120" class="block w-full mt-1 px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white">
+        </label>`;
+    return `<div class="flex gap-2">${select('objectives', '학습 목표 수', LESSON_OBJECTIVE_COUNTS, '개')}${select('level', '학습자 수준', LESSON_LEVELS)}${select('length', '섹션당 분량(기본·심화학습 제외)', LESSON_LENGTHS)}</div>
+        <div class="flex gap-2 mt-2">${LESSON_PRACTICE_FIELDS.map(minutes).join('')}</div>
+        <p class="text-[0.6875rem] text-textMuted mt-1">${PRACTICE_INPUT_HINT}</p>`;
 }
 
-// 고른 값만 돌려준다. 빈 값을 남기면 차시 저장 때 바뀌지 않은 옵션이 변경 이력에 남는다
+// 고른 값만 돌려준다. 빈 값을 남기면 차시 저장 때 바뀌지 않은 옵션이 변경 이력에 남는다. 실습 시간은 받을 수 있는 값(10~600분, 10분 단위)만 숫자로 둔다
 function readLessonGenFields(prefix) {
-    const pairs = ['objectives', 'level', 'length'].map(key => [key, document.getElementById(`${prefix}-gen-${key}`)?.value]);
+    const practiceKeys = LESSON_PRACTICE_FIELDS.map(field => field.key);
+    const pairs = LESSON_GEN_KEYS.map(key => {
+        const raw = document.getElementById(`${prefix}-gen-${key}`)?.value;
+        return [key, practiceKeys.includes(key) ? practiceFieldValue(raw) : raw];
+    });
     return Object.fromEntries(pairs.filter(([, value]) => value));
 }
 
-// 기본 학습 탭은 차시 시간으로 줄이지 않고 낭독 목표 분량(lesson-lint.js basicLearnTargetMinutes)을 지킨다. 진행 단계는 내용 순서만 참고한다
-function lessonDesignTimeLine(mod, learn) {
+// 실습 시간 칸에 적었지만 받을 수 없는 값(10~600분, 10분 단위가 아님)이 든 칸의 이름(기본실습·심화실습)
+function invalidPracticeFields(prefix) {
+    return LESSON_PRACTICE_FIELDS.filter(field => {
+        const input = document.getElementById(`${prefix}-gen-${field.key}`);
+        const raw = String(input?.value ?? '').trim();
+        return !!input?.validity?.badInput || (!!raw && practiceFieldValue(raw) === null);
+    }).map(field => field.name);
+}
+
+// 받을 수 없는 실습 시간을 적었으면 알리고 true를 돌려준다(부른 쪽은 저장·시작하지 않는다)
+function warnInvalidPracticeFields(prefix) {
+    const names = invalidPracticeFields(prefix);
+    if (!names.length) return false;
+    window.showAlert(`${names.join('·')} 시간은 10분에서 600분 사이에서 10분 단위로 적어 주세요(예: 120). 비워 두면 정하지 않은 것으로 봅니다.`);
+    return true;
+}
+
+// 생성 옵션 하나를 바꾼 새 객체(빈 값은 뺀다). 칸 순서를 차시 정보 창이 읽는 순서로 맞춰, 바꾸지 않고 저장했을 때 변경 이력이 남지 않게 한다
+function withGenOption(gen, key, value) {
+    const current = gen && typeof gen === 'object' && !Array.isArray(gen) ? gen : {};
+    const merged = { ...current, [key]: value };
+    const keys = [...LESSON_GEN_KEYS, ...Object.keys(merged).filter(name => !LESSON_GEN_KEYS.includes(name))];
+    return Object.fromEntries(keys.filter(name => merged[name] !== undefined && merged[name] !== null && merged[name] !== '').map(name => [name, merged[name]]));
+}
+
+// 학습 탭(기본학습·심화학습)은 차시 시간으로 줄이지 않고 낭독 목표 분량(lesson-lint.js learnTargetMinutes)을 지킨다. 진행 단계는 내용 순서만 참고한다.
+// 강사가 실습 시간을 정한 실습 탭은 그 시간으로 쓴다(줄이라고 하지 않는다). 탭을 주지 않으면(교수안) 지금과 같다
+function lessonDesignTimeLine(mod, tabId = '') {
     if (!mod.minutes) return '';
     const head = `이 차시는 과정 설계에서 ${lessonMinutes(mod)}분으로 배정되었습니다.`;
-    if (!learn) return `${head} 지시문의 시간과 분량 기준을 이 시간에 맞게 비례해 줄이세요.`;
-    const target = basicLearnTargetMinutes(mod);
-    return `${head} 기본 학습 탭은 이 시간으로 줄이지 않고 낭독 ${target}분(공백 포함 약 ${(target * READ_CHARS_PER_MINUTE).toLocaleString('ko-KR')}자) 분량을 지킵니다. 진행 단계는 내용의 순서를 정하는 데만 참고합니다.`;
+    if (isLearnTab(tabId)) {
+        const target = learnTargetMinutes(mod, tabId);
+        return `${head} ${tabId === 'advLearn' ? '심화' : '기본'} 학습 탭은 이 시간으로 줄이지 않고 낭독 ${target}분(공백 포함 약 ${(target * READ_CHARS_PER_MINUTE).toLocaleString('ko-KR')}자) 분량을 지킵니다. 진행 단계는 내용의 순서를 정하는 데만 참고합니다.`;
+    }
+    const practice = typeof lessonPracticeMinutes === 'function' ? lessonPracticeMinutes(mod, tabId) : 0;
+    if (practice) return `${head} 이 실습 탭은 강사가 정한 ${practice}분 분량으로 씁니다.`;
+    return `${head} 지시문의 시간과 분량 기준을 이 시간에 맞게 비례해 줄이세요.`;
 }
 
 // 차시에 설계 정보가 있으면 교안 생성 프롬프트에 덧붙인다. tabId: 만드는 탭(교수안처럼 주지 않으면 지금과 같다)
 function lessonDesignBrief(mod, tabId = '') {
     if (!mod) return '';
-    const learn = tabId === 'basicLearn';
+    const learn = isLearnTab(tabId);
     const objectives = (mod.objectives || []).map(o => `- ${o}`).join('\n');
     const flow = (mod.flow || []).map(step => `- ${step.phase}: ${step.title}${learn ? '' : ` (${step.minutes}분)`}`).join('\n');
     const tools = lessonTools(mod).map(tool => `- ${toolLabel(tool)}`).join('\n');
     const prereqs = (mod.prereqs || []).map(item => `- ${item.title}`).join('\n');
     const options = lessonGenLines(mod, tabId);
     const parts = [
-        lessonDesignTimeLine(mod, learn),
+        lessonDesignTimeLine(mod, tabId),
         objectives ? `[학습 목표]\n${objectives}` : '',
         flow ? `${learn ? '[진행 단계 — 내용 순서만 참고합니다]' : '[진행 단계]'}\n${flow}` : '',
         tools ? `[사용 툴과 버전]\n${tools}\n버전 번호는 본문에 쓰지 않습니다.` : '',

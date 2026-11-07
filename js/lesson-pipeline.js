@@ -188,7 +188,7 @@ function pipelineSummary(run) {
         run.halted ? '같은 까닭으로 남은 항목은 만들지 않았습니다.' : '',
         run.skipped.length ? `교안 탭이 모두 있어야 해서 건너뛴 항목: ${run.skipped.join(', ')}` : '',
         run.partial.length ? `일부 내용이 빠졌을 수 있는 항목: ${run.partial.join(', ')}` : '',
-        short.length ? `목표 분량에 못 미친 항목: ${short.join(', ')}. 기본학습 탭 위 '분량 채우기'로 늘릴 수 있습니다.` : ''
+        short.length ? `목표 분량에 못 미친 항목: ${short.join(', ')}. 그 탭 위 '분량 채우기'로 늘릴 수 있습니다.` : ''
     ].filter(Boolean);
     const onlyShort = short.length && !run.moved && !run.failed.length && !run.skipped.length && !run.partial.length;
     const retry = run.moved || run.failed.length || run.skipped.length ? '이 차시에서 전체 생성을 다시 누르면 빠진 항목만 만듭니다.' : onlyShort ? '' : '내용이 빠진 탭은 해당 탭에서 다시 생성해주세요.';
@@ -288,27 +288,28 @@ window.runLessonJob = async function (moduleId, { label, current = null, total =
     }
 };
 
-// 차시의 기본학습 탭 만들기는 초안 뒤 낭독 목표 분량까지 섹션마다 나눠 채운다(긴 호출이 20번 넘게 들고 20분 넘게 걸린다).
+// 차시의 학습 탭(기본학습·심화학습) 만들기는 초안 뒤 낭독 목표 분량까지 섹션마다 나눠 채운다(긴 호출이 20번 넘게 들고 20분 넘게 걸린다).
 // 시작 전에 호출 수·시간을 보이고 묻는다(cost-estimate.js). 다른 탭과 최종 평가는 묻지 않는다(true)
-async function confirmBasicLearnJob(mod, tabId) {
-    if (tabId !== 'basicLearn' || !mod || mod.id === 'mainQuest' || typeof confirmWithEstimate !== 'function' || typeof lessonWork !== 'function') return true;
+async function confirmLearnJob(mod, tabId) {
+    if (!fillsLearnVolume(mod, tabId) || typeof confirmWithEstimate !== 'function' || typeof lessonWork !== 'function') return true;
     if (window.isLessonPipelineRunning?.()) return true; // 다른 생성이 돌면 runLessonJob이 알리고 멈춘다
-    const target = lessonVolumeMinutes(mod);
-    const existing = !!String(storedTabMarkdown(mod, 'basicLearn') || '').trim();
+    const label = LESSON_TABS.find(item => item.id === tabId)?.label || '학습';
+    const target = lessonVolumeMinutes(mod, tabId);
+    const existing = !!String(storedTabMarkdown(mod, tabId) || '').trim();
     const message = [
-        `«기본학습» 탭을 ${existing ? '다시 ' : ''}만듭니다. 초안을 받은 뒤 강사가 소리 내어 읽어도 ${target}분이 걸리는 분량까지 섹션마다 나눠 채우느라 20분 넘게 걸릴 수 있습니다.`,
+        `«${label}» 탭을 ${existing ? '다시 ' : ''}만듭니다. 초안을 받은 뒤 강사가 소리 내어 읽어도 ${target}분이 걸리는 분량까지 섹션마다 나눠 채우느라 20분 넘게 걸릴 수 있습니다.`,
         existing ? '끝나면 바뀐 섹션을 골라 반영하고, 지금 글은 작업 기록에 남습니다.' : '',
         '오른쪽 아래 진행 막대에서 언제든 멈출 수 있습니다.'
     ].filter(Boolean).join(' ');
-    const work = lessonWork({ tabs: ['basicLearn'], volumeMinutes: target }, currentEstimateSettings().imageAmount, 0);
-    return confirmWithEstimate(message, work, { title: '기본학습 만들기', okLabel: '만들기' });
+    const work = lessonWork({ tabs: [tabId], volumeMinutes: target }, currentEstimateSettings().imageAmount, 0);
+    return confirmWithEstimate(message, work, { title: `${label} 만들기`, okLabel: '만들기' });
 }
 
-// 탭 하나를 만들거나 다시 만든다. 다시 만들면 끝날 때 바뀐 섹션을 골라 반영한다. 차시의 기본학습은 먼저 호출 수·시간을 보이고 묻는다
+// 탭 하나를 만들거나 다시 만든다. 다시 만들면 끝날 때 바뀐 섹션을 골라 반영한다. 차시의 학습 탭(기본학습·심화학습)은 먼저 호출 수·시간을 보이고 묻는다
 window.runTabJob = async function (moduleId, tabId) {
     const tab = LESSON_TABS.find(item => item.id === tabId);
     const mod = getEditingModule(moduleId);
-    if (!(await confirmBasicLearnJob(mod, tabId))) return { ok: false, cancelled: true };
+    if (!(await confirmLearnJob(mod, tabId))) return { ok: false, cancelled: true };
     if (mod && getEditingModule(moduleId) !== mod) return { ok: false, cancelled: true }; // 묻는 동안 다른 교과·차시로 옮겼다
     return window.runLessonJob(moduleId, { label: `${tab?.label || '탭'} 만들기`, current: tabId, alerts: true },
         () => generateTabContent(moduleId, tabId, { background: true, onStatus: window.setPipelineStatus }));
@@ -342,12 +343,13 @@ window.startLessonGeneration = function (moduleId) {
         const has = id => needed.some(step => step.id === id);
         const work = lessonWork({
             tabs: needed.filter(step => LESSON_TABS.some(tab => tab.id === step.id)).map(step => step.id), // 탭마다 그림 자리 수가 달라 탭 id로 센다
-            gyosuan: has('gyosuan'), qbank: has('qbank'), art: has('art'), ncs: has('ncsElements'), fillsVolume: moduleId !== 'mainQuest', volumeMinutes: lessonVolumeMinutes(mod)
+            gyosuan: has('gyosuan'), qbank: has('qbank'), art: has('art'), ncs: has('ncsElements'), fillsVolume: moduleId !== 'mainQuest', volumeMinutes: lessonVolumeMinutes(mod),
+            practiceMinutes: lessonPracticeWork(mod) // 실습 시간을 정한 실습 탭은 이어쓰기 호출이 늘어난다
         }, currentEstimateSettings().imageAmount);
         return confirmWithEstimate(`빈 항목 ${needed.length}개(${needed.map(step => step.label).join(', ')})를 차례로 만듭니다.`, work, { title: '전체 생성', okLabel: '만들기' })
             .then(ok => ok && window.runLessonPipeline(moduleId));
     }
-    const rebuild = lessonWork({ tabs: LESSON_TABS.map(tab => tab.id), fillsVolume: moduleId !== 'mainQuest', volumeMinutes: lessonVolumeMinutes(mod) }, currentEstimateSettings().imageAmount); // 최종 평가는 분량을 채우지 않는다
+    const rebuild = lessonWork({ tabs: LESSON_TABS.map(tab => tab.id), fillsVolume: moduleId !== 'mainQuest', volumeMinutes: lessonVolumeMinutes(mod), practiceMinutes: lessonPracticeWork(mod) }, currentEstimateSettings().imageAmount); // 최종 평가는 분량을 채우지 않는다
     return confirmWithEstimate('모든 항목이 있습니다. 교안 탭 5개를 모두 다시 만듭니다(지금 글은 작업 기록에 남습니다).', rebuild, { title: '모두 다시 만들기', okLabel: '모두 다시 만들기' })
         .then(ok => ok && generateAllTabs(moduleId));
 };

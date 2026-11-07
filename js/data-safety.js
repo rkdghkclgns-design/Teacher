@@ -1254,6 +1254,32 @@ function safeRows(list, rule) {
     return kept.length === list.length && kept.every((row, index) => row === list[index]) ? list : kept;
 }
 
+// 생성 옵션의 실습 시간 칸(차시 gen, 과정 기본값 genOptions). lesson-lint.js PRACTICE_MINUTE_KEYS·practiceMinutesValue와 같은 규칙이다(이 파일은 그 파일 없이도 돈다)
+const GEN_PRACTICE_KEYS = ['basicPracMinutes', 'advPracMinutes'];
+const GEN_PRACTICE_RANGE = { min: 10, max: 600, step: 10 };
+
+// 실습 시간으로 받을 수 있는 값: 10~600분 사이 10분 단위 정수(글자 '120'도 받는다). 아니면 null
+function safePracticeMinutes(value) {
+    if (typeof value !== 'number' && typeof value !== 'string') return null;
+    if (typeof value === 'string' && !value.trim()) return null;
+    const minutes = Number(value);
+    const { min, max, step } = GEN_PRACTICE_RANGE;
+    return Number.isInteger(minutes) && minutes >= min && minutes <= max && minutes % step === 0 ? minutes : null;
+}
+
+// 생성 옵션: 실습 시간 칸은 받을 수 있는 값이면 숫자로 맞추고 아니면 뺀다. 다른 칸은 그대로 둔다. 고칠 것이 없으면 같은 객체
+function safeGenOptions(gen) {
+    if (!isObject(gen)) return gen;
+    const next = { ...gen };
+    GEN_PRACTICE_KEYS.forEach(key => {
+        if (next[key] === undefined) return;
+        const minutes = safePracticeMinutes(next[key]);
+        if (minutes === null) delete next[key];
+        else next[key] = minutes;
+    });
+    return sameFields(next, gen) ? gen : next;
+}
+
 // 차시(최종 평가 포함)의 안쪽 값을 그 자리에서 고친다(sanitizeState가 부른다)
 function cleanLessonFields(lesson) {
     lesson.images = safeImageMap(lesson.images);
@@ -1265,6 +1291,11 @@ function cleanLessonFields(lesson) {
     if (Array.isArray(lesson.illustrations)) lesson.illustrations = safeIllustrations(lesson.illustrations);
     if (lesson.tabContents !== undefined) lesson.tabContents = safeTabContents(lesson.tabContents);
     if (lesson.gyosuan !== undefined) lesson.gyosuan = safeGyosuan(lesson.gyosuan);
+    // 생성 옵션: 객체가 아니면 지운다(차시 정보 창이 칸마다 읽는다). 실습 시간은 받을 수 있는 값만 남긴다
+    if (lesson.gen !== undefined) {
+        if (isObject(lesson.gen)) lesson.gen = safeGenOptions(lesson.gen);
+        else delete lesson.gen;
+    }
     return lesson;
 }
 
