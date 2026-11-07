@@ -73,6 +73,7 @@ function recordLessonResult(report, item, result) {
 
 // 차시를 차례로 생성하고 결과를 모은다. 실패한 차시는 건너뛰고 계속하며, 중지는 차시와 탭 사이에서 받는다.
 // 다음 차시도 같은 까닭으로 실패할 오류(halt: 하루 한도·한도 0·키·연결 문제, 다른 생성이 도는 중)면 그 차시를 실패로 적고 멈춘다(halted)
+// commentLeft: 탭의 주석 단계에서 중지해 주석을 넣지 못한 코드 블록 수(tabs.js fillMissingTabs). 창의 '중지'가 탭 생성도 멈추므로 멈춘 차시의 결과로 온다
 async function runLessonQueue(queue, attempt, { isStopped = () => false, onLesson = () => {}, onRetry = () => {} } = {}) {
     let report = { done: [], partial: [], failed: [], short: [], left: [], stopped: false };
     for (let i = 0; i < queue.length; i++) {
@@ -81,7 +82,8 @@ async function runLessonQueue(queue, attempt, { isStopped = () => false, onLesso
         const result = await generateLesson(queue[i], attempt, isStopped, onRetry);
         if (result.stopped || (!result.ok && isStopped())) {
             const partial = result.partial ? [...report.partial, queue[i]] : report.partial;
-            return { ...report, partial, short: withShortLesson(report.short, queue[i], result), stopped: true, left: queue.slice(i) };
+            const commentLeft = result.commentLeft ? { commentLeft: (report.commentLeft || 0) + result.commentLeft } : {};
+            return { ...report, partial, short: withShortLesson(report.short, queue[i], result), ...commentLeft, stopped: true, left: queue.slice(i) };
         }
         report = recordLessonResult(report, queue[i], result);
         if (!result.ok && result.halt) return { ...report, stopped: true, halted: true, left: queue.slice(i + 1) };
@@ -307,6 +309,7 @@ function lessonRunReportHtml(report, { trashed = 0, imageNote = '', restored = 0
         ${(report.short || []).length ? "<p class=\"text-xs text-textMuted\">그 차시의 모자란 탭(기본학습·심화학습) 위 '분량 채우기'로 이어서 늘릴 수 있습니다.</p>" : ''}
         ${restored > 0 ? `<p class="text-xs text-textMuted">탭을 하나도 만들지 못한 차시 ${restored}개는 지우기 전 내용으로 되돌렸습니다.</p>` : ''}
         ${unfinished ? '<p class="text-xs text-textMuted">만든 내용은 저장했습니다. 다시 실행하면 남은 탭부터 이어서 생성합니다.</p>' : ''}
+        ${report.commentLeft && typeof commentStopNote === 'function' ? `<p class="text-xs text-amber-300">${escapeHtml(commentStopNote(report.commentLeft))}</p>` : ''}
         ${lessonRunLegacyHtml(legacy, '예전 방식 기본학습 교수안을 그대로 둔 차시')}
         ${lessonRunTrashNote(trashed)}
         ${lessonRunImageNote(imageNote)}`;

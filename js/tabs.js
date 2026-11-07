@@ -713,11 +713,15 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         } else if (typeof notifyCodeComments === 'function') {
             notifyCodeComments(commentRun, tabMeta.label); // 묶어서 만들 때는 탭마다 알리지 않으므로 주석 결과만 알린다(저장한 뒤)
         }
+        // 묶어서 만들 때 주석 단계에서 중지해 주석을 넣지 못한 블록 수. notifyCodeComments는 중지한 결과를 알리지 않으므로
+        // 부른 쪽(전체 생성·탭 모두 다시 만들기·일괄 생성)이 모아 멈춘 알림에 적는다(code-comments-tool.js commentStopNote)
+        const commentLeft = (_suppressTabAlert || opts.quiet) && commentRun?.stopped ? commentRun.remaining || 0 : 0;
         // short: 학습 탭이 낭독 목표에 못 미쳤다 / halt: 한도·키 문제로 분량 채우기가 멈췄다(일괄 생성도 멈춘다)
         return {
             ok: true, partial: partialDueToError || stoppedEarly,
             ...(info?.short ? { short: true, readMinutes: info.minutes, targetMinutes: info.targetMinutes } : {}),
-            ...(volumeHalt ? { halt: true, error: volume.error.message } : {})
+            ...(volumeHalt ? { halt: true, error: volume.error.message } : {}),
+            ...(commentLeft ? { commentLeft } : {})
         };
     } catch (err) {
         if (err?.name === 'AbortError') { // 첫 단락을 다시 보내려고 기다리다 중지했다. 받은 글이 없어 지금 글은 그대로다
@@ -750,6 +754,7 @@ async function generateAllTabs(moduleId) {
     const failed = [];
     const short = []; // 학습 탭이 낭독 목표에 못 미친 탭
     let halted = null; // 한도·키 문제로 멈췄으면 그 안내
+    let commentLeft = 0; // 탭의 주석 단계에서 중지해 주석을 넣지 못한 코드 블록 수(멈춘 창에 적는다)
     // 시작한 교과의 그 차시만 다시 만든다. 탭마다 차시를 id로 다시 찾으므로, 다른 교과로 옮기거나 차시가 바뀌면
     // (최종 평가는 모든 교과가 같은 id) 그 교과의 차시를 다시 만들지 않게 다음 탭으로 가지 않고 멈춘다
     const subjectId = currentSubjectId;
@@ -766,6 +771,7 @@ async function generateAllTabs(moduleId) {
             const result = await generateTabContent(moduleId, tab.id, { background: true, onStatus: window.setPipelineStatus });
             if (!result.ok) failed.push(tab.label);
             if (result.short) short.push(`${tab.label}(낭독 약 ${result.readMinutes}분)`);
+            commentLeft += result.commentLeft || 0;
             if (result.halt) { // 남은 탭도 같은 까닭으로 실패한다
                 halted = result.error || '';
                 break;
@@ -779,7 +785,8 @@ async function generateAllTabs(moduleId) {
     if (moved) return window.showAlert('다른 교과로 옮겼거나 차시가 바뀌어 교안 탭 다시 만들기를 멈췄습니다. 그 전에 다시 만든 탭은 저장했고 이전 글은 작업 기록에 있습니다. 남은 탭은 그 차시로 돌아가 탭마다 \'이 탭 생성\'으로 다시 만드세요.');
     const shortNote = short.length ? ` ${short.join(', ')}은 목표 분량에 못 미칩니다. 탭 위 '분량 채우기'로 이어서 늘릴 수 있습니다.` : '';
     if (halted !== null) return window.showAlert(`${halted}\n그 전에 만든 탭은 저장했습니다. 남은 탭은 한도가 풀린 뒤 탭마다 '이 탭 생성'으로 만드세요.${shortNote}`);
-    if (_tabGenStop) return window.showAlert(`전체 탭 생성을 중단했습니다. 받은 내용까지 저장했습니다.${shortNote}`);
+    const commentNote = commentLeft && typeof commentStopNote === 'function' ? ` ${commentStopNote(commentLeft)}` : '';
+    if (_tabGenStop) return window.showAlert(`전체 탭 생성을 중단했습니다. 받은 내용까지 저장했습니다.${shortNote}${commentNote}`);
     if (failed.length) return window.showAlert(`${failed.join(', ')} 탭을 만들지 못했습니다. 그 탭에서 다시 생성해 주세요.${shortNote}`);
     if (short.length) return window.notifyLessonJobDone(`교안 탭을 모두 다시 만들었습니다.${shortNote} 이전 글은 작업 기록에 남았습니다.`, 'warning');
     window.notifyLessonJobDone('교안 탭을 모두 다시 만들었습니다. 이전 글은 작업 기록에 남았습니다.');
@@ -800,18 +807,21 @@ async function fillMissingTabs(moduleId, { isStopped = () => false, onTab = () =
     const missing = lessonMissingTabs(mod);
     let partial = false;
     let short = {}; // 학습 탭이 낭독 목표에 못 미쳤으면 { short: true, readMinutes, shortTabs }
+    let commentLeft = 0; // 탭의 주석 단계에서 중지해 주석을 넣지 못한 코드 블록 수(일괄 생성 보고에 적는다, course-flow.js)
+    const notes = () => ({ ...short, ...(commentLeft ? { commentLeft } : {}) });
     for (let i = 0; i < missing.length; i++) {
-        if (isStopped()) return { ok: false, stopped: true, partial, ...short };
+        if (isStopped()) return { ok: false, stopped: true, partial, ...notes() };
         onTab(LESSON_TABS.find(tab => tab.id === missing[i]), i, missing.length);
         const result = await generateTabContent(moduleId, missing[i], { quiet: true, onStatus, lockedBlocks: lockedByTab[missing[i]] });
         if (result.short) short = withShortTab(short, missing[i], result);
-        if (!result.ok) return { ok: false, partial, ...short, error: result.error, stopped: !!result.stopped, noRetry: !!result.noRetry, halt: !!result.halt };
+        commentLeft += result.commentLeft || 0;
+        if (!result.ok) return { ok: false, partial, ...notes(), error: result.error, stopped: !!result.stopped, noRetry: !!result.noRetry, halt: !!result.halt };
         partial = partial || !!result.partial;
         // 학습 탭은 저장했지만 분량 채우기가 하루 한도·키 문제로 멈췄다. 남은 탭과 다음 차시도 같은 까닭으로 실패하므로 일괄 생성을 멈춘다
-        if (result.halt) return { ok: false, partial, ...short, halt: true, error: result.error };
+        if (result.halt) return { ok: false, partial, ...notes(), halt: true, error: result.error };
         await new Promise(r => setTimeout(r, 2000));
     }
-    return { ok: true, partial, ...short };
+    return { ok: true, partial, ...notes() };
 }
 
 // 탭 전체 AI 수정: 아래 명령줄에서 글을 고르지 않고 요청하면 온다. 기존 탭 내용 + 요청으로 다시 쓰고,

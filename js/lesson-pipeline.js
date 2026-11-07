@@ -218,8 +218,10 @@ window.updateLessonJob = function (step) {
 };
 
 // short: 기본 학습이 낭독 목표에 못 미친 항목 / halted: 한도·키 문제로 남은 항목을 만들지 않고 멈췄다
+// commentLeft: 탭의 주석 단계에서 중지해 주석을 넣지 못한 코드 블록 수(tabs.js generateTabContent). 끝 알림에 이어서 넣는 곳과 함께 적는다
 function pipelineSummary(run) {
     const short = run.short || [];
+    const commentNote = run.commentLeft && typeof commentStopNote === 'function' ? commentStopNote(run.commentLeft) : '';
     const problems = [
         run.moved ? '다른 교과로 옮기거나 차시가 없어져 전체 생성을 멈췄습니다.' : '',
         run.failed.length ? `만들지 못한 항목:\n${run.failed.join('\n')}` : '',
@@ -230,13 +232,14 @@ function pipelineSummary(run) {
     ].filter(Boolean);
     const onlyShort = short.length && !run.moved && !run.failed.length && !run.skipped.length && !run.partial.length;
     const retry = run.moved || run.failed.length || run.skipped.length ? '이 차시에서 전체 생성을 다시 누르면 빠진 항목만 만듭니다.' : onlyShort ? '' : '내용이 빠진 탭은 해당 탭에서 다시 생성해주세요.';
-    if (problems.length) return { alert: [...problems, run.imageNote, retry].filter(Boolean).join('\n\n') };
+    if (problems.length) return { alert: [...problems, commentNote, run.imageNote, retry].filter(Boolean).join('\n\n') };
     // 그림 모델이 막혀 그림 자리를 남겼으면 창으로 알린다. 작업 하나(job)는 부른 쪽이 끝을 따로 알리므로 안내만 보인다
     if (run.imageNote) {
         const head = run.kind === 'all' ? (run.stopped ? '전체 생성을 중지했습니다. 만든 내용은 저장했습니다.' : '전체 생성을 마쳤습니다.') : '';
-        return { alert: [head, run.imageNote].filter(Boolean).join('\n\n') };
+        return { alert: [[head, commentNote].filter(Boolean).join(' '), run.imageNote].filter(Boolean).join('\n\n') };
     }
-    return run.stopped ? { toast: '전체 생성을 중지했습니다. 만든 내용은 저장했습니다.', kind: 'warning' } : { toast: '전체 생성을 마쳤습니다.', kind: 'success' };
+    const done = run.stopped ? '전체 생성을 중지했습니다. 만든 내용은 저장했습니다.' : '전체 생성을 마쳤습니다.';
+    return { toast: [done, commentNote].filter(Boolean).join(' '), kind: run.stopped || commentNote ? 'warning' : 'success' };
 }
 
 // 기다리던 빈 탭의 안내가 남지 않게 한다. 내용을 읽거나 항목을 고치는 화면은 두고 탐색줄만 고친다.
@@ -300,6 +303,7 @@ window.runLessonPipeline = async function (moduleId, { lockedByTab = {}, continu
             if (!result.ok && !result.stopped) run.failed.push(`${steps[i].label}: ${result.error}`);
             if (result.partial) run.partial.push(steps[i].label);
             if (result.short) run.short.push(`${steps[i].label}(낭독 약 ${result.readMinutes}분/목표 ${result.targetMinutes}분)`);
+            if (result.commentLeft) run.commentLeft = (run.commentLeft || 0) + result.commentLeft; // 탭의 주석 단계에서 중지해 남은 블록(끝 알림에 적는다)
             // 하루 한도·키·연결 문제는 남은 항목도 같은 까닭으로 실패하므로 멈춘다. 기본 학습은 저장했지만 분량 채우기가 멈춘 경우도 알린다
             if (result.halt) {
                 if (result.ok) run.failed.push(`${steps[i].label} 분량 채우기: ${result.error}`);

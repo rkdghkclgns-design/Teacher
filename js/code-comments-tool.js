@@ -5,7 +5,7 @@
 //   lesson-review.js(storedTabMarkdown), lesson-editor-tools.js(lockedSectionBlocks·lockTitleKey), lesson-pipeline.js(runLessonJob·updateLessonJob·notifyLessonJobDone·setPipelineStatus),
 //   state.js(archiveContent·archiveContents·saveState), course-meta.js(withHistoryNote), gyosuan.js(collectLessonSource·legacyLessonSource·hashSource),
 //   course-qbank.js(serializeQuestion), lesson-lint.js(lessonLintQuestions·parseQuestionBlock), cost-estimate.js(confirmWithEstimate), course-ncs.js(textModelHasKey), data-safety.js(HISTORY_LIMIT)
-// 생성·고치기 쪽(tabs.js·api.js·lesson-volume.js·merge.js·course-qbank.js·lesson-review.js·lesson-objectives.js)은 typeof로 이 파일을 보고 부른다(캐시에 옛 파일이 남아도 화면이 깨지지 않게).
+// 생성·고치기 쪽(tabs.js·api.js·lesson-volume.js·merge.js·course-qbank.js·lesson-review.js·lesson-objectives.js·lesson-pipeline.js·course-flow.js)은 typeof로 이 파일을 보고 부른다(캐시에 옛 파일이 남아도 화면이 깨지지 않게).
 // 테스트: tests/code-comments-flow.test.js, tests/code-comments-safety.test.js, tests/code-comments-notice.test.js
 
 const COMMENT_TOOL_LABEL = '코드 주석 넣기';
@@ -71,6 +71,12 @@ function commentRunNote(run) {
     ].filter(Boolean).join(' ');
 }
 
+// 중지해서 주석을 넣지 못한 코드 블록(left: 블록 수)을 알리는 글, 없으면 ''. 끝 알림(commentDoneNote)과
+// 탭을 묶어 만드는 쪽(전체 생성·탭 모두 다시 만들기·일괄 생성)의 멈춘 알림이 쓴다(tabs.js generateTabContent의 commentLeft)
+function commentStopNote(left) {
+    return left > 0 ? `중지해서 코드 블록 ${left}개에는 주석을 넣지 못했습니다. 도구의 '${COMMENT_TOOL_LABEL}'로 이어서 넣을 수 있습니다.` : '';
+}
+
 // 반영을 정한 뒤 끝 알림에 붙이는 주석 결과 { text, warn }(run: codeCommentRun 결과, 없으면 빈 글). 탭 생성·분량 채우기·탭 전체 AI 수정·병합이
 // 저장하거나 반영한 다음에 쓴다(받기 전에 알리면 반영하지 않은 글의 주석도 넣었다고 알리게 된다). 중지로 보내지 못한 블록과 멈춘 오류도 적는다
 function commentDoneNote(run) {
@@ -79,7 +85,7 @@ function commentDoneNote(run) {
     const fixed = run.fixed?.length || 0;
     const parts = [
         fixed ? `코드 블록 ${fixed}개에 주석을 넣었습니다.` : '',
-        run.remaining && run.stopped ? `중지해서 코드 블록 ${run.remaining}개에는 주석을 넣지 못했습니다. 도구의 '${COMMENT_TOOL_LABEL}'로 이어서 넣을 수 있습니다.` : '',
+        run.stopped ? commentStopNote(run.remaining) : '',
         run.remaining && !run.stopped ? `코드 블록 ${run.remaining}개는 주석을 다 넣지 못했습니다. 컨벤션 검수의 'AI 수정 제안'이나 도구의 '${COMMENT_TOOL_LABEL}'로 다시 넣을 수 있습니다.` : '',
         run.held && (fixed || run.remaining) ? `고정 섹션의 코드 블록 ${run.held}개는 고치지 않았습니다.` : ''
     ].filter(Boolean);

@@ -219,6 +219,92 @@ function volumeContext({ onVolume = () => {} } = {}) {
         assert.deepStrictEqual(lost.ctx.toasts.map(toast => [toast.message, toast.kind]), [['최종 평가를 만드는 동안 그 교과를 지웠거나 백업·PC 폴더를 불러와, 만든 최종 평가를 넣지 못했습니다.', 'warning']]);
     });
 
+    await run('검토 N3-01: 탭을 묶어 만들 때(전체 생성·탭 모두 다시 만들기·일괄 생성) 주석 단계에서 중지하면 중지로 남은 블록 수를 멈춘 알림에 적고, 중지하지 않았거나 남은 블록이 없으면 적지 않는다', async () => {
+        const STOP_NOTE = left => `중지해서 코드 블록 ${left}개에는 주석을 넣지 못했습니다. 도구의 '코드 주석 넣기'로 이어서 넣을 수 있습니다.`;
+        const stopNotes = ctx => [...ctx.toasts.map(toast => toast.message), ...ctx.alerts].filter(text => text.includes('중지해서'));
+        // 코드 블록 count개를 든 글(주석은 한 번에 8블록씩 받는다)
+        const practice = count => Array.from({ length: count }, (_, i) => `## ${i + 1}. 실습 ${i + 1} (⏱ 10분)\n\n실습 ${i + 1}을 합니다.\n\n${PY(`step_${i} = ${i}`, `print(step_${i})`)}`).join('\n\n');
+        const OTHER = '## 1. 글 (⏱ 30분)\n\n글뿐입니다.';
+        // 기본실습만 빈 차시(교수안이 있고 학습 목표가 없어 전체 생성은 기본실습만 만든다). 분량 채우기는 받은 글 그대로 둔다(목표를 넘어 낭독 분량 안내가 붙지 않는다).
+        // 탭마다 코드 블록 count개를 든 글을 받고, 첫 주석 호출 때 stop(중지)을 누른다. answer: 주석 답
+        const lessonRun = ({ count, stop = null, answer = commentReply() }) => {
+            const ctx = appContext();
+            const gyosuan = { docMd: '# 교수안', deckMd: '#' };
+            const mod = lessonOf({ tabs: { basicLearn: OTHER, advLearn: OTHER, advPrac: OTHER, assessment: OTHER, advAssessment: OTHER }, gyosuan, gyosuanAdv: { ...gyosuan } });
+            openSubject(ctx, [mod]);
+            vm.runInContext(`ensureSpokenVolume = async opts => ({ md: opts.md, spoken: 0, minutes: 0, targetMinutes: 480, targetChars: 1, calls: 0, added: 0, short: false, stopped: false, gone: false, error: null, reason: 'none', parts: [] });
+                renderOverviewLNB = () => {};`, ctx);
+            ['lesson-run-body', 'lesson-run-footer', 'lesson-run-status'].forEach(id => { ctx.elements[id] = fakeElement(); });
+            let pressed = false;
+            ctx.ai = route(ctx, {
+                tab: () => reply(practice(count)), fix: () => reply(''),
+                comment: item => {
+                    if (stop && !pressed) {
+                        pressed = true;
+                        stop(ctx);
+                    }
+                    return answer(item);
+                }
+            });
+            return { ctx, mod };
+        };
+        const barStop = ctx => call(ctx, 'requestLessonPipelineStop')(); // 진행 막대의 '중지'
+        const dialogStop = ctx => call(ctx, 'onLessonRunClick')({ target: Object.assign(fakeElement(), { dataset: { runAction: 'stop' } }) }); // 일괄 생성 창의 '중지'
+        const badAnswer = swapAnswer('= ', '== '); // 코드를 바꾼 답(확인이 버려 중지하지 않아도 블록이 남는다)
+
+        // 전체 생성: 기본학습이 아닌 탭(기본실습)의 주석 단계에서 중지하면 끝 알림에 남은 블록을 적는다
+        const pipe = lessonRun({ count: 12, stop: barStop });
+        await call(pipe.ctx, 'runLessonPipeline')(1);
+        assert.strictEqual(callsOf(pipe.ctx, 'comment').length, 1, '받던 묶음까지만 넣는다');
+        assert.strictEqual(needsOf(pipe.ctx, pipe.mod.tabContents.basicPrac), 4);
+        assert.deepStrictEqual(pipe.ctx.toasts.at(-1), { message: `전체 생성을 중지했습니다. 만든 내용은 저장했습니다. ${STOP_NOTE(4)}`, kind: 'warning' });
+        assert.strictEqual(stopNotes(pipe.ctx).length, 1, '한 번만 알린다');
+        // 중지했지만 남은 블록이 없거나, 중지하지 않았으면 적지 않는다
+        const pipeFull = lessonRun({ count: 8, stop: barStop });
+        await call(pipeFull.ctx, 'runLessonPipeline')(1);
+        assert.strictEqual(needsOf(pipeFull.ctx, pipeFull.mod.tabContents.basicPrac), 0);
+        assert.deepStrictEqual(pipeFull.ctx.toasts.at(-1), { message: '전체 생성을 중지했습니다. 만든 내용은 저장했습니다.', kind: 'warning' });
+        const pipeBad = lessonRun({ count: 2, answer: badAnswer });
+        await call(pipeBad.ctx, 'runLessonPipeline')(1);
+        assert.strictEqual(needsOf(pipeBad.ctx, pipeBad.mod.tabContents.basicPrac), 2);
+        assert.ok(pipeBad.ctx.toasts.some(toast => toast.kind === 'warning' && toast.message.startsWith('기본실습 코드 블록 2개는 주석을 다 넣지 못했습니다.')), '중지하지 않고 남은 블록은 지금처럼 탭마다 알린다');
+        assert.deepStrictEqual(pipeBad.ctx.toasts.at(-1), { message: '전체 생성을 마쳤습니다.', kind: 'success' });
+        assert.deepStrictEqual(stopNotes(pipeBad.ctx), []);
+        // 만들지 못한 항목이 있거나 그림 자리를 남겨 창으로 알릴 때도 적는다
+        const summary = call(pipe.ctx, 'pipelineSummary');
+        const stoppedRun = { kind: 'all', stopped: true, moved: false, halted: false, failed: [], skipped: [], partial: [], short: [], imageNote: '', commentLeft: 3 };
+        assert.ok(summary({ ...stoppedRun, failed: ['심화학습: 오류'] }).alert.includes(`\n\n${STOP_NOTE(3)}\n\n`), summary({ ...stoppedRun, failed: ['심화학습: 오류'] }).alert);
+        assert.strictEqual(summary({ ...stoppedRun, imageNote: '그림 안내' }).alert, `전체 생성을 중지했습니다. 만든 내용은 저장했습니다. ${STOP_NOTE(3)}\n\n그림 안내`);
+
+        // 탭 모두 다시 만들기: 멈춘 창에 남은 블록을 적는다(첫 탭 기본학습에서 중지)
+        const all = lessonRun({ count: 12, stop: barStop });
+        await call(all.ctx, 'generateAllTabs')(1);
+        assert.strictEqual(needsOf(all.ctx, all.mod.tabContents.basicLearn), 4);
+        assert.deepStrictEqual(all.ctx.alerts, [`전체 탭 생성을 중단했습니다. 받은 내용까지 저장했습니다. ${STOP_NOTE(4)}`]);
+        const allFull = lessonRun({ count: 8, stop: barStop });
+        await call(allFull.ctx, 'generateAllTabs')(1);
+        assert.deepStrictEqual(allFull.ctx.alerts, ['전체 탭 생성을 중단했습니다. 받은 내용까지 저장했습니다.']);
+        const allBad = lessonRun({ count: 2, answer: badAnswer });
+        await call(allBad.ctx, 'generateAllTabs')(1);
+        assert.deepStrictEqual(allBad.ctx.toasts.at(-1), { message: '교안 탭을 모두 다시 만들었습니다. 이전 글은 작업 기록에 남았습니다.', kind: 'success' });
+        assert.deepStrictEqual(stopNotes(allBad.ctx), []);
+
+        // 일괄 생성(이 교과): 창의 '중지'를 누르면 보고에 남은 블록을 적는다
+        const bulk = lessonRun({ count: 12, stop: dialogStop });
+        await call(bulk.ctx, 'startLessonRun')('subject');
+        const report = bulk.ctx.elements['lesson-run-body'].innerHTML;
+        assert.strictEqual(needsOf(bulk.ctx, bulk.mod.tabContents.basicPrac), 4);
+        assert.ok(report.includes('중지했습니다') && report.includes(call(bulk.ctx, 'escapeHtml')(STOP_NOTE(4))), report);
+        const bulkFull = lessonRun({ count: 8, stop: dialogStop });
+        await call(bulkFull.ctx, 'startLessonRun')('subject');
+        const fullReport = bulkFull.ctx.elements['lesson-run-body'].innerHTML;
+        assert.ok(fullReport.includes('중지했습니다') && !fullReport.includes('주석'), fullReport);
+        const bulkBad = lessonRun({ count: 2, answer: badAnswer });
+        await call(bulkBad.ctx, 'startLessonRun')('subject');
+        const badReport = bulkBad.ctx.elements['lesson-run-body'].innerHTML;
+        assert.ok(badReport.includes('일괄 생성을 마쳤습니다 · 완료 1개') && !badReport.includes('주석'), badReport);
+    });
+
     await run('검토 V2-06: 학습 목표 세트 추가는 주석을 넣지 못하면 미리보기 안내에 적는다', async () => {
         const ctx = appContext();
         vm.runInContext(source('lesson-objectives.js'), ctx);
