@@ -639,6 +639,36 @@ test('되돌리기: GIF 그대로면 간직한 그림으로 되돌리고 원래 
     assert.ok(ref.imageMotions.img_1, '찾지 못한 그림 자리는 기록을 두고 나중에 채워지기를 기다린다');
 });
 
+test('되돌리기와 교수안: GIF를 켠 동안 만든 기본학습·심화학습 교수안이 옮겨 둔 GIF 사본도 원래 그림으로 바꿔, 교수안·슬라이드에도 원래 그림이 보인다. 다른 그림 사본은 그대로 둔다', () => {
+    const tracks = [
+        { trackId: 'basic', field: 'gyosuan', tabContents: { basicLearn: '## 구조\n\n![서버와 P2P](local:img_1)\n\n설명 글', basicPrac: '실습' } },
+        { trackId: 'adv', field: 'gyosuanAdv', tabContents: { advLearn: '## 게임\n\n![Tetris 게임 그림](local:img_1)\n\n설명 글', advPrac: '실습' } }
+    ];
+    tracks.forEach(({ trackId, field, tabContents }) => {
+        const mod = motionLesson({ tabContents });
+        const ctx = apiContext(mod);
+        vm.runInContext(read('gyosuan.js'), ctx);
+        ctx.applyImageMotionData(mod, 'img_1', PNG, GIF);
+        const deck = '![](local:img_1)';
+        mod[field] = { docMd: deck, deckMd: deck, images: { img_1: GIF, img_9: PNG_B } }; // GIF를 켠 동안 만든 교수안(그림을 사본으로 옮겨 둔다)
+        const resolve = () => call(ctx, 'resolveGyosuanImages')(deck, mod, trackId);
+        assert.strictEqual(resolve(), `![](${GIF})`, `${trackId}: 켜 둔 동안은 GIF`);
+        assert.strictEqual(ctx.undoImageMotion(mod, 'img_1'), 'restored');
+        assert.strictEqual(resolve(), `![](${PNG})`, `${trackId}: 되돌리면 교수안·슬라이드도 원래 그림`);
+        assert.deepStrictEqual(plain(mod[field].images), { img_1: PNG, img_9: PNG_B }, `${trackId}: 다른 그림 사본은 그대로`);
+        assert.deepStrictEqual([mod[field].docMd, mod[field].deckMd], [deck, deck], '교수안 글은 바꾸지 않는다');
+    });
+    // GIF를 켜기 전에 만든 교수안의 사본(원래 그림)과 다른 그림 사본은 건드리지 않는다
+    const mod = motionLesson();
+    const ctx = apiContext(mod);
+    vm.runInContext(read('gyosuan.js'), ctx);
+    mod.gyosuan = { docMd: '![](local:img_1)', images: { img_1: PNG_B } };
+    const plan = mod.gyosuan;
+    ctx.applyImageMotionData(mod, 'img_1', PNG, GIF);
+    ctx.undoImageMotion(mod, 'img_1');
+    assert.strictEqual(mod.gyosuan, plan, '사본이 GIF가 아니면 그대로 둔다');
+});
+
 test('낡은 기록: 그 자리 그림이 다시 찾기 등으로 바뀌었으면 새 그림을 덮지 않고 기록만 정리한다(원래 그림 키는 아무 데서도 쓰지 않을 때만 지운다)', () => {
     const mod = motionLesson();
     const ctx = apiContext(mod);

@@ -399,6 +399,37 @@ async function run(name, fn) {
         assert.deepStrictEqual(ctx.archived.map(item => [item.reason, item.lesson === imported, item.title]), [['넣지 못한 원문', true, '👑 최종 평가']]);
     });
 
+    /* ---------- 탐색줄 옆으로 밀기 ---------- */
+    await run('탐색줄: 옆으로 밀 수 있다는 막대가 흰 바탕에서도 보이고, 칸보다 길면 마우스 휠의 위아래로도 옆으로 민다(끝에 닿으면 화면이 스크롤된다)', async () => {
+        const ctx = makeContext();
+        const { L1 } = twoSubjects(ctx);
+        const box = fakeElement('', ['lesson-nav-scroll']);
+        let binds = 0;
+        box.addEventListener = (type, fn, opts) => { binds += 1; box.wheel = { type, fn, opts }; };
+        ctx.document.querySelector = selector => (selector === '.lesson-nav-scroll' ? box : null);
+        call(ctx, 'renderEditor')(L1);
+        call(ctx, 'renderEditor')(L1);
+        assert.ok(/<div class="lesson-nav-scroll[^"]*overflow-x-auto[^"]*">\s*<div id="lesson-nav-items"/.test(ctx.elements['editor-content-area'].innerHTML), '탭 단추를 담은 칸에 막대 모양을 붙인다');
+        assert.deepStrictEqual([binds, box.wheel.type, plain(box.wheel.opts)], [1, 'wheel', { passive: false }], '그린 칸에 휠을 한 번만 단다');
+        const css = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+        assert.ok(/\.lesson-nav-scroll::-webkit-scrollbar-thumb\s*\{\s*background:\s*rgba\(0,\s*0,\s*0,\s*0\.3\)/.test(css), '흰 바탕에서 보이는 어두운 막대');
+        const wheel = call(ctx, 'lessonNavWheel');
+        const nav = { scrollWidth: 958, clientWidth: 645, scrollLeft: 0 };
+        const spin = (extra = {}) => {
+            const event = { currentTarget: nav, deltaY: 100, deltaX: 0, deltaMode: 0, ctrlKey: false, prevented: false, preventDefault() { this.prevented = true; }, ...extra };
+            wheel(event);
+            return event.prevented;
+        };
+        assert.deepStrictEqual([spin(), nav.scrollLeft], [true, 100], '아래로 굴리면 오른쪽으로 민다');
+        assert.deepStrictEqual([spin({ deltaY: 3, deltaMode: 1 }), nav.scrollLeft], [true, 148], '줄 단위 휠');
+        assert.deepStrictEqual([spin({ deltaY: 1000 }), nav.scrollLeft], [true, 313], '끝까지만');
+        assert.deepStrictEqual([spin(), nav.scrollLeft], [false, 313], '끝에 닿으면 막지 않아 화면이 스크롤된다');
+        assert.deepStrictEqual([spin({ deltaY: -50 }), nav.scrollLeft], [true, 263], '위로 굴리면 왼쪽으로');
+        assert.deepStrictEqual([spin({ deltaX: 200, deltaY: 10 }), spin({ ctrlKey: true }), nav.scrollLeft], [false, false, 263], '옆으로 미는 휠과 확대(Ctrl)는 그대로 둔다');
+        Object.assign(nav, { scrollWidth: 600, clientWidth: 645, scrollLeft: 0 });
+        assert.strictEqual(spin(), false, '칸에 다 들어가면 막지 않는다');
+    });
+
     /* ---------- 탭이 없는 최종 평가 ---------- */
     await run('탭이 없는 최종 평가: 본문 하나로 보고 탭 단추가 없다. 탭이 있는 최종 평가와 차시는 그대로', async () => {
         const ctx = makeContext();

@@ -232,16 +232,33 @@ function lessonRunListHtml(title, items, detail = () => '') {
     return `<div><p class="text-xs font-bold text-textMuted mb-1">${title} ${items.length}개</p><ul class="list-disc pl-4 space-y-0.5 text-[0.7rem] text-textLight max-h-32 overflow-y-auto">${rows}</ul></div>`;
 }
 
-function lessonRunQueueHtml(queue, uploaded) {
+// 교수안까지 만들되 덮어쓰지 않는 실행은 이미 있는 교수안을 다시 만들지 않는다. 그 가운데 예전 방식(기본·심화 네 탭을 함께 담아 만든)
+// 기본학습 교수안을 그대로 두는 차시(gyosuan.js isLegacyGyosuan). 그 교수안에는 심화 내용도 들어 있어 미리 보기와 보고에 알린다
+function legacyGyosuanItems(queue) {
+    if (typeof isLegacyGyosuan !== 'function') return [];
+    return queue.filter(item => {
+        const lesson = (item.subject.lessons || []).find(entry => entry.id === item.lessonId);
+        return !!lesson && isLegacyGyosuan(lesson);
+    });
+}
+
+const LEGACY_RUN_NOTE = '예전 방식으로 기본·심화를 함께 담아 만든 기본학습 교수안은 그대로 두므로 심화 내용도 들어 있습니다. 기본학습·기본실습만으로 다시 만들려면 그 차시 교수안 화면의 다시 만들기나 이미 만든 내용도 모두 다시 만들기를 쓰세요.';
+
+function lessonRunLegacyHtml(legacy, title = '예전 방식 기본학습 교수안을 그대로 두는 차시') {
+    return legacy.length ? `${lessonRunListHtml(title, legacy)}<p class="text-xs text-amber-300">${escapeHtml(LEGACY_RUN_NOTE)}</p>` : '';
+}
+
+function lessonRunQueueHtml(queue, uploaded, legacy = []) {
     return `
         ${lessonRunListHtml('생성할 차시', queue) || '<p class="text-xs text-textMuted">생성할 차시가 없습니다.</p>'}
-        ${uploaded.length ? `<p class="text-xs text-amber-400">업로드한 MD가 있는 차시 ${uploaded.length}개는 제외합니다. 업로드 파일을 반영하려면 차시 카드의 교안 생성을 눌러주세요.</p>` : ''}`;
+        ${uploaded.length ? `<p class="text-xs text-amber-400">업로드한 MD가 있는 차시 ${uploaded.length}개는 제외합니다. 업로드 파일을 반영하려면 차시 카드의 교안 생성을 눌러주세요.</p>` : ''}
+        ${lessonRunLegacyHtml(legacy)}`;
 }
 
 function lessonRunIntroHtml(queue, uploaded, withGyosuan = false) {
     return `
         <p class="text-xs text-textLight">내용이 비어 있는 탭만 차례로 생성합니다. 이미 있는 탭은 그대로 둡니다. 차시마다 몇 분 걸릴 수 있습니다. 교안을 만든 차시에는 NCS 능력단위요소도 확정 전 상태로 배정합니다. 기본학습과 심화학습은 각각 낭독 480분 분량을 채우느라 차시마다 40분 넘게 걸릴 수 있습니다. 실습 탭은 정한 실습 시간(정하지 않으면 90~120분) 분량으로 만듭니다.</p>
-        <div id="lesson-run-queue" class="space-y-2">${lessonRunQueueHtml(queue, uploaded)}</div>
+        <div id="lesson-run-queue" class="space-y-2">${lessonRunQueueHtml(queue, uploaded, withGyosuan ? legacyGyosuanItems(queue) : [])}</div>
         <div id="lesson-run-estimate"></div>
         <label class="flex items-start gap-2 text-xs text-textLight">
             <input id="lesson-run-gyosuan" type="checkbox" ${withGyosuan ? 'checked' : ''}>
@@ -276,7 +293,8 @@ const lessonRunImageNote = note => (note ? `<p class="text-xs text-amber-300">${
 // trashed: 덮어쓰기로 이전 내용을 휴지통에 넣은 차시 수
 // imageNote: 그림 모델이 막혀 남긴 그림 자리 안내(api.js imageRunNote)
 // restored: 덮어쓰기로 비웠다가 탭을 하나도 만들지 못해 지우기 전 내용으로 되돌린 차시 수(undoEmptyRewrite)
-function lessonRunReportHtml(report, { trashed = 0, imageNote = '', restored = 0 } = {}) {
+// legacy: 예전 방식 기본학습 교수안을 그대로 둔 차시(legacyGyosuanItems)
+function lessonRunReportHtml(report, { trashed = 0, imageNote = '', restored = 0, legacy = [] } = {}) {
     const counts = [`완료 ${report.done.length}개`, `실패 ${report.failed.length}개`, report.left.length ? `남은 ${report.left.length}개` : ''].filter(Boolean).join(' · ');
     // 다시 실행하면 이어서 만들 것: 남은 차시나 탭을 만들다 만 차시(지우기 전 내용으로 되돌린 차시는 빈 탭이 없다). 멈춘 까닭이 있으면(halted) 그 줄이 대신 말한다
     const unfinished = !report.halted && (report.left.length || report.failed.length > restored);
@@ -289,6 +307,7 @@ function lessonRunReportHtml(report, { trashed = 0, imageNote = '', restored = 0
         ${(report.short || []).length ? "<p class=\"text-xs text-textMuted\">그 차시의 모자란 탭(기본학습·심화학습) 위 '분량 채우기'로 이어서 늘릴 수 있습니다.</p>" : ''}
         ${restored > 0 ? `<p class="text-xs text-textMuted">탭을 하나도 만들지 못한 차시 ${restored}개는 지우기 전 내용으로 되돌렸습니다.</p>` : ''}
         ${unfinished ? '<p class="text-xs text-textMuted">만든 내용은 저장했습니다. 다시 실행하면 남은 탭부터 이어서 생성합니다.</p>' : ''}
+        ${lessonRunLegacyHtml(legacy, '예전 방식 기본학습 교수안을 그대로 둔 차시')}
         ${lessonRunTrashNote(trashed)}
         ${lessonRunImageNote(imageNote)}`;
 }
@@ -361,7 +380,8 @@ function refreshLessonRunQueue(scope) {
     const options = { withGyosuan: checked('lesson-run-gyosuan'), overwrite: checked('lesson-run-overwrite'), art: checked('lesson-run-art'), genOptions: readLessonGenFields('run') };
     const pending = pendingLessons(runSubjects(scope), options.withGyosuan, options.overwrite);
     const queue = pending.filter(item => !item.uploaded);
-    document.getElementById('lesson-run-queue').innerHTML = lessonRunQueueHtml(queue, pending.filter(item => item.uploaded));
+    const legacy = options.withGyosuan && !options.overwrite ? legacyGyosuanItems(queue) : []; // 덮어쓰면 교수안도 다시 만든다
+    document.getElementById('lesson-run-queue').innerHTML = lessonRunQueueHtml(queue, pending.filter(item => item.uploaded), legacy);
     const estimate = document.getElementById('lesson-run-estimate');
     if (estimate) estimate.innerHTML = queue.length ? estimateBoxHtml(lessonRunWork(queue, options)) : '';
     document.querySelector('[data-run-action="start"]').disabled = !queue.length;
@@ -433,12 +453,14 @@ async function startLessonRun(scope, button = null) {
     const ownsImageRun = !!window.beginImageRun?.(); // 그림 모델이 막히면 이 실행이 끝날 때까지 다시 부르지 않는다(api.js)
     const imageNote = () => (ownsImageRun ? window.imageRunNote?.() || '' : ''); // 이 실행이 연 기록의 안내만 보인다
     try {
-        const report = await runLessonQueue(runnableLessons(runSubjects(scope), withGyosuan, overwrite), item => attemptLesson(item, run), {
+        const queue = runnableLessons(runSubjects(scope), withGyosuan, overwrite);
+        const legacy = withGyosuan && !overwrite ? legacyGyosuanItems(queue) : []; // 시작할 때 센다(이번 실행이 그 교수안을 다시 만들지 않는다)
+        const report = await runLessonQueue(queue, item => attemptLesson(item, run), {
             isStopped: () => run.stopped,
             onLesson: (item, index, total) => setLessonRunBody(lessonRunProgressHtml(item, index, total)),
             onRetry: (item, error) => setLessonRunStatus(`${LESSON_RETRY_WAIT_SECONDS}초 뒤 다시 시도합니다... (${error})`)
         });
-        setLessonRunBody(lessonRunReportHtml(report, { trashed: run.trashed, imageNote: imageNote(), restored: run.restored.size }));
+        setLessonRunBody(lessonRunReportHtml(report, { trashed: run.trashed, imageNote: imageNote(), restored: run.restored.size, legacy }));
         await saveState();
         renderSidebar();
         renderOverviewLNB();

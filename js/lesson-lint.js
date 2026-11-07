@@ -36,7 +36,8 @@ const LESSON_QUESTION_FIELD_KEYS = { 힌트: 'hint', '시작 코드': 'code', �
 const LESSON_QUESTION_HEAD = /^###\s*문제\s*\d+/;
 const LESSON_QUESTION_TAIL = /^\s*(?:<table\b|\*\*[^*]+\*\*\s*$)/; // 문항 뒤에 이어지는 채점 기준표 등
 const LESSON_INLINE_SPAN = /<\/?span[^>]*>/g; // 교안 프롬프트가 정답 보기를 색 강조 span으로 감싼다
-const LESSON_HTML_BLOCK = /^\s*<(?:div|img|figure)\b/; // 문항에 끼어드는 이미지 자리표시
+// 문항에 끼어드는 이미지 자리표시와 한 줄 주석(채우지 않고 남은 그림 자리 <!-- [IMG: "…"] --> 등). 문항 글·CSV에 넣지 않고 그대로 간직한다
+const LESSON_HTML_BLOCK = /^\s*(?:<(?:div|img|figure)\b|<!--.*-->\s*$)/;
 const QUESTION_ANSWER_STYLE = 'color: #22c55e; font-weight: bold;';
 const QUESTION_BAND_TYPES = { L1: ['객관식', '단답식'], L2: ['서술형', '코드제출'], L3: ['파일제출'] };
 const LESSON_LINT_MULTI_ANSWER = /복수\s*정답|모두 고르/;

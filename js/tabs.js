@@ -84,6 +84,12 @@ function lessonTrackSwitchHtml(mod, panelId, theme = 'light') {
     return `<div class="lesson-track-switch inline-flex items-center gap-0.5 p-0.5 mb-3 rounded-lg border ${style.box}" role="group" aria-label="기본학습·심화학습 고르기">${buttons}</div>`;
 }
 
+// 다시 그린 갈래 고르기에서 고른 단추로 포커스를 돌려준다(키보드로 바꾼 강사가 처음부터 다시 찾지 않게). 숨은 사본은 건너뛴다
+function focusLessonTrackSwitch() {
+    const pressed = typeof document !== 'undefined' ? [...(document.querySelectorAll?.('.lesson-track-switch button[aria-pressed="true"]') || [])] : [];
+    pressed.find(button => button.offsetParent !== null)?.focus?.();
+}
+
 // 갈래를 바꾸고 보고 있는 교수안·슬라이드·문제은행을 그 갈래로 다시 그린다. 열어 둔 문제은행에서 문항을 고치거나 만드는 중이면 바꾸지 않는다
 window.setLessonPanelTrack = function (trackId) {
     const next = lessonTrack(trackId).id;
@@ -93,9 +99,12 @@ window.setLessonPanelTrack = function (trackId) {
         return;
     }
     _lessonTrack = next;
-    if (window.switchQbankTrack?.(next)) return; // 열어 둔 문제은행은 그 자리에서 그 갈래로 다시 그린다(고른 목표·밴드 등은 그대로)
+    // 열어 둔 문제은행은 그 자리에서 그 갈래로 다시 그린다(고른 목표·밴드 등은 그대로)
+    if (window.switchQbankTrack?.(next)) return focusLessonTrackSwitch();
     const mod = getEditingModule();
-    if (mod && _lessonPanel) renderEditor(mod); // 교수안·슬라이드(연 스튜디오도 닫고 그 갈래로)
+    if (!mod || !_lessonPanel) return;
+    renderEditor(mod); // 교수안·슬라이드(연 스튜디오도 닫고 그 갈래로)
+    focusLessonTrackSwitch();
 };
 
 // 탭이 없는 최종 평가(차시 목록의 카드로 만든 본문 하나). 기본학습 칸에 본문을 보이고 탭 단추·탭 생성은 두지 않는다(탭 생성은 본문을 버리고 새 탭을 만든다)
@@ -144,8 +153,33 @@ window.showLessonPanel = function (panel) {
     if (mod) renderEditor(mod);
 };
 
+/* ---------- 탐색줄 옆으로 밀기 ---------- */
+// 탐색줄(교안 탭·교수안·슬라이드·문제은행)이 칸보다 길면 마우스 휠의 위아래로도 옆으로 민다(보통 휠로는 옆으로 밀리지 않는다).
+// 옆으로 미는 휠·Ctrl 휠(확대)은 그대로 두고, 끝에 닿으면 화면을 그대로 위아래로 스크롤한다
+const LESSON_NAV_WHEEL_LINE = 16; // 줄 단위로 오는 휠(deltaMode 1) 한 줄의 픽셀
+function lessonNavWheel(event) {
+    const box = event.currentTarget;
+    if (!box || event.ctrlKey || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+    const max = box.scrollWidth - box.clientWidth;
+    if (!(max > 0)) return;
+    const unit = event.deltaMode === 1 ? LESSON_NAV_WHEEL_LINE : event.deltaMode === 2 ? box.clientWidth : 1;
+    const next = Math.max(0, Math.min(max, box.scrollLeft + event.deltaY * unit));
+    if (next === box.scrollLeft) return;
+    event.preventDefault();
+    box.scrollLeft = next;
+}
+
+// renderEditor가 새로 그린 탐색줄 칸에 휠을 단다. 같은 칸에 두 번 달지 않는다
+function bindLessonNavWheel() {
+    const box = typeof document !== 'undefined' ? document.querySelector?.('.lesson-nav-scroll') : null;
+    if (!box || !box.dataset || box.dataset.wheelBound) return;
+    box.dataset.wheelBound = '1';
+    box.addEventListener?.('wheel', lessonNavWheel, { passive: false });
+}
+
 // 탐색줄에서 고른 항목만 본문 자리에 보여 준다. renderEditor가 화면을 다시 그린 뒤 부른다
 function applyLessonPanel(mod) {
+    bindLessonNavWheel();
     // 메인 퀘스트에는 교수안·슬라이드·문제은행 항목이 없다
     if (mod.id === 'mainQuest' && _lessonPanel) {
         window.clearLessonPanel();
@@ -347,6 +381,16 @@ function warnPracticeTime(minutes, md, label) {
     if (note) window.showToast?.(note, 'warning');
 }
 
+// 문제은행 탭(학습이해도·심화이해도)은 그 갈래의 학습 목표로 문제를 낸다. 그 갈래의 학습 탭이 비었고 목표(과정 설계의 목표 포함)도 없으면
+// 만들지 않는다(다른 갈래의 글로 문제를 내 기본학습과 심화학습이 섞이지 않게). 막으면 알릴 글, 아니면 ''. 최종 평가는 막지 않는다
+function bankTabBlockText(mod, tabId) {
+    const track = isQuestionBankTab(tabId) && mod && mod.id !== 'mainQuest' ? tabTrack(tabId) : null;
+    if (!track || typeof qbankTrackObjectives !== 'function') return '';
+    if (String(tabSourceFor(mod, track.learn) || '').trim() || qbankTrackObjectives(mod, track.id).length) return '';
+    const label = id => LESSON_TABS.find(tab => tab.id === id)?.label || id;
+    return `${label(track.learn)} 탭을 먼저 만들어 주세요. ${label(track.bank)}는 ${label(track.learn)} 탭의 학습 목표로 문제를 냅니다.`;
+}
+
 // 문제은행 탭(학습이해도·심화이해도) 문항을 문제은행에서 바로 쓰도록 그 갈래의 목표 번호를 함께 준다. 목표가 기본 문제 수보다 많으면 목표 수만큼 낸다
 // 다시 만드는 탭이므로 예전 방식의 학습이해도가 남아 있어도 그 갈래의 목표만 준다
 function assessmentObjectivePrompt(mod, tabId) {
@@ -400,6 +444,11 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
 
     const tabMeta = LESSON_TABS.find(t => t.id === tabId);
     if (!tabMeta) return { ok: false, error: '알 수 없는 탭입니다.' };
+    const bankBlock = bankTabBlockText(mod, tabId);
+    if (bankBlock) {
+        if (!opts.quiet) window.showAlert(bankBlock);
+        return { ok: false, error: bankBlock };
+    }
     const lockedBlocks = opts.lockedBlocks || lockedSectionBlocks(mod, tabId);
 
     // Cross-tab context
@@ -611,8 +660,8 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             .join('\n\n---\n\n');
 
         // 이미지 태그 자동 처리 (딥리서치 파이프라인 활용). 중단하면 이미지 생성 비용도 쓰지 않고 태그만 남긴다. 한도·키 문제로 멈췄을 때도 부르지 않는다.
-        // 분량을 채운 글은 초안에 넣은 그림 자리만 채운다(inject: false)
-        if (typeof processImageTags === 'function' && !_tabGenStop && !volumeQuit) {
+        // 분량을 채운 글은 초안에 넣은 그림 자리만 채운다(inject: false). 문제은행 탭(학습이해도·심화이해도)에는 그림 자리를 넣지도 채우지도 않는다(컨벤션)
+        if (typeof processImageTags === 'function' && !_tabGenStop && !volumeQuit && !isQuestionBankTab(tabId)) {
             setLoadingText(`🖼️ ${tabMeta.label} 이미지와 서식을 정리하고 있습니다...`);
             try {
                 const processed = restoreLockedSections(await processImageTags(mod, resultText, { onStatus: setLoadingText, latest: () => latestTabMarkdown(mod, tabId, resultText), inject: !volume }), lockedBlocks);

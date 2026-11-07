@@ -582,6 +582,44 @@ const draftLesson = () => ({ id: 'm1', title: '재미', hours: 1, tabContents: {
         assert.strictEqual(mod.images.img_orphan, PNG, '교안 이미지는 그대로');
     });
 
+    await run('이미지 자동 생성: 교안의 예시 게임 그림을 슬라이드에 쓰면 편성안·교수안에 그 그림의 출처·라이선스를 함께 적는다(다른 그림 설명은 붙이지 않는다)', async () => {
+        let called = 0;
+        const credit = 'Tetris · 출처: 위키백과 · 공정 이용 이미지';
+        const game = `<div class="image-wrapper"><img src="local:img_game" alt="재미의 세 층" class="x"><button class="image-regenerate-btn" data-lesson-action="regenerate-image" data-keyword="game: Tetris" data-img-id="img_game"><i class="ph-bold"></i> 다시 찾기</button><div class="image-caption" data-source-url="https://en.wikipedia.org/wiki/Tetris" style="margin-top:8px;">${credit}</div></div>`;
+        const plainPicture = '<div class="image-wrapper"><img src="local:img_plain" alt="기획 메모 쓰는 법"><div class="image-caption">메모 그림 설명</div></div>';
+        const mod = {
+            ...lesson(undefined), images: { img_game: PNG, img_plain: PNG },
+            tabContents: { basicLearn: `## 재미의 세 층\n\n${game}\n\n메카닉은 규칙입니다. 다이내믹은 진행입니다.\n\n## 기획 메모 쓰는 법\n\n${plainPicture}\n\n목표를 적습니다.\n` }
+        };
+        const ctx = withLesson(mod, { storage: { 'kb-auto-img': '2' }, generateImage: async () => { called++; return PNG; } });
+        assert.deepStrictEqual(plain(call(ctx, 'lessonImageCandidates')(mod)).map(item => [item.id, item.credit]), [['img_game', credit], ['img_plain', '']]);
+        const out = await ctx.attachGyosuanImages(mod, { docMd: DOC, deckMd: DECK });
+        assert.strictEqual(called, 0, '교안 그림을 다시 쓴다');
+        assert.ok(out.deckMd.includes(`![](local:img_game) (${credit})`), out.deckMd);
+        assert.ok(!out.deckMd.includes('메모 그림 설명') && out.deckMd.includes('![](local:img_plain)'), '다른 그림 설명은 붙이지 않는다');
+        const shown = call(ctx, 'resolveGyosuanImages')(out.deckMd, { ...mod, gyosuan: { images: out.images } });
+        assert.ok(shown.includes(`![](${PNG}) (${credit})`), '편성안·스튜디오 원고에 출처가 남는다');
+        const deck = ctx.KBuilder.parseDeck(shown).slides.find(slide => slide.title === '재미의 세 층');
+        assert.ok(deck.visual.includes(PNG), '슬라이드 그림 칸은 그대로 그 그림을 쓴다');
+        // 교수안 본문(단계 제목 아래 한 줄 표시)은 그림 아래 줄에 출처를 적는다
+        const localized = call(ctx, 'localizeImageTags')('### 전개 1 - 재미 분석\n\n[이미지:img_game]\n\n**설명 내용**: MDA', id => (id === 'img_game' ? PNG : ''), new Map([['img_game', 'Q*bert · 출처: 위키백과 · CC BY-SA 4.0']]));
+        assert.strictEqual(localized, '### 전개 1 - 재미 분석\n\n![](local:img_game)\n\nQ*bert · 출처: 위키백과 · CC BY-SA 4.0\n\n**설명 내용**: MDA');
+        const doc = ctx.KBuilder.parseDoc(call(ctx, 'resolveGyosuanImages')(localized, { images: { img_game: PNG } }));
+        assert.ok(doc.blocks.some(block => block.type === 'para' && String(block.html).includes('Q*bert · 출처: 위키백과 · CC BY-SA 4.0')), '교수안 화면에 출처 줄이 글자 그대로 보인다');
+    });
+
+    await run("이미지 자동 생성: '이미지 건너뛰기'를 눌러 새 그림을 하나도 만들지 않았으면 만들지 못했다고 하지 않는다", async () => {
+        let called = 0;
+        const mod = lesson(undefined);
+        const ctx = withLesson(mod, { storage: { 'kb-auto-img': '2' }, generateImage: async () => { called++; return PNG; } });
+        ctx.document.createElement = () => ({ appendChild() {}, remove() { this.removed = true; } });
+        ctx.elements['editor-loading'] = { appendChild: button => button.onclick() }; // 단추가 나오자마자 누른다
+        const out = await ctx.attachGyosuanImages(mod, { docMd: DOC, deckMd: DECK });
+        assert.strictEqual(called, 0);
+        assert.strictEqual(out.note, '🖼 이미지 건너뛰기를 눌러 새 슬라이드 이미지는 만들지 않았습니다.');
+        assert.ok(!out.note.includes('만들지 못했습니다'));
+    });
+
     await run('이미지 자동 생성: 연달아 실패하면 멈추고 글은 살린다', async () => {
         let called = 0;
         const mod = lesson(undefined);

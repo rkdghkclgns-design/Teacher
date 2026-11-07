@@ -236,7 +236,7 @@ function estimateLines(summary, { modelLabel = '', imageLabel = '' } = {}) {
     return [
         summary.calls ? `글: AI 호출 약 ${summary.calls}회 · 비용 ${summary.costLabel}${modelLabel ? `(${modelLabel})` : ''}` : '',
         summary.images ? `그림: ${estimateImageCount(summary)} · ${(IMAGE_SOURCE_TEXT[summary.imageSource] || IMAGE_SOURCE_TEXT.gemini)(imageLabel)}` : '',
-        summary.gameImages ? `예시 게임 그림: ${summary.exactImages ? '' : '약 '}${summary.gameImages}장 · 위키백과에서 무료로 찾음` : '',
+        summary.gameImages ? `예시 게임 그림: ${summary.exactImages ? '' : '약 '}${summary.gameImages}장 · 위키백과에서 무료로 찾음(못 찾으면 검색 키가 있을 때 웹 검색)` : '',
         `걸리는 시간: ${estimateTimeText(summary.minutesLow, summary.minutesHigh)}`
     ].filter(Boolean);
 }

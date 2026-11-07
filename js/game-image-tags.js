@@ -10,6 +10,7 @@ const GAME_SKIP_REASONS = { exists: '이미 그림이 있음', quote: '글 단�
 
 const GAME_TAG_TEXT = {
     notTab: '예시 게임 그림은 보고 있는 교안 탭에 넣습니다. 교안 탭을 연 뒤 다시 눌러 주세요.',
+    bankTab: '학습이해도·심화이해도에는 그림을 넣지 않습니다. 기본학습·기본실습·심화학습·심화실습 탭에서 눌러 주세요.',
     emptyTab: '이 탭은 아직 비어 있습니다. 먼저 탭을 만든 뒤 눌러 주세요.',
     noKey: '글 모델 키가 없어 교안에서 예시 게임을 찾을 수 없습니다. 오른쪽 위 ⚙ 설정에서 키를 넣어 주세요.',
     asking: '교안에서 예시로 든 실제 게임을 찾는 중입니다.',
@@ -194,7 +195,7 @@ async function requestExampleGames(mod, tabId, md, signal) {
 function gamePlanNote(plan) {
     const skipped = plan.skipped.map(item => `${item.title}(${GAME_SKIP_REASONS[item.reason] || '건너뜀'})`).join(', ');
     return [
-        `예시 게임 ${plan.added.length}개의 그림 자리(<!-- [IMG: "game: …"] --> 줄)를 그 게임이 나온 단락 바로 뒤에 넣습니다. 반영하면 위키백과에서 그 게임 그림을 찾아 넣고 출처를 적습니다.`,
+        `예시 게임 ${plan.added.length}개의 그림 자리(<!-- [IMG: "game: …"] --> 줄)를 그 게임이 나온 단락 바로 뒤에 넣습니다. 반영하면 위키백과에서 그 게임 그림을 찾아 넣고 출처를 적습니다(못 찾으면 검색 키가 있을 때 웹 검색으로 찾습니다).`,
         skipped ? `넣지 않는 게임: ${skipped}` : ''
     ].filter(Boolean).join(' ');
 }
@@ -273,6 +274,7 @@ window.insertGamePictures = async function (moduleId) {
     const mod = getEditingModule(moduleId);
     const tabId = typeof currentLessonTab !== 'undefined' ? currentLessonTab : 'basicLearn';
     if (!mod) return;
+    if (isQuestionBankTab(tabId)) return window.showAlert(GAME_TAG_TEXT.bankTab); // 문제은행 탭에는 그림 자리를 넣지 않는다(컨벤션)
     if (window.isLessonPipelineRunning?.()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
     if (!isViewingTab(mod, tabId)) return window.showAlert(GAME_TAG_TEXT.notTab);
     saveOpenEditsFor(mod, tabId); // 원문 칸에서 고치던 글을 먼저 넣는다

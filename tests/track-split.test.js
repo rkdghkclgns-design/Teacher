@@ -414,7 +414,8 @@ const bankLesson = () => ({
         assert.deepStrictEqual(plain(objectives(mod, 'basic')), ['기본 목표 하나를 설명할 수 있습니다.', '기본 목표 둘을 비교할 수 있습니다.']);
         assert.deepStrictEqual(plain(objectives(mod, 'adv')), ['심화 목표 하나를 분석할 수 있습니다.']);
         const noAdvGoals = { ...mod, tabContents: { ...mod.tabContents, advLearn: '## 심화 본문\n\n글' } };
-        assert.deepStrictEqual(plain(objectives(noAdvGoals, 'adv')), plain(objectives(noAdvGoals)), '심화 탭에 목표가 없으면 차시의 목표');
+        assert.deepStrictEqual(plain(objectives(noAdvGoals, 'adv')), [], '심화 탭에 목표가 없으면 기본학습 목표를 빌려 쓰지 않는다');
+        assert.deepStrictEqual(plain(objectives({ ...noAdvGoals, objectives: ['설계한 목표를 정리할 수 있습니다.'] }, 'adv')), ['설계한 목표를 정리할 수 있습니다.'], '과정 설계의 목표는 쓴다');
         mod.tabContents.advAssessment = question(1, 1, '심화 문항');
         assert.deepStrictEqual([call(ctx, 'qbankQuestions')(mod, 'basic')[0].title, call(ctx, 'qbankQuestions')(mod, 'adv')[0].title, call(ctx, 'qbankQuestions')(mod)[0].title], ['기본 문항', '심화 문항', '기본 문항']);
         mod.tabContents.advAssessment = null;
@@ -432,8 +433,89 @@ const bankLesson = () => ({
         assert.ok(listFor(mod, 'advAssessment').includes('1. 심화 목표 하나를 분석할 수 있습니다.') && !listFor(mod, 'advAssessment').includes('기본 목표'));
         assert.ok(listFor(mod, 'assessment').includes('2. 기본 목표 둘을 비교할 수 있습니다.') && !listFor(mod, 'assessment').includes('심화 목표'));
         assert.strictEqual(listFor(mod, 'advLearn'), '');
-        call(ctx, 'warnUncoveredObjectives')(noAdvGoals, question(1, 1, '하나만'), 'advAssessment');
+        const twoAdvGoals = { ...mod, tabContents: { ...mod.tabContents, advLearn: goalsMd(['심화 목표 하나를 분석할 수 있습니다.', '심화 목표 둘을 적용할 수 있습니다.'], '## 심화 본문\n\n글') } };
+        call(ctx, 'warnUncoveredObjectives')(twoAdvGoals, question(1, 1, '하나만'), 'advAssessment');
         assert.ok(ctx.toasts.at(-1).message.startsWith('심화이해도 점검:') && ctx.toasts.at(-1).message.includes('문제은행의 심화학습에서'), ctx.toasts.at(-1).message);
+    });
+
+    await run('문항 원고: 480분 학습 탭에서도 그 목표가 다시 보기로 가리키는 섹션과 실습 탭을 보낸다(앞 6,000자만 보내지 않는다). 대응을 못 읽으면 앞부분과 실습 탭', () => {
+        const ctx = flowContext();
+        vm.runInContext(source('lesson-objectives.js'), ctx);
+        const goals = Array.from({ length: 5 }, (_, i) => `목표 ${i + 1}의 내용을 분석할 수 있습니다.`);
+        const body = Array.from({ length: 8 }, (_, i) => `## ${i + 1}. 섹션 ${i + 1} (⏱ 60분)\n\n섹션${i + 1}표식 ${LONG.repeat(400)}`).join('\n\n');
+        const checklist = `## ✅ 학습 후 체크리스트\n\n${goals.map((goal, i) => `- 목표 ${i + 1}을 확인했습니다. (다시 보기: ${i + 1}. 섹션 ${i + 1})`).join('\n')}`;
+        const learn = `${goalsMd(goals, body)}\n\n${checklist}`;
+        assert.ok(learn.length > 100000, `480분 학습 탭만큼 길다: ${learn.length}`);
+        for (const trackId of ['basic', 'adv']) {
+            const track = call(ctx, 'lessonTrack')(trackId);
+            const mod = { id: 1, title: '재미', images: {}, tabContents: { [track.learn]: learn, [track.practice]: `## 실습\n\n실습표식 ${LONG}` } };
+            ctx.courseData = [mod];
+            const objectives = plain(call(ctx, 'qbankObjectives')(mod, trackId));
+            const prompt = call(ctx, 'buildQuestionPrompt')(mod, { objective: 5, band: 'L1', type: '객관식', multi: false, count: 3 }, objectives, [], trackId);
+            const sourceText = prompt.slice(prompt.indexOf('[교안]'));
+            assert.ok(sourceText.includes('섹션5표식') && !sourceText.includes('섹션1표식') && sourceText.includes('실습표식'), `${trackId}: 목표 5의 섹션과 실습 탭`);
+            assert.ok(sourceText.length <= 6000 + 20, `${trackId}: 원고는 6,000자까지 (${sourceText.length})`);
+            const unmapped = { ...mod, tabContents: { ...mod.tabContents, [track.learn]: goalsMd(goals, body) } }; // 체크리스트가 없어 대응을 못 읽는다
+            const fallback = call(ctx, 'buildQuestionPrompt')(unmapped, { objective: 5, band: 'L1', type: '객관식', multi: false, count: 3 }, objectives, [], trackId);
+            assert.ok(fallback.includes('목표 1의 내용을') && fallback.includes('실습표식'), `${trackId}: 앞부분과 실습 탭`);
+        }
+    });
+
+    await run('문제은행 탭의 남은 그림 자리: 문항 글·카드·CSV에 넣지 않고 그대로 간직하며, 문제은행 탭을 만들 때는 그림 자리를 넣지도 채우지도 않는다', async () => {
+        const ctx = flowContext();
+        const tag = '<!-- [IMG: "문제 1. MDA 프레임워크의 계층 구조와 관점"] -->';
+        const md = `### 문제 1. MDA 프레임워크의 계층 구조와 관점\n학습 목표 1 · 밴드 L1 · 객관식\n\n${tag}\n\n다음 가운데 MDA의 계층으로 맞는 것을 고릅니다.\n\n① 가\n② 나\n③ 다\n④ 라\n\n✅ **정답:** ②\n\n---`;
+        const [q] = call(ctx, 'lessonLintQuestions')(md).map(call(ctx, 'parseQuestionBlock'));
+        assert.deepStrictEqual([q.stem, q.media], ['다음 가운데 MDA의 계층으로 맞는 것을 고릅니다.', tag], '그림 자리는 문항 글에 넣지 않고 따로 간직한다');
+        assert.ok(call(ctx, 'serializeQuestion')(q, 1).includes(tag), '문항을 고쳐 다시 써도 남긴다');
+        assert.ok(!call(ctx, 'qbankCardHtml')(q, 0, []).includes('[IMG:'), '문항 카드에 보이지 않는다');
+        const mod = bankLesson();
+        mod.tabContents.assessment = md;
+        ctx.courseData = [mod];
+        const [row] = plain(call(ctx, 'lessonBankCsvRows')({ title: '교과' }, mod, 'basic'));
+        assert.ok(!row[8].includes('[IMG:') && row[8].includes('MDA의 계층'), `CSV 문항 칸: ${row[8]}`);
+        // 탭 생성: 문제은행 탭은 그림 자리를 넣거나 채우지 않는다(실습 탭은 예전처럼 채운다)
+        const processed = [];
+        ctx.processImageTags = async (lesson, text) => { processed.push(text); return text; };
+        ctx.buildTaskContext = () => ({ systemInstruction: '시스템', userPrompt: '탭' });
+        ctx.callGemini = async () => reply(md.replace(`${tag}\n\n`, ''));
+        mod.tabContents.assessment = null;
+        assert.strictEqual((await call(ctx, 'generateTabContent')(1, 'assessment', { quiet: true, background: true })).ok, true);
+        assert.deepStrictEqual([processed.length, mod.tabContents.assessment.includes('[IMG:')], [0, false], '학습이해도에 그림 자리를 넣지 않는다');
+        mod.tabContents.advAssessment = null;
+        assert.strictEqual((await call(ctx, 'generateTabContent')(1, 'advAssessment', { quiet: true, background: true })).ok, true);
+        assert.strictEqual(processed.length, 0, '심화이해도도');
+        mod.tabContents.basicPrac = null;
+        await call(ctx, 'generateTabContent')(1, 'basicPrac', { quiet: true, background: true });
+        assert.strictEqual(processed.length, 1, '실습 탭은 그림 자리를 채운다');
+    });
+
+    await run('심화학습이 비면: 심화이해도·심화 문제은행은 기본학습 목표를 쓰지 않고, 심화이해도 만들기는 심화학습을 먼저 만들라고 알리며, 전체 생성은 심화학습을 못 만들면 심화이해도를 건너뛴다', async () => {
+        const ctx = flowContext();
+        const mod = { ...bankLesson(), tabContents: { ...bankLesson().tabContents, advLearn: null, assessment: null } };
+        ctx.courseData = [mod];
+        assert.deepStrictEqual(plain(call(ctx, 'qbankTrackObjectives')(mod, 'adv')), [], '심화 목표 목록에 기본학습 목표가 없다');
+        assert.ok(!call(ctx, 'assessmentObjectivePrompt')(mod, 'advAssessment').includes('기본 목표'), '심화이해도 지시에 기본학습 목표를 싣지 않는다');
+        assert.deepStrictEqual(plain(call(ctx, 'questionBankGaps')(mod, 'adv')), [], '기본학습 목표를 심화 문제은행의 빈 목표로 세지 않는다');
+        const blocked = '심화학습 탭을 먼저 만들어 주세요. 심화이해도는 심화학습 탭의 학습 목표로 문제를 냅니다.';
+        assert.deepStrictEqual(plain(await call(ctx, 'generateTabContent')(1, 'advAssessment', { quiet: true })), { ok: false, error: blocked }, 'AI를 부르지 않고 막는다');
+        await call(ctx, 'generateTabContent')(1, 'advAssessment', { background: true });
+        assert.strictEqual(ctx.alerts.at(-1), blocked, '이 탭 생성은 알린다');
+        assert.strictEqual(mod.tabContents.advAssessment, null, '심화이해도는 그대로 비어 있다');
+        // 전체 생성: 심화학습 만들기가 실패하면(멈추지 않는 실패) 심화이해도는 만들지 않고 건너뛴 항목으로 알린다
+        const order = [];
+        const lesson = { id: 2, title: '재미', status: 'done', images: {}, tabContents: {} };
+        ctx.courseData = [lesson];
+        ctx.alerts.length = 0;
+        ctx.generateTabContent = async (id, tabId) => {
+            order.push(tabId);
+            if (tabId === 'advLearn') return { ok: false, error: 'AI 응답이 비어 있습니다.' };
+            lesson.tabContents[tabId] = tabId === 'basicLearn' ? goalsMd(['기본 목표 하나를 설명할 수 있습니다.'], '## 기본 본문\n\n글') : `## ${tabId}\n\n- 내용입니다.`;
+            return { ok: true };
+        };
+        await call(ctx, 'runLessonPipeline')(2);
+        assert.deepStrictEqual(order, ['basicLearn', 'basicPrac', 'advLearn', 'advPrac', 'assessment'], '심화이해도를 부르지 않는다');
+        assert.ok(ctx.alerts.at(-1).includes('심화이해도(심화학습 탭이 없음)') && ctx.alerts.at(-1).includes('심화학습: AI 응답이 비어 있습니다.'), ctx.alerts.at(-1));
     });
 
     await run('문제은행 채우기와 CSV: 전체 생성은 두 문제은행을 모두 채우고, 교과 CSV는 머리줄을 그대로 두고 학습모듈 칸에 갈래를 적는다. 차시 CSV는 보는 갈래만', async () => {

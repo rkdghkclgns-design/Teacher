@@ -1417,7 +1417,16 @@ function resolveMarkdownImages(content, images) {
 
 
     // 1. 커스텀 HTML 래퍼를 표준 마크다운 이미지 문법으로 되돌림 (WAF 방어 및 깔끔한 수출). 그림 키는 [\w-]만 쓴다(data-safety.js SAFE_IMAGE_KEY)
-
+    //    그림 설명(image-caption)이 든 틀은 설명과 틀의 닫는 </div>까지 바꿔 </div>가 남지 않게 한다. 출처를 적은 설명(예시 게임 그림, game-images.js)은
+    //    그림 아래 한 줄 글로 남기고(출처 페이지는 http·https 주소만), 다른 그림의 설명은 예전처럼 뺀다. 설명은 이스케이프한 글이라 꺾쇠가 없다
+    const captionText = text => String(text).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#0*39;/g, "'").replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
+    const captionMd = text => text.replace(/[\\`*_[\]<>]/g, '\\$&');
+    md = md.replace(/<div class="image-wrapper">\s*<img src="(local:[\w-]+)" alt="([^"]*)"[^>]*>(?:(?!<\/?div\b)[\s\S])*?<div class="image-caption"([^>]*)>([^<]*)<\/div>\s*<\/div>/gi, (whole, src, alt, attrs, caption) => {
+        const url = captionText((attrs.match(/\sdata-source-url="(https?:\/\/[^"\s<>]+)"/i) || [])[1] || '');
+        const text = captionText(caption);
+        const credit = text && (url || /출처\s*:/.test(text)) ? `\n\n${captionMd(text)}${url ? ` · 출처 페이지: ${url}` : ''}` : '';
+        return `![${alt}](${src})${credit}`;
+    });
     md = md.replace(/<div class="image-wrapper">\s*<img src="(local:[\w-]+)" alt="([^"]*)"[^>]*>[\s\S]*?<\/div>/gi, '![$2]($1)');
 
     // 2. local:그림 키를 그림으로. 키 모양 하나로 찾아 키 끝까지 읽고 목록에서 꺼낸다(그림 키로 글을 자르거나 정규식을 만들지 않는다. img_1이 img_10을 건드리지 않는다).

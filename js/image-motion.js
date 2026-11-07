@@ -116,6 +116,17 @@ function applyImageMotionData(mod, imgId, source, gif, meta = {}, now = Date.now
     return still;
 }
 
+// GIF를 켜 둔 동안 만든 교수안·편성안(기본학습·심화학습, data.js LESSON_TRACKS)은 차시 그림을 사본(images)으로 옮겨 두어 그 GIF를 들고 있다.
+// 되돌릴 때 그 사본도 원래 그림으로 바꾼다(교수안의 사본이 차시 그림보다 이긴다, gyosuan.js gyosuanImageMap). 사본이 다른 그림이면 그대로 둔다
+function restoreMotionCopies(mod, imgId, gif, still) {
+    const tracks = typeof LESSON_TRACKS !== 'undefined' ? LESSON_TRACKS : [];
+    tracks.forEach(track => {
+        const plan = mod[track.field];
+        if (!plan || typeof plan !== 'object' || !motionHas(plan.images, imgId) || plan.images[imgId] !== gif) return;
+        mod[track.field] = { ...plan, images: { ...plan.images, [imgId]: still } };
+    });
+}
+
 // '원래 그림으로'(차시만 바꾼다). 'restored': 간직한 그림을 그 자리에 되돌림, 'stale': 그 자리 그림이 바뀌어 지금 그림은 두고 기록만 정리,
 // 'missing': 간직한 그림이나 GIF 값을 찾지 못해 그대로 둠, 'none': 기록 없음
 function undoImageMotion(mod, imgId) {
@@ -126,6 +137,7 @@ function undoImageMotion(mod, imgId) {
     if (state === 'valid') {
         const still = mod.images?.[record.still];
         if (typeof still !== 'string' || !MOTION_PICTURE_RE.test(still)) return 'missing';
+        restoreMotionCopies(mod, imgId, mod.images[imgId], still);
         mod.images = { ...mod.images, [imgId]: still };
     }
     dropImageMotion(mod, imgId);

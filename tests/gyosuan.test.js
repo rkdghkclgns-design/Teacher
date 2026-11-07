@@ -238,6 +238,26 @@ async function run(name, fn) {
         assert.ok(!mod.gyosuan.docMd.includes('### 전개 1 - 학습 목표'));
     });
 
+    await run('탭 맨 위의 # 제목과 첫머리: 전개로 만들지 않고 머리말 근거의 끝에 둔다. 제목이 하나뿐인 탭은 예전처럼 전개로 쓴다', async () => {
+        const ai = responder();
+        const ctx = makeContext(ai);
+        const opening = '- 첫머리표식 이 차시에서 심화 시스템 아키텍처를 분석하고 설계하는 목표를 미리 봅니다.\n- 배경: 게임 시스템이 커지면 층 사이의 관계를 설계해야 합니다.';
+        const advLearn = `# 📝 MDA 프레임워크 기반의 게임 시스템 아키텍처 심화\n\n${opening}\n\n## 학습 목표\n\n- 머리말표식 시스템 층을 분석할 수 있습니다.\n\n## 1. 시스템 층 분석 (⏱ 60분)\n\n본문 내용이 충분히 길게 들어갑니다. 시스템 층을 하나씩 분석합니다.\n`;
+        const advPrac = '# 📝 동적 시스템 시뮬레이션 및 밸런스 튜닝\n\n- 실습첫머리표식 실습의 배경을 소개하는 충분히 긴 문장입니다.\n\n## 실습 1. 밸런스 표 만들기\n\n직접 밸런스 표를 만들고 값을 바꿔 결과를 비교합니다. 충분히 긴 실습 설명입니다.\n';
+        const titles = list => JSON.parse(JSON.stringify(list.map(s => s.title))); // vm 안의 배열을 바깥 배열로 견준다
+        const split = lessonMod => vm.runInContext('splitLessonSections', ctx)(vm.runInContext('collectLessonSource', ctx)(lessonMod, 'adv'));
+        const mod = { id: 'm1', title: '심화', tabContents: { basicLearn: null, basicPrac: null, advLearn, advPrac, assessment: null } };
+        const { intro, sections } = split(mod);
+        assert.deepStrictEqual(titles(sections), ['시스템 층 분석', '실습 1. 밸런스 표 만들기'], '# 제목은 전개가 아니다');
+        assert.ok(intro.indexOf('머리말표식') >= 0 && intro.indexOf('첫머리표식') > intro.indexOf('머리말표식') && intro.includes('실습첫머리표식'), '첫머리는 학습 목표 뒤 머리말 근거로');
+        const single = { ...mod, tabContents: { ...mod.tabContents, advLearn: null, advPrac: '# 실습 과제\n\n직접 기획 메모를 작성합니다. 충분히 긴 실습 설명 문장이 들어갑니다.' } };
+        assert.deepStrictEqual(titles(split(single).sections), ['실습 과제'], '제목이 하나뿐인 탭은 그 제목을 전개로 쓴다');
+        const legacy = { id: 'm1', title: '옛 차시', content: '# 1. 개요\n게임 기획은 재미를 설계하는 일이라는 개요 문장이 충분히 깁니다.\n\n# 2. 핵심 내용\n\n## 재미의 본질\n재미는 플레이어가 겪는 도전과 보상의 순환이라는 설명이 충분히 길게 들어갑니다.' };
+        const old = vm.runInContext('splitLessonSections', ctx)(vm.runInContext('collectLessonSource', ctx)(legacy, 'basic'));
+        assert.ok(old.intro.startsWith('개요\n게임 기획은'), '맨 위 # 개요는 예전처럼 머리말');
+        assert.deepStrictEqual(titles(old.sections), ['재미의 본질']);
+    });
+
     await run('컨벤션 검수', async () => {
         const ctx = makeContext(responder());
         const issues = md => vm.runInContext('lintLessonMarkdown', ctx)(md).map(i => i.msg);

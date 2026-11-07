@@ -373,7 +373,9 @@ const LESSON_MD = [
         ctx.courseData = subject.lessons;
         const order = [];
         const options = [];
-        ctx.generateTabContent = async (id, tabId, opts) => { order.push(tabId); options.push(opts); lesson.tabContents[tabId] = `## ${tabId}\n\n- 내용입니다.`; return { ok: true }; };
+        // 심화학습 탭은 제 학습 목표를 쓴다(심화 문제은행은 기본학습 목표를 빌려 쓰지 않는다)
+        const made = tabId => (tabId === 'advLearn' ? '## 학습 목표\n\n- 심화 구조를 분석할 수 있습니다.\n\n## advLearn\n\n- 내용입니다.' : `## ${tabId}\n\n- 내용입니다.`);
+        ctx.generateTabContent = async (id, tabId, opts) => { order.push(tabId); options.push(opts); lesson.tabContents[tabId] = made(tabId); return { ok: true }; };
         ctx.runGyosuanGeneration = async (id, opts) => { order.push(`gyosuan:${opts.track}`); lesson[opts.track === 'adv' ? 'gyosuanAdv' : 'gyosuan'] = { docMd: '#' }; return { ok: true }; };
         ctx.generateQuestions = async (mod, spec, trackId) => { order.push(`qbank:${trackId}:${spec.objective}`); return [{ no: 0, title: '문항', objective: spec.objective, band: 'L1', type: '객관식', typed: true, multi: false, stem: '내용', media: '', choices: [{ mark: '①', text: '가' }], answer: '①', accepted: '', hint: '', code: '', lang: '', explanation: '', rubric: '', tests: '', review: '' }]; };
         const toasts = [];
@@ -698,7 +700,8 @@ const LESSON_MD = [
     });
 
     await run('전체 생성: 교수안이 실패해도 문제은행은 만든다', async () => {
-        const lesson = { id: 1, title: '재미', tabContents: { basicLearn: '## 학습 목표\n\n- 비교할 수 있습니다.', basicPrac: '- 내용', advLearn: '- 내용', advPrac: '- 내용', assessment: '- 내용' } };
+        const tabs = { basicLearn: '## 학습 목표\n\n- 비교할 수 있습니다.', basicPrac: '- 내용', advLearn: '## 학습 목표\n\n- 분석할 수 있습니다.', advPrac: '- 내용', assessment: '- 내용' };
+        const lesson = { id: 1, title: '재미', tabContents: tabs };
         ctx.globalState.subjects = [{ id: 's1', title: '기획', lessons: [lesson] }];
         ctx.courseData = ctx.globalState.subjects[0].lessons;
         ctx.alerts.length = 0;
@@ -706,9 +709,13 @@ const LESSON_MD = [
         const asked = [];
         ctx.generateQuestions = async (mod, spec, trackId) => { asked.push(`${trackId}:${spec.objective}`); return []; };
         await call('runLessonPipeline')(1);
-        // 심화학습 탭에 학습 목표가 없으면 차시의 학습 목표로 심화학습 문제은행을 채운다
-        assert.deepStrictEqual(asked, ['basic:1', 'adv:1']);
+        assert.deepStrictEqual(asked, ['basic:1', 'adv:1'], '두 갈래 문제은행을 그 갈래의 목표로 채운다');
         assert.ok(ctx.alerts.at(-1).includes('호출 한도') && !ctx.alerts.at(-1).includes('건너뛴'));
+        // 심화학습 탭에 학습 목표가 없으면 기본학습 목표를 빌려 심화학습 문제은행을 채우지 않는다
+        lesson.tabContents = { ...tabs, advLearn: '- 내용' };
+        asked.length = 0;
+        await call('runLessonPipeline')(1);
+        assert.deepStrictEqual(asked, ['basic:1']);
     });
 
     await run('전체 생성: 만드는 차시에만 진행 표시를 한다', async () => {

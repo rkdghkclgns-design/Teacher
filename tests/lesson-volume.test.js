@@ -631,7 +631,11 @@ async function run(name, fn) {
         const alert = ctx.alerts.at(-1);
         ['기본학습 분량 채우기: 오늘 쓸 수 있는', '같은 까닭으로 남은 항목은 만들지 않았습니다.', '목표 분량에 못 미친 항목: 기본학습(낭독 약 300분/목표 480분)', "'분량 채우기'"].forEach(text => assert.ok(alert.includes(text), `${text}\n${alert}`));
         order.length = 0;
-        ctx.generateTabContent = async (id, tabId) => { order.push(tabId); return tabId === 'basicLearn' ? { ok: true, short: true, readMinutes: 410, targetMinutes: 480 } : { ok: true }; };
+        ctx.generateTabContent = async (id, tabId) => {
+            order.push(tabId);
+            lesson.tabContents[tabId] = `## ${tabId}\n\n- 내용입니다.`; // 만든 탭은 글이 있다(문제은행 탭은 그 갈래의 학습 탭이 있어야 만든다)
+            return tabId === 'basicLearn' ? { ok: true, short: true, readMinutes: 410, targetMinutes: 480 } : { ok: true };
+        };
         lesson.tabContents = {};
         await call(ctx, 'runLessonPipeline')(1);
         assert.deepStrictEqual(order.slice(0, 5), ['basicLearn', 'basicPrac', 'advLearn', 'advPrac', 'assessment'], '모자라기만 하면 이어서 만든다');

@@ -146,22 +146,31 @@ function sectionMinutes(title) {
     return match ? Number(match[1]) : 0;
 }
 
-function splitLessonSections(parts) {
+// 탭 맨 위의 # 제목(예: '# 📝 차시 제목')과 그 아래 첫머리(목표 미리 보기·배경 목록)는 전개가 아니라 머리말 근거로 본다(opening).
+// 그 탭에 제목이 더 있을 때만 그렇게 본다(# 제목 하나에 본문을 모두 담은 탭은 예전처럼 그 제목을 전개로 쓴다)
+function lessonPartUnits(part) {
     const units = [];
-    parts.forEach(part => {
-        let current = null;
-        cleanGyosuanSource(part.text).split('\n').forEach(line => {
-            const heading = line.match(/^#{1,2}\s+(.+?)\s*$/);
-            if (heading) {
-                current = { title: cleanSectionTitle(heading[1]), minutes: sectionMinutes(heading[1]), practice: part.practice, text: '' };
-                units.push(current);
-            } else if (current) {
-                current.text += line + '\n';
-            }
-        });
+    let current = null;
+    cleanGyosuanSource(part.text).split('\n').forEach(line => {
+        const heading = line.match(/^(#{1,2})\s+(.+?)\s*$/);
+        if (heading) {
+            current = { title: cleanSectionTitle(heading[2]), minutes: sectionMinutes(heading[2]), practice: part.practice, text: '', top: heading[1] === '#' && !units.length };
+            units.push(current);
+        } else if (current) {
+            current.text += line + '\n';
+        }
     });
-    const intro = units.filter(u => GYOSUAN_INTRO_TITLE.test(u.title)).map(u => `${u.title}\n${u.text.trim()}`).join('\n\n');
-    const sections = units.filter(u => u.text.trim().length > 30 && !GYOSUAN_INTRO_TITLE.test(u.title) && !GYOSUAN_SKIP_TITLE.test(u.title));
+    const [first] = units;
+    if (first?.top && units.length > 1 && !GYOSUAN_INTRO_TITLE.test(first.title)) first.opening = true;
+    return units;
+}
+
+// 첫머리는 머리말 근거의 끝에 둔다(학습 목표·개요가 머리말 길이 상한 안에 먼저 들어가게)
+function splitLessonSections(parts) {
+    const units = parts.flatMap(lessonPartUnits);
+    const introUnits = [...units.filter(u => !u.opening && GYOSUAN_INTRO_TITLE.test(u.title)), ...units.filter(u => u.opening && u.text.trim())];
+    const intro = introUnits.map(u => `${u.title}\n${u.text.trim()}`).join('\n\n');
+    const sections = units.filter(u => !u.opening && u.text.trim().length > 30 && !GYOSUAN_INTRO_TITLE.test(u.title) && !GYOSUAN_SKIP_TITLE.test(u.title));
     return { intro, sections };
 }
 
@@ -514,7 +523,8 @@ function usedGyosuanImages(gyosuan) {
 }
 
 // 교수안·편성안이 쓰는 그림: 차시 그림 위에 그 갈래 교수안의 그림(교수안을 만들 때 옮겨 둔 사본)이 이긴다.
-// 다만 차시에서 움직이는 GIF로 바꾼 그림(image-motion.js)은 GIF가 이긴다(원래 그림으로 되돌리면 교수안의 사본이 다시 보인다)
+// 다만 차시에서 움직이는 GIF로 바꾼 그림(image-motion.js)은 GIF가 이긴다. 원래 그림으로 되돌리면 교수안의 사본이 다시 보이고,
+// GIF를 켠 동안 만든 교수안이라 사본이 그 GIF였으면 되돌릴 때 사본도 원래 그림으로 바꾼다(image-motion.js restoreMotionCopies)
 function gyosuanImageMap(mod, trackId = 'basic') {
     const images = { ...(mod?.images || {}), ...(gyosuanOf(mod, trackId)?.images || {}) };
     const motions = mod?.imageMotions && typeof mod.imageMotions === 'object' ? Object.keys(mod.imageMotions) : [];

@@ -11,7 +11,9 @@ const QBANK_BANDS = {
 const QBANK_BAND_L4 = { band: 'L4', name: '목표만 제시', desc: '최종 목표만 주고 수행 능력 전체를 평가합니다. 문제은행이 아니라 과정의 프로젝트에서 다룹니다.', types: '프로젝트에서 다룸 · 문제은행에 만들지 않음' };
 const QBANK_BAND_INTRO = '밴드는 문항이 학습자에게 얼마나 많은 것을 스스로 하도록 요구하는지를 나타내는 단계입니다. 숫자가 클수록 주어지는 정보가 적습니다. 모든 문항에 학습 목표와 밴드를 함께 붙여 두면, 오답률이 높을 때 어느 목표의 어느 수준이 무너졌는지 찾을 수 있습니다.';
 const QBANK_COUNTS = [1, 2, 3, 5, 8, 10];
-const QBANK_LESSON_CHARS = 6000;
+const QBANK_LESSON_CHARS = 6000;   // 문항 생성에 보내는 교안 원고 상한
+const QBANK_SECTION_CHARS = 4000;  // 그 학습 목표의 내용 섹션 원고 상한
+const QBANK_PRACTICE_CHARS = 1500; // 이어 붙이는 실습 탭 앞부분
 const QBANK_MAX_FLAGGED = 20;
 const QBANK_FLASH_MS = 1600;
 const QBANK_CHOICE_MARKS = '①②③④⑤⑥⑦⑧⑨⑩';
@@ -69,13 +71,12 @@ function qbankTabBullets(mod, title, trackId = null) {
     return texts.flatMap(md => (md ? lessonLintBullets(String(md).replace(/\r\n/g, '\n'), title) : []));
 }
 
-// 그 갈래의 학습 목표. trackId를 주면 그 갈래의 학습·실습 탭에 적힌 목표(없으면 차시 전체 탭의 목표, 그것도 없으면 과정 설계의 목표).
-// 주지 않으면 차시 전체(NCS 배정·교육 자료가 쓴다). 새로 만드는 문항·탭은 이 목록으로 만든다
+// 그 갈래의 학습 목표. trackId를 주면 그 갈래의 학습·실습 탭에 적힌 목표, 없으면 과정 설계의 목표다(다른 갈래 탭의 목표는 쓰지 않는다.
+// 심화학습 탭이 비었을 때 심화이해도에 기본학습 목표가 섞이지 않게). 주지 않으면 차시 전체 탭의 목표, 없으면 과정 설계의 목표(NCS 배정·교육 자료가 쓴다).
+// 새로 만드는 문항·탭은 이 목록으로 만든다. 갈래를 나누기 전의 학습이해도 번호는 qbankLegacyObjectives가 따로 읽는다
 function qbankTrackObjectives(mod, trackId = null) {
-    const own = trackId ? uniqueTexts(qbankTabBullets(mod, '학습\\s*목표', trackId)) : [];
-    if (own.length) return own;
-    const fromTabs = uniqueTexts(qbankTabBullets(mod, '학습\\s*목표'));
-    return fromTabs.length ? fromTabs : (mod.objectives || []);
+    const listed = uniqueTexts(trackId ? qbankTabBullets(mod, '학습\\s*목표', trackId) : qbankTabBullets(mod, '학습\\s*목표'));
+    return listed.length ? listed : (mod.objectives || []);
 }
 
 // 갈래를 나누기 전에 만든 학습이해도는 차시 전체 탭의 목표를 이어 센 번호를 쓴다.
@@ -299,15 +300,30 @@ function qbankChoiceRule(spec) {
     return spec.multi ? '[정답 수] 정답 2개 이상, 오답 1개 이상이며 문항에 「모두 고르시오」를 밝힙니다.' : '[정답 수] 정답이 될 수 있는 보기는 정확히 하나입니다.';
 }
 
-// 문항을 만들 교안 원고: 그 갈래의 학습 탭, 이어서 실습 탭(앞부분만 보낸다). 탭 글이 하나도 없는 옛 차시의 본문은 기본학습 갈래의 원고다
-function qbankLessonSource(mod, trackId = 'basic') {
+// 그 학습 목표의 내용 섹션: 학습 탭 체크리스트의 '다시 보기'가 가리키는 섹션부터 다음 목표의 섹션 앞까지(lesson-objectives.js objectiveContentRange).
+// 그 탭의 목표 목록에서 목표 글로 찾는다(예전 방식 학습이해도의 번호와 섞이지 않게). 찾지 못하면 ''
+function qbankObjectiveSection(learn, goal) {
+    if (!goal || typeof objectiveContentRange !== 'function' || typeof mdSections !== 'function') return '';
+    const index = lessonLintBullets(learn, '학습\\s*목표').indexOf(goal);
+    if (index < 0) return '';
+    const sections = mdSections(learn);
+    return objectiveContentRange(learn, index).map(item => sections[item.index]?.text || '').filter(Boolean).join('\n\n');
+}
+
+// 문항을 만들 교안 원고: 그 갈래의 학습 탭에서 그 목표의 섹션(4,000자까지, 찾지 못하면 학습 탭 앞부분), 이어서 실습 탭 앞부분(1,500자). 모두 6,000자까지.
+// 480분 학습 탭은 12만 자쯤이라 앞부분만 보내면 뒤쪽 목표의 섹션과 실습 탭이 빠진다. 탭 글이 하나도 없는 옛 차시의 본문은 기본학습 갈래의 원고다.
+// goal: 문항을 만들 학습 목표 글(주지 않으면 학습 탭 앞부분)
+function qbankLessonSource(mod, trackId = 'basic', goal = '') {
     const track = lessonTrack(trackId);
     const legacy = track.id === LESSON_TRACKS[0].id && !LESSON_TABS.some(tab => mod.tabContents?.[tab.id]) ? mod.content : '';
-    return [mod.tabContents?.[track.learn] || legacy, mod.tabContents?.[track.practice]].filter(Boolean).map(String).join('\n\n').slice(0, QBANK_LESSON_CHARS);
+    const learn = String(mod.tabContents?.[track.learn] || legacy || '').replace(/\r\n/g, '\n');
+    const practice = String(mod.tabContents?.[track.practice] || '').replace(/\r\n/g, '\n').slice(0, QBANK_PRACTICE_CHARS);
+    const section = qbankObjectiveSection(learn, goal).slice(0, QBANK_SECTION_CHARS);
+    return [(section || learn).slice(0, QBANK_LESSON_CHARS - practice.length), practice].filter(Boolean).join('\n\n');
 }
 
 function buildQuestionPrompt(mod, spec, objectives, questions, trackId = 'basic') {
-    const source = qbankLessonSource(mod, trackId);
+    const source = qbankLessonSource(mod, trackId, objectives[spec.objective - 1]);
     return [
         `아래 차시의 문제은행 문항을 ${spec.count}개 만드세요.`, '', QBANK_RULES, '',
         `[학습 목표 ${spec.objective}] ${objectives[spec.objective - 1] || mod.title}`,

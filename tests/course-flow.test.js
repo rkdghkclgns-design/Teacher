@@ -206,6 +206,41 @@ async function run(name, fn) {
         assert.ok(!call('lessonRunReportHtml')(report).includes('text-amber-300'), '안내가 없으면 그 줄도 없다');
     });
 
+    await run('일괄 실행: 예전 방식(기본·심화 네 탭을 함께 담은) 기본학습 교수안은 그대로 두고, 미리 보기와 보고에 그 차시와 심화 내용이 남는다는 것을 알린다', async () => {
+        const local = makeContext();
+        ['gyosuan.js', 'cost-estimate.js'].forEach(file => vm.runInContext(fs.readFileSync(root + file, 'utf8'), local));
+        const four ={ ...emptyTabs(), basicLearn: '## 기본\n\n기본 글', basicPrac: '## 기본 실습\n\n글', advLearn: '## 심화\n\n심화 글', advPrac: '## 심화 실습\n\n글', assessment: '### 문제 1. 가\n학습 목표 1 · 밴드 L1 · 객관식\n\n① 가\n② 나\n\n✅ **정답:** ②' };
+        const legacyLesson = lesson(1, four, { title: '예전 차시' });
+        legacyLesson.gyosuan = { docMd: '# 교수안 - 예전 차시', deckMd: '#', sourceKey: vm.runInContext('hashSource', local)(vm.runInContext('legacyLessonSource', local)(legacyLesson)) };
+        const fresh = lesson(2, { ...four }, { title: '새 차시' });
+        fresh.gyosuan = { docMd: '# 교수안 - 새 차시', deckMd: '#', sourceKey: vm.runInContext('hashSource', local)(vm.runInContext('collectLessonSource', local)(fresh, 'basic')) };
+        assert.deepStrictEqual([vm.runInContext('isLegacyGyosuan', local)(legacyLesson), vm.runInContext('isLegacyGyosuan', local)(fresh)], [true, false]);
+        const subject = { id: 's1', title: '교과', lessons: [legacyLesson, fresh] };
+        local.globalState.subjects = [subject];
+        local.currentSubjectId = 's1';
+        local.courseData = subject.lessons;
+        ['lesson-run-body', 'lesson-run-footer', 'lesson-run-status', 'lesson-run-queue', 'lesson-run-estimate'].forEach(id => { local.elements[id] = { innerHTML: '', textContent: '' }; });
+        local.elements['lesson-run-gyosuan'] = { checked: true };
+        local.elements['lesson-run-overwrite'] = { checked: false };
+        local.document.querySelector = () => ({ disabled: false });
+        local.localStorage = { getItem: () => null, setItem() {} };
+        const built = [];
+        local.runGyosuanGeneration = async (id, opts) => { built.push(`${id}:${opts.track}`); const mod = local.courseData.find(item => item.id === id); mod[opts.track === 'adv' ? 'gyosuanAdv' : 'gyosuan'] = { docMd: '#' }; return { ok: true }; };
+        local.generateQuestions = async () => [];
+        vm.runInContext('refreshLessonRunQueue', local)('subject');
+        const queueHtml = local.elements['lesson-run-queue'].innerHTML;
+        assert.ok(queueHtml.includes('예전 방식 기본학습 교수안을 그대로 두는 차시 1개') && queueHtml.includes('교과 · 예전 차시') && queueHtml.includes('심화 내용도 들어 있습니다'), queueHtml);
+        assert.ok(!queueHtml.slice(queueHtml.indexOf('예전 방식 기본학습')).includes('새 차시'), '새 방식 교수안은 알리지 않는다');
+        local.elements['lesson-run-overwrite'] = { checked: true };
+        vm.runInContext('refreshLessonRunQueue', local)('subject');
+        assert.ok(!local.elements['lesson-run-queue'].innerHTML.includes('예전 방식'), '모두 다시 만들면 교수안도 다시 만든다');
+        local.elements['lesson-run-overwrite'] = { checked: false };
+        await vm.runInContext('startLessonRun', local)('subject');
+        assert.deepStrictEqual(built, ['1:adv', '2:adv'], '기본학습 교수안은 다시 만들지 않고 심화학습 교수안만 만든다');
+        const report = local.elements['lesson-run-body'].innerHTML;
+        assert.ok(report.includes('예전 방식 기본학습 교수안을 그대로 둔 차시 1개') && report.includes('교과 · 예전 차시') && report.includes('다시 만들기'), report);
+    });
+
     await run('일괄 실행 시작: 전체 탭 생성이 대기 중일 때도 진행 중으로 봄', async () => {
         const local = makeContext();
         const busy = () => vm.runInContext('generationBusy()', local);

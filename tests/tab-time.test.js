@@ -469,9 +469,11 @@ async function run(name, fn) {
         assert.strictEqual(minutesOf(tabPrompts(ctx)[0]), 240, '다음 생성에 쓴다');
         const saves = ctx.saved;
         ctx.promptAnswer = '95';
+        const askedBefore = ctx.asked.length;
         await call(ctx, 'changePracticeMinutes')(1, 'basicPrac');
-        assert.ok(mod.gen.basicPracMinutes === 240 && ctx.toasts.at(-1).kind === 'warning' && ctx.toasts.at(-1).message.includes('10분 단위'), '받을 수 없는 값은 저장하지 않고 알린다');
-        assert.strictEqual(ctx.asked.at(-1).opts.value, '240', '차시 값을 칸에 넣어 묻는다');
+        assert.ok(mod.gen.basicPracMinutes === 240 && ctx.toasts.at(-1).kind === 'warning' && ctx.toasts.at(-1).message.includes('10분 단위'), '받을 수 없는 값만 거듭 적으면 저장하지 않고 알린다');
+        assert.strictEqual(ctx.asked[askedBefore].opts.value, '240', '차시 값을 칸에 넣어 묻는다');
+        assert.deepStrictEqual([ctx.asked.length - askedBefore, ctx.asked.at(-1).opts.value], [5, '95'], '받을 수 없는 값은 적은 글을 칸에 둔 채 다섯 번까지 다시 묻는다');
         ctx.promptAnswer = null;
         await call(ctx, 'changePracticeMinutes')(1, 'basicPrac');
         assert.strictEqual(ctx.saved, saves, '취소하면 저장하지 않는다');
@@ -484,6 +486,61 @@ async function run(name, fn) {
         ctx.currentMod = lessonOf({}, { id: 2 });
         await asking;
         assert.strictEqual(mod.gen.advPracMinutes, undefined);
+    });
+
+    await run("실습 시간 입력: '120분'처럼 분을 붙여 적어도 받고, 받을 수 없는 값이면 적은 글을 칸에 둔 채 까닭을 붙여 다시 묻는다. 저장하면 다시 그린 단추로 포커스를 돌려주고, 머리 줄 단추 글은 짧다", async () => {
+        const ctx = genContext();
+        const mod = lessonOf({ basicPrac: '## 실습 (⏱ 60분)\n\n글입니다.' });
+        ctx.currentMod = mod;
+        const button = { focused: 0, focus() { this.focused += 1; } };
+        ctx.elements['lesson-practice-time'] = button;
+        const answers = [];
+        ctx.promptAsync = async (message, opts) => { ctx.asked.push({ message, opts }); return answers.length ? answers.shift() : null; };
+        answers.push('120분');
+        await call(ctx, 'changePracticeMinutes')(1, 'basicPrac');
+        assert.deepStrictEqual([mod.gen.basicPracMinutes, ctx.asked.length, button.focused], [120, 1, 1], "'120분'을 120분으로 받고 단추로 포커스를 돌려준다");
+        answers.push(' 150 분');
+        await call(ctx, 'changePracticeMinutes')(1, 'basicPrac');
+        assert.strictEqual(mod.gen.basicPracMinutes, 150, '띄어 쓴 분도 받는다');
+        ctx.asked.length = 0;
+        answers.push('125', '130');
+        await call(ctx, 'changePracticeMinutes')(1, 'basicPrac');
+        assert.strictEqual(ctx.asked.length, 2, '받을 수 없는 값이면 창을 닫지 않고 다시 묻는다');
+        assert.deepStrictEqual([ctx.asked[0].opts.value, ctx.asked[1].opts.value], ['150', '125'], '적은 글을 칸에 그대로 둔다');
+        assert.ok(ctx.asked[1].message.startsWith('기본실습 시간은 10분에서 600분 사이에서 10분 단위로 적어 주세요(예: 120).') && ctx.asked[1].message.includes('비워 두면'), ctx.asked[1].message);
+        assert.strictEqual(mod.gen.basicPracMinutes, 130, '고쳐 적은 값을 저장한다');
+        ctx.asked.length = 0;
+        answers.push('125');
+        const saves = ctx.saved;
+        await call(ctx, 'changePracticeMinutes')(1, 'basicPrac'); // 다시 묻는 창을 취소한다
+        assert.deepStrictEqual([ctx.asked.length, mod.gen.basicPracMinutes, ctx.saved], [2, 130, saves], '다시 묻는 창을 닫으면 저장하지 않는다');
+        // 머리 줄(이 탭 생성 옆) 단추는 짧은 글을 보이고 긴 글은 title에 둔다. 빈 탭 안내의 단추는 긴 글 그대로
+        const shown = html => html.replace(/<[^>]*>/g, '').trim();
+        const header = call(ctx, 'practiceTimeButtonHtml')(mod, 'basicPrac', 'header');
+        assert.ok(shown(header).length <= 10 && shown(header) === '실습 130분' && header.includes('title="실습 시간 130분. 이 차시에서 정한 실습 시간입니다'), header);
+        const unset = call(ctx, 'practiceTimeButtonHtml')(lessonOf(), 'advPrac', 'header');
+        assert.ok(shown(unset) === '실습 90~120분' && shown(unset).length <= 10, shown(unset));
+        assert.strictEqual(shown(call(ctx, 'practiceTimeButtonHtml')(lessonOf(), 'advPrac', 'empty')), '실습 시간 기본 90~120분');
+    });
+
+    await run('갈래 고르기: 키보드로 기본학습 | 심화학습을 바꾸면 다시 그린 고르기의 고른 단추로 포커스를 돌려준다(숨은 사본은 건너뛴다)', async () => {
+        const ctx = genContext();
+        const mod = lessonOf({ basicLearn: '## 본문\n\n글입니다.', advLearn: '## 본문\n\n글입니다.' });
+        ctx.currentMod = mod;
+        const switches = () => [
+            { offsetParent: null, focused: 0, focus() { this.focused += 1; } }, // 숨은 슬라이드 패널의 사본
+            { offsetParent: {}, focused: 0, focus() { this.focused += 1; } }
+        ];
+        let drawn = [];
+        ctx.document.querySelectorAll = selector => (selector === '.lesson-track-switch button[aria-pressed="true"]' ? drawn : []);
+        vm.runInContext("renderEditor = () => { window.redrawn = (window.redrawn || 0) + 1; window.onRedraw?.(); }; _lessonPanel = 'gyosuan';", ctx);
+        ctx.onRedraw = () => { drawn = switches(); };
+        call(ctx, 'setLessonPanelTrack')('adv');
+        assert.deepStrictEqual([ctx.redrawn, drawn[0].focused, drawn[1].focused], [1, 0, 1], '보이는 고른 단추로');
+        // 열어 둔 문제은행은 그 자리에서 다시 그리고 같은 단추로 포커스를 돌려준다
+        ctx.switchQbankTrack = () => { drawn = switches(); return true; };
+        call(ctx, 'setLessonPanelTrack')('basic');
+        assert.deepStrictEqual([ctx.redrawn, drawn[1].focused], [1, 1]);
     });
 
     await run('실습 시간 칸: 차시 정보·일괄 생성 창에 두 칸을 두고, 받을 수 있는 값만 숫자로 읽으며, 받을 수 없는 값이면 저장·시작하지 않고 알린다', () => {

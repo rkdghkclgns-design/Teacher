@@ -887,6 +887,38 @@ async function run(name, fn) {
         assert.strictEqual(ctx.previews.length, 0);
     });
 
+    await run('예시 게임 그림 넣기·일괄 이미지 찾기: 학습이해도·심화이해도에는 그림 자리를 넣지도 채우지도 않는다(문항이 길어도)', async () => {
+        const stem = `${'테트리스처럼 떨어지는 블록을 맞추는 게임에서 규칙과 보상이 어떻게 이어지는지 살펴봅니다. '.repeat(8)}가장 알맞은 설명을 고릅니다.`;
+        const question = `### 문제 1. 블록 퍼즐 게임에서 규칙과 보상이 플레이어의 다음 행동을 어떻게 이끄는지 구조를 단계별로 분석하기\n학습 목표 1 · 밴드 L2 · 서술형\n\n${stem}\n\n✅ **정답:** 모범 답안`;
+        for (const tabId of ['assessment', 'advAssessment']) {
+            reset();
+            const mod = openLesson('## 1. 퍼즐 게임\n\n본문입니다.');
+            mod.tabContents = { ...mod.tabContents, [tabId]: question };
+            vm.runInContext(`currentLessonTab = '${tabId}';`, ctx);
+            // 부르면 게임을 찾았다고 답한다(막지 않으면 그 문항 뒤에 그림 자리를 넣으려 한다)
+            ctx.fetchStub = async url => (url.includes('generativelanguage') ? gamesReply([{ title: 'Tetris', quote: '테트리스처럼 떨어지는 블록을' }]) : wikiStub(TETRIS_STUB)(url));
+            await call('insertGamePictures')(7);
+            assert.strictEqual(ctx.fetched.length, 0, `${tabId}: AI를 부르지 않는다`);
+            assert.strictEqual(mod.tabContents[tabId], question, `${tabId}: 글을 바꾸지 않는다`);
+            assert.strictEqual(ctx.alerts.at(-1), '학습이해도·심화이해도에는 그림을 넣지 않습니다. 기본학습·기본실습·심화학습·심화실습 탭에서 눌러 주세요.');
+        }
+        // 예전에 남은 그림 자리(제목이 길면 글 위주 섹션으로 보지 않는다)도 일괄 이미지 찾기·콘텐츠 정리가 세지도 채우지도 않는다
+        reset();
+        const leftover = question.replace('\n\n테트리스', '\n\n<!-- [IMG: "game: Tetris"] -->\n\n<!-- [IMG: "puzzle board"] -->\n\n테트리스');
+        const mod = openLesson('## 1. 퍼즐 게임\n\n본문입니다.');
+        mod.tabContents = { ...mod.tabContents, assessment: leftover };
+        assert.strictEqual(call('pendingImageTags')(leftover).length, 2, '글만 보면 채울 자리다');
+        assert.deepStrictEqual([call('countImageSlots')(mod), call('countGameImageSlots')(mod), plain(call('imageTagTabs')(mod)).length], [0, 0, 0]);
+        await call('generateAllImagesInModule')(7);
+        assert.strictEqual(ctx.toasts.at(-1), '아직 채우지 않은 그림 자리가 없습니다.');
+        vm.runInContext('confirmWithEstimate = () => Promise.resolve(true); confirmAsync = () => Promise.resolve(true);', ctx);
+        await call('sanitizeAllContent')();
+        const cleaned = mod.tabContents.assessment;
+        assert.ok(cleaned.includes('<!-- [IMG: "game: Tetris"] -->') && cleaned.includes('<!-- [IMG: "puzzle board"] -->') && !cleaned.includes('image-wrapper'), '콘텐츠 정리도 문제은행 탭의 그림 자리를 채우지 않는다(서식만 고친다)');
+        assert.ok(!ctx.fetched.some(item => item.url.includes('wikipedia') || item.url.includes('generativelanguage')), '그림을 찾지 않는다');
+        assert.ok(read('js/api.js').includes("${isQuestionBankTab(currentLessonTab) ? '' : `<button onclick=\"insertGamePictures("), '도구 메뉴: 문제은행 탭에서는 단추를 두지 않는다');
+    });
+
     /* ---------- 예고·개수 ---------- */
     await run('예고: 게임 그림은 그림 자리 수에 세지만 AI 호출·그림 모델 장수에는 넣지 않고 위키백과에서 무료로 찾는다고 보인다', async () => {
         const text = '## 1. 첫째\n\n<!-- [IMG: "a"] -->\n\n<!-- [IMG: "game: Tetris"] -->\n\n<!-- [IMG: "game: Doom"] -->\n\n```md\n<!-- [IMG: "game: Code"] -->\n```';
@@ -904,9 +936,9 @@ async function run(name, fn) {
         const summary = plain(call('estimateSummary')({ images: 1, gameImages: 2 }, { model: 'gemini-3.8-flash', timings: {}, exactImages: true }));
         assert.deepStrictEqual([summary.calls, summary.images, summary.gameImages], [1, 1, 2], '검색어 정하기 1번만 센다');
         const lines = plain(call('estimateLines')(summary, {}));
-        assert.ok(lines.includes('예시 게임 그림: 2장 · 위키백과에서 무료로 찾음') && lines.includes('그림: 1장 · 그림 모델 · 장마다 요금'), JSON.stringify(lines));
+        assert.ok(lines.includes('예시 게임 그림: 2장 · 위키백과에서 무료로 찾음(못 찾으면 검색 키가 있을 때 웹 검색)') && lines.includes('그림: 1장 · 그림 모델 · 장마다 요금'), JSON.stringify(lines));
         const gamesOnly = plain(call('estimateLines')(plain(call('estimateSummary')({ gameImages: 4 }, { model: 'gemini-3.8-flash', timings: {} })), {}));
-        assert.ok(!gamesOnly.some(line => line.startsWith('글:') || line.startsWith('그림:')) && gamesOnly[0] === '예시 게임 그림: 약 4장 · 위키백과에서 무료로 찾음', JSON.stringify(gamesOnly));
+        assert.ok(!gamesOnly.some(line => line.startsWith('글:') || line.startsWith('그림:')) && gamesOnly[0] === '예시 게임 그림: 약 4장 · 위키백과에서 무료로 찾음(못 찾으면 검색 키가 있을 때 웹 검색)', JSON.stringify(gamesOnly));
         assert.strictEqual(call('estimateCalls')({ gameImages: 9 }), 0);
         assert.strictEqual(call('estimateCalls')({ gameImages: 9 }, 'svg'), 0, 'SVG 삽화여도 게임 그림은 글 모델이 그리지 않는다');
     });
@@ -930,6 +962,35 @@ async function run(name, fn) {
         assert.strictEqual(box.querySelectorAll('button').length, 0, '다시 찾기 버튼은 내보내지 않는다');
         assert.ok(box.querySelector('.image-caption').textContent.includes('출처: 위키백과'));
         assert.ok(read('js/lesson-export.js').includes('.image-source {'), '내보낸 문서에 설명 글 서식');
+    });
+
+    await run('MD로 바꾸기(학습자용 교안·작업 기록): 게임 그림 틀은 그림과 출처·라이선스 줄로, 다른 그림 틀은 그림만 남기고 닫는 </div>를 남기지 않는다', async () => {
+        vm.runInContext(sliceSource(read('js/state.js'), 'function resolveMarkdownImages('), ctx);
+        vm.runInContext(read('js/lesson-material.js'), ctx);
+        const PNG = 'data:image/png;base64,QUFBQkJC';
+        const found = { vendor: 'wikipedia', wiki: 'en', page: 'Tetris', name: 'Tetris', file: 'a.png', pageUrl: 'https://en.wikipedia.org/wiki/Tetris?a=1&b=2', license: 'CC BY-SA 4.0' };
+        const game = call('gameImageWrapperHtml')('img_9', 'game: Tetris', found);
+        const other = call('imageWrapperHtml')('img_8', '서버 구조', '서버 구조', '서버와 클라이언트 연결');
+        const md = `## 게임 예시\n\n앞 글\n\n${game}\n\n가운데 글\n\n${other}\n\n뒤 글`;
+        const out = call('resolveMarkdownImages')(md, { img_9: PNG, img_8: PNG });
+        assert.ok(out.includes(`![Tetris 게임 그림](${PNG})\n\nTetris · 출처: 위키백과 · CC BY-SA 4.0 · 출처 페이지: https://en.wikipedia.org/wiki/Tetris?a=1&b=2`), out);
+        assert.ok(out.includes(`가운데 글\n\n![서버 구조](${PNG})\n\n뒤 글`), '다른 그림의 설명은 빼고 그림만');
+        assert.ok(!out.includes('</div>') && !out.includes('image-caption') && !out.includes('서버와 클라이언트 연결'), out);
+        const google = call('gameImageWrapperHtml')('img_7', 'game: Doom', { vendor: 'google', name: 'Doom', pageUrl: '', license: '이용 조건 확인 필요' });
+        assert.ok(call('resolveMarkdownImages')(google, { img_7: PNG }).endsWith('\n\nDoom · 출처: 웹 검색 · 이용 조건 확인 필요'), '출처 페이지가 없어도 출처 줄은 남긴다');
+        const lesson = { id: 7, title: '차시', images: { img_9: PNG }, tabContents: { basicLearn: md } };
+        const material = call('materialTabMd')(lesson, 'basicLearn');
+        assert.ok(material.includes('출처: 위키백과 · CC BY-SA 4.0') && !material.includes('</div>'), '학습자용 교안에도 출처를 남긴다');
+    });
+
+    await run('보기 화면: AI 그림의 설명은 예전처럼 숨기고, 출처 페이지를 단 게임 그림 설명(게임 · 출처 · 라이선스)은 숨기지 않는다', async () => {
+        const html = read('index.html').replace(/\/\*[\s\S]*?\*\//g, ''); // 주석은 뺀다
+        const hidden = [...html.matchAll(/([^{}]*\.image-caption[^{}]*)\{([^{}]*)\}/g)].filter(([, , body]) => /display:\s*none/.test(body)).map(([, selector]) => selector.trim());
+        assert.deepStrictEqual(hidden, ['.image-wrapper .image-caption:not([data-source-url])'], hidden.join(' | '));
+        // 보기 화면의 그림 틀은 가로 줄(flex)이라 설명이 그림 옆에 붙지 않게 줄을 바꿔 그림 아래에 둔다
+        assert.ok(/\.markdown-body \.image-wrapper\s*\{\s*flex-wrap:\s*wrap;\s*\}/.test(html) && /\.markdown-body \.image-wrapper \.image-caption\[data-source-url\]\s*\{\s*flex-basis:\s*100%;\s*\}/.test(html), '설명은 그림 아래 한 줄');
+        const caption = call('gameImageWrapperHtml')('img_9', 'game: Tetris', { vendor: 'wikipedia', wiki: 'en', page: 'Tetris', name: 'Tetris', file: 'a.png', pageUrl: 'https://en.wikipedia.org/wiki/Tetris', license: '공정 이용 이미지' });
+        assert.ok(caption.includes('<div class="image-caption" data-source-url="https://en.wikipedia.org/wiki/Tetris"'), '게임 그림 설명에는 출처 페이지가 달린다');
     });
 
     await run('저장소: 검색 그림 저장소에 게임 그림 정보(meta)를 함께 담고, 주지 않으면 예전 모양 그대로 담는다', async () => {
@@ -960,6 +1021,14 @@ async function run(name, fn) {
         assert.ok(order.indexOf('game-images') >= 0 && order.indexOf('game-images') < order.indexOf('game-image-tags') && order.indexOf('game-image-tags') < order.indexOf('api'), order.join(','));
         assert.strictEqual(new Set(scripts.map(([, v]) => v)).size, 1, '새 태그도 이웃과 같은 ?v=');
         assert.ok(read('README.md').includes('예시 게임 그림은 위키백과에서 찾아 넣고 출처를 적습니다'));
+        // 위키백과에서 못 찾으면 검색 키가 있을 때 Google로 찾으므로(findGamePictureCached) 단추 설명·README·예고·진행 문구도 그렇게 말한다
+        assert.ok(read('js/game-images.js').includes('|| (await findGamePictureByGoogle(title, { signal, context }))'), '웹 검색으로 물러서는 길이 있다');
+        const tip = (api.match(/id="game-picture-btn"[^>]*title="([^"]*)"/) || [])[1] || '';
+        assert.ok(tip.includes('위키백과에서 찾아 넣습니다') && tip.includes('웹 검색') && tip.includes('이용 조건 확인 필요'), tip);
+        const readme = read('README.md').split('\n').find(line => line.startsWith('- **예시 게임 그림**')) || '';
+        assert.ok(readme.includes('웹 검색') && readme.includes('이용 조건 확인 필요'), readme);
+        assert.ok(api.includes("${game ? '인터넷에서 찾는 중' : '만드는 중'}") && !api.includes('위키백과에서 찾는 중'), '진행 문구');
+        assert.ok(read('js/game-image-tags.js').includes('못 찾으면 검색 키가 있을 때 웹 검색으로 찾습니다'), '미리보기 안내');
         const sources = ['js/game-images.js', 'js/game-image-tags.js'].map(read).join('\n');
         assert.ok(!/new RegExp\(/.test(sources), '데이터로 정규식을 만들지 않는다');
         assert.ok(!/(^|[^.\w])(confirm|prompt|alert)\((?!\))/m.test(sources), '브라우저 기본 창을 쓰지 않는다');

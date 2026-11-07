@@ -284,15 +284,41 @@ const PRACTICE_BUTTON_CLASS = {
 const coursePracticeMinutes = key => practiceFieldValue(globalState.courseDesign?.genOptions?.[key]) || 0;
 
 // 실습 탭의 '실습 시간 N분' 단추. place: 'header'(이 탭 생성 옆) | 'empty'(빈 탭 안내의 만들기 단추 아래). 누르면 이 차시의 실습 시간을 바꾼다(changePracticeMinutes).
-// 보이는 시간은 차시 값 → 과정 기본값 → 기본 90~120분 순서다. 실습 탭이 아니거나 최종 평가면 ''
+// 보이는 시간은 차시 값 → 과정 기본값 → 기본 90~120분 순서다. 머리 줄 단추는 좁은 화면에서 차시 제목을 가리지 않게 짧게 쓰고 긴 글은 title에 둔다.
+// 실습 탭이 아니거나 최종 평가면 ''
 function practiceTimeButtonHtml(mod, tabId, place = 'header') {
     const field = LESSON_PRACTICE_FIELDS.find(item => item.tab === tabId);
     if (!field || !mod || mod.id === 'mainQuest' || typeof lessonPracticeTime !== 'function') return '';
     const { minutes, from } = lessonPracticeTime(mod, tabId);
     const text = minutes ? `실습 시간 ${minutes}분${from === 'course' ? '(과정 기본값)' : ''}` : '실습 시간 기본 90~120분';
     const tip = { lesson: '이 차시에서 정한 실습 시간입니다. 눌러서 바꿉니다', course: '과정 기본값입니다. 눌러서 이 차시만 바꿉니다' }[from] || '정하지 않으면 90~120분으로 만듭니다. 눌러서 이 차시의 실습 시간을 정합니다';
-    const id = place === 'header' ? 'id="lesson-practice-time" ' : '';
-    return `<button type="button" ${id}data-practice-lesson="${escapeHtml(String(mod.id))}" data-practice-tab="${field.tab}" onclick="changePracticeMinutes(this.dataset.practiceLesson, this.dataset.practiceTab)" title="${escapeHtml(tip)}" class="${PRACTICE_BUTTON_CLASS[place] || PRACTICE_BUTTON_CLASS.header}"><i class="ph-bold ph-timer"></i> ${escapeHtml(text)}</button>`;
+    const header = place === 'header';
+    const label = header ? `실습 ${minutes ? `${minutes}분` : '90~120분'}` : text;
+    const id = header ? 'id="lesson-practice-time" ' : '';
+    return `<button type="button" ${id}data-practice-lesson="${escapeHtml(String(mod.id))}" data-practice-tab="${field.tab}" onclick="changePracticeMinutes(this.dataset.practiceLesson, this.dataset.practiceTab)" title="${escapeHtml(header ? `${text}. ${tip}` : tip)}" class="${PRACTICE_BUTTON_CLASS[place] || PRACTICE_BUTTON_CLASS.header}"><i class="ph-bold ph-timer"></i> ${escapeHtml(label)}</button>`;
+}
+
+const PRACTICE_PROMPT_TRIES = 5; // 받을 수 없는 값을 적으면 그 글을 칸에 둔 채 다시 묻는 횟수(이 뒤에는 알리고 멈춘다)
+
+// 실습 시간을 앱 입력 창으로 묻는다. '120분'처럼 '분'을 붙여 적어도 받고, 받을 수 없는 값이면 적은 글을 칸에 둔 채 까닭을 붙여 다시 묻는다.
+// 결과: 분 | null(비움: 이 차시에서 정한 값을 지운다) | undefined(취소했거나 묻는 동안 차시가 바뀜, 끝내 받을 수 없는 값)
+async function askPracticeMinutes(field, mod, moduleId, { ask, invalid, placeholder, value }) {
+    let typed = value;
+    for (let tries = 1; tries <= PRACTICE_PROMPT_TRIES; tries++) {
+        const answer = await window.promptAsync(tries > 1 ? `${invalid}\n\n${ask}` : ask, { title: `${field.name} 시간`, okLabel: '저장', placeholder, value: typed });
+        if (answer === null || answer === undefined) return undefined;
+        if (getEditingModule(moduleId) !== mod) {
+            window.showToast?.('묻는 동안 차시가 바뀌어 실습 시간을 바꾸지 않았습니다.', 'warning');
+            return undefined;
+        }
+        const text = String(answer).trim().replace(/\s*분$/, '').trim();
+        if (!text) return null;
+        const minutes = practiceFieldValue(text);
+        if (minutes) return minutes;
+        typed = String(answer);
+    }
+    window.showToast?.(invalid, 'warning');
+    return undefined;
 }
 
 // 이 차시의 실습 시간을 바꾼다(앱 입력 창). 비우면 이 차시에서 정한 값을 지운다(과정 기본값, 없으면 90~120분으로 만든다). 10~600분, 10분 단위만 받는다
@@ -303,17 +329,20 @@ window.changePracticeMinutes = async function (moduleId, tabId) {
     const { minutes, from } = lessonPracticeTime(mod, tabId);
     const course = coursePracticeMinutes(field.key);
     const fallback = course ? `과정 기본값 ${course}분` : '기본 90~120분';
-    const answer = await window.promptAsync(`이 차시 ${field.name}의 실습 시간을 분으로 적어 주세요. 10분에서 600분 사이, 10분 단위입니다.\n비워 두면 ${fallback}으로 만듭니다. 바꾼 시간은 다음에 ${field.name}을 만들 때부터 씁니다.`,
-        { title: `${field.name} 시간`, okLabel: '저장', placeholder: course ? String(course) : '예: 120', value: from === 'lesson' ? String(minutes) : '' });
-    if (answer === null || answer === undefined) return;
-    if (getEditingModule(moduleId) !== mod) return window.showToast?.('묻는 동안 차시가 바뀌어 실습 시간을 바꾸지 않았습니다.', 'warning');
-    const text = String(answer).trim();
-    const value = text ? practiceFieldValue(text) : null;
-    if (text && !value) return window.showToast?.(`${field.name} 시간은 10분에서 600분 사이에서 10분 단위로 적어 주세요(예: 120).`, 'warning');
+    const value = await askPracticeMinutes(field, mod, moduleId, {
+        ask: `이 차시 ${field.name}의 실습 시간을 분으로 적어 주세요. 10분에서 600분 사이, 10분 단위입니다.\n비워 두면 ${fallback}으로 만듭니다. 바꾼 시간은 다음에 ${field.name}을 만들 때부터 씁니다.`,
+        invalid: `${field.name} 시간은 10분에서 600분 사이에서 10분 단위로 적어 주세요(예: 120).`,
+        placeholder: course ? String(course) : '예: 120',
+        value: from === 'lesson' ? String(minutes) : ''
+    });
+    if (value === undefined) return;
     if (practiceFieldValue(mod.gen?.[field.key]) === value) return;
     Object.assign(mod, { gen: withGenOption(mod.gen, field.key, value) }, withHistoryNote(mod, value ? `${field.name} 시간 ${value}분으로 정함` : `${field.name} 시간 정한 값 지움`));
     await saveState();
-    if (getEditingModule() === mod) renderEditor(mod);
+    if (getEditingModule() === mod) {
+        renderEditor(mod);
+        document.getElementById('lesson-practice-time')?.focus?.(); // 다시 그린 단추로 포커스를 돌려준다(키보드로 쓰는 강사가 처음부터 다시 찾지 않게)
+    }
     const made = String(mod.tabContents?.[tabId] || '').trim() ? ` 이미 만든 ${field.name}은 바뀌지 않습니다. 새 시간에 맞추려면 '이 탭 생성'으로 다시 만드세요.` : '';
     window.showToast?.(`${value ? `${field.name} 시간을 ${value}분으로 정했습니다.` : `${field.name}에서 정한 시간을 지웠습니다. ${fallback}으로 만듭니다.`}${made}`, 'success');
 };

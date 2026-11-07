@@ -97,6 +97,8 @@ function pipelineSteps(moduleId, lockedByTab) {
     const tabs = LESSON_TABS.map(tab => ({
         id: tab.id,
         label: tab.label,
+        // 문제은행 탭(학습이해도·심화이해도)은 그 갈래의 학습 탭이 있어야 만든다(앞에서 학습 탭을 만들지 못했으면 건너뛴다)
+        needsTab: isQuestionBankTab(tab.id) ? tabTrack(tab.id)?.learn || null : null,
         needed: mod => lessonMissingTabs(mod).includes(tab.id),
         run: () => generateTabContent(moduleId, tab.id, { quiet: true, background: true, lockedBlocks: lockedByTab[tab.id], onStatus: window.setPipelineStatus })
     }));
@@ -274,6 +276,11 @@ window.runLessonPipeline = async function (moduleId, { lockedByTab = {}, continu
             if (!steps[i].needed(mod)) continue;
             if (steps[i].afterTabs && lessonMissingTabs(mod).length) {
                 run.skipped.push(steps[i].label);
+                continue;
+            }
+            if (steps[i].needsTab && lessonMissingTabs(mod).includes(steps[i].needsTab)) {
+                const learn = LESSON_TABS.find(tab => tab.id === steps[i].needsTab)?.label || steps[i].needsTab;
+                run.skipped.push(`${steps[i].label}(${learn} 탭이 없음)`);
                 continue;
             }
             Object.assign(run, { current: steps[i].id, label: steps[i].label, status: '', done: i });

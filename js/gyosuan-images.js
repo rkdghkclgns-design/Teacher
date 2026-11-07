@@ -38,27 +38,55 @@ function lessonImageContext(lines, at) {
     return { title: alt || heading.replace(/^#+\s*/, ''), text: [heading.replace(/^#+\s*/, ''), ...near].join(' ') };
 }
 
-// 그 줄이 그 그림 키(local:키)를 가리키는지. local:b 뒤에 키 글자가 더 이어지면(local:both) 다른 그림이다
-function lessonLineUsesImage(line, id) {
+// 그 줄에서 그 그림 키(local:키)가 놓인 자리. local:b 뒤에 키 글자가 더 이어지면(local:both) 다른 그림이다. 없으면 -1
+function lessonImageRefAt(line, id) {
     const ref = `local:${id}`;
-    for (let at = line.indexOf(ref); at !== -1; at = line.indexOf(ref, at + 1)) if (!/[\w-]/.test(line.charAt(at + ref.length))) return true;
-    return false;
+    for (let at = line.indexOf(ref); at !== -1; at = line.indexOf(ref, at + 1)) if (!/[\w-]/.test(line.charAt(at + ref.length))) return at;
+    return -1;
 }
 
-// 그 갈래의 학습·실습 탭에 놓인 그림만 고른다(다른 갈래의 그림을 이 갈래 슬라이드에 넣지 않게)
+const lessonLineUsesImage = (line, id) => lessonImageRefAt(line, id) !== -1;
+
+// 그 그림 칸의 출처 설명(예시 게임 그림의 '게임 · 출처: 위키백과 · 라이선스', game-images.js). 출처 페이지를 달았거나 '출처:'가 든 설명만, 아니면 ''.
+// 그림 키 뒤의 첫 설명을 다음 그림 칸 앞까지만 찾는다. 설명은 이스케이프한 글이라 꺾쇠가 없다
+function lessonImageCredit(line, id) {
+    const at = lessonImageRefAt(line, id);
+    if (at === -1) return '';
+    const rest = line.slice(at);
+    const next = rest.indexOf('<div class="image-wrapper"');
+    const match = (next === -1 ? rest : rest.slice(0, next)).match(/<div class="image-caption"([^>]*)>([^<]*)<\/div>/);
+    if (!match) return '';
+    const text = match[2].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#0*39;/g, "'").replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
+    return text && (/\sdata-source-url="https?:\/\//i.test(match[1]) || /출처\s*:/.test(text)) ? text : '';
+}
+
+// 그 갈래의 학습·실습 탭에 놓인 그림만 고른다(다른 갈래의 그림을 이 갈래 슬라이드에 넣지 않게). credit: 그 그림의 출처 설명(없으면 '')
 function lessonImageCandidates(mod, trackId = 'basic') {
     const lines = collectLessonSource(mod, trackId).flatMap(part => String(part.text).split('\n'));
     return Object.entries(mod.images || {}).flatMap(([id, url]) => {
         if (!window.KBuilder.isRasterImage(url)) return [];
         const at = lines.findIndex(line => lessonLineUsesImage(line, id));
-        return at === -1 ? [] : [{ id, url, ...lessonImageContext(lines, at) }];
+        return at === -1 ? [] : [{ id, url, ...lessonImageContext(lines, at), credit: lessonImageCredit(lines[at], id) }];
     });
 }
 
 /* ---------- 결과 옮기기 ---------- */
-// [이미지:id]를 local: 참조로 바꾸고, 내보낼 수 없는 이미지는 표시를 지운다
-function localizeImageTags(md, url) {
-    return String(md || '').replace(GYOSUAN_IMAGE_TAG, (match, id) => (window.KBuilder.isRasterImage(url(id)) ? `![](local:${id})` : ''));
+const GYOSUAN_IMAGE_LINE = /^([ \t]*)\[이미지:([^\]\s]+)\][ \t]*$/gm; // 한 줄을 차지한 표시(교수안 본문의 단계 제목 아래)
+
+// [이미지:id]를 local: 참조로 바꾸고, 내보낼 수 없는 이미지는 표시를 지운다. credits: 출처를 적어야 하는 그림(예시 게임 그림)의 설명 { id → 글 }.
+// 그 그림은 교수안 본문이면 그림 아래 줄에, 편성안의 '이미지/시각' 줄 끝이면 그 줄 끝에 출처를 붙인다(교수안·편성안·내려받기에 출처가 남는다).
+// 교수안 화면(kbuilder parser.js inline)은 굵게·코드·링크만 읽으므로 설명은 꾸밈 없이 글자 그대로 붙인다
+function localizeImageTags(md, url, credits = new Map()) {
+    const credit = id => (credits.has(id) && credits.get(id) ? String(credits.get(id)).replace(/\s+/g, ' ').trim() : '');
+    return String(md || '')
+        .replace(GYOSUAN_IMAGE_LINE, (match, indent, id) => {
+            if (!window.KBuilder.isRasterImage(url(id))) return '';
+            return `${indent}![](local:${id})${credit(id) ? `\n\n${indent}${credit(id)}` : ''}`;
+        })
+        .replace(GYOSUAN_IMAGE_TAG, (match, id) => {
+            if (!window.KBuilder.isRasterImage(url(id))) return '';
+            return `![](local:${id})${credit(id) ? ` (${credit(id)})` : ''}`;
+        });
 }
 
 function taggedImages(texts, url) {
@@ -91,6 +119,13 @@ function collectGeneratedRefs(mod) {
     K.refImagesAddUrl = (url, name) => { K.refImages = [...K.refImages, { name, url }]; };
 }
 
+// 끝 안내(kbuilder/auto-images.js summary). '이미지 건너뛰기'를 눌러 새 그림을 하나도 시작하지 않았으면(실패도 없다) 만들지 못했다고 하지 않는다
+function gyosuanImageNote(A, result, skipped) {
+    if (!skipped || result.made || result.failed || !result.total) return A.summary(result);
+    const reused = result.reused ? ` 교안 본문 이미지 ${result.reused}장을 내용이 같은 슬라이드에 넣었습니다.` : '';
+    return `🖼 이미지 건너뛰기를 눌러 새 슬라이드 이미지는 만들지 않았습니다.${reused}`;
+}
+
 // texts = { docMd, deckMd } → 이미지가 들어간 { docMd, deckMd, images, note }. 실패해도 글은 살린다. trackId: 교수안을 만드는 갈래
 window.attachGyosuanImages = async function (mod, texts, trackId = 'basic') {
     const K = window.KBuilder;
@@ -99,6 +134,7 @@ window.attachGyosuanImages = async function (mod, texts, trackId = 'basic') {
     bindGyosuanImageAi();
     await A.ready;
     const lessonImages = lessonImageCandidates(mod, trackId);
+    const credits = new Map(lessonImages.filter(image => image.credit).map(image => [image.id, image.credit])); // 슬라이드에 쓰면 출처를 함께 적을 그림
     A.adopt(lessonImages);
     collectGeneratedRefs(mod);
     const skip = showGyosuanImageSkip();
@@ -112,10 +148,10 @@ window.attachGyosuanImages = async function (mod, texts, trackId = 'basic') {
         const [tagged] = result.parts;
         mod.refImages = K.normalizeRefImages(K.refImages);
         return {
-            docMd: localizeImageTags(tagged.docMd, A.url),
-            deckMd: localizeImageTags(tagged.deckMd, A.url),
+            docMd: localizeImageTags(tagged.docMd, A.url, credits),
+            deckMd: localizeImageTags(tagged.deckMd, A.url, credits),
             images: taggedImages([tagged.docMd, tagged.deckMd], A.url),
-            note: A.summary(result)
+            note: gyosuanImageNote(A, result, _gyosuanImageSkip)
         };
     } catch (err) {
         console.error('[교수안] 이미지 생성 실패:', err);

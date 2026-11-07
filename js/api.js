@@ -1592,7 +1592,7 @@ async function processImageTags(mod, markdown, { onStatus = null, isStopped = ()
     const reportImage = (done, game) => {
         if (!onStatus) return;
         const leftMinutes = done ? Math.max(1, Math.round((Date.now() - startedAt) / done * (pickedTags.length - done) / 60000)) : 0;
-        onStatus(`🖼️ 이미지 ${done + 1}/${pickedTags.length} ${game ? '위키백과에서 찾는 중' : '만드는 중'} · ${done ? `남은 시간 약 ${leftMinutes}분` : '남은 시간 계산 중'}`);
+        onStatus(`🖼️ 이미지 ${done + 1}/${pickedTags.length} ${game ? '인터넷에서 찾는 중' : '만드는 중'} · ${done ? `남은 시간 약 ${leftMinutes}분` : '남은 시간 계산 중'}`);
     };
 
     // 시작 알림 — 사용자가 진행 상황을 인지할 수 있도록 toast 표시
@@ -1835,18 +1835,21 @@ function lessonTextParts(mod) {
     return mod?.content ? [{ id: 'basicLearn', label: '본문' }] : [];
 }
 
+// 그림을 채우는 글. 문제은행 탭(학습이해도·심화이해도)은 빼서 남은 그림 자리도 세지도 채우지도 않는다(컨벤션: 문제은행 탭에는 그림을 넣지 않는다)
+const lessonPictureParts = mod => lessonTextParts(mod).filter(part => !isQuestionBankTab(part.id));
+
 // 아직 채우지 않은 그림 자리가 남은 글(일괄 이미지 찾기)
 function imageTagTabs(mod) {
-    return lessonTextParts(mod).filter(part => pendingImageTags(storedTabMarkdown(mod, part.id)).length);
+    return lessonPictureParts(mod).filter(part => pendingImageTags(storedTabMarkdown(mod, part.id)).length);
 }
 
 // 그림 자리 수. 실제 처리와 같은 기준(pendingImageTags, 'all')으로 센다. clean: 세기 전에 글에 적용할 정리(콘텐츠 정리는 서식 정리 뒤를 센다)
-function countImageSlots(mod, parts = lessonTextParts(mod), clean = text => text) {
+function countImageSlots(mod, parts = lessonPictureParts(mod), clean = text => text) {
     return parts.reduce((sum, part) => sum + pendingImageTags(clean(storedTabMarkdown(mod, part.id))).length, 0);
 }
 
 // 그림 자리 가운데 예시 게임 그림 수(위키백과에서 찾아 AI 호출이 들지 않는다). 예고가 AI 그림 장수에서 뺀다
-function countGameImageSlots(mod, parts = lessonTextParts(mod), clean = text => text) {
+function countGameImageSlots(mod, parts = lessonPictureParts(mod), clean = text => text) {
     return parts.reduce((sum, part) => sum + pendingImageTags(clean(storedTabMarkdown(mod, part.id))).filter(tag => tag.game).length, 0);
 }
 
@@ -1967,7 +1970,7 @@ async function cleanupLesson(subj, mod, run) {
     const changed = cleanLessonMarkdown(mod);
     let touched = changed > 0;
     if (changed && lessonTextParts(mod).some(part => isShowingLessonTab(subj, mod, part.id))) renderEditor(mod);
-    for (const part of lessonTextParts(mod)) {
+    for (const part of lessonPictureParts(mod)) { // 문제은행 탭의 남은 그림 자리는 채우지 않는다
         if (run.stopped) break;
         const snapshot = storedTabMarkdown(mod, part.id);
         if (!pendingImageTags(snapshot).length) continue;
@@ -3123,7 +3126,7 @@ ${tabGenerateButtonsHtml(mod, tabless)}
                             <button onclick="toggleEditorMode('edit'); this.closest('details').open = false" id="raw-edit-btn" class="px-3 py-1.5 text-xs font-bold bg-gray-50 text-gray-700 border border-gray-200 rounded hover:bg-gray-100 flex items-center gap-1 transition-colors" title="이 탭의 마크다운 원문 전체를 고칩니다. 단락 하나는 본문을 두 번 눌러 고칩니다"><i class="ph-bold ph-code"></i> 원문 전체 수정</button>
                             <button onclick="generateAllImagesInModule('${mod.id}')" id="img-batch-btn" class="px-3 py-1.5 text-xs font-bold bg-purple-50 text-purple-600 border border-purple-200 rounded hover:bg-purple-100 flex items-center gap-1 transition-colors hover:-translate-y-0.5"><i class="ph-bold ph-image-square"></i> 일괄 이미지 찾기</button>
                             <button onclick="sanitizeAllContent()" id="sanitize-btn" class="px-3 py-1.5 text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 flex items-center gap-1 transition-colors hover:-translate-y-0.5" title="교과의 모든 차시와 최종 평가에서 글 서식을 고치고, 아직 채우지 않은 그림 자리를 채웁니다"><i class="ph-bold ph-sparkle"></i> 콘텐츠 정리</button>
-                            <button onclick="insertGamePictures('${mod.id}'); this.closest('details').open = false" id="game-picture-btn" class="px-3 py-1.5 text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 flex items-center gap-1 transition-colors" title="이 탭에서 예로 든 실제 게임을 AI가 찾아, 그 게임 그림을 위키백과에서 찾아 넣습니다(출처를 함께 적습니다)"><i class="ph-bold ph-game-controller"></i> 예시 게임 그림 넣기</button>
+                            ${isQuestionBankTab(currentLessonTab) ? '' : `<button onclick="insertGamePictures('${mod.id}'); this.closest('details').open = false" id="game-picture-btn" class="px-3 py-1.5 text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 flex items-center gap-1 transition-colors" title="이 탭에서 예로 든 실제 게임을 AI가 찾아, 그 게임 그림을 위키백과에서 찾아 넣습니다(출처를 함께 적습니다). 위키백과에서 못 찾으면 검색 키가 있을 때 웹 검색으로 찾고, 그 그림에는 이용 조건 확인 필요라고 적습니다"><i class="ph-bold ph-game-controller"></i> 예시 게임 그림 넣기</button>`}
                             <label class="cursor-pointer px-3 py-1.5 text-xs font-bold bg-blue-50 text-blue-600 border border-blue-200 rounded hover:bg-blue-100 flex items-center gap-1 transition-colors" title="에디터에 이미지 삽입">
                                 <i class="ph-bold ph-image"></i> 이미지 삽입
                                 <input type="file" accept="image/*" class="hidden" multiple onchange="handleImageInputSelect(event)">
@@ -3148,9 +3151,10 @@ ${tabGenerateButtonsHtml(mod, tabless)}
                     </div>
 
                     <!-- 탐색줄: 위쪽 버튼 줄과 함께 붙어 있게 같은 sticky 안에 둔다(높이가 바뀌어도 틈이 생기지 않는다).
-                         탭 단추만 옆으로 밀어 보고, 낭독 분량 표시(분량 채우기)는 밀지 않아도 늘 오른쪽 끝에 보인다 -->
+                         탭 단추만 옆으로 밀어 보고, 낭독 분량 표시(분량 채우기)는 밀지 않아도 늘 오른쪽 끝에 보인다.
+                         밀 수 있으면 아래 막대가 보이고 마우스 휠로도 민다(index.html .lesson-nav-scroll, tabs.js lessonNavWheel) -->
                     <div class="flex items-center gap-0.5 px-4 py-1 bg-white border-t border-gray-200">
-                        <div class="flex-1 min-w-0 overflow-x-auto">
+                        <div class="lesson-nav-scroll flex-1 min-w-0 overflow-x-auto">
                             <div id="lesson-nav-items" class="flex items-center gap-0.5 w-max">${renderTabBar(mod)}</div>
                         </div>
                         <span id="lesson-volume-chip" class="hidden"></span>
