@@ -311,7 +311,8 @@ const DBManager = {
     },
 
     // --- [Phase F10] 이미지 캐시 관리 API ---
-    async setCache(keyword, base64Data, sourceUrl, formatLabel) {
+    // meta: 그림과 함께 둘 정보(예시 게임 그림의 문서·파일·라이선스, game-images.js). 없으면 넣지 않는다
+    async setCache(keyword, base64Data, sourceUrl, formatLabel, meta = null) {
         const db = await this.init();
         return new Promise((resolve, reject) => {
             const tx = db.transaction(this.cacheStoreName, 'readwrite');
@@ -321,7 +322,8 @@ const DBManager = {
                 base64: base64Data,      // 이미지
                 source: sourceUrl,       // 출처 URL (안내용)
                 format: formatLabel,     // 라벨 ("웹 검색 연동" 등)
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                ...(meta && typeof meta === 'object' ? { meta } : {})
             };
             const request = store.put(payload);
             request.onsuccess = () => resolve();

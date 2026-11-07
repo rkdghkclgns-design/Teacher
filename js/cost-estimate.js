@@ -1,4 +1,4 @@
-// cost-estimate.js - 일괄 작업 전에 글 호출 수·비용 수준, 그림 장수·그리는 곳·요금 방식, 걸릴 시간을 미리 보여 준다
+// cost-estimate.js - 일괄 작업 전에 글 호출 수·비용 수준, 그림 장수·그리는 곳·요금 방식, 걸릴 시간을 미리 보여 준다(예시 게임 그림은 위키백과에서 무료로 찾아 호출로 세지 않는다)
 // 정확한 값이 아니라 가늠이다. 호출 하나에 걸린 시간을 이 브라우저에 모델별로 모아(본문 호출과 짧은 호출은 따로, 최근 평균) 시간 가늠에 쓴다(api.js callGemini).
 // 금액은 공급자 요금표가 자주 바뀌어 넣지 않는다. 글은 고른 글 모델로 비용 수준(낮음·보통·높음)을, 그림은 누가 그리는지와 요금 방식을 보인다. 테스트: tests/cost-estimate.test.js
 
@@ -37,6 +37,7 @@ const LONG_CALL_FACTOR = 3;                                // 잰 기록이 없�
 const ESTIMATE_VOLUME = { minutes: 480, charsPerMinute: 250, tabs: ['basicLearn', 'advLearn'], practiceTabs: ['basicPrac', 'advPrac'] };
 const IMAGE_CALL_SECONDS = { gemini: 25, higgsfield: 60 }; // 잰 기록이 없을 때 그림 한 장(초)
 const ESTIMATE_GAPS = { image: 7, tab: 4 };                // 교안 그림 사이 간격(api.js IMAGE_TAG_GAP_MS), 탭·단계 사이 쉬는 시간(초)
+const ESTIMATE_GAME_SECONDS = 5;                           // 예시 게임 그림 한 장: 위키백과 검색·라이선스·그림 받기(AI 호출 없음, 사이 간격 없음)
 const EFFORT_FACTOR = { low: 0.7, medium: 1, high: 1.5, xhigh: 1.75, max: 2 };
 const COST_LABEL = { low: '낮음', mid: '보통', high: '높음' };
 const ESTIMATE_SVG_MODEL = 'svg-illustration';             // data.js SVG_IMAGE_MODEL과 같다(테스트는 data.js 없이 돈다)
@@ -119,7 +120,7 @@ const sumWork = list => list.reduce((total, work) => {
 // work: { tabs, images(교안 그림), slideImages(슬라이드 그림), ncs, gyosuan, qbank, art, ocr, volume(분량을 채우는 학습 탭 수), volumeCalls(그 긴 호출 수),
 // practiceCalls(실습 시간을 정한 실습 탭의 더 드는 이어쓰기 호출) } 개수 →
 // 본문 호출(body), 기다리는 시간으로 센 본문 호출(bodyWait), 짧은 호출(short), 그림 장수(images), 분량 보강·자동 수정의 긴 호출(long, 있을 때만).
-// volumeCalls가 없으면 탭마다 480분 상한으로 센다
+// volumeCalls가 없으면 탭마다 480분 상한으로 센다. 예시 게임 그림(work.gameImages)은 위키백과에서 찾아 호출로 세지 않는다(estimateSummary가 시간만 더한다)
 function estimateCallSplit(work = {}) {
     const rule = ESTIMATE_RULES;
     const tabs = (work.tabs || 0) * rule.tabCalls + (work.practiceCalls || 0);
@@ -188,21 +189,23 @@ function secondsPerImage(imageModel, source, timings = readAiTimings()) {
 // 시간은 범위(0.7배~1.5배)로. 한 번에 하나씩 차례로 부르므로 더한다(교수안 전개는 셋씩이라 bodyWait로 센다)
 // imageSource: 'gemini'(그림 모델, 장마다 요금) · 'higgsfield'(크레딧) · 'svg'(글 모델이 그림) / exactImages: 남은 자리를 그대로 셌다
 // imageAmount: 교안 이미지 양(안내에 쓴다) / imageSearch: 그림 검색 키가 있는지(그림 모델이 막혀도 교안 그림은 검색으로 찾는다)
+// work.gameImages: 예시 게임 그림 장수. 위키백과에서 무료로 찾아 호출·그림 장수에 넣지 않고 따로 보인다
 function estimateSummary(work, { model = '', effort = 'medium', timings = readAiTimings(), imageModel = '', imageSource = 'gemini', exactImages = false, routed = false, imageAmount = '', imageSearch = false } = {}) {
     const split = estimateCallSplit(work);
+    const gameImages = Math.max(0, Math.round(Number(work.gameImages) || 0));
     const body = secondsPerCall(model, effort, timings);
     const shortSeconds = secondsPerCall(model, effort, timings, 'short').seconds;
     const long = secondsPerCall(model, effort, timings, 'long');
     const longSeconds = long.measured ? long.seconds : body.seconds * LONG_CALL_FACTOR; // 잰 긴 호출이 없으면 본문 호출 시간(잰 값이면 그 값)의 3배
     const imageSeconds = imageSource === 'svg' ? body.seconds : secondsPerImage(imageModel, imageSource, timings);
     const seconds = split.bodyWait * body.seconds + split.short * shortSeconds + (split.long || 0) * longSeconds + split.images * imageSeconds
-        + (work.images || 0) * ESTIMATE_GAPS.image + (work.tabs || 0) * ESTIMATE_GAPS.tab;
+        + (work.images || 0) * ESTIMATE_GAPS.image + (work.tabs || 0) * ESTIMATE_GAPS.tab + gameImages * ESTIMATE_GAME_SECONDS;
     const minutes = seconds / 60;
     const minutesLow = Math.max(1, Math.round(minutes * 0.7));
     const minutesHigh = Math.max(minutesLow, Math.ceil(minutes * 1.5));
     const tier = modelCostTier(model);
     return {
-        calls: estimateCalls(work, imageSource), images: split.images, slideImages: work.slideImages || 0,
+        calls: estimateCalls(work, imageSource), images: split.images, slideImages: work.slideImages || 0, gameImages,
         volume: work.volume || 0, volumeAdv: work.volumeAdv || 0, volumeCalls: split.long || 0, volumeMinutes: work.volumeMinutes || ESTIMATE_VOLUME.minutes,
         imageSource, exactImages, routed, imageAmount, imageSearch,
         minutesLow, minutesHigh, tier, costLabel: COST_LABEL[tier], measured: body.measured
@@ -228,11 +231,12 @@ const IMAGE_SOURCE_TEXT = {
     svg: () => '글 모델이 SVG로 그림 · 글 비용에 포함'
 };
 
-// 보이는 글: 글(호출 수·비용 수준), 그림(장수·누가 그리는지·요금), 걸리는 시간을 한 줄씩
+// 보이는 글: 글(호출 수·비용 수준), 그림(장수·누가 그리는지·요금), 예시 게임 그림(위키백과에서 무료로 찾는 장수), 걸리는 시간을 한 줄씩
 function estimateLines(summary, { modelLabel = '', imageLabel = '' } = {}) {
     return [
         summary.calls ? `글: AI 호출 약 ${summary.calls}회 · 비용 ${summary.costLabel}${modelLabel ? `(${modelLabel})` : ''}` : '',
         summary.images ? `그림: ${estimateImageCount(summary)} · ${(IMAGE_SOURCE_TEXT[summary.imageSource] || IMAGE_SOURCE_TEXT.gemini)(imageLabel)}` : '',
+        summary.gameImages ? `예시 게임 그림: ${summary.exactImages ? '' : '약 '}${summary.gameImages}장 · 위키백과에서 무료로 찾음` : '',
         `걸리는 시간: ${estimateTimeText(summary.minutesLow, summary.minutesHigh)}`
     ].filter(Boolean);
 }

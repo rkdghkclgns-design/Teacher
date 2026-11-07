@@ -1344,7 +1344,8 @@ async function searchImageAPI(query) {
                 const imgUrl = data.items[0].link;
                 // Base64로 가져오기
                 const b64 = await fetchImageAsBase64(imgUrl);
-                return { b64, source: imgUrl, vendor: "Google" };
+                const page = typeof data.items[0].image?.contextLink === 'string' ? data.items[0].image.contextLink : ''; // 그림이 실린 페이지(예시 게임 그림의 출처)
+                return { b64, source: imgUrl, page, vendor: "Google" };
             } else {
                 return null; // 검색 결과 없음 -> 롤백
             }
@@ -1489,6 +1490,7 @@ window.autoInjectImageTags = autoInjectImageTags;
 const IMAGE_TAG_GAP_MS = 7000; // 이미지 하나에 검색 의도·판정·생성 호출이 이어지므로 무료 등급 분당 호출 한도를 피한다
 
 // 이미지 양 설정에 따라 만들 태그를 고른다. 고르지 않은 태그는 본문에 남아 나중에 '일괄 이미지 찾기'로 채운다
+// 예시 게임 태그는 AI를 부르지 않아(위키백과에서 찾는다) '핵심만'에서도 모두 고르고 섹션의 한 장으로 세지 않는다. '넣지 않음'이면 고르지 않는다
 function pickImageTags(markdown, tags, amount) {
     if (amount === 'none') return [];
     if (amount !== 'section') return tags;
@@ -1497,6 +1499,7 @@ function pickImageTags(markdown, tags, amount) {
     return tags.filter(tag => {
         const at = markdown.indexOf(tag.fullMatch, from);
         if (at >= 0) from = at + tag.fullMatch.length;
+        if (tag.game) return true;
         const section = (markdown.slice(0, Math.max(at, 0)).match(/^##\s/gm) || []).length;
         if (sections.has(section)) return false;
         sections.add(section);
@@ -1508,6 +1511,29 @@ const IMAGE_TAG_RE = /<!--\s*\[IMG:\s*"?([^"]+)"?\]\s*-->/g;
 const IMAGE_SKIP_SECTIONS = /학습\s*목표|objectives?|개요|overview|요약|정리|마무리|summary|체크리스트/i;
 const IMAGE_TIME_LABEL = /\(\s*⏱[^()]*\)/g; // 섹션 제목의 (⏱ N분). 그림 자리 검색어에는 넣지 않는다
 
+// 예시 게임 그림 태그: <!-- [IMG: "game: 공식 영어 제목"] -->. AI 그림 모델 대신 인터넷(위키백과)에서 그 게임의 실제 그림을 찾는다(game-images.js)
+const GAME_TAG_PREFIX = 'game:';
+const isGameImageKeyword = keyword => String(keyword ?? '').trim().slice(0, GAME_TAG_PREFIX.length).toLowerCase() === GAME_TAG_PREFIX;
+
+// 그림 태그 검색어가 예시 게임 태그이면 게임 제목, 아니면 ''
+function gameImageTitle(keyword) {
+    if (!isGameImageKeyword(keyword)) return '';
+    return String(keyword).trim().slice(GAME_TAG_PREFIX.length).replace(/\s+/g, ' ').trim();
+}
+
+// 예시 게임 그림을 찾지 못한 자리의 글(이스케이프 전)
+const gameMissText = title => `인터넷에서 '${title}' 게임 그림을 찾지 못했습니다`;
+
+// 새 그림 키. 같은 밀리초에 여럿 만들어도(예시 게임 그림은 사이를 두지 않는다) 겹치지 않게 이미 쓴 키를 피한다
+function uniqueLessonImageId(taken = new Set()) {
+    let id = '';
+    do {
+        id = 'img_' + Date.now() + Math.floor(Math.random() * 1000);
+    } while (taken.has(id));
+    taken.add(id);
+    return id;
+}
+
 // 태그 바로 앞 500자 안의 가장 가까운 # 제목이 학습 목표·개요·요약 같은 글 위주 섹션인지
 function inSkippedImageSection(markdown, fullMatch) {
     const pos = markdown.indexOf(fullMatch);
@@ -1518,16 +1544,23 @@ function inSkippedImageSection(markdown, fullMatch) {
 
 // 이 글에서 실제로 처리할 그림 자리. 코드 블록 안의 태그(코드 예제)와 글 위주 섹션의 태그, 이미 있는 그림을 가리키는 local: 태그(백업 ZIP 되살리기)는 빼고,
 // 이미지 양 설정으로 고른다. 예고(일괄 이미지 찾기·콘텐츠 정리)와 실제 처리가 같은 수를 쓴다. 검색어의 (⏱ N분)은 뗀다(예전에 넣은 태그)
+// 태그마다 game: 예시 게임 태그면 게임 제목, 아니면 ''. 제목이 빈 게임 태그는 뺀다
 function pendingImageTags(markdown, amount = 'all') {
     const text = stashCodeFences(String(markdown || '')).text;
-    const tags = [...text.matchAll(IMAGE_TAG_RE)].map(match => ({ fullMatch: match[0], keyword: match[1].replace(IMAGE_TIME_LABEL, ' ').replace(/\s{2,}/g, ' ').trim() }));
-    return pickImageTags(text, tags.filter(tag => tag.keyword && !/^local:/.test(tag.keyword) && !inSkippedImageSection(text, tag.fullMatch)), amount);
+    const tags = [...text.matchAll(IMAGE_TAG_RE)].map(match => {
+        const keyword = match[1].replace(IMAGE_TIME_LABEL, ' ').replace(/\s{2,}/g, ' ').trim();
+        return { fullMatch: match[0], keyword, game: gameImageTitle(keyword) };
+    });
+    const usable = tag => tag.keyword && !/^local:/.test(tag.keyword) && (tag.game || !isGameImageKeyword(tag.keyword));
+    return pickImageTags(text, tags.filter(tag => usable(tag) && !inSkippedImageSection(text, tag.fullMatch)), amount);
 }
 window.pendingImageTags = pendingImageTags;
 
 // 교안 그림 칸(다시 찾기 버튼과 한글 설명). alt·caption은 이미 이스케이프한 글이어야 한다
-function imageWrapperHtml(imgId, keyword, alt, caption) {
-    return `<div class="image-wrapper"><img src="local:${imgId}" alt="${alt}" class="rounded-lg border-2 border-accent/30 shadow-md max-w-full"><button class="image-regenerate-btn px-3 py-1.5 text-xs text-white font-bold rounded flex items-center gap-1 border border-accent/50 hover:bg-accent transition-colors" data-lesson-action="regenerate-image" data-keyword="${escapeHtml(keyword)}" data-img-id="${imgId}"><i class="ph-bold ph-arrows-clockwise"></i> 다시 찾기</button><div class="image-caption" style="margin-top:8px;text-align:center;font-size:0.85rem;color:#6b7280;font-style:italic;font-weight:500;letter-spacing:-0.01em;line-height:1.4;max-width:100%;">${caption}</div></div>`;
+// attrs: 다시 찾기 버튼(button)과 그림 설명(caption)에 더 달 data 속성 { 이름: 값 }. 이름은 코드가 정하고 값은 여기서 이스케이프한다(빈 값은 달지 않는다)
+function imageWrapperHtml(imgId, keyword, alt, caption, attrs = {}) {
+    const extra = map => Object.entries(map || {}).filter(([, value]) => value).map(([name, value]) => ` ${name}="${escapeHtml(String(value))}"`).join('');
+    return `<div class="image-wrapper"><img src="local:${imgId}" alt="${alt}" class="rounded-lg border-2 border-accent/30 shadow-md max-w-full"><button class="image-regenerate-btn px-3 py-1.5 text-xs text-white font-bold rounded flex items-center gap-1 border border-accent/50 hover:bg-accent transition-colors" data-lesson-action="regenerate-image" data-keyword="${escapeHtml(keyword)}" data-img-id="${imgId}"${extra(attrs.button)}><i class="ph-bold ph-arrows-clockwise"></i> 다시 찾기</button><div class="image-caption"${extra(attrs.caption)} style="margin-top:8px;text-align:center;font-size:0.85rem;color:#6b7280;font-style:italic;font-weight:500;letter-spacing:-0.01em;line-height:1.4;max-width:100%;">${caption}</div></div>`;
 }
 
 // 그림을 못 만든 자리. 그 자리의 '다시 검색'을 누르면 새 그림을 만들어 이 자리에 넣는다(doRegenerateImage). text는 이미 이스케이프한 글이어야 한다
@@ -1538,53 +1571,64 @@ function imagePlaceholderHtml(text, keyword) {
 // opts.onStatus: 진행 문구(장수·남은 시간)를 받는다 / opts.isStopped·opts.signal: 중지하면 남은 태그를 그대로 두고 그리던 그림 호출도 끊는다
 // opts.amount: 'all' | 'section' | 'none' (기본은 설정의 이미지 양) / opts.latest: 다 만든 뒤 이미지를 넣을 최신 글을 돌려준다
 // opts.inject: 그림 자리가 빠진 섹션에 태그를 보탤지. 새로 만든 글만 켠다(남은 자리를 채울 때 켜면 이미 그림이 있는 섹션에 또 그린다)
-// opts.quiet: 끝 알림을 띄우지 않는다(부른 쪽이 모아서 알린다) / opts.stats: { made, failed }에 이번 결과를 더한다
-async function processImageTags(mod, markdown, { onStatus = null, isStopped = () => !!window.isTabGenerationStopped?.(), signal = window.aiStopSignal?.() || null, amount = LESSON_IMAGE_AMOUNT, latest = null, inject = true, quiet = false, stats = null } = {}) {
+// opts.quiet: 끝 알림을 띄우지 않는다(부른 쪽이 모아서 알린다) / opts.stats: { made, failed, gameFailed }에 이번 결과를 더한다
+// opts.gamesOnly: 예시 게임 태그만 채운다(예시 게임 그림 넣기. 다른 그림 자리는 AI를 불러야 해서 그대로 둔다)
+// 예시 게임 태그는 검색어 정하기·판정·AI 그림 없이 위키백과(검색 키가 있으면 Google)에서 찾는다(game-images.js). 그 앞에서는 쉬지 않는다
+async function processImageTags(mod, markdown, { onStatus = null, isStopped = () => !!window.isTabGenerationStopped?.(), signal = window.aiStopSignal?.() || null, amount = LESSON_IMAGE_AMOUNT, latest = null, inject = true, quiet = false, stats = null, gamesOnly = false } = {}) {
 
     // LLM이 태그를 누락했을 경우 자동 주입 (이미지 0장 방지). 남은 자리를 채우는 작업은 보태지 않는다
     if (inject) markdown = autoInjectImageTags(markdown);
     const result = markdown;
-    const pickedTags = pendingImageTags(markdown, amount);
+    const pickedTags = pendingImageTags(markdown, amount).filter(tag => !gamesOnly || tag.game);
     if (pickedTags.length === 0) return result;
     const proseText = stashCodeFences(markdown).text; // 검색 문맥은 코드 블록 밖의 같은 태그 자리에서 읽는다
+    const takenIds = new Set(Object.keys(mod?.images && typeof mod.images === 'object' ? mod.images : {}));
 
     // 부른 쪽 진행 막대에 장수와 남은 시간을 보인다. 남은 시간은 지금까지 걸린 평균으로 잰다
     const startedAt = Date.now();
-    const reportImage = done => {
+    const reportImage = (done, game) => {
         if (!onStatus) return;
         const leftMinutes = done ? Math.max(1, Math.round((Date.now() - startedAt) / done * (pickedTags.length - done) / 60000)) : 0;
-        onStatus(`🖼️ 이미지 ${done + 1}/${pickedTags.length} 만드는 중 · ${done ? `남은 시간 약 ${leftMinutes}분` : '남은 시간 계산 중'}`);
+        onStatus(`🖼️ 이미지 ${done + 1}/${pickedTags.length} ${game ? '위키백과에서 찾는 중' : '만드는 중'} · ${done ? `남은 시간 약 ${leftMinutes}분` : '남은 시간 계산 중'}`);
     };
 
     // 시작 알림 — 사용자가 진행 상황을 인지할 수 있도록 toast 표시
     if (window.showToast && !quiet && !onStatus) window.showToast(`🎨 이미지 ${pickedTags.length}개를 차례로 만듭니다. 한 장에 수십 초가 걸릴 수 있습니다.`, 'info');
 
-    // Rate Limit(429) 방지: 순차 처리 + 요청 간 7초 간격
+    // Rate Limit(429) 방지: 순차 처리 + AI를 부르는 그림 사이 7초 간격
     let successCount = 0;
     let failCount = 0;
+    let gameFails = 0; // 못 찾은 자리 가운데 예시 게임 그림(끝 알림이 그림 모델 이야기를 하지 않게)
     let skipped = 0;
     let blockedLeft = 0; // 그림 모델이 모두 막혀 그대로 둔 태그 수
+    let calledAi = false; // AI를 부르는 그림 자리를 하나라도 처리했는지(다음 그런 자리 앞에서 쉰다)
     const replacements = [];
     for (let index = 0; index < pickedTags.length; index++) {
-        // 요청 사이 간격을 둔 뒤 중지를 확인한다. 중지하면 남은 태그는 본문에 두어 '일괄 이미지 찾기'로 이어서 만든다
-        if (index > 0) await waitMs(IMAGE_TAG_GAP_MS, signal).catch(() => {}); // 중지하면 간격을 다 기다리지 않는다
+        const tag = pickedTags[index];
+        // 그림 모델이 모두 막혔고 검색으로 찾을 길도 없으면 AI를 부르는 태그는 부르지 않고 둔다(비용 없음). 예시 게임 태그는 위키백과에서 계속 찾는다
+        const blocked = !tag.game && imageGenerationBlocked() && !imageSearchReady();
+        // AI를 부르는 자리 사이에 간격을 둔 뒤 중지를 확인한다. 중지하면 남은 태그는 본문에 두어 '일괄 이미지 찾기'로 이어서 만든다
+        if (!tag.game && !blocked && calledAi) await waitMs(IMAGE_TAG_GAP_MS, signal).catch(() => {}); // 중지하면 간격을 다 기다리지 않는다
         if (isStopped() || signal?.aborted) {
             skipped = pickedTags.length - index;
             break;
         }
-        // 그림 모델이 모두 막혔고 검색으로 찾을 길도 없으면 남은 태그는 부르지 않고 둔다(비용 없음)
-        if (imageGenerationBlocked() && !imageSearchReady()) {
-            blockedLeft += pickedTags.length - index;
-            break;
+        if (blocked) {
+            blockedLeft += 1;
+            continue;
         }
-        reportImage(index);
-        const tag = pickedTags[index];
+        if (!tag.game) calledAi = true;
+        reportImage(index, !!tag.game);
         let outcome = ''; // 'stopped' | 'blocked'이면 이 태그는 글에 그대로 둔다
         const replacement = await (async () => {
         try {
 
             // [Phase F10] 1. 문맥 기반 검색어 튜닝 에이전트 가동
             const context = getContextWindow(proseText, tag.fullMatch, 400);
+            if (tag.game) { // 예시 게임: 위키백과 → (검색 키가 있으면) Google. 검색어 정하기·Pixabay·AI 그림은 쓰지 않는다
+                if (typeof gameTagReplacement === 'function') return await gameTagReplacement(tag, { signal, context, taken: takenIds });
+                return { fullMatch: tag.fullMatch, html: imagePlaceholderHtml(escapeHtml(gameMissText(tag.game)), tag.keyword), game: true };
+            }
             const intent = await extractSearchIntent(tag.keyword, context, signal);
             const searchQuery = (intent && intent.search_query) ? intent.search_query : tag.keyword;
 
@@ -1685,7 +1729,7 @@ async function processImageTags(mod, markdown, { onStatus = null, isStopped = ()
 
             if (b64Image) {
                 // 그림은 글에 자리를 넣을 때(아래) 차시 그림에 담는다. 그리는 동안 원문을 저장하면 글이 아직 가리키지 않는 그림을 덜어 낸다(tabs.js dropUnusedLessonImages)
-                const imgId = 'img_' + Date.now() + Math.floor(Math.random() * 1000);
+                const imgId = uniqueLessonImageId(takenIds);
 
                 let vendorIcon = 'ph-sparkle'; // default (AI)
                 if (vendorLabel.includes('Google') || vendorLabel.includes('웹 검색')) vendorIcon = 'ph-google-logo';
@@ -1712,6 +1756,7 @@ async function processImageTags(mod, markdown, { onStatus = null, isStopped = ()
                 return null;
             }
             console.error(`이미지 처리 실패 (${tag.keyword}):`, e);
+            if (tag.game) return { fullMatch: tag.fullMatch, html: imagePlaceholderHtml(escapeHtml(gameMissText(tag.game)), tag.keyword), game: true };
             return { fullMatch: tag.fullMatch, html: imagePlaceholderHtml(`이미지 확보 실패: ${escapeHtml(tag.keyword)}`, tag.keyword) };
         }
         })();
@@ -1744,6 +1789,7 @@ async function processImageTags(mod, markdown, { onStatus = null, isStopped = ()
         output = output.slice(0, at) + rep.html + output.slice(at + rep.fullMatch.length); // 글 조각으로 이어 붙여 그림 설명 속 $ 기호를 바꿀 글 규칙으로 읽지 않는다
         if (!rep.imgId) {
             failCount++;
+            if (rep.game) gameFails++;
             continue;
         }
         if (!mod.images || typeof mod.images !== 'object') mod.images = {};
@@ -1753,6 +1799,7 @@ async function processImageTags(mod, markdown, { onStatus = null, isStopped = ()
     if (stats) {
         stats.made += successCount;
         stats.failed += failCount;
+        if (gameFails) stats.gameFailed = (stats.gameFailed || 0) + gameFails;
         if (gone) stats.gone = (stats.gone || 0) + gone;
     }
     if (blockedLeft && _imageRun) _imageRun.left += blockedLeft;
@@ -1767,6 +1814,8 @@ async function processImageTags(mod, markdown, { onStatus = null, isStopped = ()
                 window.showToast(`✅ 이미지 ${successCount}건 생성 완료`, 'success');
             } else if (successCount > 0 && failCount > 0) {
                 window.showToast(`⚠️ 이미지 ${successCount}건 성공 · ${failCount}건 실패 (실패한 자리는 '다시 검색'으로 다시 해 보세요)`, 'warning');
+            } else if (failCount > 0 && gameFails === failCount) { // 예시 게임 그림만 못 찾았다: 그림 모델 이야기를 하지 않는다
+                window.showToast(`인터넷에서 예시 게임 그림 ${failCount}장을 찾지 못했습니다. 그 자리의 '다시 검색'으로 다시 해 보세요.`, 'warning');
             } else if (failCount > 0) {
                 window.showToast(`❌ 그림 ${failCount}장을 모두 만들지 못했습니다. 설정의 이미지 생성 모델과 키를 확인해 주세요.`, 'error');
             }
@@ -1793,20 +1842,29 @@ function countImageSlots(mod, parts = lessonTextParts(mod), clean = text => text
     return parts.reduce((sum, part) => sum + pendingImageTags(clean(storedTabMarkdown(mod, part.id))).length, 0);
 }
 
+// 그림 자리 가운데 예시 게임 그림 수(위키백과에서 찾아 AI 호출이 들지 않는다). 예고가 AI 그림 장수에서 뺀다
+function countGameImageSlots(mod, parts = lessonTextParts(mod), clean = text => text) {
+    return parts.reduce((sum, part) => sum + pendingImageTags(clean(storedTabMarkdown(mod, part.id))).filter(tag => tag.game).length, 0);
+}
+
 // 그림을 채운 작업의 끝 알림. slots: 시작할 때 센 자리 수(중지·한도로 못 간 자리는 남은 자리로 센다. 그리는 동안 글에서 지운 자리 gone은 빼고)
 // 못 만든 자리는 그림 없는 자리(이미지 영역·이미지 확보 실패)가 되고, 그 자리의 '다시 검색'이 새 그림을 만들어 넣는다(doRegenerateImage)
-function imageFillSummary({ made = 0, failed = 0, gone = 0 }, slots = 0) {
+// gameFailed: 못 만든 자리 가운데 인터넷에서 찾지 못한 예시 게임 그림. 모두 그것이면 그림 모델 설정을 보라고 하지 않는다
+function imageFillSummary({ made = 0, failed = 0, gone = 0, gameFailed = 0 }, slots = 0) {
     const left = Math.max(0, slots - made - failed - gone);
     const retry = "그 자리의 '다시 검색'으로 다시 해 보세요.";
     const madeText = made ? `그림 ${made}장을 넣었습니다.` : '넣은 그림은 없습니다.';
+    const onlyGames = failed > 0 && gameFailed >= failed;
     const head = !failed ? madeText
         : made ? `${madeText} 못 만든 ${failed}곳은 ${retry}`
-            : `그림을 하나도 넣지 못했습니다(${failed}곳). 설정의 이미지 생성 모델과 키를 확인한 뒤 ${retry}`;
+            : onlyGames ? `인터넷에서 예시 게임 그림을 찾지 못했습니다(${failed}곳). ${retry}`
+                : `그림을 하나도 넣지 못했습니다(${failed}곳). 설정의 이미지 생성 모델과 키를 확인한 뒤 ${retry}`;
     const text = left ? `${head} 그림 자리 ${left}개는 그대로 남겨 두었습니다.` : head;
-    return { text, kind: failed && !made ? 'error' : failed || left ? 'warning' : 'success' };
+    return { text, kind: failed && !made ? (onlyGames ? 'warning' : 'error') : failed || left ? 'warning' : 'success' };
 }
 window.lessonTextParts = lessonTextParts;
 window.countImageSlots = countImageSlots;
+window.countGameImageSlots = countGameImageSlots;
 window.imageFillSummary = imageFillSummary;
 
 // 일괄 작업이 시작할 때 잡은 차시(최종 평가)가 아직 지금 데이터의 그 객체인지. 백업·PC 폴더를 불러오거나 교과·차시를 지우면(휴지통)
@@ -1841,6 +1899,7 @@ async function fillTabImages(subj, mod, tabId, stats) {
     stats.made += tabStats.made;
     stats.failed += tabStats.failed;
     stats.gone = (stats.gone || 0) + (tabStats.gone || 0);
+    stats.gameFailed = (stats.gameFailed || 0) + (tabStats.gameFailed || 0);
     setTabMarkdown(mod, tabId, processed);
     const saved = (await saveState()) !== false; // 브라우저에 저장하지 못하면 false(알림은 saveState가 띄운다)
     if (isShowingLessonTab(subj, mod, tabId)) renderEditor(mod);
@@ -1857,7 +1916,8 @@ async function generateAllImagesInModule(moduleId) {
     const tabs = imageTagTabs(mod);
     if (!tabs.length) return window.showToast('아직 채우지 않은 그림 자리가 없습니다.', 'info');
     const slots = countImageSlots(mod, tabs);
-    if (!(await confirmWithEstimate(`탭 ${tabs.length}개에서 아직 채우지 않은 그림 자리 ${slots}개를 검색이나 AI로 채웁니다.`, { images: slots }, { title: '일괄 이미지 찾기', okLabel: '찾기 시작', exactImages: true }))) return;
+    const games = countGameImageSlots(mod, tabs); // 예시 게임 그림은 위키백과에서 찾아 AI 호출로 세지 않는다
+    if (!(await confirmWithEstimate(`탭 ${tabs.length}개에서 아직 채우지 않은 그림 자리 ${slots}개를 검색이나 AI로 채웁니다.`, { images: slots - games, gameImages: games }, { title: '일괄 이미지 찾기', okLabel: '찾기 시작', exactImages: true }))) return;
     const subj = globalState.subjects.find(s => s.id === currentSubjectId);
     const stats = { made: 0, failed: 0 };
     let halt = ''; // fillTabImages가 멈춘 까닭('gone' · 'save')
@@ -1933,11 +1993,12 @@ window.sanitizeAllContent = async function () {
     const cleanText = typeof sanitizeMarkdownContent === 'function' ? sanitizeMarkdownContent : text => text;
     const slotsOf = targets.map(mod => countImageSlots(mod, undefined, cleanText)); // 서식 정리가 고치는 깨진 태그까지 센다
     const slots = slotsOf.reduce((sum, count) => sum + count, 0);
+    const games = targets.reduce((sum, mod) => sum + countGameImageSlots(mod, undefined, cleanText), 0); // 예시 게임 그림은 AI 호출로 세지 않는다
     const lessonCount = targets.filter(mod => mod.id !== 'mainQuest').length;
     const hasFinal = !!subj.mainQuest && lessonTextParts(subj.mainQuest).length > 0;
     const where = `${subj.title ? `'${subj.title}'의` : '이 교과의'} 차시 ${lessonCount}개${hasFinal ? '와 최종 평가' : ''}에서`;
     const ok = slots
-        ? await confirmWithEstimate(`${where} 글 서식을 고치고, 아직 채우지 않은 그림 자리 ${slots}개를 채웁니다. 오른쪽 아래 막대에서 언제든 멈출 수 있습니다.`, { images: slots }, { title: '콘텐츠 정리', okLabel: '정리 시작', exactImages: true })
+        ? await confirmWithEstimate(`${where} 글 서식을 고치고, 아직 채우지 않은 그림 자리 ${slots}개를 채웁니다. 오른쪽 아래 막대에서 언제든 멈출 수 있습니다.`, { images: slots - games, gameImages: games }, { title: '콘텐츠 정리', okLabel: '정리 시작', exactImages: true })
         : await confirmAsync(`${where} 글 서식을 고칩니다. 채울 그림 자리는 없습니다.`, { title: '콘텐츠 정리', okLabel: '정리 시작', tone: 'primary' });
     if (!ok) return;
     const stats = { made: 0, failed: 0 };
@@ -1959,6 +2020,7 @@ window.sanitizeAllContent = async function () {
                 stats.made += done.stats.made;
                 stats.failed += done.stats.failed;
                 stats.gone = (stats.gone || 0) + (done.stats.gone || 0);
+                stats.gameFailed = (stats.gameFailed || 0) + (done.stats.gameFailed || 0);
                 // 바뀐 차시만 저장한다(저장마다 PC 폴더 동기화가 돈다). 저장하지 못하면 그림을 더 부르지 않는다
                 if (done.touched && (await saveState()) === false) halt = 'save';
             }
@@ -2165,15 +2227,16 @@ function locateImagePlaceholder(source, placeholder) {
 }
 
 // 그림을 못 만든 자리를 새 그림 칸으로 바꿔 저장한다. 그림을 만드는 사이 탭 글이 바뀌어 그 자리를 찾지 못하면 false
-async function fillImagePlaceholder(mod, tabId, block, b64, keyword, desc) {
+// frame: 그림 키를 받아 그림 칸 HTML을 돌려준다(예시 게임 그림은 출처를 적은 칸, game-images.js). 없으면 desc를 설명으로 쓴 보통 칸
+async function fillImagePlaceholder(mod, tabId, block, b64, keyword, desc, frame = null) {
     const source = storedTabMarkdown(mod, tabId);
     const unmoved = source.slice(block.start, block.start + block.raw.length) === block.raw;
     const once = source.indexOf(block.raw) === source.lastIndexOf(block.raw); // 옮겨졌으면 한 곳에만 있을 때 그 자리로 본다
     const start = unmoved ? block.start : (once ? source.indexOf(block.raw) : -1);
     if (start < 0) return false;
-    const imgId = 'img_' + Date.now() + Math.floor(Math.random() * 1000);
+    const imgId = uniqueLessonImageId(new Set(Object.keys(mod.images || {})));
     mod.images = { ...(mod.images || {}), [imgId]: b64 };
-    const html = imageWrapperHtml(imgId, keyword, escapeHtml(desc), escapeHtml(desc.slice(0, 80)));
+    const html = frame ? frame(imgId) : imageWrapperHtml(imgId, keyword, escapeHtml(desc), escapeHtml(desc.slice(0, 80)));
     setTabMarkdown(mod, tabId, source.slice(0, start) + html + source.slice(start + block.raw.length));
     await saveState();
     if (getEditingModule() === mod && isViewingTab(mod, tabId)) renderEditor(mod);
@@ -2181,6 +2244,9 @@ async function fillImagePlaceholder(mod, tabId, block, b64, keyword, desc) {
 }
 
 window.promptRegenerateImage = function (btn, fallbackKeyword, imgId) {
+
+    // 예시 게임 그림은 AI 그림 요청 창을 열지 않고 인터넷에서 다른 그림을 찾는다(game-images.js)
+    if (gameImageTitle(fallbackKeyword) && typeof window.regenerateGamePicture === 'function') return window.regenerateGamePicture(btn, fallbackKeyword, imgId);
 
     const wrapper = btn.closest('.image-wrapper') || btn.closest('.image-placeholder');
 
@@ -3054,6 +3120,7 @@ ${tabGenerateButtonsHtml(mod, tabless)}
                             <button onclick="toggleEditorMode('edit'); this.closest('details').open = false" id="raw-edit-btn" class="px-3 py-1.5 text-xs font-bold bg-gray-50 text-gray-700 border border-gray-200 rounded hover:bg-gray-100 flex items-center gap-1 transition-colors" title="이 탭의 마크다운 원문 전체를 고칩니다. 단락 하나는 본문을 두 번 눌러 고칩니다"><i class="ph-bold ph-code"></i> 원문 전체 수정</button>
                             <button onclick="generateAllImagesInModule('${mod.id}')" id="img-batch-btn" class="px-3 py-1.5 text-xs font-bold bg-purple-50 text-purple-600 border border-purple-200 rounded hover:bg-purple-100 flex items-center gap-1 transition-colors hover:-translate-y-0.5"><i class="ph-bold ph-image-square"></i> 일괄 이미지 찾기</button>
                             <button onclick="sanitizeAllContent()" id="sanitize-btn" class="px-3 py-1.5 text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 flex items-center gap-1 transition-colors hover:-translate-y-0.5" title="교과의 모든 차시와 최종 평가에서 글 서식을 고치고, 아직 채우지 않은 그림 자리를 채웁니다"><i class="ph-bold ph-sparkle"></i> 콘텐츠 정리</button>
+                            <button onclick="insertGamePictures('${mod.id}'); this.closest('details').open = false" id="game-picture-btn" class="px-3 py-1.5 text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 flex items-center gap-1 transition-colors" title="이 탭에서 예로 든 실제 게임을 AI가 찾아, 그 게임 그림을 위키백과에서 찾아 넣습니다(출처를 함께 적습니다)"><i class="ph-bold ph-game-controller"></i> 예시 게임 그림 넣기</button>
                             <label class="cursor-pointer px-3 py-1.5 text-xs font-bold bg-blue-50 text-blue-600 border border-blue-200 rounded hover:bg-blue-100 flex items-center gap-1 transition-colors" title="에디터에 이미지 삽입">
                                 <i class="ph-bold ph-image"></i> 이미지 삽입
                                 <input type="file" accept="image/*" class="hidden" multiple onchange="handleImageInputSelect(event)">

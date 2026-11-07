@@ -7,6 +7,7 @@ const EXPORT_FRAME_LIFETIME = 30 * 60 * 1000; // 인쇄가 끝났다는 신호(a
 const EXPORT_CONTROLS = '[data-lesson-action], .image-regenerate-btn, .image-wrapper > span, .para-edit, button, textarea';
 const EXPORT_IMAGE_KEY_RE = /^[\w-]{1,80}$/; // 다시 불러오기 표시를 달 그림 키(output-import.js OUTPUT_IMAGE_KEY_RE, data-safety.js SAFE_IMAGE_KEY와 같은 규칙)
 const EXPORT_PICTURE_RE = /^data:image\//; // 넣을 그림인지(진짜 그림). 찾지 못한 그림 자리(teacher-image:…)·빈 값은 없는 그림으로 그린다
+const EXPORT_SOURCE_URL_RE = /^https?:\/\/[^\s"'<>]+$/i; // 그림 설명 아래 글자로 적을 출처 페이지 주소(http·https만)
 
 const LESSON_EXPORT_CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;600;800&display=swap');
@@ -44,6 +45,7 @@ th { background: #f3f2f8; font-weight: 700; }
 img, video, svg { max-width: 100%; height: auto; }
 img, video { display: block; margin: 1.5rem auto; border-radius: 8px; }
 .image-wrapper, .mermaid { display: flex; flex-direction: column; align-items: center; margin: 1.5rem auto; }
+.image-source { margin-top: 2px; font-size: .75rem; color: #6b7280; text-align: center; word-break: break-all; }
 hr { border: 0; border-top: 1px solid #e5e5ee; margin: 2rem 0; }
 @media print {
     @page { size: A4; margin: 1.5cm; }
@@ -124,12 +126,26 @@ ${source}
 }
 
 /* ---------- 그리기 ---------- */
+// 예시 게임 그림의 출처 페이지 주소(그림 설명의 data-source-url, game-images.js)를 설명 바로 아래에 글자로 적는다. http·https 주소만, 글자로만 넣는다
+function exportImageSources(box) {
+    box.querySelectorAll('.image-caption[data-source-url]').forEach(caption => {
+        const url = String(caption.getAttribute('data-source-url') || '').trim();
+        const next = caption.nextSibling;
+        if (!EXPORT_SOURCE_URL_RE.test(url) || (next && next.nodeType === 1 && String(next.className || '').split(' ').includes('image-source'))) return;
+        const line = document.createElement('div');
+        line.className = 'image-source';
+        line.textContent = `출처 페이지: ${url}`;
+        caption.parentNode.insertBefore(line, next);
+    });
+    return box;
+}
+
 function exportStrip(html) {
     const box = document.createElement('div');
     box.innerHTML = html;
     box.querySelectorAll(EXPORT_CONTROLS).forEach(el => el.remove());
     box.querySelectorAll('.hidden').forEach(el => el.classList.remove('hidden')); // 두 번 눌러 고치는 중 숨긴 단락
-    return box;
+    return exportImageSources(box);
 }
 
 async function renderExportMermaid(box) {
