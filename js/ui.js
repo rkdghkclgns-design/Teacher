@@ -1750,9 +1750,9 @@ function cleanForAPI(text) {
 function codeTopicPrompt(tabId) {
     const practice = tabId === 'basicPrac' || tabId === 'advPrac';
     return '\n\n[코드 예제 — 이 차시는 코드를 다룹니다]\n' + (practice
-        ? '- 실습 단계마다 입력할 코드를 언어를 적은 코드 블록으로 보이고, 그 코드가 하는 일과 실행 결과(```text)를 함께 씁니다.'
+        ? '- 실습 단계마다 입력할 코드를 언어를 적은 코드 블록으로 보이고, 그 코드가 하는 일과 실행 결과(```text)를 함께 씁니다. 코드 블록 안에는 무엇을 하는 코드인지와 핵심 줄이 하는 일을 한국어 주석으로 적습니다.'
         : '- 코드, 명령어, 쿼리를 설명하는 섹션은 개념 설명 바로 뒤에 예제 코드 블록을 둡니다. 설명만 있고 코드가 없는 코드 섹션을 만들지 않습니다.\n' +
-          '- 예제마다 무엇을 하는 코드인지 → 코드 블록(```언어) → 핵심 줄 설명 → 실행 결과(```text) 순서로 씁니다.\n' +
+          '- 예제마다 무엇을 하는 코드인지 → 한국어 주석을 단 코드 블록(```언어) → 핵심 줄 설명 → 실행 결과(```text) 순서로 씁니다.\n' +
           '- 학습 목표, 개요, 학습 후 체크리스트에는 코드를 넣지 않습니다.');
 }
 
@@ -2146,7 +2146,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
 
         case 'main_quest':
 
-            systemInstruction = `${CONTEXT_CORE.personas.orchestrator}\n[작성 규칙]\n${buildFullRules()}`;
+            systemInstruction = `${CONTEXT_CORE.personas.orchestrator}\n[작성 규칙]\n${buildFullRules()}\n- 과제에 시작 코드를 주면 학습자가 채울 자리마다 무엇을 채울지 한국어 주석으로 적고, 정답 코드는 주석에 적지 않습니다.`;
 
             userPrompt = `${thinkingPrefix}[현재 작업: 메인 퀘스트(교과 최종 과제) 설계]\n다음은 이 교과에 속한 차시들과 일일 퀘스트 내용입니다. 이를 모두 종합하여, 학습자가 교과 과정을 마스터했는지 평가할 수 있는 흥미로운 '메인 퀘스트' 스토리를 작성해주세요.\n\n차시 정보:\n${additionalContext}`;
 
@@ -2164,7 +2164,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
 
         case 'edit':
 
-            systemInstruction = `${CONTEXT_CORE.personas.assistant}\n[규칙]\n- ${CONTEXT_CORE.rules.concise_edit}`;
+            systemInstruction = `${CONTEXT_CORE.personas.assistant}\n[규칙]\n- ${CONTEXT_CORE.rules.concise_edit}\n- 고친 글에 코드 블록이 있으면 코드 블록마다 한국어 주석을 넣고, 이미 있던 주석은 지우지 않습니다. 학습이해도·심화이해도 문항의 코드라면 주석에 정답, 출력 결과, 고칠 곳을 적지 않습니다.`;
 
             userPrompt = `[현재 작업: 텍스트 부분 수정]\n문맥:\n${cleanForAPI(additionalContext.context)}\n\n원본 텍스트:\n${additionalContext.selectedText}\n\n요청사항:\n${additionalContext.command}`;
 
@@ -2273,8 +2273,8 @@ function buildTaskContext(taskScope, additionalContext = "") {
                 (a.objectives?.length ? `\n\n[이 교안의 학습 목표 — 참고용]\n${a.objectives.map(goal => `- ${goal}`).join('\n')}` : '') +
                 `\n\n[보강할 섹션 — 이 섹션 끝에 이어 붙일 내용만 씁니다]\n${a.sectionText}` +
                 `\n\n[보강 분량]\n- 새 ### 소주제 ${a.subtopics}개 안팎, 소리 내어 읽는 본문 ${Number(a.requestChars).toLocaleString('ko-KR')}자 이상(공백 포함)을 씁니다. 소주제 하나는 2,000자 이상입니다.` +
-                (a.needCode ? '\n\n[코드 예제 — 이 섹션에는 아직 코드 예제가 없습니다]\n- 첫 새 소주제는 언어를 적은 코드 블록 예제로 시작합니다. 코드 앞에 무엇을 하는 코드인지, 코드 뒤에 핵심 줄 설명과 실행 결과(```text)를 씁니다.' : '') +
-                (a.codeSection ? '\n\n[코드 예제 — 이 섹션은 코드를 다룹니다]\n- 새 소주제마다 언어를 적은 코드 블록 예제를 하나 이상 넣고, 코드 앞에 무엇을 하는 코드인지, 코드 뒤에 핵심 줄 설명과 실행 결과(```text)를 씁니다.\n- 코드 자체는 분량에 들어가지 않으므로 코드를 설명하는 문장을 충분히 씁니다.' : '') +
+                (a.needCode ? '\n\n[코드 예제 — 이 섹션에는 아직 코드 예제가 없습니다]\n- 첫 새 소주제는 언어를 적고 한국어 주석을 단 코드 블록 예제로 시작합니다. 코드 앞에 무엇을 하는 코드인지, 코드 뒤에 핵심 줄 설명과 실행 결과(```text)를 씁니다.' : '') +
+                (a.codeSection ? '\n\n[코드 예제 — 이 섹션은 코드를 다룹니다]\n- 새 소주제마다 언어를 적고 한국어 주석을 단 코드 블록 예제를 하나 이상 넣고, 코드 앞에 무엇을 하는 코드인지, 코드 뒤에 핵심 줄 설명과 실행 결과(```text)를 씁니다.\n- 코드 자체는 분량에 들어가지 않으므로 코드를 설명하는 문장을 충분히 씁니다.' : '') +
                 (a.fromUpload ? '\n\n[원본 문서]\n- 사용자가 올린 문서로 만든 교안입니다. 섹션에 이미 있는 사실과 어긋나는 내용을 만들지 않습니다.' : '');
             break;
         }

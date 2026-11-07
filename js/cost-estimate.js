@@ -3,7 +3,7 @@
 // 금액은 공급자 요금표가 자주 바뀌어 넣지 않는다. 글은 고른 글 모델로 비용 수준(낮음·보통·높음)을, 그림은 누가 그리는지와 요금 방식을 보인다. 테스트: tests/cost-estimate.test.js
 
 const ESTIMATE_RULES = {
-    tabCalls: 2,                                    // 탭 하나: 본문(학습 탭은 이어쓰기가 잦아 2~6회, 나머지 1~3회) + 가끔 생성 직후 자동 수정
+    tabCalls: 2,                                    // 탭 하나: 본문(학습 탭은 이어쓰기가 잦아 2~6회, 나머지 1~3회) + 가끔 생성 직후 자동 수정·코드 주석 보강
     // 탭마다 그림 자리(설정의 교안 이미지 양). 탭 글 규칙(ui.js 탭 작성 지시)의 최소 섹션 수로 센다(api.js autoInjectImageTags·pendingImageTags):
     // 핵심만은 ## 섹션마다 한 장(기본·심화 학습은 학습 목표·개요를 빼고 6개, 실습 3개), 모두는 긴 ### 소주제마다 한 장 더(기본·심화 학습 16개).
     // 학습이해도·심화이해도는 문제(짧은 ###)뿐이라 그림이 거의 없다. 글이 길면 더 늘어난다(모두는 정해진 상한이 없다)
@@ -17,7 +17,7 @@ const ESTIMATE_RULES = {
     ncsCalls: 1,                                    // NCS 배정(교과·차시)
     gyosuanCalls: 12,                               // 교수안 하나(갈래마다 하나): 머리말 1 + 전개(섹션마다 1, 최대 14) + 도입·정리 1
     gyosuanWaitCalls: 6,                            // 전개는 셋씩 함께 부르므로 기다리는 시간은 호출 6번쯤
-    qbankCalls: 2,                                  // 문제은행 하나(갈래마다 하나) 채우기
+    qbankCalls: 2,                                  // 문제은행 하나(갈래마다 하나) 채우기. 코드가 든 문항은 주석 보강이 가끔 더해짐
     artCalls: 4,                                    // SVG 삽화(후보 1회 + 그림 최대 3장)
     ocrMaxCallsPerPdf: 8,                           // 스캔 PDF: 30쪽까지 4쪽마다 1회
     // 학습 탭(기본학습·심화학습) 분량 보강(lesson-volume.js): 호출 하나가 낭독 글자 약 5,000자를 늘린다고 보고, 탭마다 호출 상한(목표 글자 ÷ 5,000, 480분이면 24번, 최대 48번)까지 센다.
@@ -118,13 +118,13 @@ const sumWork = list => list.reduce((total, work) => {
 }, {});
 
 // work: { tabs, images(교안 그림), slideImages(슬라이드 그림), ncs, gyosuan, qbank, art, ocr, volume(분량을 채우는 학습 탭 수), volumeCalls(그 긴 호출 수),
-// practiceCalls(실습 시간을 정한 실습 탭의 더 드는 이어쓰기 호출) } 개수 →
+// practiceCalls(실습 시간을 정한 실습 탭의 더 드는 이어쓰기 호출), codeComments(코드 주석 넣기 호출 수, 다시 받기 제외) } 개수 →
 // 본문 호출(body), 기다리는 시간으로 센 본문 호출(bodyWait), 짧은 호출(short), 그림 장수(images), 분량 보강·자동 수정의 긴 호출(long, 있을 때만).
 // volumeCalls가 없으면 탭마다 480분 상한으로 센다. 예시 게임 그림(work.gameImages)은 위키백과에서 찾아 호출로 세지 않는다(estimateSummary가 시간만 더한다)
 function estimateCallSplit(work = {}) {
     const rule = ESTIMATE_RULES;
     const tabs = (work.tabs || 0) * rule.tabCalls + (work.practiceCalls || 0);
-    const others = (work.ncs || 0) * rule.ncsCalls + (work.qbank || 0) * rule.qbankCalls + (work.art || 0) * rule.artCalls + (work.ocr || 0);
+    const others = (work.ncs || 0) * rule.ncsCalls + (work.qbank || 0) * rule.qbankCalls + (work.art || 0) * rule.artCalls + (work.ocr || 0) + (work.codeComments || 0);
     const long = work.volumeCalls ?? (work.volume || 0) * volumeCallsFor();
     return {
         body: tabs + others + (work.gyosuan || 0) * rule.gyosuanCalls,
