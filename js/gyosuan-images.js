@@ -38,12 +38,19 @@ function lessonImageContext(lines, at) {
     return { title: alt || heading.replace(/^#+\s*/, ''), text: [heading.replace(/^#+\s*/, ''), ...near].join(' ') };
 }
 
+// 그 줄이 그 그림 키(local:키)를 가리키는지. local:b 뒤에 키 글자가 더 이어지면(local:both) 다른 그림이다
+function lessonLineUsesImage(line, id) {
+    const ref = `local:${id}`;
+    for (let at = line.indexOf(ref); at !== -1; at = line.indexOf(ref, at + 1)) if (!/[\w-]/.test(line.charAt(at + ref.length))) return true;
+    return false;
+}
+
 // 그 갈래의 학습·실습 탭에 놓인 그림만 고른다(다른 갈래의 그림을 이 갈래 슬라이드에 넣지 않게)
 function lessonImageCandidates(mod, trackId = 'basic') {
     const lines = collectLessonSource(mod, trackId).flatMap(part => String(part.text).split('\n'));
     return Object.entries(mod.images || {}).flatMap(([id, url]) => {
         if (!window.KBuilder.isRasterImage(url)) return [];
-        const at = lines.findIndex(line => line.includes(`local:${id}`));
+        const at = lines.findIndex(line => lessonLineUsesImage(line, id));
         return at === -1 ? [] : [{ id, url, ...lessonImageContext(lines, at) }];
     });
 }

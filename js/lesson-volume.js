@@ -225,8 +225,37 @@ function withTitleMinutes(text, minutes) {
 
 const volumeLabelSum = md => mdSections(md).reduce((sum, section) => sum + volumeTitleMinutes(section.title), 0);
 
+// 체크리스트의 다시 보기 표시와 그 뒤 섹션 이름에 붙은 시간((⏱ N분)·⏱ N분)
+const VOLUME_CHECK_REF = /다시\s*보기\s*:/;
+const VOLUME_REF_TIME = /\s*[(（]\s*⏱[^()（）]*[)）]|\s*⏱\S*\s*(?:약\s*)?\d+\s*분/g;
+
+// 체크리스트 항목의 '다시 보기:' 뒤 섹션 이름에서 시간을 뗀다. AI는 ## 제목을 (⏱ N분)까지 옮겨 적으므로 시간을 다시 매기면 옛 시간이 남는다.
+// 섹션 이름만 남기면 검수(lesson-lint.js lintChecklistRefs)가 시간 없이 같은 섹션을 찾는다. 고정한 체크리스트와 코드 블록 안은 그대로 둔다. 뗄 것이 없으면 받은 글 그대로다
+function withoutChecklistRefTimes(md, lockedKeys = new Set()) {
+    let changed = false;
+    const texts = mdSections(md).map(section => {
+        if (!LESSON_CHECKLIST_TITLE.test(section.title) || lockedKeys.has(lockTitleKey(section.title))) return section.text;
+        let fence = 0;
+        return section.text.split('\n').map(line => {
+            const wasFenced = fence;
+            fence = nextCodeFence(fence, line);
+            const ref = !wasFenced && !fence ? line.match(VOLUME_CHECK_REF) : null;
+            if (!ref) return line;
+            const from = ref.index + ref[0].length;
+            const next = line.slice(0, from) + line.slice(from).replace(VOLUME_REF_TIME, '');
+            if (next !== line) changed = true;
+            return next;
+        }).join('\n');
+    });
+    return changed ? texts.join('\n\n') : md;
+}
+
+// 분량을 채운 학습 탭을 AI가 고쳐 준 뒤(tabs.js·api.js·fillVolumeJob)에도 다시 보기에 옛 시간이 남지 않게 뗀다. lockedBlocks: 고정 섹션
+const volumeChecklistText = (md, lockedBlocks = []) => withoutChecklistRefTimes(md, new Set(lockedBlocks.map(block => lockTitleKey(block.title))));
+
 // 내용 섹션의 (⏱ N분)을 낭독 길이에 맞춰 다시 매긴다. 학습 목표·개요·체크리스트·고정·실습·요약 섹션의 라벨은 그대로 두고,
-// 목표 시간에서 그 합을 뺀 시간을 낭독 글자 비율로 5분 단위로 나눈다(섹션마다 5분 이상). 남은 시간은 5분 단위로 올려 라벨 합계가 목표 시간 이상이 된다
+// 목표 시간에서 그 합을 뺀 시간을 낭독 글자 비율로 5분 단위로 나눈다(섹션마다 5분 이상). 남은 시간은 5분 단위로 올려 라벨 합계가 목표 시간 이상이 된다.
+// 다시 매긴 제목과 어긋나지 않게 체크리스트의 다시 보기에 적힌 옛 시간도 뗀다
 function retimeSections(md, targetMinutes, lockedKeys = new Set(), tabId = 'basicLearn') {
     const sections = mdSections(md).map((section, index) => ({ ...section, index }));
     const quest = volumeQuestStart(sections);
@@ -237,7 +266,8 @@ function retimeSections(md, targetMinutes, lockedKeys = new Set(), tabId = 'basi
     const total = Math.max(open.length * VOLUME_TIME_UNIT, Math.ceil((targetMinutes - kept) / VOLUME_TIME_UNIT) * VOLUME_TIME_UNIT);
     const minutes = allocateTime(open.length, total, open.map(section => spokenChars(section.text)), VOLUME_TIME_UNIT);
     const labels = new Map(open.map((section, i) => [section.index, minutes[i]]));
-    return sections.map(section => (labels.has(section.index) ? withTitleMinutes(section.text, labels.get(section.index)) : section.text)).join('\n\n');
+    const retimed = sections.map(section => (labels.has(section.index) ? withTitleMinutes(section.text, labels.get(section.index)) : section.text)).join('\n\n');
+    return withoutChecklistRefTimes(retimed, lockedKeys);
 }
 
 /* ---------- 채우기 ---------- */
@@ -403,10 +433,11 @@ function rebaseVolumeParts(current, parts, { targetMinutes, lockedBlocks = [], t
     return volumeFinalText({ md, added: (parts || []).length, stopped, targetMinutes, lockedKeys, lockedBlocks, tabId });
 }
 
-// 미리 보기에서 섹션을 골라 반영한 글은 (⏱) 합계가 목표에서 벗어날 수 있어 고른 글로 다시 매긴다(고정 섹션의 라벨은 그대로)
+// 미리 보기에서 섹션을 골라 반영한 글은 (⏱) 합계가 목표에서 벗어날 수 있어 고른 글로 다시 매긴다(고정 섹션의 라벨은 그대로).
+// 다시 매긴 섹션과 예전 체크리스트를 함께 고를 수 있어, 합계가 맞아 다시 매기지 않아도 다시 보기의 옛 시간은 뗀다
 function retimeVolumeChoice(md, { targetMinutes, lockedBlocks = [], tabId = 'basicLearn' } = {}) {
     const sum = volumeLabelSum(md);
-    if (sum >= targetMinutes && sum <= targetMinutes + BASIC_LEARN_LABEL_SLACK) return md;
+    if (sum >= targetMinutes && sum <= targetMinutes + BASIC_LEARN_LABEL_SLACK) return volumeChecklistText(md, lockedBlocks);
     try {
         return retimeSections(md, targetMinutes, new Set(lockedBlocks.map(block => lockTitleKey(block.title))), tabId);
     } catch (err) {
@@ -512,10 +543,11 @@ async function fillVolumeJob({ mod, subj, before, snapshot, tabId = 'basicLearn'
     });
     const gone = '차시가 지워졌거나 불러온 내용으로 바뀌어 분량 채우기를';
     if (volume.gone) return window.showAlert(`${gone} 멈췄습니다.${volume.added ? ` ${await keep(volume.md)}` : ''}`);
-    // 늘린 소주제가 없으면 고쳐 받지 않는다(있던 글만 고치는 호출이 된다). 중지·한도·키 문제·다시 보내도 같은 오류로 멈췄을 때도
+    // 늘린 소주제가 없으면 고쳐 받지 않는다(있던 글만 고치는 호출이 된다). 중지·한도·키 문제·다시 보내도 같은 오류로 멈췄을 때도.
+    // 고쳐 받은 체크리스트에도 다시 보기의 옛 시간이 남지 않게 뗀다
     const fixable = volume.added > 0 && !volume.stopped && !isVolumeHalt(volume.error);
     const filled = fixable
-        ? await autoFixGeneratedTab({ tabId, md: volume.md, lockedBlocks, onStatus: window.setPipelineStatus, rounds: VOLUME_FIX_ROUNDS, minSpokenChars: volume.targetChars, isStopped })
+        ? volumeChecklistText(await autoFixGeneratedTab({ tabId, md: volume.md, lockedBlocks, onStatus: window.setPipelineStatus, rounds: VOLUME_FIX_ROUNDS, minSpokenChars: volume.targetChars, isStopped }), lockedBlocks)
         : volume.md;
     if (!isLive()) return window.showAlert(`${gone} 반영하지 못했습니다. ${await keep(filled)}`);
     saveOpenEditsFor(mod, tabId); // 열어 둔 원문 칸의 글을 먼저 넣는다(미리 보기의 단추를 누르며 칸을 벗어나 넣으면 반영을 막는다)

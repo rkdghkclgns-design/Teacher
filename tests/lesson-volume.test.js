@@ -1213,6 +1213,101 @@ async function run(name, fn) {
         assert.strictEqual(call(pure, 'spokenText')('앞 <!-- 숨김 --> 뒤 <table><tr><td>표</td></tr></table> 끝 <b>굵게</b> [링크](https://a.b/c) ![그림](local:img_1) <!-- 닫지 않은 주석'), '앞 뒤 끝 굵게 링크 <!-- 닫지 않은 주석', '닫힌 주석·표·태그·링크·그림은 예전과 같게 빼고, 닫지 않은 주석은 예전처럼 글로 둔다');
     });
 
+    /* ---------- 7차: 다시 매긴 뒤 체크리스트의 다시 보기 ---------- */
+    // 진짜 AI 답처럼 다시 보기에 ## 제목을 (⏱ N분)까지 그대로 옮겨 적은 체크리스트(초안의 60분)
+    const TIMED_CHECKS = ['- 합계를 구했습니다. (다시 보기: ## 1. 내용 1 (⏱ 60분))', '- 값을 골라 셌습니다. (다시 보기: ## 2. 내용 2 (⏱ 60분))'];
+    const timedChecklist = (checks = TIMED_CHECKS) => `## ✅ 학습 후 체크리스트\n\n${checks.join('\n')}`;
+    const timedDraft = (opts = {}, checks = TIMED_CHECKS) => draftMd(opts).replace(CHECKLIST, timedChecklist(checks));
+    const checklistText = (ctx, md) => sectionOf(ctx, md, title => /체크리스트/.test(title))?.text || '';
+    // 체크리스트 항목마다 다시 보라는 곳(괄호 안 글 전체)
+    const refsOf = (ctx, md) => checklistText(ctx, md).split('\n').filter(line => line.startsWith('- ')).map(line => (line.match(/다시 보기: (.*)\)$/) || [])[1]);
+    // 검수(lesson-lint.js)가 체크리스트에 낸 지적
+    const checklistIssues = (ctx, md, tabId = 'basicLearn') => plain(call(ctx, 'lintLessonMarkdown')(md, tabId)).filter(issue => issue.where === '학습 후 체크리스트').map(issue => `${issue.msg} ${issue.snip || ''}`.trim());
+    const FRESH_REFS = ['## 1. 내용 1', '## 2. 내용 2'];
+
+    await run('(⏱ N분) 다시 매기기: 체크리스트의 다시 보기에 적힌 옛 시간을 떼어 바뀐 제목과 어긋나지 않게 하고, 검수는 그 섹션을 찾는다. 고정한 체크리스트는 그대로 둔다', () => {
+        const ctx = genContext();
+        const md = timedDraft({ sectionBody: i => filler(i === 0 ? 7200 : 2400) });
+        const out = call(ctx, 'retimeSections')(md, 480);
+        const first = call(ctx, 'volumeTitleMinutes')(sectionOf(ctx, out, title => title.startsWith('1. 내용 1')).title);
+        assert.notStrictEqual(first, 60, '첫 섹션의 시간이 바뀌어 다시 보기의 60분은 옛 시간이다');
+        assert.ok(!checklistText(ctx, out).includes('⏱'), checklistText(ctx, out));
+        assert.deepStrictEqual(refsOf(ctx, out), FRESH_REFS, '시간만 떼고 ## 제목은 그대로 둔다');
+        assert.deepStrictEqual(checklistIssues(ctx, out), [], '검수가 다시 볼 섹션을 찾는다');
+        const kept = call(ctx, 'retimeSections')(md, 480, new Set([call(ctx, 'lockTitleKey')('✅ 학습 후 체크리스트')]));
+        assert.strictEqual(checklistText(ctx, kept), timedChecklist(), '고정한 체크리스트는 한 글자도 바꾸지 않는다');
+    });
+
+    await run('분량 채우기(기본학습·심화학습): 다시 매긴 뒤 체크리스트의 다시 보기에 옛 (⏱) 시간이 남지 않는다. 채우는 동안 바뀐 글에 이어 붙인 글과 미리 보기에서 고른 글도 같다', async () => {
+        for (const tabId of ['basicLearn', 'advLearn']) {
+            const ctx = genContext();
+            ctx.callGemini = volumeModel(ctx, { deliver: 0.75 });
+            const result = await ensure(ctx)({ md: timedDraft(), tabId });
+            assert.ok(result.added > 0 && call(ctx, 'volumeLabelSum')(result.md) === 480, `${tabId}: 채우고 다시 매겼다`);
+            assert.deepStrictEqual(refsOf(ctx, result.md), FRESH_REFS, `${tabId}: 채운 글`);
+            assert.deepStrictEqual(checklistIssues(ctx, result.md, tabId), [], `${tabId}: 검수가 다시 볼 섹션을 찾는다`);
+            const rebased = call(ctx, 'rebaseVolumeParts')(timedDraft(), result.parts, { targetMinutes: 480, tabId });
+            assert.deepStrictEqual(refsOf(ctx, rebased), FRESH_REFS, `${tabId}: 늘린 소주제를 지금 글에 다시 붙인 글`);
+            // 미리 보기에서 채운 섹션과 예전 체크리스트를 함께 고른 글: 라벨 합계가 맞아 다시 매기지 않아도 옛 시간을 뗀다
+            const mixed = result.md.replace(checklistText(ctx, result.md), timedChecklist());
+            const chosen = call(ctx, 'retimeVolumeChoice')(mixed, { targetMinutes: 480, tabId });
+            assert.deepStrictEqual([refsOf(ctx, chosen), call(ctx, 'volumeLabelSum')(chosen)], [FRESH_REFS, 480], `${tabId}: 고른 글`);
+        }
+    });
+
+    await run('탭 생성(기본학습·심화학습): 나눠 받은 초안(이어 쓴 청크의 체크리스트)과 채운 뒤 AI가 고쳐 준 체크리스트도 다시 보기에 옛 시간이 남지 않는다', async () => {
+        for (const tabId of ['basicLearn', 'advLearn']) {
+            const mod = { ...MOD, tabContents: {} };
+            const ctx = genContext();
+            ctx.currentMod = mod;
+            const body = timedDraft().replace(/\n\n## ✅ 학습 후 체크리스트[\s\S]*$/, '');
+            let k = 0;
+            ctx.callGemini = async (model, payload) => {
+                const text = payload.contents[0].parts[0].text;
+                ctx.prompts.push(text);
+                const [task, , , requestChars] = text.split('|');
+                // 첫 청크는 본문만, 이어 쓴 청크가 체크리스트를 쓴다(항목이 하나 모자라 채운 뒤 고쳐 받는다)
+                if (task === 'tab_content') return reply(`${body}\n<!-- CONTINUE -->`);
+                if (task === 'tab_content_continue') return reply(`${timedChecklist(TIMED_CHECKS.slice(0, 1))}\n<!-- END -->`);
+                if (task !== 'volume_expand') return reply(timedChecklist()); // 컨벤션 수정: 초안의 옛 시간을 그대로 적은 체크리스트
+                k += 1;
+                return reply(`### ■ 보강 ${k}\n\n${filler(Math.round(Number(requestChars) * 0.75))}`);
+            };
+            await call(ctx, 'generateTabContent')(1, tabId, { quiet: true });
+            const saved = mod.tabContents[tabId];
+            assert.ok(ctx.prompts.some(text => text.startsWith('tab_content_continue')) && ctx.prompts.some(text => text.startsWith('[작업]')), `${tabId}: 이어 쓰고 고쳐 받았다`);
+            assert.ok(call(ctx, 'spokenChars')(saved) >= TARGET_CHARS && call(ctx, 'volumeLabelSum')(saved) === 480, `${tabId}: 채우고 다시 매겼다`);
+            assert.deepStrictEqual(refsOf(ctx, saved), FRESH_REFS, `${tabId}: ${checklistText(ctx, saved)}`);
+            assert.deepStrictEqual(checklistIssues(ctx, saved, tabId), [], `${tabId}: 검수가 다시 볼 섹션을 찾는다`);
+        }
+    });
+
+    await run("분량 채우기 단추(기본학습·심화학습)와 교안 전체 생성: 채운 뒤 AI가 고쳐 준 체크리스트도 다시 보기에 옛 시간을 남기지 않고 반영한다", async () => {
+        for (const tabId of ['basicLearn', 'advLearn']) {
+            const start = timedDraft({}, TIMED_CHECKS.slice(0, 1)); // 항목이 하나 모자라 채운 뒤 고쳐 받는다
+            const mod = { ...MOD, tabContents: { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null, [tabId]: start } };
+            const ctx = genContext();
+            ctx.currentMod = mod;
+            ctx.callGemini = volumeModel(ctx, { fixReply: () => reply(timedChecklist()) });
+            answerPreviewWith(ctx, 'apply');
+            await call(ctx, 'fillLessonVolume')(1, tabId);
+            const saved = mod.tabContents[tabId];
+            assert.ok(ctx.prompts.some(text => text.startsWith('[작업]')) && saved !== start && call(ctx, 'volumeLabelSum')(saved) === 480, `${tabId}: 고쳐 받아 반영했다`);
+            assert.deepStrictEqual(refsOf(ctx, saved), FRESH_REFS, `${tabId}: ${checklistText(ctx, saved)}`);
+            assert.deepStrictEqual(checklistIssues(ctx, saved, tabId), [], `${tabId}: 검수가 다시 볼 섹션을 찾는다`);
+        }
+        const mod = { id: 9, title: '반복과 합계', description: '합계를 구합니다.', status: 'waiting' };
+        const ctx = genContext();
+        ctx.currentMod = mod;
+        ctx.runLessonPipeline = async () => {};
+        ctx.callGemini = volumeModel(ctx, { draft: timedDraft({}, TIMED_CHECKS.slice(0, 1)), fixReply: () => reply(timedChecklist()) });
+        await call(ctx, 'generateModuleContent')(9, []);
+        const saved = mod.tabContents.basicLearn;
+        assert.ok(ctx.prompts.some(text => text.startsWith('[작업]')) && call(ctx, 'volumeLabelSum')(saved) === 480, '교안 전체 생성도 채운 뒤 고쳐 받았다');
+        assert.deepStrictEqual(refsOf(ctx, saved), FRESH_REFS, checklistText(ctx, saved));
+        assert.deepStrictEqual(checklistIssues(ctx, saved), []);
+    });
+
     console.log(`\n${count - failed}/${count} passed`);
     if (failed) process.exit(1);
 })();

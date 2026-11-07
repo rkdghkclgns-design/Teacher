@@ -697,6 +697,11 @@ const bankLesson = () => ({
         const pick = call(ctx, 'lessonImageCandidates');
         assert.deepStrictEqual(plain(pick(mod)).map(item => item.id), ['pic_basic', 'pic_shared']);
         assert.deepStrictEqual(plain(pick(mod, 'adv')).map(item => item.id), ['pic_adv', 'pic_shared']);
+        // 그림 키가 다른 키의 앞부분이어도(local:b와 local:both) 그 키를 가리킨 자리만 본다. 다른 갈래의 그림이 섞이지 않고 설명도 제자리 글을 쓴다
+        const prefix = { id: 'm2', title: '앞 글자', images: { b: PNG, both: JPG },
+            tabContents: { basicLearn: '## 함께 쓰는 그림\n\n![둘](local:both)', advLearn: '## 혼자 쓰는 그림\n\n![하나](local:b)' } };
+        assert.deepStrictEqual(plain(pick(prefix)).map(item => [item.id, item.title]), [['both', '둘']], 'local:both는 local:b가 아니다');
+        assert.deepStrictEqual(plain(pick(prefix, 'adv')).map(item => [item.id, item.title]), [['b', '하나']]);
     });
 
     await run('판서 영상: 심화학습 교수안·편성안에만 남은 그림도 차시 글에 있는 것으로 보고, 같은 값의 그림 키가 여럿이면 그 교수안이 가리키는 키에 버튼을 단다', () => {

@@ -569,6 +569,8 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             showTabGenStop(false);
             const floor = volume ? { rounds: VOLUME_FIX_ROUNDS, minSpokenChars: volume.targetChars, isStopped: () => _tabGenStop } : {}; // 채운 분량 아래로 줄이지 않는다
             resultText = await autoFixGeneratedTab({ tabId, md: resultText, lockedBlocks, onStatus: setLoadingText, onRetry, ...floor });
+            // 분량을 채운 학습 탭은 고쳐 받은 체크리스트에도 다시 보기의 옛 (⏱) 시간이 남지 않게 뗀다(lesson-volume.js)
+            if (volume && typeof volumeChecklistText === 'function') resultText = volumeChecklistText(resultText, lockedBlocks);
         }
         if (tabId === 'basicPrac' && typeof withQuestFileName === 'function') resultText = withQuestFileName(resultText, mod, subj);
         // 기존 탭을 다시 만들면 바뀐 섹션을 보고 고른다. 묶어서 생성할 때는 묻지 않고 기존 글을 히스토리에 남긴다

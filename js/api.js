@@ -880,6 +880,8 @@ async function generateModuleContent(moduleId, keyConcepts) {
             if (moduleId !== 'mainQuest') {
                 const floor = volume ? { rounds: VOLUME_FIX_ROUNDS, minSpokenChars: volume.targetChars, isStopped } : {}; // 채운 분량 아래로 줄이지 않는다
                 fullContent = await autoFixGeneratedTab({ tabId: 'basicLearn', md: fullContent, lockedBlocks, onStatus: setLoadingStatus, ...floor });
+                // 분량을 채운 기본학습은 고쳐 받은 체크리스트에도 다시 보기의 옛 (⏱) 시간이 남지 않게 뗀다(lesson-volume.js)
+                if (volume && typeof volumeChecklistText === 'function') fullContent = volumeChecklistText(fullContent, lockedBlocks);
             }
 
             // ── 이미지 태그 처리 ── 분량을 채운 글은 초안에 넣은 그림 자리만 채운다
