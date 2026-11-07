@@ -374,6 +374,26 @@ test('중심과 주변(서버 모델): 클라이언트가 위에서 시계 방�
     assert.strictEqual(new Set(hub.events.map(event => event.edge)).size, 8, '연결 8개를 모두 쓴다');
 });
 
+// 진짜 Gemini가 첨부 그림의 서버 모델을 '서버 → 클라이언트(데이터 전송)' 한 방향으로만 읽었을 때, 앞 절반(요청 물결)이 통째로 비어 GIF의 절반이 멈춰 보였다
+test('중심과 주변: 연결이 모두 한 방향(가운데에서만·가운데로만)이면 그 물결이 한 바퀴 내내 돌아 멈춘 구간이 없다', () => {
+    const outward = sampleAnswer();
+    outward.groups = [{ ...outward.groups[0], edges: outward.groups[0].edges.map(edge => ({ from: 'srv', to: edge.from, dir: 'forward', label: '데이터 전송' })) }];
+    const inward = sampleAnswer();
+    inward.groups = [{ ...inward.groups[0], edges: inward.groups[0].edges.map(edge => ({ from: edge.from, to: 'srv', dir: 'forward' })) }];
+    for (const [answer, tone] of [[outward, 'response'], [inward, 'request']]) {
+        const plan = sanitize(answer);
+        const [hub] = eventsOf(plan);
+        const group = plan.groups[0];
+        assert.strictEqual(hub.pattern, 'hub', tone);
+        assert.strictEqual(hub.events.length, 8, `${tone}: 연결마다 한 번`);
+        assert.ok(hub.events.every(event => event.tone === tone), `${tone}: 한 가지 물결`);
+        assert.ok(hub.events.every(event => idOf(group, tone === 'response' ? event.from : event.to) === 'srv'), `${tone}: 화살표 쪽으로만`);
+        for (let t = 0.05; t < 0.951; t += 0.05) assert.ok(hub.events.some(event => event.start <= t && t <= event.end), `${tone}: ${t.toFixed(2)}에도 움직이는 점이 있다`);
+        assert.ok(hub.events.every(event => event.start >= 0.03 - 1e-9 && event.end <= 0.97 + 1e-9), `${tone}: 0.03~0.97 안`);
+        hub.events.slice(1).forEach((event, i) => assert.ok(event.start > hub.events[i].start, `${tone}: 위에서 시계 방향으로 어긋나 출발한다`));
+    }
+});
+
 test('서로 연결(P2P): 가운데 없이 피어마다 차례로(위에서 시계 방향) 이웃 일곱에게 보낸다. 연결마다 양쪽으로 한 번씩, 모든 피어가 같은 수만큼 빛난다', () => {
     const plan = sanitize(sampleAnswer());
     const mesh = eventsOf(plan)[1];
@@ -491,10 +511,10 @@ test('긴 흐름: 차례 흐름·순환·나무 구조는 걸음이 많아도 �
     deep.slice(1).forEach((event, k) => assert.ok(event.start > deep[k].start, '단계 차례대로'));
 });
 
-test('짝 주고받기: 연결마다 앞 절반에 한쪽으로, 뒤 절반에 반대로(한쪽 화살표는 화살표 쪽만)', () => {
+test('짝 주고받기: 연결마다 앞 절반에 한쪽으로, 뒤 절반에 반대로(한쪽 화살표는 두 절반 모두 화살표 쪽으로 보내 뒤 절반이 비지 않는다)', () => {
     const plan = sanitize({ groups: [{ pattern: 'pairs', nodes: [node('a', 0, 0), node('b', 300, 0), node('c', 600, 0)], edges: [{ from: 'a', to: 'b' }, { from: 'b', to: 'c', dir: 'forward' }] }] });
     const events = eventsOf(plan)[0].events.map(event => [event.edge, idOf(plan.groups[0], event.from), idOf(plan.groups[0], event.to), event.start < 0.5, event.tone]);
-    assert.deepStrictEqual(events, [[0, 'a', 'b', true, 'request'], [0, 'b', 'a', false, 'response'], [1, 'b', 'c', true, 'request']]);
+    assert.deepStrictEqual(events, [[0, 'a', 'b', true, 'request'], [0, 'b', 'a', false, 'response'], [1, 'b', 'c', true, 'request'], [1, 'b', 'c', false, 'request']]);
 });
 
 test('어느 무늬로 골라도 모든 연결을 쓰고, 시간은 0~1 안이며, 한쪽 화살표를 거스르지 않는다(묶음마다 고른 무늬, 자동)', () => {

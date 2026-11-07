@@ -275,33 +275,42 @@ function motionSend(out, edge, from, to, start, end, tone, wrap = false) {
     out.pulses.push({ node: to, at: Math.min(1, end), tone });
 }
 
-// 짝 주고받기: 연결마다 앞 절반에 from→to, 뒤 절반에 to→from(한쪽 화살표는 화살표 쪽만). 연결끼리 조금씩 어긋나게
+// 짝 주고받기: 연결마다 앞 절반에 from→to, 뒤 절반에 to→from. 한쪽 화살표는 뒤 절반에도 화살표 쪽으로 한 번 더 보내 뒤 절반이 비지 않게 한다.
+// 연결끼리 조금씩 어긋나게
 function motionPairs(group, graph, out, edgeIndexes = group.edges.map((edge, i) => i), tones = ['request', 'response']) {
     edgeIndexes.forEach((i, k) => {
         const edge = group.edges[i];
         const a = graph.index.get(edge.from);
         const b = graph.index.get(edge.to);
         const offset = (k % 4) * 0.025;
-        if (motionAllows(edge, edge.from)) motionSend(out, i, a, b, 0.03 + offset, 0.03 + offset + MOTION_TIMES.pair, tones[0]);
+        motionSend(out, i, a, b, 0.03 + offset, 0.03 + offset + MOTION_TIMES.pair, tones[0]); // from→to는 어느 방향 표시든 된다
         if (motionAllows(edge, edge.to)) motionSend(out, i, b, a, 0.53 + offset, 0.53 + offset + MOTION_TIMES.pair, tones[1]);
+        else motionSend(out, i, a, b, 0.53 + offset, 0.53 + offset + MOTION_TIMES.pair, tones[0]);
     });
 }
 
 // 중심과 주변: 주변 요소가 가운데로 요청을 보내고(가운데를 두고 위에서 시계 방향으로 차례로), 뒤 절반에 가운데가 주변 요소마다 응답한다.
+// 연결이 모두 한 방향(가운데에서만, 또는 가운데로만)이면 그 물결 하나가 한 바퀴 내내 돈다. 두 물결로 나누면 한쪽 절반이 통째로 빈다.
 // 가운데와 이어지지 않은 연결은 같은 두 물결에 짝 주고받기로 함께 움직인다
 function motionHub(group, graph, out) {
     const c = motionHubIndex(group, graph);
     const center = motionCenterOf(group.nodes[c].box);
     const spokes = graph.links[c]
         .map(link => ({ ...link, angle: motionAngle(center, motionCenterOf(group.nodes[link.other].box)) }))
-        .sort((a, b) => a.angle - b.angle || a.edge - b.edge);
-    const step = spokes.length > 1 ? (0.44 - MOTION_TIMES.travel) / (spokes.length - 1) : 0;
+        .sort((a, b) => a.angle - b.angle || a.edge - b.edge)
+        .map(spoke => ({
+            ...spoke,
+            ask: motionAllows(group.edges[spoke.edge], group.nodes[spoke.other].id),
+            answer: motionAllows(group.edges[spoke.edge], group.nodes[c].id)
+        }));
+    const oneWay = !spokes.some(spoke => spoke.ask) || !spokes.some(spoke => spoke.answer);
+    const span = oneWay ? 0.94 : 0.44;
+    const step = spokes.length > 1 ? (span - MOTION_TIMES.travel) / (spokes.length - 1) : 0;
     spokes.forEach((spoke, k) => {
-        const edge = group.edges[spoke.edge];
         const ask = 0.03 + k * step;
-        const answer = 0.53 + k * step;
-        if (motionAllows(edge, group.nodes[spoke.other].id)) motionSend(out, spoke.edge, spoke.other, c, ask, ask + MOTION_TIMES.travel, 'request');
-        if (motionAllows(edge, group.nodes[c].id)) motionSend(out, spoke.edge, c, spoke.other, answer, answer + MOTION_TIMES.travel, 'response');
+        const answer = (oneWay ? 0.03 : 0.53) + k * step;
+        if (spoke.ask) motionSend(out, spoke.edge, spoke.other, c, ask, ask + MOTION_TIMES.travel, 'request');
+        if (spoke.answer) motionSend(out, spoke.edge, c, spoke.other, answer, answer + MOTION_TIMES.travel, 'response');
     });
     const spokeEdges = new Set(spokes.map(spoke => spoke.edge));
     motionPairs(group, graph, out, group.edges.map((edge, i) => i).filter(i => !spokeEdges.has(i)), ['flow', 'flow']);
