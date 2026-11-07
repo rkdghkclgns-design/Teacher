@@ -993,12 +993,13 @@ async function run(name, fn) {
         assert.ok(!body.includes('휴지통에 있습니다') && !body.includes('남은 탭부터 이어서'), '있지 않은 휴지통 사본이나 만든 내용을 말하지 않는다');
     });
 
-    await run('덮어쓰기(교수안까지): 움직이는 GIF로 바꾼 그림이 든 차시를 비웠다가 탭을 하나도 만들지 못해 되돌리면 GIF 기록도 함께 돌아오고, 다음 그림 정리가 간직한 원래 그림을 지우지 않는다', async () => {
+    await run('덮어쓰기(교수안까지): 움직이는 GIF로 바꾼 그림이 든 차시를 비웠다가 탭을 하나도 만들지 못해 되돌리면 두 갈래(기본학습·심화학습) 교수안과 GIF 기록도 함께 돌아오고, 다음 그림 정리가 간직한 원래 그림을 지우지 않는다', async () => {
         const GIF = 'data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACw=';
         const PNG = 'data:image/png;base64,QUFBQkJC';
         const still = 'img_17938368000001';
         const mod = lesson(1, { ...fullTabs('글'), basicLearn: '## 구조\n\n![서버와 P2P](local:img_1)' }, {
             status: 'done', gyosuan: { docMd: '# 교수안' }, images: { img_1: GIF, [still]: PNG },
+            gyosuanAdv: { docMd: '# 심화학습 교수안\n\n![서버와 P2P](local:img_1)', deckMd: '### 슬라이드 1 - 구조\n\n![서버와 P2P](local:img_1)' },
             imageMotions: { img_1: { still, at: 1793836800000, sig: '32-1sfx5hx', patterns: ['hub', 'mesh'], summary: '서버 모델: 중심과 주변' } }
         });
         const before = plain(mod);
@@ -1007,11 +1008,11 @@ async function run(name, fn) {
         });
         local.elements['lesson-run-gyosuan'] = { checked: true }; // 교수안·슬라이드·문제은행까지 다시 만들기: 비울 때 쓰지 않는 그림을 덜어 낸다
         local.gyosuanHasScreenEdits = () => false;
-        const saved = []; // 저장할 때마다 차시의 탭·그림·기록
-        local.saveState = async () => { saved.push(JSON.stringify([mod.tabContents, Object.keys(mod.images || {}), mod.imageMotions ?? null])); };
+        const saved = []; // 저장할 때마다 차시의 탭·그림·기록·두 갈래 교수안
+        local.saveState = async () => { saved.push(JSON.stringify([mod.tabContents, Object.keys(mod.images || {}), mod.imageMotions ?? null, mod.gyosuan ?? null, mod.gyosuanAdv ?? null])); };
         await vm.runInContext('startLessonRun', local)('subject');
-        assert.ok(saved.includes(JSON.stringify([{}, [], {}])), `비운 차시를 저장할 때는 GIF·원래 그림·기록을 함께 덜어 냈다: ${saved.join(' | ')}`);
-        assert.deepStrictEqual(plain(mod), before, '되돌리면 글·그림·교수안과 움직이는 GIF 기록까지 지우기 전 그대로');
+        assert.ok(saved.includes(JSON.stringify([{}, [], {}, null, null])), `비운 차시를 저장할 때는 두 갈래 교수안을 비우고 GIF·원래 그림·기록을 함께 덜어 냈다: ${saved.join(' | ')}`);
+        assert.deepStrictEqual(plain(mod), before, '되돌리면 글·그림·두 갈래 교수안과 움직이는 GIF 기록까지 지우기 전 그대로');
         assert.deepStrictEqual(plain(local.globalState.lessonTrash), [], '되돌린 차시의 사본은 휴지통에서 뺀다');
         vm.runInContext('dropUnusedLessonImages', local)(mod); // 다음 원문 저장의 그림 정리
         assert.deepStrictEqual([Object.keys(mod.images).sort(), Object.keys(mod.imageMotions)], [['img_1', still].sort(), ['img_1']], '원래 그림과 기록이 남는다');

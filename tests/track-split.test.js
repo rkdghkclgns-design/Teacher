@@ -699,11 +699,15 @@ const bankLesson = () => ({
         assert.deepStrictEqual(plain(pick(mod, 'adv')).map(item => item.id), ['pic_adv', 'pic_shared']);
     });
 
-    await run('판서 영상: 심화학습 교수안·편성안에만 남은 그림도 차시 글에 있는 것으로 본다', () => {
+    await run('판서 영상: 심화학습 교수안·편성안에만 남은 그림도 차시 글에 있는 것으로 보고, 같은 값의 그림 키가 여럿이면 그 교수안이 가리키는 키에 버튼을 단다', () => {
         const mod = whiteboardLesson({ images: { img_story: PNG }, tabContents: { basicLearn: '## 1. 절\n\n글' }, gyosuanAdv: { docMd: '## 진행\n\n![그림](local:img_story)' } });
         const ctx = whiteboardContext({ mod, files: ['whiteboard-video.js'] });
         const has = lesson => ctx.whiteboardPictureInLesson(lesson, 'img_story');
         assert.deepStrictEqual([has(mod), has({ ...mod, gyosuanAdv: { deckMd: '![](local:img_story)' } }), has({ ...mod, gyosuanAdv: { docMd: '![](local:img_story10)' } })], [true, true, false]);
+        // 기록을 잃은 원래 그림 사본(img_copy)이 뒤에 있어도 심화학습 교수안이 가리키는 키를 고른다(whiteboardImageIds)
+        const ids = lesson => plain([...ctx.whiteboardImageIds(lesson).entries()]);
+        assert.deepStrictEqual(ids({ ...mod, images: { img_story: PNG, img_copy: PNG } }), [[PNG, 'img_story']], '심화학습 교수안이 가리키는 키');
+        assert.deepStrictEqual(ids({ ...mod, images: { img_story: PNG, img_copy: PNG }, gyosuanAdv: { deckMd: '![](local:img_story)' } }), [[PNG, 'img_story']], '심화학습 편성안이 가리키는 키');
     });
 
     await run('차시 목록·교과 현황 배지: 문항은 두 문제은행을 더하고, 교수안은 교안이 있는 갈래를 모두 갖춘 차시만 센다', () => {
