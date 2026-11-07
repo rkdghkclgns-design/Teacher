@@ -97,7 +97,8 @@ function ownBlocks(md) {
 
     await run('언어 표: 모든 언어가 작은 예문을 읽고 줄 위 주석을 받는다', () => {
         const langs = call('CODE_COMMENT_LANGS');
-        const SAMPLE = { dockerfile: 'FROM python', makefile: 'all:', yaml: 'a: 1', toml: 'a = 1', ini: 'a=1', batch: 'echo hi', css: 'p { color: red; }', scss: 'p { color: red; }', less: 'p { color: red; }', sql: 'SELECT 1;' };
+        // xml·svg·xaml은 요소 글자 사이에 주석을 넣지 않으므로 태그로 된 예문을 쓴다
+        const SAMPLE = { dockerfile: 'FROM python', makefile: 'all:', yaml: 'a: 1', toml: 'a = 1', ini: 'a=1', batch: 'echo hi', css: 'p { color: red; }', scss: 'p { color: red; }', less: 'p { color: red; }', sql: 'SELECT 1;', xml: '<a/>', svg: '<svg/>', xaml: '<Grid/>' };
         Object.entries(langs).forEach(([key, spec]) => {
             const comment = spec.add.length ? `${spec.add[0]} 설명` : `${spec.addBlock[0]} 설명 ${spec.addBlock[1]}`;
             const code = SAMPLE[key] || 'x = 1';
@@ -569,7 +570,7 @@ function ownBlocks(md) {
         assert.ok(out.failed[0].reason.includes('연결이 끊겼습니다'), out.failed[0].reason);
         assert.deepStrictEqual([out.fixed, out.calls, out.remaining], [[2], 2, 1]);
         const halt = await runAll({ md: RUN_DOC, maxBlocks: 1, ask: async () => { throw Object.assign(new Error('하루 한도'), { status: 429, quota: 'daily', noRetry: true }); } });
-        assert.deepStrictEqual([halt.calls, halt.failed.length, halt.remaining], [1, 1, 2], '다시 보내도 같은 오류면 멈춘다');
+        assert.deepStrictEqual([halt.calls, halt.failed.length, halt.remaining], [1, 2, 2], '다시 보내도 같은 오류면 멈춘다(보내지 못한 블록도 failed에 든다)');
         assert.ok(halt.error && halt.error.includes('하루 한도'));
         let stop = false;
         const stopped = await runAll({ md: RUN_DOC, maxBlocks: 1, isStopped: () => stop, ask: async prompt => { stop = true; return askWith(commentEach, [])(prompt); } });
@@ -610,6 +611,311 @@ function ownBlocks(md) {
         vm.runInContext(source('lesson-lint.js'), lctx);
         const sections = plain(vm.runInContext('lessonCodeSections', lctx)(md));
         issues.forEach(issue => assert.ok(sections.some(section => (section.title || '본문') === issue.where && section.text.includes(issue.snip)), issue.where));
+    });
+
+    /* ---------- 8차 검토 반영(재현 시험) ---------- */
+    const BS = String.fromCharCode(92); // 역슬래시 하나
+
+    await run('검토 S1: 줄 배열 답의 원소 안 줄바꿈도 줄로 나눠 보고, 코드를 끼운 원소는 막는다', () => {
+        const code = 'total = 0\nprint(total)';
+        rejects('python', code, ['total = 0  # 0으로 둡니다\ntotal = 999', 'print(total)'], /코드/);
+        rejects('python', code, ['# 합계를 준비합니다\nimport os; os.system("echo HACKED")', 'total = 0', 'print(total)'], /코드/);
+        passes('python', code, ['# 합계를 준비합니다\ntotal = 0', 'print(total)  # 찍습니다'], '# 합계를 준비합니다\ntotal = 0\nprint(total)  # 찍습니다');
+        const md = '## 합계\n\n```python\ntotal = 0\nprint(total)\n```\n';
+        const out = apply(md, [{ index: 0, code: ['total = 0  # 0으로 둡니다\ntotal = 999', 'print(total)'] }]);
+        assert.deepStrictEqual([out.md, out.applied, out.rejected.map(item => item.index)], [md, [], [0]]);
+        const spec = call('CODE_COMMENT_LANGS').python;
+        assert.ok(/글자/.test(call('ccShape')(spec, 'python', '# 설명\ntotal = 999')), '주석 모양 검사도 줄바꿈 글자를 막는다');
+    });
+
+    await run('검토 S2: java·groovy·scala 주석의 \\u 는 u 를 여럿 쓴 꼴까지 줄 주석·블록 주석·줄 위·줄 끝 모두 막는다', () => {
+        const lines = ['public class Main {', '    public static void main(String[] args) {', '        int total = 0;', '        System.out.println(total);', '    }', '}'];
+        const code = lines.join('\n');
+        const at3 = line => lines.map((l, k) => (k === 2 ? line : l)).join('\n');
+        rejects('java', code, at3(`        int total = 0; // 합계 ${BS}uu000a total = 999;`), /\\u/);
+        rejects('java', code, at3(`        int total = 0; /* 합계 ${BS}u002a/ total = 999; // */`), /\\u/);
+        rejects('java', code, [...lines.slice(0, 3), `        // 합계를 바꿉니다 ${BS}uuu000a total = 999;`, ...lines.slice(3)].join('\n'), /\\u/);
+        rejects('java', code, at3(`        int total = 0; // C:${BS}users 폴더`), /\\u/); // 16진수가 아닌 \u 도 java는 컴파일 오류다
+        rejects('groovy', 'def total = 0', `def total = 0 // 합계 ${BS}u000a total = 9`, /\\u/);
+        rejects('scala', 'val total = 0', `// 합계 ${BS}u000a val total = 9\nval total = 0`, /\\u/);
+        passes('java', code, at3('        int total = 0; // 합계를 0으로 둡니다'));
+        passes('kotlin', 'val total = 0', `val total = 0 // C:${BS}users 폴더`); // kotlin은 주석의 \u 를 바꾸지 않는다
+    });
+
+    await run('검토 S3·ACC-5: bash 따옴표 밖의 \\\' · \\" · \\# 는 글자이고, $(( )) 안의 << 는 히어독이 아니다', () => {
+        const sh = [`echo It${BS}'s a test`, "msg='first line", "second line'", 'echo "$msg"'].join('\n');
+        assert.deepStrictEqual(gapsOf('bash', sh), ['', '', 'string', '', '']);
+        assert.deepStrictEqual(endsOf('bash', sh), ['', 'string', '', '']);
+        rejects('bash', sh, [`echo It${BS}'s a test`, "msg='first line", '# 둘째 줄을 이어 씁니다', "second line'", 'echo "$msg"'].join('\n'), /문자열/);
+        rejects('bash', sh, [`echo It${BS}'s a test`, "msg='first line  # 첫 줄", "second line'", 'echo "$msg"'].join('\n'), /문자열/);
+        assert.deepStrictEqual(gapsOf('bash', [`echo ${BS}"quoted`, "msg='first line", "second line'"].join('\n')), ['', '', 'string', '']);
+        const quote = [`echo 'It'${BS}''s ok'`, '# 인사를 찍습니다', 'echo done'].join('\n');
+        assert.deepStrictEqual([counted('bash', quote), gapsOf('bash', quote)], [[2, 1], ['', '', '', '']]);
+        passes('bash', quote, [`echo 'It'${BS}''s ok'`, '# 인사를 찍습니다', '# 끝을 알립니다', 'echo done'].join('\n'));
+        assert.deepStrictEqual(counted('bash', [`echo ${BS}"hi${BS}"`, '# 설명', 'echo done'].join('\n')), [2, 1]);
+        assert.deepStrictEqual(counted('bash', `echo ${BS}# 글자\n# 진짜`), [1, 1], '\\# 는 주석이 아니다');
+        const shift = ['mask=$(( 1 << bit ))', '# 마스크를 찍습니다', 'echo $mask'].join('\n');
+        assert.deepStrictEqual([counted('bash', shift), gapsOf('bash', shift)], [[2, 1], ['', '', '', '']]);
+        assert.deepStrictEqual(gapsOf('bash', '(( x = (1 << n) ))\ncat <<EOF\nhi\nEOF'), ['', '', 'heredoc', 'heredoc', ''], '산술이 닫힌 뒤의 << 는 히어독이다');
+    });
+
+    await run('검토 S4: TS 제네릭 화살표를 JSX로 보지 않고, 형 단언일 수 있는 JSX와 미심쩍은 자리에서 연 JSX의 { } 안도 막는다', () => {
+        const ts = ['const first = <T,>(items: T[]): T => items[0];', 'const css = `', '.box {', '  width: 10px;', '}', '`;', 'console.log(JSON.stringify(css), first([1]));'].join('\n');
+        assert.deepStrictEqual(gapsOf('typescript', ts), ['', '', 'string', 'string', 'string', 'string', '', '']);
+        rejects('typescript', ts, ts.replace('.box {\n', '.box {\n  // 너비를 정합니다\n'), /문자열|JSX/);
+        const cast = ts.replace('const first = <T,>(items: T[]): T => items[0];', 'const base = <number>Number("2");');
+        const castGaps = gapsOf('typescript', cast);
+        assert.ok(castGaps.slice(2, 6).every(Boolean), JSON.stringify(castGaps));
+        rejects('typescript', cast, cast.replace('.box {\n', '.box {\n  // 너비를 정합니다\n'), /문자열|JSX/);
+        const ext = 'const pick = <T extends object>(x: T) => x;\nconst s = `\n{\n  a\n}\n`;';
+        assert.deepStrictEqual(gapsOf('typescript', ext).slice(2, 6), ['string', 'string', 'string', 'string']);
+        assert.deepStrictEqual(gapsOf('typescript', 'const id = <T>(x: T): T => x;\nconst s = `\n{\n  a\n}\n`;').slice(2, 6), ['string', 'string', 'string', 'string']);
+        assert.deepStrictEqual(gapsOf('javascript', 'const el = <div>{\n  a\n}</div>;'), ['', 'jsx', 'jsx', ''], '= 뒤에서 연 JSX의 { } 안은 막는다');
+        assert.deepStrictEqual(gapsOf('javascript', 'x;\n<div>{\n  a\n}</div>;'), ['', 'jsx', 'jsx', 'jsx', ''], '; 뒤에서 연 JSX의 { } 안은 막는다');
+        assert.deepStrictEqual(gapsOf('javascript', 'return (<div>{\n  a\n}</div>);'), ['', '', '', ''], 'return ( 뒤에서 연 JSX의 { } 안은 코드다');
+        assert.deepStrictEqual(gapsOf('tsx', 'return (<div>{\n  a\n}</div>);'), ['', '', '', ''], 'tsx 이름표도 같다');
+        assert.deepStrictEqual(gapsOf('typescript', 'return (<div>{\n  a\n}</div>);'), ['', 'jsx', 'jsx', ''], 'ts의 속성 없는 <이름>은 형 단언일 수 있어 { } 안도 막는다');
+        assert.deepStrictEqual(gapsOf('typescript', 'return (<div className="a">{\n  a\n}</div>);'), ['', '', '', ''], '속성이 있으면 형 단언이 아니다');
+        assert.deepStrictEqual(gapsOf('javascript', '<button onClick={() => {\n  setCount(count + 1);\n}}>\n</button>'), ['jsx', '', '', 'jsx', 'jsx'], '줄 머리에서 연 JSX 속성의 { } 안은 그대로 코드다');
+    });
+
+    await run('검토 S5: 닫히지 않은 한 줄 문자열을 버린 다음 줄 위를 막고, c# $@"…{…}…" · $"…" 끼움 식과 vb 여러 줄 문자열을 따라간다', () => {
+        const cs = ['var ok = true;', 'var s = $@"Name: {(ok ? "yes" : "no")}', 'second line";', 'System.Console.WriteLine(s);'].join('\n');
+        assert.deepStrictEqual(gapsOf('csharp', cs), ['', '', 'string', '', '']);
+        assert.deepStrictEqual(endsOf('csharp', cs), ['', 'string', '', '']);
+        rejects('csharp', cs, cs.replace('second line', '// 둘째 줄을 이어 씁니다\nsecond line'), /문자열/);
+        assert.deepStrictEqual(gapsOf('csharp', 'var s = $@"Name: {(ok ? "yes" : "no")}\nsecond\nthird";\nint n = 1;'), ['', 'string', 'string', '', '']);
+        assert.deepStrictEqual(gapsOf('csharp', 'var s = $"{{ {n} }}";\nint m = 1;'), ['', '', ''], '{{ }} 는 글자다');
+        assert.deepStrictEqual(counted('csharp', 'var s = $"{(ok ? "a" : "b")}"; // 끝'), [1, 1]);
+        const vb = ['Module Program', '    Sub Main()', '        Dim s = "first line', 'second line"', '        Console.WriteLine(s)', '    End Sub', 'End Module'].join('\n');
+        assert.deepStrictEqual(gapsOf('vbnet', vb), ['', '', '', 'string', '', '', '', '']);
+        rejects('vbnet', vb, vb.replace('second line', "' 둘째 줄\nsecond line"), /문자열/);
+        assert.strictEqual(gapsOf('c', `char *s = "abc${BS} \n  def";\nint x;`)[1], 'string', '공통 안전망: 버린 문자열 다음 줄 위는 막는다');
+        assert.deepStrictEqual(gapsOf('lua', `local s = "abc${BS}z\n      def"\nprint(s)`), ['', 'string', '', ''], 'lua \\z 는 문자열을 다음 줄로 잇는다');
+    });
+
+    await run('검토 S6: python·ruby 첫 두 줄에 coding 선언이 새로 생기거나 밀려나는 고침은 줄 위·줄 끝 모두 막는다', () => {
+        const py = '# 인사말 예제\nword = "café"\nprint(len(word), word.upper())';
+        rejects('python', py, `# coding: latin-1\n${py}`, /coding/);
+        rejects('python', py, py.replace('# 인사말 예제', '# 인사말 예제  # coding: latin-1'), /coding/);
+        rejects('ruby', '# 인사\nputs "café"', '# 인사  # encoding: ascii-8bit\nputs "café"', /coding/);
+        passes('python', py, py.replace('word = "café"', 'word = "café"  # coding: utf-8'));
+        const decl = '# 예제\n# -*- coding: cp949 -*-\nx = 1';
+        assert.deepStrictEqual(gapsOf('python', decl).slice(0, 2), ['directive', 'directive'], '맨 위에 줄을 더하면 둘째 줄 선언이 셋째 줄로 밀려난다');
+        rejects('python', decl, `# 설명\n${decl}`, /넣을 수 없습니다|coding/);
+        passes('python', decl, `${decl}  # 하나`);
+    });
+
+    await run('검토 S7: yaml 값이 다음 줄에서 시작하거나 따옴표 키·&앵커·!태그 뒤에 오는 여러 줄 평문 값도 막는다', () => {
+        const next = 'description:\n  this is a long\n  description text\nname: demo';
+        assert.deepStrictEqual([gapsOf('yaml', next), endsOf('yaml', next)], [['', '', 'string', '', ''], ['', 'string', '', '']]);
+        rejects('yaml', next, next.replace('  description text', '  # 설명을 이어 씁니다\n  description text'), /문자열/);
+        rejects('yaml', next, next.replace('this is a long', 'this is a long  # 설명'), /문자열/);
+        passes('yaml', next, `# 설명\n${next.replace('description:', 'description:  # 키')}`);
+        assert.deepStrictEqual(gapsOf('yaml', '"description": this is a long\n  description text\nname: demo'), ['', 'string', '', '']);
+        assert.deepStrictEqual(gapsOf('yaml', "'key': it is\n  long"), ['', 'string', '']);
+        assert.deepStrictEqual(gapsOf('yaml', 'items:\n  -\n    first part\n    second part'), ['', '', '', 'string', '']);
+        assert.deepStrictEqual(gapsOf('yaml', 'base: &b this is a long\n  value text\nnote: !!str this is a long\n  value text'), ['', 'string', '', 'string', '']);
+        assert.deepStrictEqual(gapsOf('yaml', 'base: &b\n  this is\n  long'), ['', '', 'string', '']);
+        assert.deepStrictEqual(gapsOf('yaml', 'list:\n  - a\n  - b: 1\n    c: 2'), ['', '', '', '', ''], '새 키와 목록 항목은 이어지는 글이 아니다');
+        assert.deepStrictEqual(gapsOf('yaml', 'parent:\n  child: 1\n  other: 2'), ['', '', '', ''], '값 없는 키 다음의 하위 키는 평문이 아니다');
+    });
+
+    await run('검토 S8: perl << "EOF"(띄운 따옴표 끝말)와 bash <<"END OF"(공백 든 끝말) 히어독을 알아본다', () => {
+        assert.deepStrictEqual(gapsOf('perl', 'print << "EOF";\nHello\nWorld\nEOF\nprint "done";'), ['', 'heredoc', 'heredoc', 'heredoc', '', '']);
+        rejects('perl', 'print << "EOF";\nHello\nWorld\nEOF', 'print << "EOF";\nHello\n# 둘째 줄을 찍습니다\nWorld\nEOF', /히어독/);
+        assert.deepStrictEqual(gapsOf('bash', 'cat <<"END OF"\nHello\nWorld\nEND OF\necho done'), ['', 'heredoc', 'heredoc', 'heredoc', '', '']);
+        assert.deepStrictEqual(gapsOf('bash', 'cat <<E"O"F\nhi\nEOF\nls'), ['', 'heredoc', 'heredoc', '', '']);
+        assert.deepStrictEqual(gapsOf('perl', 'my $x = 1 << 2;\nprint $x;'), ['', '', ''], '띄운 숫자 앞 << 는 셈이다');
+    });
+
+    await run('검토 S9: perl의 # line 숫자 주석은 줄 번호를 바꾸므로 줄 위·줄 끝 모두 막는다', () => {
+        const pl = 'my $n = 1;\nwarn "check" if 0;\nprint __LINE__;';
+        rejects('perl', pl, pl.replace('warn', '# line 100\nwarn'), /line/);
+        rejects('perl', pl, pl.replace('my $n = 1;', 'my $n = 1;  # line 100'), /line/);
+        passes('perl', pl, `# 줄 번호를 찍습니다\n${pl}`);
+    });
+
+    await run('검토 S10·ACC-10: js의 뒤붙이 ++ 와 map 같은 이름 뒤 / 는 나눗셈이고, cpp의 100\'000 은 숫자다', () => {
+        const js1 = 'let i = 3;\nconst x = i++ / 2; const p = `/\n${x}`;\nconsole.log(JSON.stringify(p));';
+        assert.deepStrictEqual(gapsOf('javascript', js1), ['', '', 'string', '', '']);
+        rejects('javascript', js1, js1.replace('${x}', '// 설명\n${x}'), /문자열/);
+        rejects('javascript', js1, js1.replace('const p = `/', 'const p = `/  // 설명'), /문자열/);
+        assert.deepStrictEqual(gapsOf('javascript', 'const map = 8;\nconst half = map / 2; const t = `/\ne`;'), ['', '', 'string', '']);
+        assert.deepStrictEqual(counted('javascript', 'y = x++ / 2; // 절반'), [1, 1]);
+        assert.deepStrictEqual(counted('javascript', 'const w = map / 2; // 절반'), [1, 1]);
+        assert.deepStrictEqual(counted('javascript', 'const r = ++i / 2; // 반'), [1, 1]);
+        assert.deepStrictEqual(counted('javascript', 'const r = s.split(/,/); // 나눔'), [1, 1]);
+        assert.deepStrictEqual(counted('perl', 'my @w = split /,/, $s; # 나눔'), [1, 1], 'perl split 뒤 / 는 정규식이다');
+        assert.deepStrictEqual(counted('cpp', "int n = 100'000; // 십만"), [1, 1]);
+        assert.deepStrictEqual(endsOf('cpp', "int n = 100'000; // 십만\nint m;"), ['', '']);
+    });
+
+    await run('검토 S11: xml·svg·xaml 요소 글자 사이와 그 줄 끝에는 넣지 않고, 태그와 태그 사이만 연다', () => {
+        const xml = '<config>\n  <message>Hello\nWorld</message>\n</config>';
+        assert.deepStrictEqual([gapsOf('xml', xml), endsOf('xml', xml)], [['', '', 'text', '', ''], ['', 'text', '', '']]);
+        rejects('xml', xml, xml.replace('World', '<!-- 둘째 줄 -->\nWorld'), /글자/);
+        rejects('xml', xml, xml.replace('Hello', 'Hello <!-- 인사 -->'), /글자/);
+        assert.deepStrictEqual(gapsOf('svg', '<svg>\n<text>\nHi\n</text>\n</svg>'), ['', '', 'text', 'text', '', '']);
+        passes('xml', xml, `<!-- 설정 -->\n${xml.replace('<config>', '<config> <!-- 뿌리 -->')}`);
+        assert.deepStrictEqual(gapsOf('html', xml), ['', '', '', '', ''], 'html은 공백을 합쳐 그대로 둔다');
+    });
+
+    await run('검토 S12: 줄 끝 공백이 있는 원래 줄에 붙인 줄 끝 주석도 넣고, 한 블록이 다시 보기에 걸려도 다른 블록 고침은 넣는다', async () => {
+        const md = '```python\ntotal = 0   \nprint(total)\n```\n\n```js\nlet a = 1;\n```\n';
+        const out = apply(md, [{ index: 0, code: 'total = 0  # 0으로 둡니다\nprint(total)' }, { index: 1, code: '// 값을 정합니다\nlet a = 1;' }]);
+        assert.deepStrictEqual([out.applied, out.rejected], [[0, 1], []]);
+        assert.ok(out.md.includes('```python\ntotal = 0   # 0으로 둡니다\nprint(total)\n```') && out.md.includes('```js\n// 값을 정합니다\nlet a = 1;'), out.md);
+        const ran = await runAll({ md: '```python\ntotal = 0   \nprint(total)\n```', ask: async () => '<<<CODE 1>>>\ntotal = 0  # 0으로 둡니다\nprint(total)\n<<<END 1>>>' });
+        assert.deepStrictEqual([ran.fixed, ran.failed, ran.calls], [[0], [], 1]);
+        // 다시 보기가 한 블록(BAD 표시)만 거르는 맥락: 다른 블록은 넣는다
+        const c2 = makeContext();
+        vm.runInContext('const ccKeepsCodeReal = ccKeepsCode; ccKeepsCode = (a, b) => ccKeepsCodeReal(a, b) && !b.includes("BAD");', c2);
+        const two = plain(vm.runInContext('codeCommentApply', c2)(md, [{ index: 0, code: 'total = 0  # BAD\nprint(total)' }, { index: 1, code: '// 값을 정합니다\nlet a = 1;' }]));
+        assert.deepStrictEqual([two.applied, two.rejected.map(item => item.index)], [[1], [0]]);
+        assert.ok(two.md.includes('```js\n// 값을 정합니다\nlet a = 1;') && !two.md.includes('BAD'), two.md);
+    });
+
+    await run('검토 S13: 멈춤·중지 뒤 보내지 않은 블록도 까닭과 함께 failed에 넣는다', async () => {
+        const md3 = ['```python', 'a = 1', '```', '', '```python', 'b = 2', '```', '', '```python', 'c = 3', '```'].join('\n');
+        let stop = false;
+        const stopped = await runAll({ md: md3, maxBlocks: 1, isStopped: () => stop, ask: async prompt => { stop = true; return askWith(commentEach, [])(prompt); } });
+        assert.deepStrictEqual([stopped.fixed, stopped.failed.map(item => item.index), stopped.remaining, stopped.stopped], [[0], [1, 2], 2, true]);
+        assert.ok(stopped.failed.every(item => /멈춰/.test(item.reason)), JSON.stringify(stopped.failed));
+        const halt = await runAll({ md: md3, maxBlocks: 1, ask: async () => { throw Object.assign(new Error('하루 한도를 넘었습니다'), { noRetry: true }); } });
+        assert.deepStrictEqual([halt.fixed, halt.failed.map(item => item.index), halt.remaining], [[], [0, 1, 2], 3]);
+        assert.ok(/하루 한도/.test(halt.failed[0].reason) && /멈춰/.test(halt.failed[1].reason), JSON.stringify(halt.failed));
+    });
+
+    await run('검토 ACC-1: 흔한 문서 주석 꼴(/** */ · /*! */ · /// · ## · --- · ;; · %% · \'\'\' · #\')을 받고, rust 문서 주석과 sql의 --- · /*! 는 막는다', () => {
+        passes('javascript', 'let hp = 100;', '/** 플레이어 체력 */\nlet hp = 100;');
+        passes('typescript', 'let hp = 100;', 'let hp = 100; /** 체력 */');
+        passes('java', 'int hp = 100;', '/** 플레이어 체력 */\nint hp = 100;');
+        passes('kotlin', 'val hp = 100', '/** 플레이어 체력 */\nval hp = 100');
+        passes('cpp', 'int hp = 100;', '/** 플레이어 체력 */\nint hp = 100;');
+        passes('c', 'int hp = 100;', '/*! 체력 */\nint hp = 100;');
+        passes('css', 'p { color: red; }', '/** 문단 색 */\np { color: red; }');
+        passes('swift', 'let hp = 100', '/// 체력을 돌려줍니다\nlet hp = 100');
+        passes('dart', 'int hp = 100;', '/// 체력을 돌려줍니다\nint hp = 100;');
+        passes('gdscript', 'var hp = 100', '## 플레이어 체력\nvar hp = 100');
+        passes('lua', 'local hp = 100', '--- 플레이어 체력\nlocal hp = 100');
+        passes('clojure', '(def hp 100)', ';; 플레이어 체력\n(def hp 100)');
+        passes('scheme', '(define hp 100)', ';; 플레이어 체력\n(define hp 100)');
+        passes('matlab', 'hp = 100;', '%% 체력 정하기\nhp = 100;');
+        passes('vbnet', 'Dim hp = 100', "''' <summary>체력</summary>\nDim hp = 100");
+        passes('r', 'hp <- 100', "#' 플레이어 체력\nhp <- 100");
+        rejects('rust', 'let hp = 100;', '/// 체력\nlet hp = 100;', /문서 주석/);
+        rejects('rust', 'let hp = 100;', '/** 체력 */\nlet hp = 100;', /문서 주석/);
+        rejects('sql', 'SELECT 1;', '--- 하나\nSELECT 1;', /공백/);
+        rejects('sql', 'SELECT 1;', '/*! 하나 */\nSELECT 1;', /!/);
+        rejects('typescript', 'let a;', '/// <reference path="a.ts" />\nlet a;', /지시/);
+        rejects('lua', 'print(1)', '---[[ 설명 ]]\nprint(1)', /공백/);
+        const prompt = plain(call('codeCommentPrompt')([{ block: { index: 0, lang: 'javascript', label: 'js', lines: ['let a;'] } }, { block: { index: 1, lang: 'rust', label: 'rust', lines: ['let a = 1;'] } }]));
+        assert.ok(prompt.user.includes('/** */') && prompt.user.includes('///'), prompt.user);
+        assert.ok(/\[블록 2\] Rust[^\n]*쓰지 않습니다/.test(prompt.user), prompt.user);
+    });
+
+    await run('검토 ACC-2: 여러 줄 블록 주석은 까닭을 바로 알리고, 지시에 한 줄에서 닫는 규칙을 적는다', () => {
+        rejects('java', 'int add(int a, int b) {\n    return a + b;\n}', '/**\n * 두 수를 더합니다.\n */\nint add(int a, int b) {\n    return a + b;\n}', /여러 줄 블록 주석/);
+        rejects('css', 'p { color: red; }', '/*\n  문단 색\n*/\np { color: red; }', /여러 줄 블록 주석/);
+        rejects('html', '<p>a</p>', '<!--\n  문단\n-->\n<p>a</p>', /여러 줄 블록 주석/);
+        rejects('c', 'int a;', '/*\n// 안\n*/\nint a;', /여러 줄 블록 주석/);
+        rejects('c', 'int a;', 'int a;\n/* 끝 설명\n   이어서 */', /여러 줄 블록 주석/);
+        const system = plain(call('codeCommentPrompt')([])).system;
+        assert.ok(/한 줄에서 열고 닫/.test(system) && /여러 줄 블록 주석/.test(system), system);
+    });
+
+    await run('검토 ACC-3: 필요 수는 주석을 넣을 수 없는 안쪽 줄을 빼고 세며, 따로 넣을 수 있는 자리 수를 넘지 않는다', async () => {
+        const doc = ['def move(player, dx, dy):', '    """', ...Array.from({ length: 10 }, (_, i) => `    설명 ${i}`), '    """', ...Array.from({ length: 8 }, (_, i) => `    player.x${i} = dx`)].join('\n');
+        assert.deepStrictEqual([count('python', doc).codeLines, count('python', doc).need], [21, 1], 'docstring 안쪽 줄은 필요 수에서 뺀다');
+        const sh = ['cat <<EOF > /etc/app.conf', ...Array.from({ length: 30 }, (_, i) => `key${i}=v${i}`), 'EOF'].join('\n');
+        assert.deepStrictEqual(count('bash', sh).need, 1);
+        const full = verify('bash', sh, `# 설정 파일을 씁니다\n${sh}\n# 끝났습니다`);
+        assert.ok(full.ok && full.enough, JSON.stringify(full));
+        const out = await runAll({ md: `\`\`\`bash\n${sh}\n\`\`\``, ask: askWith(code => `# 설정 파일을 씁니다\n${code}\n# 끝났습니다`, []) });
+        assert.deepStrictEqual([out.fixed, out.failed, out.remaining, out.calls], [[0], [], 0, 1]);
+        const sql = ['SQL = """', ...Array.from({ length: 40 }, (_, i) => `SELECT ${i}`), '"""'].join('\n');
+        assert.strictEqual(count('python', sql).need, 1);
+        // 따로 넣을 수 있는 자리(줄 위 2곳 + 줄 끝 0곳)보다 많이 요구하지 않는다
+        const jsx = ['function App() {', '  return (', '    <div>', ...Array.from({ length: 40 }, (_, i) => `      <p>${i}</p>`), '    </div>', '  );', '}'].join('\n');
+        const c = count('javascript', jsx);
+        const z = zones('javascript', jsx);
+        const free = z.gaps.filter(g => g.ok).length + z.ends.filter((e, k) => e.ok && jsx.split('\n')[k].trim()).length;
+        assert.ok(c.need <= free && c.need >= 1, JSON.stringify({ c, free }));
+        // 필요 수 경계(9·10·19·20·30줄)에 보호 구역이 낀 경우: 문자열 안쪽 3줄은 세지 않는다
+        const withString = n => ['# 설명', 'x = """', 'a', 'b', 'c', '"""', ...Array.from({ length: n }, (_, i) => `y${i} = ${i}`)].join('\n');
+        assert.deepStrictEqual([7, 8, 17, 18, 28].map(n => count('python', withString(n)).need), [1, 1, 1, 2, 3]);
+        assert.deepStrictEqual([7, 8, 17, 18, 28].map(n => count('python', withString(n)).codeLines), [12, 13, 22, 23, 33], '코드 줄 수는 그대로 센다');
+    });
+
+    await run('검토 ACC-4: 언어 자리에 이름표(py·js·cs·c#·sh·c++·tsx·mysql)도 받고, constructor 같은 이름은 모르는 언어로 본다', () => {
+        ['py', 'python3', 'js', 'cs', 'c#', 'sh', 'c++', 'Python', 'main.py'].forEach(label => assert.strictEqual(count(label, 'x = 1').short, true, label));
+        assert.deepStrictEqual(counted('cs', 'int x = 1; // 하나'), [1, 1]);
+        assert.ok(zones('js', 'let a = 1;'));
+        assert.strictEqual(call('codeCommentMarks')('py'), '#');
+        passes('cs', 'int x = 1;', '// 값을 정합니다\nint x = 1;');
+        assert.deepStrictEqual(counted('mysql', 'SELECT 1; # 끝'), [1, 1], 'sql 이름표는 갈래로도 쓴다');
+        ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf'].forEach(name => {
+            assert.deepStrictEqual(count(name, 'x'), { codeLines: 0, comments: 0, need: 0, short: false, unknown: true }, name);
+            assert.strictEqual(zones(name, 'x'), null, name);
+            assert.strictEqual(call('codeCommentMarks')(name), '', name);
+            assert.strictEqual(verify(name, 'x', '# a\nx').ok, false, name);
+        });
+        assert.strictEqual(count('brainfuck', '+++').unknown, true);
+        const prompt = plain(call('codeCommentPrompt')([{ block: { index: 0, lang: 'constructor', lines: ['x'] } }, { block: { index: 1, lang: 'py', lines: ['x = 1'] } }]));
+        assert.ok(prompt.user.includes('코드 블록 1개') && prompt.user.includes('[블록 2] Python'), prompt.user);
+    });
+
+    await run('검토 ACC-6: 원래 코드에 ``` 나 ~~~ 로 시작하는 줄이 있어도 원래 줄은 받고, 더한 줄의 ``` 만 막는다', async () => {
+        const doc = 'def area(w, h):\n    """\n    넓이\n    ~~~~\n    """\n    return w * h';
+        passes('python', doc, `# 넓이를 구합니다\n${doc}`);
+        passes('python', '```\nx = 1', '```\n# 설명\nx = 1');
+        rejects('python', 'x = 1', '```\nx = 1', /```/);
+        const docMd = `\`\`\`python\n${doc}\n\`\`\``;
+        const out1 = await runAll({ md: docMd, ask: askWith(code => `# 넓이를 구합니다\n${code}`, []) });
+        assert.deepStrictEqual([out1.fixed, out1.failed], [[0], []]);
+        const md = '````python\n```\nx = 1\n````';
+        const out2 = await runAll({ md, ask: askWith(code => code.replace('x = 1', '# 설명\nx = 1'), []) });
+        assert.deepStrictEqual([out2.fixed, out2.failed], [[0], []], '답 첫 줄이 원래 첫 줄(```)과 같으면 떼지 않는다');
+        assert.ok(out2.md.includes('```\n# 설명\nx = 1\n````'), out2.md);
+    });
+
+    await run('검토 ACC-7: CRLF 글·줄을 그대로 넘겨도 줄 끝 \\r 을 떼고 읽는다', () => {
+        assert.deepStrictEqual(plain(call('codeCommentCount')('bash', 'cat <<EOF\r\nhi\r\nEOF\r\n# 설명\r\necho done')), { codeLines: 4, comments: 1, need: 1, short: false });
+        const out = plain(call('codeCommentVerify')({ lang: 'python', lines: 'x = 1\r\ny = 2'.split('\n') }, '# 설명\nx = 1\ny = 2'));
+        assert.deepStrictEqual([out.ok, out.code], [true, '# 설명\nx = 1\ny = 2']);
+        assert.deepStrictEqual(counted('bash', ['cat <<EOF\r', 'hi\r', 'EOF\r', '# 설명\r', 'echo done']), [4, 1]);
+    });
+
+    await run('검토 ACC-8: 게임 교안에 흔한 이름표와 파일 이름 이름표를 언어로 바꾸고, 모르는 이름표는 점검에 알린다', () => {
+        const cases = { luau: 'luau', gdshader: 'glsl', cg: 'hlsl', node: 'javascript', nodejs: 'javascript', arduino: 'cpp', ino: 'cpp', sass: 'scss', py3: 'python', pl: 'perl', 'obj-c': 'objectivec', 'c-sharp': 'csharp', 'main.py': 'python', 'Player.cs': 'csharp', 'app.min.js': 'javascript' };
+        Object.entries(cases).forEach(([info, key]) => assert.strictEqual(lang(info), key, info));
+        assert.deepStrictEqual(blocks('```output.txt\n1\n```\n```package.json\n{}\n```').map(b => b.skip), ['nocode', 'nocode'], '파일 이름의 확장자로 코드가 아닌 블록도 안다');
+        assert.deepStrictEqual(counted('luau', 'local s = `점수 {score}점`\n-- 설명'), [1, 1]);
+        assert.deepStrictEqual(gapsOf('luau', 'local s = `a {\n  x\n} b`\nprint(s)'), ['', 'string', 'string', '', ''], 'luau 백틱 끼움 식');
+        const issues = plain(call('codeCommentIssues')('## 점수\n\n```brainfuck\n+++\n```\n\n```luau\nlocal score = 0\nscore += 10\nprint(score)\n```'));
+        assert.deepStrictEqual(issues.map(issue => [issue.sev, issue.where, issue.block]), [['info', '점수', 0], ['warn', '점수', 1]]);
+        assert.ok(issues[0].msg.includes('이름표') && issues[0].snip.includes('brainfuck'), JSON.stringify(issues[0]));
+    });
+
+    await run('검토 ACC-9: 갈래 없는 sql 블록의 DELIMITER $$ 는 mysql로 읽어 본문을 코드로 본다', () => {
+        const proc = 'DELIMITER $$\nCREATE PROCEDURE p()\nBEGIN\n  -- 설명\n  SELECT 1;\nEND$$\nDELIMITER ;';
+        assert.deepStrictEqual([counted('sql', proc), gapsOf('sql', proc)], [[6, 1], ['', '', '', '', '', '', '', '']]);
+        assert.deepStrictEqual(counted('sql', 'CREATE FUNCTION f() AS $$\n-- 본문 안\n$$ LANGUAGE sql;'), [3, 0], 'DELIMITER 가 없으면 $$ 는 문자열이다');
+    });
+
+    await run('검토 ACC-11: 응답 표시줄 앞의 제목·목록 기호와 뒤의 : 를 견딘다', () => {
+        assert.deepStrictEqual(parse('### <<<CODE 1>>>\n# c\nx = 1\n### <<<END 1>>>'), { 1: ['# c\nx = 1'] });
+        assert.deepStrictEqual(parse('- <<<CODE 1>>>\n# c\nx = 1\n- <<<END 1>>>'), { 1: ['# c\nx = 1'] });
+        assert.deepStrictEqual(parse('<<<CODE 1>>>:\n# c\nx = 1\n<<<END 1>>>'), { 1: ['# c\nx = 1'] });
+        assert.deepStrictEqual(parse('**<<<CODE 2>>>**:\n# c\n* <<<END 2>>>'), { 2: ['# c'] });
+    });
+
+    await run('검토 ACC-12: 앞 설명에서 그림 태그·그림만 든 단락·마크다운 그림을 뗀다', () => {
+        const one = blocks("## 1. 점수\n\n<p align='center'><img src='https://example.com/a.png' alt='그림' width='400'></p>\n\n점수를 셉니다.\n\n```python\nscore = 0\n```")[0];
+        assert.strictEqual(one.context, '## 1. 점수\n점수를 셉니다.');
+        const two = blocks('## 1. 점수\n\n![다이어그램](https://example.com/b.png)\n\n점수를 셉니다. [![배지](https://x.y/b.svg)](https://x.y)\n\n```python\nscore = 0\n```')[0];
+        assert.strictEqual(two.context, '## 1. 점수\n점수를 셉니다.');
     });
 
     console.log(`\n${total - failed}/${total} passed`);
