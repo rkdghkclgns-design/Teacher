@@ -489,9 +489,18 @@ function usedGyosuanImages(gyosuan) {
     return Object.fromEntries(Object.entries(gyosuan.images || {}).filter(([id]) => text.includes(`local:${id}`)));
 }
 
+// 교수안·편성안이 쓰는 그림: 차시 그림 위에 교수안 그림(교수안을 만들 때 옮겨 둔 사본)이 이긴다.
+// 다만 차시에서 움직이는 GIF로 바꾼 그림(image-motion.js)은 GIF가 이긴다(원래 그림으로 되돌리면 교수안의 사본이 다시 보인다)
+function gyosuanImageMap(mod) {
+    const images = { ...(mod?.images || {}), ...(mod?.gyosuan?.images || {}) };
+    const motions = mod?.imageMotions && typeof mod.imageMotions === 'object' ? Object.keys(mod.imageMotions) : [];
+    if (typeof imageMotionState === 'function') motions.filter(id => imageMotionState(mod, id) === 'valid').forEach(id => { images[id] = mod.images[id]; });
+    return images;
+}
+
 // 교수안·편성안의 ![설명](local:id)를 data URL로 바꾼다. 찾지 못한 이미지(빈 값·폴더에서 찾지 못한 teacher-image 참조)는 줄에서 뺀다
 function resolveGyosuanImages(md, mod) {
-    const images = { ...(mod?.images || {}), ...(mod?.gyosuan?.images || {}) };
+    const images = gyosuanImageMap(mod);
     return String(md || '').replace(/!\[([^\]]*)\]\(local:([^)\s]+)\)/g, (match, alt, id) => (/^data:image\//.test(images[id] || '') ? `![${alt}](${images[id]})` : ''));
 }
 

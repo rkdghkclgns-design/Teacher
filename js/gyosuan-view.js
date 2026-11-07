@@ -306,7 +306,7 @@ window.downloadGyosuanMd = function (moduleId, field = 'docMd') {
 // 교수안 문서(HTML 한 파일). 교수안 서식(css/gyosuan-doc.css)을 문서 안에 넣어 따로 열어도 같은 모양이다
 // shown(Map)을 주면 보이는 그림에 다시 불러오기 표시를 달고 그 그림을 모은다(HTML 내려받기). 인쇄에는 주지 않는다
 async function gyosuanExportDocument(mod, shown = null) {
-    const images = { ...(mod.images || {}), ...(mod.gyosuan?.images || {}) }; // 그릴 때와 같은 순서(교수안 그림이 이긴다, gyosuan.js resolveGyosuanImages)
+    const images = gyosuanImageMap(mod); // 그릴 때와 같은 그림(교수안 그림이 이기고 움직이는 GIF는 GIF가 이긴다, gyosuan.js resolveGyosuanImages)
     const html = gyosuanDocHtml(mod, shown ? mount => markShownImages(mount, images, 0, shown) : null);
     if (!html) return null;
     const cssUrl = new URL('css/gyosuan-doc.css', location.href).href;

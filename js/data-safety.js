@@ -212,6 +212,21 @@ const historyImages = entry => Object.fromEntries(Object.entries(isObject(entry.
 // 진짜 그림(data:image)인지. 아니면 찾지 못한 그림 자리(teacher-image 참조)나 빈 값이다(화면에는 빈 그림으로 보인다)
 const isPictureData = data => typeof data === 'string' && data.startsWith('data:image/');
 
+// 기록에 함께 담을 움직이는 GIF 기록(image-motion.js)과 그 원래 그림: 기록이 담은 그림(images)의 GIF 그림 키에 딸린 것만.
+// 원래 그림은 글이 가리키지 않아 referencedImages가 담지 않으므로 따로 담는다(되돌리거나 새 차시로 되살려도 '원래 그림으로'가 되게). 담을 것이 없으면 null
+function historyMotionParts(records, images, allImages) {
+    if (!isObject(records) || !isObject(images) || !isObject(allImages)) return null;
+    const imageMotions = {};
+    const stills = {};
+    for (const [key, item] of Object.entries(records)) {
+        if (!Object.prototype.hasOwnProperty.call(images, key) || !isObject(item) || typeof item.still !== 'string') continue;
+        if (typeof allImages[item.still] !== 'string') continue;
+        imageMotions[key] = { ...item, ...(Array.isArray(item.patterns) ? { patterns: [...item.patterns] } : {}) };
+        stills[item.still] = allImages[item.still];
+    }
+    return Object.keys(imageMotions).length ? { imageMotions, stills } : null;
+}
+
 // 되돌리는 쪽 밖에서 쓰는 그림 키. 되돌리는 쪽은 탭 하나 기록(part)이면 그 탭, 차시 기록이면 5개 탭과 합친 글이다.
 // 밖: 다른 탭 글, 교수안·편성안·슬라이드 화면 편집본, 삽화·판서 영상이 가리키는 키(tabs.js unusedLessonImageIds와 같은 곳). 글은 local: 뒤 id 그대로 견준다(img_10은 img_1이 아니다).
 // 합친 글(content)은 탭이 있으면 탭을 이은 글이라 밖으로 세지 않는다. 탭이 모두 빈 옛 본문은 다른 탭을 되돌리면 기본학습으로 옮겨지므로 밖이다
@@ -279,12 +294,16 @@ function historyTextSize(value, depth = 0) {
 }
 const historySizeBytes = list => (Array.isArray(list) ? list : []).reduce((sum, item) => sum + historyTextSize(item), 0);
 
-// 예전 기록 줄이기: 탭 내용이 없는 기록(탭 하나 기록·옛 단일 본문)은 그 글이 쓰는 그림만 남긴다.
+// 예전 기록 줄이기: 탭 내용이 없는 기록(탭 하나 기록·옛 단일 본문)은 그 글이 쓰는 그림과 그 GIF 그림의 원래 그림만 남긴다.
 // 차시 전체 기록(tabContents)은 교수안에 붙여 넣은 그림이 섞여 있을 수 있어 그대로 둔다. 바뀐 것이 없으면 같은 객체를 돌려준다
 function slimHistoryEntry(entry) {
     if (isObject(entry.tabContents) || !isObject(entry.images)) return entry;
-    const images = referencedImages(stateText(entry.content), entry.images);
-    return Object.keys(images).length === Object.keys(entry.images).length ? entry : { ...entry, images };
+    const used = referencedImages(stateText(entry.content), entry.images);
+    const motion = historyMotionParts(entry.imageMotions, used, entry.images);
+    const images = motion ? { ...used, ...motion.stills } : used;
+    if (Object.keys(images).length === Object.keys(entry.images).length) return entry;
+    const { imageMotions, ...rest } = entry;
+    return { ...rest, images, ...(motion ? { imageMotions: motion.imageMotions } : {}) };
 }
 
 // 저장해 둔 기록을 열 때 한 번. 객체가 아닌 칸은 뺀다(목록을 그리지 못한다). 이 브라우저의 기록이라 id 모양 때문에 지우지는 않는다(mergeHistory와 같다).
@@ -307,21 +326,25 @@ function tidyStoredHistory(list) {
 
 // 작업 기록 한 칸. 차시 id·교과 id·5개 탭(탭 하나 기록이면 그 탭 id)·이유를 함께 남겨 그 차시로 되돌릴 수 있게 한다.
 // mod: 차시(또는 최종 평가) 객체, 또는 탭 하나만 남길 때 { title, content, images, tabId, lesson }. lesson은 그 차시 객체이고 기록에는 id만 남는다.
-// 그림은 그 글이 쓰는 것만 담는다(값이 글자라 원본 차시와 이어지지 않는다). 탭 하나 기록은 교과 id를 알 때만 차시 id를 남긴다(엉뚱한 차시를 고치지 않게)
+// 그림은 그 글이 쓰는 것만 담는다(값이 글자라 원본 차시와 이어지지 않는다). 탭 하나 기록은 교과 id를 알 때만 차시 id를 남긴다(엉뚱한 차시를 고치지 않게).
+// 담은 그림이 움직이는 GIF면 그 기록(imageMotions)과 원래 그림도 담는다(historyMotionParts)
 function historyEntry(mod, { id, date, reason, subjectId } = {}) {
     const part = isObject(mod.lesson) ? historyPart(mod) : null;
     const lessonId = part ? (subjectId != null ? mod.lesson.id : null) : mod.id;
+    const images = referencedImages(historyText(mod), mod.images);
+    const motion = historyMotionParts(isObject(mod.imageMotions) ? mod.imageMotions : mod.lesson?.imageMotions, images, mod.images);
     return {
         id,
         title: mod.title,
         content: mod.content,
-        images: referencedImages(historyText(mod), mod.images),
+        images: motion ? { ...images, ...motion.stills } : images,
         date,
         ...(lessonId != null ? { lessonId } : {}),
         ...(subjectId != null ? { subjectId } : {}),
         ...(part ? { tabId: part } : {}),
         ...(!part && mod.tabContents ? { tabContents: { ...mod.tabContents } } : {}),
-        ...(reason ? { reason } : {})
+        ...(reason ? { reason } : {}),
+        ...(motion ? { imageMotions: motion.imageMotions } : {})
     };
 }
 
@@ -350,21 +373,25 @@ function historyRestoreTarget(entry, subjects) {
     return { mode: 'new', part: null };
 }
 
-// 새 차시로 되살린다. 탭 하나 기록은 그 탭에, 5개 탭 기록은 탭 그대로, 탭 구분이 없는 기록(예전 기록 등)은 기본학습 칸에 넣는다
+// 새 차시로 되살린다. 탭 하나 기록은 그 탭에, 5개 탭 기록은 탭 그대로, 탭 구분이 없는 기록(예전 기록 등)은 기본학습 칸에 넣는다.
+// 기록이 담은 움직이는 GIF 기록은 그 GIF와 원래 그림이 함께 들어갈 때만 넣는다
 function lessonFromHistory(entry, newId) {
     const part = historyPart(entry);
     const content = stateText(entry.content);
     const tabs = part ? { [part]: content } : isObject(entry.tabContents) ? entry.tabContents : { basicLearn: content };
+    const images = historyImages(entry);
+    const imageMotions = isObject(entry.imageMotions) ? safeImageMotions(entry.imageMotions, images) : {};
     return {
         id: newId,
         title: `${stateText(entry.title) || '되살린 교안'} (되살림)`,
         description: '',
         status: 'done',
         content,
-        images: historyImages(entry),
+        images,
         tabContents: { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null, ...tabs },
         uploadedMdName: null,
-        uploadedMdContent: null
+        uploadedMdContent: null,
+        ...(Object.keys(imageMotions).length ? { imageMotions } : {})
     };
 }
 
@@ -397,7 +424,12 @@ function historyMatchesNow(lesson, entry, part) {
 // 되돌리는 쪽 밖에서도 쓰는 키의 새 그림도 덮지 않는다(historyImagePlan. 글을 바꾸기 전 차시로 가린다)
 function applyHistoryEntry(lesson, entry) {
     const part = historyPart(entry);
-    lesson.images = { ...(lesson.images || {}), ...historyImagesFor(lesson, entry, part) };
+    const restored = historyImagesFor(lesson, entry, part);
+    lesson.images = { ...(lesson.images || {}), ...restored };
+    // 기록이 담은 움직이는 GIF 기록은 그 GIF가 실제로 돌아간 그림 자리에만 넣는다(지금 그림을 그대로 둔 자리는 지금 기록을 둔다)
+    const motions = isObject(entry.imageMotions) ? safeImageMotions(entry.imageMotions, lesson.images) : {};
+    const back = Object.entries(motions).filter(([key]) => Object.prototype.hasOwnProperty.call(restored, key) && lesson.images[key] === restored[key]);
+    if (back.length) lesson.imageMotions = { ...(isObject(lesson.imageMotions) ? lesson.imageMotions : {}), ...Object.fromEntries(back) };
     if (part) {
         setTabMarkdown(lesson, part, stateText(entry.content));
     } else {
@@ -1140,6 +1172,37 @@ function safeGyosuan(gyosuan) {
     return sameFields(next, gyosuan) ? gyosuan : next;
 }
 
+// 움직이는 GIF 기록(image-motion.js): { GIF 그림 키: { still: 간직한 원래 그림 키, at, sig, patterns, summary } }.
+// GIF 그림 키와 원래 그림 키가 서로 다른 바른 키이고 둘 다 그 차시 그림(images)에 있을 때만 남긴다. 원래 그림 키를 앞 기록이 이미 쓰거나 다른 기록의 GIF 키면 뺀다.
+// 칸은 작은 표시만 맞춰 남기고(모르는 칸은 버린다) 지문(sig)이 없는 기록은 뺀다. 고칠 것이 없으면 같은 객체, 객체가 아니면 빈 목록
+const MOTION_SIG_RE = /^[0-9a-z]{1,12}-[0-9a-z]{1,8}$/;
+const MOTION_RECORD_PATTERN_RE = /^[a-z]{2,8}$/;
+const MOTION_SUMMARY_MAX = 120;
+function safeImageMotions(records, images) {
+    if (!isObject(records)) return {};
+    const has = key => isObject(images) && Object.prototype.hasOwnProperty.call(images, key);
+    const stills = new Set();
+    const kept = {};
+    let same = true;
+    for (const [key, item] of Object.entries(records)) {
+        const still = isObject(item) && typeof item.still === 'string' ? item.still : '';
+        const ok = isSafeImageKey(key) && isSafeImageKey(still) && still !== key && has(key) && has(still) && !stills.has(still)
+            && !Object.prototype.hasOwnProperty.call(records, still) && typeof item.sig === 'string' && MOTION_SIG_RE.test(item.sig);
+        if (!ok) {
+            same = false;
+            continue;
+        }
+        stills.add(still);
+        const patterns = (Array.isArray(item.patterns) ? item.patterns : []).filter(pattern => typeof pattern === 'string' && MOTION_RECORD_PATTERN_RE.test(pattern)).slice(0, 4);
+        const clean = { still, at: Number.isFinite(item.at) && item.at >= 0 ? item.at : 0, sig: item.sig, patterns, summary: stateText(item.summary).slice(0, MOTION_SUMMARY_MAX) };
+        const unchanged = Object.keys(item).length === Object.keys(clean).length && clean.at === item.at && clean.summary === item.summary
+            && Array.isArray(item.patterns) && patterns.length === item.patterns.length && patterns.every((pattern, i) => pattern === item.patterns[i]);
+        if (!unchanged) same = false;
+        kept[key] = unchanged ? item : clean;
+    }
+    return same ? records : kept;
+}
+
 // 삽화 목록: 객체만 두고, 바르지 않은 그림 키(imgId)는 비운다(그 삽화는 본문에 다시 넣을 수 있다). 고칠 것이 없으면 같은 목록
 function safeIllustrations(list) {
     const kept = list.filter(isObject).map(item => (item.imgId == null || isSafeImageKey(item.imgId) ? item : { ...item, imgId: null }));
@@ -1178,6 +1241,7 @@ function safeRows(list, rule) {
 // 차시(최종 평가 포함)의 안쪽 값을 그 자리에서 고친다(sanitizeState가 부른다)
 function cleanLessonFields(lesson) {
     lesson.images = safeImageMap(lesson.images);
+    if (lesson.imageMotions !== undefined) lesson.imageMotions = safeImageMotions(lesson.imageMotions, lesson.images); // 그림을 고른 뒤에 본다
     LESSON_TEXT_FIELDS.forEach(field => { if (lesson[field] !== undefined) lesson[field] = textOrNull(lesson[field]); });
     LESSON_INFO_TEXT_FIELDS.forEach(field => { if (lesson[field] != null && typeof lesson[field] !== 'string') lesson[field] = stateText(lesson[field]); });
     LESSON_LIST_FIELDS.forEach(field => { if (lesson[field] != null && !Array.isArray(lesson[field])) lesson[field] = []; });
@@ -1211,6 +1275,11 @@ function cleanHistoryItem(item) {
     ['title', 'date', 'reason'].forEach(field => { if (item[field] !== undefined) next[field] = stateText(item[field]); });
     if (item.content !== undefined) next.content = textOrNull(item.content);
     if (item.images !== undefined) next.images = safeImageMap(item.images);
+    if (item.imageMotions !== undefined) {
+        const motions = safeImageMotions(item.imageMotions, next.images);
+        if (Object.keys(motions).length) next.imageMotions = motions;
+        else delete next.imageMotions;
+    }
     if (item.tabContents !== undefined) {
         const tabs = safeTabContents(item.tabContents);
         if (tabs) next.tabContents = tabs;
@@ -1578,6 +1647,7 @@ if (typeof window !== 'undefined') {
         isBackupImageRef, backupImageInfo, backupImageRefs, backupImageFileNames, folderImageModeOf, folderCopyName,
         folderOpenPrompt, folderOpenedMessage, folderSaveUnreadableText, backupImageFromKeyedFile,
         safeImageMap, safeTabContents, safeGyosuan, cleanLessonFields, cleanHistoryItem, isSafeImageKey, isSafeImageValue, validHistory, validTrash, cleanTrashEntry,
+        safeImageMotions, historyMotionParts,
         trashTimeIso, withTrashTime, backupMarkdownBody, takeBackupMarkdown, relinkAttachedImages, applyBackupMarkdown,
         relinkLocalImages, attachedImageFile, attachmentImages, UNREAD_PARTIAL_BACKUP_TEXT, jsonTextParts, staleUnreadCopies,
         importTitleText, repairImageValue

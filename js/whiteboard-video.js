@@ -409,8 +409,10 @@ window.sweepWhiteboardVideos = function () {
 const WB_BUTTON = 'absolute left-1/2 -translate-x-1/2 z-10 whitespace-nowrap inline-flex items-center gap-1 px-2.5 py-1 text-[0.6875rem] font-bold rounded-full shadow transition-opacity';
 let whiteboardObjectUrls = [];
 
+// 그림 값 → 그림 키. 움직이는 GIF가 간직한 원래 그림 키(image-motion.js)는 화면에 그려지지 않는 사본이라 빼고 찾는다
 function whiteboardImageIds(mod) {
-    return new Map(Object.entries(mod.images || {}).map(([id, src]) => [src, id]));
+    const stills = new Set(Object.values(mod.imageMotions && typeof mod.imageMotions === 'object' ? mod.imageMotions : {}).map(item => item?.still));
+    return new Map(Object.entries(mod.images || {}).filter(([id]) => !stills.has(id)).map(([id, src]) => [src, id]));
 }
 
 function whiteboardButton(action, imgId, html, tone) {
@@ -474,6 +476,7 @@ window.applyWhiteboardVideos = function (mod) {
         else holder.appendChild(whiteboardButton('whiteboard-video', imgId, '<i class="ph-bold ph-chalkboard-teacher"></i> 판서 영상으로 바꾸기',
             'bottom-3 bg-indigo-600 text-white opacity-0 group-hover:opacity-100 focus:opacity-100'));
     });
+    window.applyImageMotions?.(mod); // 판서 영상 버튼을 단 그림에 '움직이는 GIF로'·'원래 그림으로'(image-motion.js)
 };
 
 // HTML 내보내기: 영상은 파일 안에 넣고(따로 파일이 필요 없음) 영상 뒤에 숨긴 원래 그림과 판서 영상 버튼은 뺀다

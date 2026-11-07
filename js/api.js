@@ -3886,11 +3886,12 @@ function textUsesImage(text, key) {
     return false;
 }
 
-// 차시 어딘가가 아직 그 그림 키를 쓰는지: 글(합친 본문·탭·교수안·슬라이드)이 그 키를 가리키거나 삽화·판서 영상이 붙잡고 있다.
+// 차시 어딘가가 아직 그 그림 키를 쓰는지: 글(합친 본문·탭·교수안·슬라이드)이 그 키를 가리키거나 삽화·판서 영상·움직이는 GIF 기록(원래 그림)이 붙잡고 있다.
 // tabs.js unusedLessonImageIds와 같은 곳을 보되 local:img_1과 local:img_10을 가른다
 function lessonStillUsesImage(mod, key) {
     const illustrations = Array.isArray(mod.illustrations) ? mod.illustrations.map(item => item?.imgId) : [];
-    const pinned = [...illustrations, ...Object.keys(mod.whiteboardVideos || {})];
+    const motions = mod.imageMotions && typeof mod.imageMotions === 'object' ? Object.values(mod.imageMotions).map(item => item?.still) : [];
+    const pinned = [...illustrations, ...Object.keys(mod.whiteboardVideos || {}), ...motions];
     return pinned.some(id => id != null && String(id) === key) || lessonImageRefTexts(mod).some(text => textUsesImage(text, key));
 }
 
@@ -3942,7 +3943,8 @@ function rawViewAfterImageDelete(mod, tabId) {
 }
 
 // 보기 화면의 삭제 버튼. 물어본 뒤 이 탭의 그 그림 자리를 지운다. 그림 값은 다른 곳이 쓰지 않을 때만 지운다
-// (다른 탭·교수안·슬라이드·삽화, 진행 중인 AI 작업). 판서 영상은 연결만 풀고 파일은 저장된 작업을 열 때 정리한다(whiteboard-video.js)
+// (다른 탭·교수안·슬라이드·삽화, 진행 중인 AI 작업). 판서 영상은 연결만 풀고 파일은 저장된 작업을 열 때 정리한다(whiteboard-video.js).
+// 움직이는 GIF로 바꾼 그림을 지우면 그 기록과 간직한 원래 그림도 지운다(다른 곳이 쓰지 않을 때만, image-motion.js)
 window.deleteImage = async function (imgId) {
     const mod = getEditingModule();
     if (!mod) return;
@@ -3960,7 +3962,10 @@ window.deleteImage = async function (imgId) {
     if (!now.busy) {
         if (typeof dropWhiteboardVideo === 'function') now.unlink.forEach(key => dropWhiteboardVideo(mod, key)); // 영상 연결이 남으면 그림 값도 남는다
         const drop = targets.keys.filter(key => !lessonStillUsesImage(mod, key));
-        if (drop.length) mod.images = Object.fromEntries(Object.entries(mod.images).filter(([key]) => !drop.includes(key)));
+        // 지우는 GIF 그림의 기록을 뺀 뒤, 그 원래 그림도 아무 데서도 쓰지 않으면 함께 지운다
+        const stills = typeof dropImageMotion === 'function' ? drop.map(key => dropImageMotion(mod, key)?.still).filter(key => typeof key === 'string' && !drop.includes(key)) : [];
+        const gone = [...drop, ...stills.filter(key => !lessonStillUsesImage(mod, key))];
+        if (gone.length) mod.images = Object.fromEntries(Object.entries(mod.images).filter(([key]) => !gone.includes(key)));
     }
     rawViewAfterImageDelete(mod, tabId);
     // 저장하지 못했으면(saveState가 이미 알렸다) 지웠다고 알리지 않는다

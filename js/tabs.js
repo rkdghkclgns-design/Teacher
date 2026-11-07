@@ -204,6 +204,7 @@ function lessonImageRefTexts(mod, extraTexts = []) {
 }
 
 // 차시 어디에서도 쓰지 않는 그림 id. 글에 없어도 삽화(imgId)나 판서 영상(그림 id 자리)이 가리키면 쓰는 그림이다.
+// 움직이는 GIF의 원래 그림(imageMotions[GIF 그림 키].still, image-motion.js)은 그 GIF 그림이 남는 동안 쓰는 그림이다(GIF 그림이 빠지면 함께 빠진다).
 // 값은 보지 않는다(찾지 못한 그림 자리 teacher-image:…나 빈 값도 글이 가리키는 동안은 남긴다). local:img_1은 local:img_10 안에도 있어 남기는 쪽으로 틀린다
 function unusedLessonImageIds(mod, extraTexts = []) {
     const images = mod?.images && typeof mod.images === 'object' ? mod.images : {};
@@ -211,12 +212,20 @@ function unusedLessonImageIds(mod, extraTexts = []) {
     const illustrations = Array.isArray(mod?.illustrations) ? mod.illustrations : [];
     const videos = mod?.whiteboardVideos && typeof mod.whiteboardVideos === 'object' ? Object.keys(mod.whiteboardVideos) : [];
     const pinned = new Set([...illustrations.map(item => item?.imgId), ...videos].filter(id => id != null && id !== '').map(String));
-    return Object.keys(images).filter(id => !pinned.has(id) && !texts.some(text => text.includes(`local:${id}`)));
+    const unused = Object.keys(images).filter(id => !pinned.has(id) && !texts.some(text => text.includes(`local:${id}`)));
+    const motions = mod?.imageMotions && typeof mod.imageMotions === 'object' && !Array.isArray(mod.imageMotions) ? Object.entries(mod.imageMotions) : [];
+    const stills = new Set(motions
+        .filter(([id, item]) => Object.prototype.hasOwnProperty.call(images, id) && !unused.includes(id) && item && typeof item.still === 'string')
+        .map(([, item]) => item.still));
+    return unused.filter(id => !stills.has(id));
 }
 
-// 쓰지 않는 그림만 지운다(용량 확보). 다른 곳이 가리키는 그림은 남긴다
+// 쓰지 않는 그림만 지운다(용량 확보). 다른 곳이 가리키는 그림은 남긴다. 지운 GIF 그림이나 원래 그림의 움직이는 GIF 기록도 뺀다
 function dropUnusedLessonImages(mod, extraTexts = []) {
-    unusedLessonImageIds(mod, extraTexts).forEach(id => { delete mod.images[id]; });
+    const unused = unusedLessonImageIds(mod, extraTexts);
+    unused.forEach(id => { delete mod.images[id]; });
+    if (!unused.length || !mod.imageMotions || typeof mod.imageMotions !== 'object' || Array.isArray(mod.imageMotions)) return;
+    mod.imageMotions = Object.fromEntries(Object.entries(mod.imageMotions).filter(([id, item]) => !unused.includes(id) && !unused.includes(item?.still)));
 }
 
 function showTabGenStop(visible, labels = TAB_STOP_LABELS) {
