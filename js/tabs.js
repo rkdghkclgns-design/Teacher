@@ -621,6 +621,10 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             // 분량을 채운 학습 탭은 고쳐 받은 체크리스트에도 다시 보기의 옛 (⏱) 시간이 남지 않게 뗀다(lesson-volume.js)
             if (volume && typeof volumeChecklistText === 'function') resultText = volumeChecklistText(resultText, lockedBlocks);
         }
+        // 주석이 모자란 코드 블록에는 주석만 더한다(code-comments-tool.js). 자동 수정과 같은 때에, 미리보기·작업 기록·저장·그림보다 앞에서 한다(코드 블록 안이라 낭독 분량은 그대로다)
+        if (typeof addGeneratedCodeComments === 'function' && !partialDueToError && !_tabGenStop && !volumeQuit) {
+            resultText = (await addGeneratedCodeComments({ md: resultText, tabId, quiz: isCodeCommentQuiz(mod, tabId), lockedBlocks, label: tabMeta.label, onStatus: setLoadingText, onRetry, isStopped: () => _tabGenStop, waitSignal: stopSignal })).md;
+        }
         if (tabId === 'basicPrac' && typeof withQuestFileName === 'function') resultText = withQuestFileName(resultText, mod, subj);
         // 기존 탭을 다시 만들면 바뀐 섹션을 보고 고른다. 묶어서 생성할 때는 묻지 않고 기존 글을 히스토리에 남긴다
         saveOpenEditsFor(mod, tabId);
@@ -821,7 +825,8 @@ async function reinforceCurrentTab(moduleId, command = '') {
                 CONTEXT_CORE.rules.content_design + '\n- ' +
                 CONTEXT_CORE.rules.korean_period + '\n- ' +
                 (CONTEXT_CORE.rules.emoji_rule || '') +
-                (!isQuestionBankTab(tabId) && CONTEXT_CORE.rules.code_examples ? '\n- ' + CONTEXT_CORE.rules.code_examples : '');
+                (!isQuestionBankTab(tabId) && CONTEXT_CORE.rules.code_examples ? '\n- ' + CONTEXT_CORE.rules.code_examples : '') +
+                (isQuestionBankTab(tabId) ? '\n- 문항 속 코드(문제 글·보기·시작 코드)에도 한국어 주석을 넣습니다. 주석은 코드가 무엇을 하는지만 적고 정답, 출력 결과, 고칠 곳을 알려 주지 않습니다. 시작 코드에는 학습자가 채울 자리마다 무엇을 채울지 주석으로 적습니다.' : '');
 
             const userPrompt = `[현재 작업: ${tabMeta.label} 보강 재생성]\n모듈명: ${mod.title}\n\n[사용자 보강 명령]\n${reinforceCmd}\n\n[기존 교안 내용 — 이 내용을 기반으로 보강하세요]\n${existingContent}`;
 
@@ -834,8 +839,13 @@ async function reinforceCurrentTab(moduleId, command = '') {
             const data = await callGemini(TEXT_MODEL, { ...payload, signal: window.aiStopSignal() }); // 중지하면 받던 글을 끊는다(반영하지 않는 글이다)
             if (_tabGenStop) return; // 중지하면 받은 글을 반영하지 않는다
 
-            const resultText = restoreLockedSections(extractText(data), lockedBlocks);
+            const received = restoreLockedSections(extractText(data), lockedBlocks);
             const truncated = data?.candidates?.[0]?.finishReason === 'MAX_TOKENS';
+            // 주석이 모자란 코드 블록에는 주석만 더한 글을 미리 보인다(code-comments-tool.js). 그사이 중지하면 반영하지 않는다
+            const resultText = typeof addGeneratedCodeComments === 'function'
+                ? (await addGeneratedCodeComments({ md: received, tabId, quiz: isCodeCommentQuiz(mod, tabId), lockedBlocks, label: shownLabel, onStatus: window.setPipelineStatus, isStopped: () => _tabGenStop, signal: window.aiStopSignal() })).md
+                : received;
+            if (_tabGenStop) return;
             // 기다리는 동안 이 탭을 고쳤으면 고친 글을 지키고, 다시 실행하게 한다
             saveOpenEditsFor(mod, tabId);
             if (storedTabMarkdown(mod, tabId) !== existingContent) return window.showAlert('고치는 동안 탭 내용이 바뀌어 반영하지 않았습니다. 다시 실행해 주세요.');

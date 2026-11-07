@@ -176,7 +176,8 @@ async function autoFixGeneratedTab({ tabId, md, lockedBlocks = [], onStatus, onR
     for (let round = 1; round <= rounds; round++) {
         if (round > 1 && isStopped()) break;
         const before = lintLessonMarkdown(current, tabId);
-        const required = before.filter(issue => issue.sev === 'bad');
+        // 주석 지적(codeComment)은 섹션을 통째로 고쳐 쓰지 않는다(코드가 바뀔 수 있고 같은 지적이 남아 헛호출이 된다). 부른 쪽이 바로 뒤 주석 단계에서 넣는다
+        const required = before.filter(issue => issue.sev === 'bad' && !issue.codeComment);
         if (!required.length) break;
         const next = await fixRoundText({ tabId, md: current, required, lockedBlocks, onRetry, onStatus: text => onStatus?.(rounds > 1 ? `${text} (${round}/${rounds})` : text) });
         const shrank = minSpokenChars > 0 && next !== null && spokenChars(next) < Math.min(minSpokenChars, spokenChars(current));
@@ -233,16 +234,30 @@ function fixPlanNote({ locked, deferred }) {
     return [locked ? `고정 섹션 ${locked}개는 고치지 않았습니다.` : '', deferred ? `분량이 많아 섹션 ${deferred}개는 이번 제안에서 뺐습니다. 반영한 뒤 다시 실행합니다.` : ''].filter(Boolean).join(' ');
 }
 
+// 지적을 섹션 지적과 주석 지적(codeComment)으로 나눈다. 섹션 지적은 지적이 있는 섹션만 고쳐 받고, 그 글의 주석이 모자란 코드 블록에는 주석만 더한다(code-comments-tool.js)
 async function proposeLessonFix() {
     const { moduleId, tabId } = _review;
     const mod = getEditingModule(moduleId);
     const md = storedTabMarkdown(mod, tabId);
     const issues = lintLessonMarkdown(md, tabId, lessonLintContext(mod, tabId));
+    const sectionIssues = issues.filter(issue => !issue.codeComment);
+    const lockedBlocks = lockedSectionBlocks(mod, tabId);
+    const canComment = typeof addGeneratedCodeComments === 'function';
     setReviewBusy(true);
     try {
-        const { text, plan } = await requestSectionFix({ tabId, md, issues, lockedBlocks: lockedSectionBlocks(mod, tabId) });
-        if (!plan.targets.length && !issues.some(issue => issue.missing)) return window.showAlert('고칠 수 있는 섹션이 없습니다. 지적된 섹션이 모두 고정되어 있습니다.');
-        const next = await previewAiChange(md, text, { title: 'AI 수정 제안', tabId, note: fixPlanNote(plan) });
+        const { text, plan } = sectionIssues.length
+            ? await requestSectionFix({ tabId, md, issues: sectionIssues, lockedBlocks })
+            : { text: md, plan: { targets: [], locked: 0, deferred: 0 } };
+        const commented = canComment
+            ? await addGeneratedCodeComments({ md: text, tabId, quiz: isCodeCommentQuiz(mod, tabId), lockedBlocks, notify: false })
+            : { md: text, run: null };
+        // 섹션 지적이 모두 고정 섹션에 있거나, 주석이 모자란 블록이 모두 고정 섹션에 있어(부르지 않았다) 고칠 곳이 없다
+        const lockedSections = sectionIssues.length > 0 && !plan.targets.length && !sectionIssues.some(issue => issue.missing);
+        const lockedComments = !sectionIssues.length && !commented.run && commented.held > 0;
+        if (commented.md === md && (lockedSections || lockedComments)) return window.showAlert('고칠 수 있는 섹션이 없습니다. 지적된 섹션이 모두 고정되어 있습니다.');
+        if (commented.md === md && commented.run && !sectionIssues.length) return window.showAlert('주석을 넣지 못했습니다. AI 답이 코드를 바꿔 버렸거나 답을 받지 못했습니다. 잠시 뒤 다시 눌러 보세요.');
+        const note = [fixPlanNote(plan), typeof commentRunNote === 'function' ? commentRunNote(commented.run) : ''].filter(Boolean).join(' ');
+        const next = await previewAiChange(md, commented.md, { title: 'AI 수정 제안', tabId, note });
         if (next !== null) await commitTabChange(mod, tabId, md, next, `AI 수정 제안 반영 (${reviewTabLabel(tabId)})`);
     } catch (err) {
         console.error('[컨벤션 검수] AI 수정 제안 실패:', err);
@@ -355,7 +370,7 @@ function reviewPanelHtml(mod, tabId, md, busy) {
             </div>
             <div class="p-3 border-t border-white/10 flex justify-end gap-2">
                 <button data-review-action="close" class="px-4 py-2 text-xs font-bold text-textLight bg-white/10 rounded-lg hover:bg-white/20">닫기</button>
-                <button data-review-action="fix" ${issues.length && !busy ? '' : 'disabled'} class="px-4 py-2 text-xs font-bold text-white bg-accent rounded-lg hover:bg-accentHover disabled:opacity-50" title="지적이 있는 섹션만 고친 수정안을 미리 본 뒤 반영합니다">${fixLabel}</button>
+                <button data-review-action="fix" ${issues.length && !busy ? '' : 'disabled'} class="px-4 py-2 text-xs font-bold text-white bg-accent rounded-lg hover:bg-accentHover disabled:opacity-50" title="지적이 있는 섹션만 고치고 주석이 모자란 코드 블록에는 주석만 더한 수정안을 미리 본 뒤 반영합니다">${fixLabel}</button>
             </div>
         </div>`;
 }
@@ -416,6 +431,7 @@ window.syncReviewBadge = function (mod = getEditingModule()) {
     window.syncVolumeChip?.(mod); // 탭 위 낭독 분량 표시(lesson-volume.js)도 같은 때 다시 센다
     const badge = document.getElementById('convention-check-count');
     if (!badge || !mod) return;
+    window.noteCodeCommentGaps?.(mod); // 주석이 모자란 코드 블록이 있으면 차시마다 한 번 알린다(code-comments-tool.js). 지금 탭이 비어도 다른 탭을 본다
     const md = getActiveTabContent(mod);
     if (!md || !md.trim()) {
         badge.className = 'hidden';

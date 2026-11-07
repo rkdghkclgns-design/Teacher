@@ -883,6 +883,10 @@ async function generateModuleContent(moduleId, keyConcepts) {
                 // 분량을 채운 기본학습은 고쳐 받은 체크리스트에도 다시 보기의 옛 (⏱) 시간이 남지 않게 뗀다(lesson-volume.js)
                 if (volume && typeof volumeChecklistText === 'function') fullContent = volumeChecklistText(fullContent, lockedBlocks);
             }
+            // 주석이 모자란 코드 블록에는 주석만 더한다(code-comments-tool.js). 최종 평가는 정답을 알려 주지 않는 문항 모드다
+            if (typeof addGeneratedCodeComments === 'function') {
+                fullContent = (await addGeneratedCodeComments({ md: fullContent, tabId: 'basicLearn', quiz: moduleId === 'mainQuest', lockedBlocks, label: moduleId === 'mainQuest' ? '최종 평가' : '기본학습', onStatus: setLoadingStatus, isStopped, waitSignal: window.aiStopSignal?.() || null })).md;
+            }
 
             // ── 이미지 태그 처리 ── 분량을 채운 글은 초안에 넣은 그림 자리만 채운다
             setLoadingStatus(chunkCount > 1 ? `이미지 생성 중... (${chunkCount}단계 완료)` : '이미지 생성 중...');
@@ -1069,6 +1073,13 @@ async function generateMainQuest() {
 
 
         let markdownContent = extractText(data);
+        // 문항 속 코드에 주석이 모자라면 주석만 더한다(code-comments-tool.js, 정답을 알려 주지 않는 문항 모드). 로딩 화면 글로 진행을 보이고 끝나면 되돌린다
+        if (typeof addGeneratedCodeComments === 'function') {
+            const loadingText = document.getElementById('editor-loading-text');
+            const shownText = loadingText ? loadingText.textContent : '';
+            markdownContent = (await addGeneratedCodeComments({ md: markdownContent, quiz: true, label: '최종 평가', onStatus: text => { if (loadingText) loadingText.textContent = text; } })).md;
+            if (loadingText) loadingText.textContent = shownText;
+        }
 
         // 지금 최종 평가(손으로 고친 글 포함)는 작업 기록에 남긴다. 예전에 탭으로 만든 최종 평가(tabContents)는 그 탭들도 함께 남긴다
         if (typeof archiveContents === 'function') await archiveContents([mq], '다시 생성 전');
@@ -3127,6 +3138,7 @@ ${tabGenerateButtonsHtml(mod, tabless)}
                             <button onclick="generateAllImagesInModule('${mod.id}')" id="img-batch-btn" class="px-3 py-1.5 text-xs font-bold bg-purple-50 text-purple-600 border border-purple-200 rounded hover:bg-purple-100 flex items-center gap-1 transition-colors hover:-translate-y-0.5"><i class="ph-bold ph-image-square"></i> 일괄 이미지 찾기</button>
                             <button onclick="sanitizeAllContent()" id="sanitize-btn" class="px-3 py-1.5 text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 flex items-center gap-1 transition-colors hover:-translate-y-0.5" title="교과의 모든 차시와 최종 평가에서 글 서식을 고치고, 아직 채우지 않은 그림 자리를 채웁니다"><i class="ph-bold ph-sparkle"></i> 콘텐츠 정리</button>
                             ${isQuestionBankTab(currentLessonTab) ? '' : `<button onclick="insertGamePictures('${mod.id}'); this.closest('details').open = false" id="game-picture-btn" class="px-3 py-1.5 text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 flex items-center gap-1 transition-colors" title="이 탭에서 예로 든 실제 게임을 AI가 찾아, 그 게임 그림을 위키백과에서 찾아 넣습니다(출처를 함께 적습니다). 위키백과에서 못 찾으면 검색 키가 있을 때 웹 검색으로 찾고, 그 그림에는 이용 조건 확인 필요라고 적습니다"><i class="ph-bold ph-game-controller"></i> 예시 게임 그림 넣기</button>`}
+                            <button onclick="startCodeComments('lesson'); this.closest('details').open = false" id="code-comment-btn" class="px-3 py-1.5 text-xs font-bold bg-cyan-50 text-cyan-700 border border-cyan-200 rounded hover:bg-cyan-100 flex items-center gap-1 transition-colors" title="이 차시의 모든 탭과 교수안·슬라이드 편성안에서 주석이 모자란 코드 블록에 AI가 주석만 더합니다. 코드 줄은 한 글자도 바꾸지 않고, 바꾸기 전 탭 글은 작업 기록에 남깁니다"><i class="ph-bold ph-chat-text"></i> 코드 주석 넣기</button>
                             <label class="cursor-pointer px-3 py-1.5 text-xs font-bold bg-blue-50 text-blue-600 border border-blue-200 rounded hover:bg-blue-100 flex items-center gap-1 transition-colors" title="에디터에 이미지 삽입">
                                 <i class="ph-bold ph-image"></i> 이미지 삽입
                                 <input type="file" accept="image/*" class="hidden" multiple onchange="handleImageInputSelect(event)">

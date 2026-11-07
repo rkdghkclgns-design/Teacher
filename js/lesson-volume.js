@@ -546,9 +546,13 @@ async function fillVolumeJob({ mod, subj, before, snapshot, tabId = 'basicLearn'
     // 늘린 소주제가 없으면 고쳐 받지 않는다(있던 글만 고치는 호출이 된다). 중지·한도·키 문제·다시 보내도 같은 오류로 멈췄을 때도.
     // 고쳐 받은 체크리스트에도 다시 보기의 옛 시간이 남지 않게 뗀다
     const fixable = volume.added > 0 && !volume.stopped && !isVolumeHalt(volume.error);
-    const filled = fixable
+    const fixed = fixable
         ? volumeChecklistText(await autoFixGeneratedTab({ tabId, md: volume.md, lockedBlocks, onStatus: window.setPipelineStatus, rounds: VOLUME_FIX_ROUNDS, minSpokenChars: volume.targetChars, isStopped }), lockedBlocks)
         : volume.md;
+    // 고쳐 받은 글의 주석이 모자란 코드 블록에는 주석만 더한다(code-comments-tool.js). 자동 수정과 같은 때만 한다
+    const filled = fixable && typeof addGeneratedCodeComments === 'function'
+        ? (await addGeneratedCodeComments({ md: fixed, tabId, lockedBlocks, label, onStatus: window.setPipelineStatus, isStopped, waitSignal: window.aiStopSignal?.() || null })).md
+        : fixed;
     if (!isLive()) return window.showAlert(`${gone} 반영하지 못했습니다. ${await keep(filled)}`);
     saveOpenEditsFor(mod, tabId); // 열어 둔 원문 칸의 글을 먼저 넣는다(미리 보기의 단추를 누르며 칸을 벗어나 넣으면 반영을 막는다)
     const current = String(storedTabMarkdown(mod, tabId) || '');
@@ -580,7 +584,7 @@ window.fillLessonVolume = async function (id, tabId = 'basicLearn') {
     const current = String(storedTabMarkdown(mod, tabId) || '');
     if (!current.trim()) return window.showAlert(`먼저 ${label} 탭을 생성해 주세요.`);
     const target = learnTargetMinutes(mod, tabId);
-    const message = `${label}은 지금 낭독 약 ${readAloudMinutes(volumeShownText(mod, tabId))}분입니다. 목표 ${target}분이 될 때까지 모자란 내용 섹션 끝에 새 소주제를 이어 붙이고, 각 ## 제목의 시간(⏱)을 낭독 길이에 맞춰 다시 매깁니다. 컨벤션 필수 지적이 남은 섹션은 AI가 고쳐 쓸 수 있습니다. 끝나면 바뀐 섹션을 골라 반영하고, 채우기 전 글은 작업 기록에 남습니다.`;
+    const message = `${label}은 지금 낭독 약 ${readAloudMinutes(volumeShownText(mod, tabId))}분입니다. 목표 ${target}분이 될 때까지 모자란 내용 섹션 끝에 새 소주제를 이어 붙이고, 각 ## 제목의 시간(⏱)을 낭독 길이에 맞춰 다시 매깁니다. 컨벤션 필수 지적이 남은 섹션은 AI가 고쳐 쓸 수 있습니다. 주석이 모자란 코드 블록에는 주석만 더합니다. 끝나면 바뀐 섹션을 골라 반영하고, 채우기 전 글은 작업 기록에 남습니다.`;
     const work = { volume: 1, volumeCalls: volumeCallEstimate(current, target), volumeMinutes: target, ...(tabId === 'advLearn' ? { volumeAdv: 1 } : {}) };
     if (!(await confirmWithEstimate(message, work, { title: `${label} 분량 채우기`, okLabel: '분량 채우기' }))) return;
     if (getEditingModule(id) !== mod) return;
