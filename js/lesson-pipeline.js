@@ -16,10 +16,13 @@ window.isPipelineStep = (id, moduleId) => isPipelineLesson(moduleId) && _pipelin
 
 /* ---------- 문제은행 채우기 ---------- */
 // 그 갈래의 문제은행에서 문항이 없는 학습 목표 번호. 학습·실습 탭이 빈 갈래는 문항을 만들 원고가 없어 채우지 않는다
+// 예전 방식의 학습이해도는 예전 번호로 세되 그 갈래의 목표만 채운다(심화학습 목표는 심화이해도에서 채운다)
 function questionBankGaps(mod, trackId = 'basic') {
     if (!trackHasContent(mod, trackId)) return [];
     const covered = new Set(qbankQuestions(mod, trackId).map(question => question.objective));
-    return qbankObjectives(mod, trackId).map((_, index) => index + 1).filter(no => !covered.has(no));
+    const goals = new Set(qbankTrackObjectives(mod, trackId));
+    return qbankObjectives(mod, trackId).map((goal, index) => ({ goal, no: index + 1 }))
+        .filter(({ goal, no }) => goals.has(goal) && !covered.has(no)).map(({ no }) => no);
 }
 
 // 두 갈래 문제은행의 빈 목표 수를 더한다(일괄 생성 대기열·전체 생성의 단계)

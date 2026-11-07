@@ -69,13 +69,36 @@ function qbankTabBullets(mod, title, trackId = null) {
     return texts.flatMap(md => (md ? lessonLintBullets(String(md).replace(/\r\n/g, '\n'), title) : []));
 }
 
-// 학습 목표 목록. 문항의 목표 번호는 이 목록의 순서다.
-// trackId를 주면 그 갈래의 학습·실습 탭에 적힌 목표(없으면 차시 전체 탭의 목표, 그것도 없으면 과정 설계의 목표). 주지 않으면 차시 전체(NCS 배정·교육 자료가 쓴다)
-function qbankObjectives(mod, trackId = null) {
+// 그 갈래의 학습 목표. trackId를 주면 그 갈래의 학습·실습 탭에 적힌 목표(없으면 차시 전체 탭의 목표, 그것도 없으면 과정 설계의 목표).
+// 주지 않으면 차시 전체(NCS 배정·교육 자료가 쓴다). 새로 만드는 문항·탭은 이 목록으로 만든다
+function qbankTrackObjectives(mod, trackId = null) {
     const own = trackId ? uniqueTexts(qbankTabBullets(mod, '학습\\s*목표', trackId)) : [];
     if (own.length) return own;
     const fromTabs = uniqueTexts(qbankTabBullets(mod, '학습\\s*목표'));
     return fromTabs.length ? fromTabs : (mod.objectives || []);
+}
+
+// 갈래를 나누기 전에 만든 학습이해도는 차시 전체 탭의 목표를 이어 센 번호를 쓴다.
+// 기본학습 목표 수보다 큰 번호의 문항이 남아 있으면 그 예전 목록을 돌려준다(아니면 null)
+function qbankLegacyObjectives(mod, trackId) {
+    if (!trackId || lessonTrack(trackId).id !== LESSON_TRACKS[0].id) return null;
+    const own = uniqueTexts(qbankTabBullets(mod, '학습\\s*목표', trackId));
+    if (!own.length) return null;
+    const highest = Math.max(0, ...qbankQuestions(mod, trackId).map(q => q.objective || 0));
+    if (highest <= own.length) return null;
+    const all = uniqueTexts(qbankTabBullets(mod, '학습\\s*목표'));
+    return all.length > own.length ? all : null;
+}
+
+// 학습 목표 목록. 문항의 목표 번호는 이 목록의 순서다(예전 방식의 학습이해도는 예전 번호를 그대로 읽는다)
+function qbankObjectives(mod, trackId = null) {
+    return qbankLegacyObjectives(mod, trackId) || qbankTrackObjectives(mod, trackId);
+}
+
+// 예전 방식의 학습이해도를 보고 있으면 화면에 붙이는 안내(아니면 빈 글)
+function qbankLegacyNote(mod, trackId) {
+    if (!qbankLegacyObjectives(mod, trackId)) return '';
+    return '예전 방식으로 만든 학습이해도에 심화학습 목표 문항이 있습니다. 문항 번호는 예전처럼 차시 전체의 학습 목표 순서를 따릅니다. 학습이해도 탭을 다시 만들면 기본학습 목표만으로 만듭니다.';
 }
 
 const qbankChecklist = (mod, trackId = null) => qbankTabBullets(mod, '학습\\s*후\\s*체크리스트', trackId);
@@ -512,6 +535,7 @@ function renderQbank() {
     body.innerHTML = `
         ${typeof lessonTrackSwitchHtml === 'function' ? lessonTrackSwitchHtml(mod, 'qbank', 'dark') : ''}
         ${qbankEmptyTrackHtml(mod, trackId)}
+        ${qbankLegacyNote(mod, trackId) ? `<p class="text-xs text-amber-300">${escapeHtml(qbankLegacyNote(mod, trackId))}</p>` : ''}
         <div class="p-2 rounded-lg bg-black/20">${qbankDistributionHtml(questions, objectives)}
             <p class="text-xs text-textMuted mt-1">권장: L1 10 · L2 5 · L3 3. L4는 프로젝트에서 다룹니다. <button data-qbank-action="help" class="underline text-textLight">밴드란? · ${_qbank.help ? '접기' : '펼치기'}</button></p>
             ${_qbank.help ? qbankBandCardsHtml() : ''}

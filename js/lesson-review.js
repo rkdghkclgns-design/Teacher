@@ -283,11 +283,19 @@ function reviewPracticeStat(mod, tabId, md) {
     return `<p class="text-xs ${check.ok ? 'text-textMuted' : 'text-amber-300'}">실습 시간 ${minutes}분${from === 'course' ? '(과정 기본값)' : ''} · ${sum}${note}</p>`;
 }
 
+// 갈래를 나누기 전에 만든 학습이해도는 예전 번호로 검사한다고 알린다(course-qbank.js qbankLegacyNote)
+function reviewLegacyBankNote(mod, tabId) {
+    if (!mod || !isQuestionBankTab(tabId) || typeof qbankLegacyNote !== 'function') return '';
+    const note = qbankLegacyNote(mod, tabTrack(tabId).id);
+    return note ? `<p class="text-xs text-amber-300">${escapeHtml(note)}</p>` : '';
+}
+
 function reviewIssuesHtml(issues, tabId, md, mod = null) {
     const stats = LESSON_STRUCTURED_TABS.includes(tabId) ? lessonStructureStats(md) : null;
     return `
         ${stats ? `<p class="text-xs text-textMuted">학습 목표 ${stats.objectives}개 · 내용 섹션 ${stats.sections}개 · 체크리스트 ${stats.checklist}개${reviewVolumeStat(mod, tabId, md)}</p>` : ''}
         ${reviewPracticeStat(mod, tabId, md)}
+        ${reviewLegacyBankNote(mod, tabId)}
         ${issues.length ? '' : '<p class="text-xs text-emerald-300">콘텐츠 업무 설계 규칙에 어긋난 곳이 없습니다.</p>'}
         ${reviewIssueGroup('필수', 'text-rose-300', issues.filter(issue => issue.sev === 'bad'))}
         ${reviewIssueGroup('권장', 'text-amber-300', issues.filter(issue => issue.sev !== 'bad'))}`;

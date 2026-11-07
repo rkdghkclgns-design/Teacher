@@ -141,23 +141,27 @@ async function runObjectiveAdd(mod, tabId, button) {
     }
 }
 
-// 목표를 지운 탭이 든 갈래(기본학습·심화학습)의 문제은행 탭 문항 번호를 고친다
+// 목표를 지운 탭이 든 갈래(기본학습·심화학습)의 문제은행 탭 문항 번호를 고친다.
+// 다른 갈래의 문제은행도 번호 목록이 바뀌면 고친다(예전 방식의 학습이해도는 차시 전체 목표로 번호를 센다). 연결 문항 지우기는 지운 탭의 갈래에만 쓴다
 async function runObjectiveRemove(mod, tabId, index) {
     const dialog = document.getElementById('objective-dialog');
     const track = tabTrack(tabId) || lessonTrack('basic');
-    const bankLabel = LESSON_TABS.find(tab => tab.id === track.bank)?.label || track.bank;
     const before = storedTabMarkdown(mod, tabId);
     const goal = lessonLintBullets(objectiveTabMd(mod, tabId), OBJECTIVE_BULLETS)[index];
-    const objectivesBefore = qbankObjectives(mod, track.id);
+    const banksBefore = LESSON_TRACKS.map(item => ({ item, objectives: qbankObjectives(mod, item.id) }));
     const sections = [...dialog.querySelectorAll('[data-objective-section]:checked')].map(box => Number(box.dataset.objectiveSection));
     const deleteLinked = dialog.querySelector('[name="objective-questions"]:checked')?.value === 'delete';
     if (!(await commitTabChange(mod, tabId, before, removeObjectiveSet(before, index, sections), `학습 목표 삭제: ${goal}`))) return;
     mod.objectives = (mod.objectives || []).filter(text => text !== goal); // 문제은행 목록이 이 값을 쓸 수 있어 번호를 고치기 전에 뺀다
-    const assessment = qbankMarkdown(mod, track.id);
-    const remapped = remappedAssessment(assessment, objectivesBefore, qbankObjectives(mod, track.id), deleteLinked);
-    if (remapped !== assessment) {
-        await archiveContent({ title: `${mod.title} · ${bankLabel}`, content: assessment, images: mod.images, tabId: track.bank, lesson: mod }, '학습 목표 삭제 전');
-        setTabMarkdown(mod, track.bank, remapped);
+    const remaps = banksBefore.map(({ item, objectives }) => {
+        const assessment = qbankMarkdown(mod, item.id);
+        return { item, assessment, remapped: remappedAssessment(assessment, objectives, qbankObjectives(mod, item.id), deleteLinked && item.id === track.id) };
+    });
+    for (const { item, assessment, remapped } of remaps) {
+        if (remapped === assessment) continue;
+        const bankLabel = LESSON_TABS.find(tab => tab.id === item.bank)?.label || item.bank;
+        await archiveContent({ title: `${mod.title} · ${bankLabel}`, content: assessment, images: mod.images, tabId: item.bank, lesson: mod }, '학습 목표 삭제 전');
+        setTabMarkdown(mod, item.bank, remapped);
     }
     _objectiveDialog = { ..._objectiveDialog, pick: null };
     await saveState();

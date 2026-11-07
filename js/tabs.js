@@ -336,7 +336,7 @@ const REINFORCE_WARN_CHARS = 80000; // 이보다 긴 탭을 통째로 고치면 
 // 문제은행 탭(학습이해도·심화이해도)이 묻지 않은 그 갈래의 학습 목표가 있으면 생성 직후 알린다. 빠진 목표는 문제은행에서 그 갈래를 골라 그 목표로 문항을 만들어 채운다
 function warnUncoveredObjectives(mod, md, tabId = 'assessment') {
     const track = tabTrack(tabId) || lessonTrack('basic');
-    const [issue] = lintObjectiveCoverage(String(md || ''), qbankObjectives(mod, track.id).length);
+    const [issue] = lintObjectiveCoverage(String(md || ''), qbankTrackObjectives(mod, track.id).length);
     const label = LESSON_TABS.find(tab => tab.id === tabId)?.label || '학습이해도';
     if (issue) window.showToast?.(`${label} 점검: ${issue.snip}. 문제은행의 ${track.label}에서 그 목표로 문항을 만들어 채우세요.`, 'warning');
 }
@@ -348,9 +348,10 @@ function warnPracticeTime(minutes, md, label) {
 }
 
 // 문제은행 탭(학습이해도·심화이해도) 문항을 문제은행에서 바로 쓰도록 그 갈래의 목표 번호를 함께 준다. 목표가 기본 문제 수보다 많으면 목표 수만큼 낸다
+// 다시 만드는 탭이므로 예전 방식의 학습이해도가 남아 있어도 그 갈래의 목표만 준다
 function assessmentObjectivePrompt(mod, tabId) {
-    if (!isQuestionBankTab(tabId) || typeof qbankObjectives !== 'function') return '';
-    const goals = qbankObjectives(mod, tabTrack(tabId).id);
+    if (!isQuestionBankTab(tabId) || typeof qbankTrackObjectives !== 'function') return '';
+    const goals = qbankTrackObjectives(mod, tabTrack(tabId).id);
     if (!goals.length) return '';
     const count = Math.max(ASSESSMENT_MIN_QUESTIONS, goals.length);
     return `\n\n[학습 목표 목록 — 문제마다 이 번호를 쓰고, 모든 목표를 1문제 이상 묻습니다. 문제는 ${count}개 이상 냅니다]\n${goals.map((goal, i) => `${i + 1}. ${goal}`).join('\n')}`;

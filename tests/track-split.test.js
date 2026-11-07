@@ -654,6 +654,42 @@ const bankLesson = () => ({
         assert.deepStrictEqual(ctx.archived.map(item => [item.tabId, item.title]), [['advLearn', '재미 · 심화학습'], ['advAssessment', '재미 · 심화이해도']]);
     });
 
+    await run('예전 학습이해도: 갈래를 나누기 전에 차시 전체 목표 번호로 만든 문항은 필수 지적 없이 예전 번호로 읽고 안내한다. 새로 만들거나 채울 때는 기본학습 목표만 쓴다', async () => {
+        const ctx = flowContext();
+        ['lesson-review.js', 'lesson-objectives.js'].forEach(file => vm.runInContext(source(file), ctx));
+        const mod = bankLesson();
+        mod.tabContents.advLearn = goalsMd(['심화 목표 하나를 분석할 수 있습니다.', '심화 목표 둘을 적용할 수 있습니다.'], '## 심화 본문\n\n심화원고표식 글입니다.');
+        // 예전에는 학습이해도 번호가 기본 목표 1·2, 심화 목표 3·4였다
+        mod.tabContents.assessment = `${question(1, 1, '기본 하나')}\n\n${question(2, 3, '심화 하나')}\n\n${question(3, 4, '심화 둘')}\n`;
+        ctx.courseData = [mod];
+        const all = ['기본 목표 하나를 설명할 수 있습니다.', '기본 목표 둘을 비교할 수 있습니다.', '심화 목표 하나를 분석할 수 있습니다.', '심화 목표 둘을 적용할 수 있습니다.'];
+        assert.deepStrictEqual(plain(call(ctx, 'qbankObjectives')(mod, 'basic')), all, '예전 번호 목록');
+        assert.deepStrictEqual(plain(call(ctx, 'qbankTrackObjectives')(mod, 'basic')), all.slice(0, 2));
+        const context = plain(call(ctx, 'lessonLintContext')(mod, 'assessment'));
+        const issues = plain(call(ctx, 'lintLessonMarkdown')(mod.tabContents.assessment, 'assessment', context));
+        assert.ok(!issues.some(issue => issue.msg === '대응하는 학습 목표가 없습니다.'), JSON.stringify(issues));
+        const rows = plain(call(ctx, 'lessonBankCsvRows')({ title: '교과' }, mod, 'basic'));
+        assert.deepStrictEqual(rows.map(row => row[4]), [all[0], all[2], all[3]], 'CSV 학습목표 칸이 비지 않는다');
+        assert.ok(call(ctx, 'reviewIssuesHtml')([], 'assessment', mod.tabContents.assessment, mod).includes('예전 방식으로 만든 학습이해도에 심화학습 목표 문항이 있습니다.'));
+        assert.strictEqual(call(ctx, 'qbankLegacyNote')(mod, 'adv'), '');
+        assert.strictEqual(call(ctx, 'qbankLegacyNote')(bankLesson(), 'basic'), '', '새 방식 차시는 안내하지 않는다');
+        // 채우기는 기본학습 목표(2번)만, 다시 만드는 학습이해도 지시도 기본학습 목표만
+        assert.deepStrictEqual(plain(call(ctx, 'questionBankGaps')(mod, 'basic')), [2]);
+        const skipped = { ...mod, tabContents: { ...mod.tabContents, assessment: `${question(1, 1, '기본 하나')}\n\n${question(2, 4, '심화 둘')}\n` } };
+        assert.deepStrictEqual(plain(call(ctx, 'questionBankGaps')(skipped, 'basic')), [2], '예전 번호의 심화학습 목표(3번)는 학습이해도에 채우지 않는다');
+        const listed = call(ctx, 'assessmentObjectivePrompt')(mod, 'assessment');
+        assert.ok(listed.includes('2. 기본 목표 둘을 비교할 수 있습니다.') && !listed.includes('심화 목표'), listed);
+        // 심화학습 목표를 지우면 예전 학습이해도의 번호도 고친다(지운 목표의 문항은 연결만 푼다)
+        const dialog = { querySelectorAll: () => [], querySelector: () => ({ value: 'delete' }) };
+        ctx.document.getElementById = id => (id === 'objective-dialog' ? dialog : null);
+        vm.runInContext("_objectiveDialog = { moduleId: 1, tabId: 'advLearn', pick: 0 };", ctx);
+        await call(ctx, 'runObjectiveRemove')(mod, 'advLearn', 0);
+        const parse = text => plain(call(ctx, 'lessonLintQuestions')(text).map(call(ctx, 'parseQuestionBlock')));
+        assert.deepStrictEqual(parse(mod.tabContents.assessment).map(q => [q.title, q.objective]), [['기본 하나', 1], ['심화 하나', null], ['심화 둘', 3]]);
+        assert.strictEqual(call(ctx, 'qbankObjectives')(mod, 'basic')[2], '심화 목표 둘을 적용할 수 있습니다.');
+        assert.ok(ctx.archived.some(item => item.tabId === 'assessment'), '고치기 전 학습이해도를 작업 기록에 남긴다');
+    });
+
     await run('교수안 그림 고르기: 그 갈래의 학습·실습 탭에 놓인 그림만 슬라이드 이미지 후보로 쓴다', () => {
         const ctx = studioContext();
         const mod = { id: 'm1', title: '재미', images: { pic_basic: PNG, pic_adv: JPG, pic_shared: PNG },
