@@ -367,9 +367,12 @@ const motionSize = bytes => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toF
 const MOTION_FIELD = 'bg-black/30 border border-white/10 rounded-lg text-xs text-white focus:outline-none focus:border-accent disabled:opacity-50';
 const MOTION_SECONDARY = 'px-4 py-2 text-xs font-bold text-textLight bg-white/5 hover:bg-white/10 rounded-lg transition-colors disabled:opacity-40';
 
+// 창 칸은 화면 높이의 90%까지 커지고 넘치면 창 안이 스크롤된다. 버튼 줄은 창 칸 아래 끝에 붙여(sticky) 1366x768 노트북처럼 낮은 화면에서도
+// 미리 보기를 만든 뒤 바꾸기·다시 읽기·취소가 바로 보이게 한다(창 칸 여백 p-6만큼 -bottom-6·-mx-6·-mb-6로 끝까지 펴고, 같은 바탕색으로 지나가는 내용을 가린다).
+// scroll-pb-20은 포커스 받은 칸을 굴려 보일 때 그 버튼 줄 높이만큼 띄운다(openMotionDialog)
 function motionDialogHtml() {
     return `
-        <div data-app-dialog-panel class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[560px] max-w-[94vw] max-h-[90vh] overflow-y-auto p-6 shadow-2xl flex flex-col gap-3" onclick="event.stopPropagation()">
+        <div data-app-dialog-panel class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[560px] max-w-[94vw] max-h-[90vh] overflow-y-auto scroll-pb-20 p-6 shadow-2xl flex flex-col gap-3" onclick="event.stopPropagation()">
             <h3 data-app-dialog-title class="font-bold text-white text-sm flex items-center gap-2"><i class="ph-bold ph-gif text-emerald-400" aria-hidden="true"></i> 움직이는 GIF 만들기</h3>
             <p data-app-dialog-text class="text-xs text-textMuted leading-relaxed">${escapeHtml(MOTION_TEXT.lead)}</p>
             <div class="rounded-lg bg-black/30 border border-white/10 p-2 flex justify-center"><img data-motion-preview alt="바꿀 그림" class="max-h-[260px] max-w-full w-auto rounded"></div>
@@ -380,7 +383,7 @@ function motionDialogHtml() {
             </label>
             <p class="text-[0.6875rem] text-textMuted"><i class="ph-bold ph-info" aria-hidden="true"></i> ${escapeHtml(MOTION_TEXT.cost)}</p>
             <p data-motion-status role="status" aria-live="polite" class="text-xs min-h-[1rem] whitespace-pre-wrap"></p>
-            <div class="flex flex-wrap justify-end gap-2">
+            <div class="sticky -bottom-6 -mx-6 -mb-6 -mt-3 px-6 pt-3 pb-6 bg-[#1a1a2e] flex flex-wrap justify-end gap-2">
                 <button type="button" data-motion-cancel class="${MOTION_SECONDARY}">취소</button>
                 <button type="button" data-motion-reread class="hidden ${MOTION_SECONDARY}">다시 읽기</button>
                 <button type="button" data-motion-start class="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg transition-colors disabled:opacity-40">관계 읽고 GIF 만들기</button>
@@ -598,6 +601,11 @@ function openMotionDialog(session) {
             closeMotionDialog(session);
         },
         focus: motionPart(session, 'instruction')
+    });
+    // 창의 Tab 처리는 포커스만 옮기고 굴리지 않는다(ui.js keepAppDialogFocus). 낮은 화면에서 옮겨 간 칸이 아래에 붙은 버튼 줄에 가리지 않게 창 칸을 굴린다
+    const buttonRow = motionPart(session, 'apply').parentElement;
+    overlay.addEventListener('focusin', event => {
+        if (!buttonRow.contains(event.target)) event.target.scrollIntoView?.({ block: 'nearest' });
     });
     const guard = run => () => {
         if (!session.dialog.tooSoon()) run();

@@ -1289,6 +1289,38 @@ test('창: 4MB를 넘어 줄여 다시 만드는 동안 장면 수가 처음부�
     assert.ok(shown(part(overlay, 'apply')), '크기를 알리고 바꾸기는 강사가 고른다');
 });
 
+test('창: 버튼 줄은 스크롤되는 창 칸 아래 끝에 붙어, 낮은 화면(1366x768 노트북 등)에서 미리 보기를 만든 뒤에도 바꾸기·다시 읽기·취소가 바로 보인다', async () => {
+    const mod = motionLesson();
+    const ctx = domContext(mod, { replies: [aiReply(sampleAnswer())] });
+    const overlay = openDialog(ctx, 'img_1');
+    const panel = overlay.querySelector('[data-app-dialog-panel]');
+    const panelClasses = panel.className.split(/\s+/);
+    assert.ok(panelClasses.includes('overflow-y-auto') && panelClasses.includes('p-6'), panel.className);
+    const row = part(overlay, 'start').parentElement;
+    assert.strictEqual(row.parentElement, panel, '버튼 줄은 스크롤되는 창 칸 바로 안에 있다');
+    ['cancel', 'reread', 'apply'].forEach(name => assert.strictEqual(part(overlay, name).parentElement, row, `${name}도 같은 줄`));
+    const rowClasses = row.className.split(/\s+/);
+    // 창 칸 여백(p-6)만큼 펴서 창 아래 끝에 닿고(브라우저는 붙는 자리를 창 칸 여백 안쪽에서 잰다), 창 칸과 같은 바탕색으로 밑으로 지나가는 내용을 가린다
+    ['sticky', '-bottom-6', '-mx-6', '-mb-6', 'px-6', 'pb-6'].forEach(name => assert.ok(rowClasses.includes(name), `${name}: ${row.className}`));
+    const background = panelClasses.find(name => name.startsWith('bg-['));
+    assert.ok(background && rowClasses.includes(background), `창 칸과 같은 바탕색: ${row.className}`);
+    part(overlay, 'start').click();
+    await flush();
+    assert.deepStrictEqual([shown(part(overlay, 'apply')), shown(part(overlay, 'reread')), shown(part(overlay, 'cancel'))], [true, true, true]);
+    assert.strictEqual(part(overlay, 'apply').parentElement, row, '만든 뒤의 바꾸기 버튼도 붙은 줄에 있다');
+    // 창의 Tab 처리는 굴리지 않으므로, 포커스를 받은 칸(버튼 줄 밖)은 창 칸을 굴려 버튼 줄 위로 보인다(창 칸의 scroll-pb-20만큼 띄운다). 버튼 줄의 버튼은 굴리지 않는다
+    assert.ok(panelClasses.includes('scroll-pb-20'), panel.className);
+    const scrolled = [];
+    const focusIn = el => {
+        el.scrollIntoView = options => scrolled.push([el.getAttribute('data-motion-speed') !== null ? 'speed' : el.hasAttribute('data-motion-instruction') ? 'instruction' : el.textContent.trim(), options]);
+        const event = ctx.document.createEvent('Event');
+        event.initEvent('focusin', true, true);
+        el.dispatchEvent(event);
+    };
+    [part(overlay, 'speed'), part(overlay, 'instruction'), part(overlay, 'apply'), part(overlay, 'cancel')].forEach(focusIn);
+    assert.deepStrictEqual(plain(scrolled), [['speed', { block: 'nearest' }], ['instruction', { block: 'nearest' }]]);
+});
+
 (async () => {
     if (domino) {
         for (const { name, fn } of pending) {
