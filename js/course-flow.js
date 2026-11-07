@@ -82,7 +82,8 @@ const lessonHasRewriteContent = lesson => lessonHasContent(lesson) || !!lesson.g
 // 덮어쓰기: 비우기 직전에 차시를 통째로 휴지통에 넣고(30일 동안 되살린다. 작업 기록 칸은 쓰지 않는다) 빈 탭을 채우는 같은 경로로 다시 만든다
 // 사본은 옛 단일 본문을 탭으로 옮기기 전 모양 그대로다. 고정 섹션은 비우면 찾을 수 없으므로 먼저 챙겨 돌려준다.
 // 교수안까지 다시 만들면 그림도 덜어 내되, 다시 넣을 고정 섹션의 그림과 남는 삽화·판서 영상이 쓰는 그림은 남긴다(카드의 다시 생성과 같은 규칙, tabs.js dropUnusedLessonImages).
-// before: 비운 칸의 지우기 전 값(탭을 하나도 만들지 못하면 되돌린다, undoEmptyRewrite) / copy: 휴지통에 넣은 사본(되돌리면 뺀다)
+// before: 비운 칸의 지우기 전 값(탭을 하나도 만들지 못하면 되돌린다, undoEmptyRewrite). 그림을 덜어 내면 움직이는 GIF 기록(imageMotions)도 함께 덜리므로
+// 그 기록도 담는다(되돌린 GIF가 기록을 잃으면 '원래 그림으로'가 사라지고 간직한 원래 그림은 다음 그림 정리에서 지워진다) / copy: 휴지통에 넣은 사본(되돌리면 뺀다)
 // batch: 이 일괄 실행의 이름. 사본에 붙여 휴지통의 '모두 복원'이 한 실행의 사본을 함께 되살린다(course-meta.js)
 async function clearLessonForRewrite(mod, withGyosuan, subjectId, batch = '') {
     const trashed = lessonHasRewriteContent(mod);
@@ -92,8 +93,13 @@ async function clearLessonForRewrite(mod, withGyosuan, subjectId, batch = '') {
     const redraw = globalState.courseDesign?.autoArt ? { illustrations: [], artAutoDone: false } : {};
     const note = trashed ? '일괄 생성으로 내용을 다시 만듦(이전 내용은 휴지통)' : '일괄 생성으로 내용을 다시 만듦';
     const emptied = { content: null, tabContents: {}, ...redraw, ...(withGyosuan ? { gyosuan: null } : {}) };
+    const isMap = value => !!value && typeof value === 'object' && !Array.isArray(value);
     const hasImages = !!mod.images && typeof mod.images === 'object';
-    const before = Object.fromEntries([...Object.keys(emptied), 'history', 'images'].map(field => [field, field === 'images' && hasImages ? { ...mod.images } : mod[field]]));
+    const motions = isMap(mod.imageMotions) ? { imageMotions: { ...mod.imageMotions } } : {};
+    const before = {
+        ...Object.fromEntries([...Object.keys(emptied), 'history', 'images'].map(field => [field, field === 'images' && hasImages ? { ...mod.images } : mod[field]])),
+        ...motions
+    };
     Object.assign(mod, withHistoryNote(mod, note), emptied);
     if (withGyosuan) {
         mod.images = hasImages ? { ...mod.images } : {};

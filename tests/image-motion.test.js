@@ -441,6 +441,56 @@ test('나무 구조: 맨 위 요소에서 단계마다 함께 내려간다(위�
     assert.deepStrictEqual(eventsOf(up)[0].events.map(event => `${idOf(up.groups[0], event.from)}>${idOf(up.groups[0], event.to)}`), ['x>r', 'y>r', 'x1>x', 'x2>x', 'y1>y']);
 });
 
+test('나무 구조: 떨어진 부분은 그 부분의 맨 위 요소에서 시작한다(AI가 아래 요소를 먼저 적어도 위로 거슬러 오르지 않는다)', () => {
+    // 오른쪽 나무는 r2가 맨 위, b1·b2가 그 아래, b3이 b1 아래. 목록에는 b1이 r2보다 먼저 나온다
+    const plan = sanitize({ groups: [{ name: '두 나무', pattern: 'tree', nodes: [
+        { id: 'r1', box: [50, 100, 150, 200] }, { id: 'a1', box: [400, 50, 500, 150] }, { id: 'a2', box: [400, 200, 500, 300] },
+        { id: 'b1', box: [400, 600, 500, 700] }, { id: 'r2', box: [50, 700, 150, 800] }, { id: 'b2', box: [400, 800, 500, 900] }, { id: 'b3', box: [800, 600, 900, 700] }
+    ], edges: [['r1', 'a1'], ['r1', 'a2'], ['r2', 'b1'], ['r2', 'b2'], ['b1', 'b3']].map(([from, to]) => ({ from, to, dir: 'none' })) }] });
+    const [tree] = eventsOf(plan);
+    const ways = tree.events.map(event => [`${idOf(plan.groups[0], event.from)}>${idOf(plan.groups[0], event.to)}`, Number(event.start.toFixed(3))]);
+    assert.deepStrictEqual(ways, [['r1>a1', 0.04], ['r1>a2', 0.04], ['r2>b1', 0.04], ['r2>b2', 0.04], ['b1>b3', 0.49]], '두 나무 모두 맨 위에서 함께 내려간다');
+});
+
+test('긴 흐름: 차례 흐름·순환·나무 구조는 걸음이 많아도 걸음마다 30장면 가운데 3장면 넘게 보이고 모든 연결이 그려진다. 순환은 한 바퀴 끝과 처음이 끊기지 않는다', () => {
+    const FRAMES = 30;
+    const framesOf = event => Array.from({ length: FRAMES }, (_, i) => i / FRAMES).filter(t => t >= event.start && t < event.end).length;
+    const plan = sanitize(sampleAnswer()); // P2P 묶음: 연결 28개를 차례로 걷는다
+    for (const pattern of ['chain', 'cycle']) {
+        const peers = eventsOf(plan, [pattern, pattern])[1];
+        const shown = new Map(); // 연결마다 보이는 장면 수(순환의 끝에서 나눈 걸음은 두 조각을 합친다)
+        peers.events.forEach(event => shown.set(event.edge, (shown.get(event.edge) || 0) + framesOf(event)));
+        assert.strictEqual(shown.size, 28, `${pattern}: 모든 연결`);
+        assert.ok(Math.min(...shown.values()) >= 3, `${pattern}: 걸음마다 3장면 넘게 ${[...shown.values()].join(',')}`);
+        assert.ok(peers.events.every(event => event.start >= 0 && event.end <= 1 && event.start < event.end), `${pattern}: 시간은 0~1 안`);
+    }
+    const chain = eventsOf(plan, ['chain', 'chain'])[1].events;
+    assert.ok(near(Math.min(...chain.map(event => event.start)), 0.03) && near(Math.max(...chain.map(event => event.end)), 0.97), '차례 흐름은 0.03에 떠나 0.97에 닿는다');
+    chain.slice(1).forEach((event, k) => assert.ok(event.start > chain[k].start && event.start < chain[k].end, '다음 점은 앞 점이 닿기 전에 차례로 떠난다'));
+    // 순환: 끝을 넘는 걸음은 끝까지(0~cut)와 다음 바퀴 처음(cut~1) 두 조각으로 나뉘어 같은 자리에서 이어진다
+    const cycle = P.planMotionTimeline(plan, ['cycle', 'cycle']);
+    const pieces = plain(cycle.groups[1].events.filter(event => event.p0 !== undefined));
+    assert.ok(pieces.length >= 2 && pieces.length % 2 === 0, `나눈 조각 ${pieces.length}`);
+    const only = events => ({ groups: [{ ...cycle.groups[0], events: [], pulses: [] }, { ...cycle.groups[1], events, pulses: [] }] });
+    for (let k = 0; k < pieces.length; k += 2) {
+        const [tail, head] = [pieces[k], pieces[k + 1]];
+        assert.deepStrictEqual([tail.end, head.start, tail.p0, head.p1, tail.p1, head.edge, head.from, head.to], [1, 0, 0, 1, head.p0, tail.edge, tail.from, tail.to]);
+        const late = P.motionScene(plan, only([tail]), 1 - 1e-9, 800, 446, 6.7).packets[0];
+        const early = P.motionScene(plan, only([head]), 0, 800, 446, 6.7).packets[0];
+        assert.ok(Math.abs(late.x - early.x) < 0.01 && Math.abs(late.y - early.y) < 0.01, '끝 장면과 처음 장면에서 점이 같은 자리');
+    }
+    const counts = Array.from({ length: FRAMES }, (_, i) => P.motionScene(plan, only(cycle.groups[1].events), i / FRAMES, 800, 446, 6.7).packets.length);
+    assert.ok(Math.max(...counts) - Math.min(...counts) <= 1, `장면마다 점 수가 고르다(끝과 처음 사이에 빈 장면이 없다): ${counts.join(',')}`);
+    // 나무 구조: 24개를 한 줄로 이은 나무(단계 23개)도 단계마다 3장면 넘게, 마지막 단계는 0.94에 닿는다
+    const many = Array.from({ length: 24 }, (_, i) => node(`n${i}`, (i % 6) * 160, Math.floor(i / 6) * 220 + (i % 6) * 10));
+    const line = sanitize({ groups: [{ pattern: 'tree', center: 'n0', nodes: many, edges: many.slice(1).map((item, i) => ({ from: many[i].id, to: item.id, dir: 'forward' })) }] });
+    const deep = eventsOf(line)[0].events;
+    assert.strictEqual(deep.length, 23);
+    assert.ok(deep.every(event => framesOf(event) >= 3), deep.map(framesOf).join(','));
+    assert.ok(near(Math.max(...deep.map(event => event.end)), 0.94) && deep.every(event => event.end <= 0.94 + 1e-9));
+    deep.slice(1).forEach((event, k) => assert.ok(event.start > deep[k].start, '단계 차례대로'));
+});
+
 test('짝 주고받기: 연결마다 앞 절반에 한쪽으로, 뒤 절반에 반대로(한쪽 화살표는 화살표 쪽만)', () => {
     const plan = sanitize({ groups: [{ pattern: 'pairs', nodes: [node('a', 0, 0), node('b', 300, 0), node('c', 600, 0)], edges: [{ from: 'a', to: 'b' }, { from: 'b', to: 'c', dir: 'forward' }] }] });
     const events = eventsOf(plan)[0].events.map(event => [event.edge, idOf(plan.groups[0], event.from), idOf(plan.groups[0], event.to), event.start < 0.5, event.tone]);
@@ -601,6 +651,78 @@ test('낡은 기록: 그 자리 그림이 다시 찾기 등으로 바뀌었으�
     assert.deepStrictEqual([again.imageMotions.img_1.still, again.images[second], first in again.images], [second, PNG_B, false]);
 });
 
+// 보기 화면의 버튼 이름=그림 키
+const actionsIn = view => [...view.querySelectorAll('[data-lesson-action]')].map(el => `${el.getAttribute('data-lesson-action')}=${el.getAttribute('data-img-id')}`);
+// 붙여 넣은 그림(<img src="local:키">, 그림 틀·다시 찾기 버튼 없음)은 보기 화면에 그림 값으로 그려진다
+const PASTED = '## 구조\n\n<img src="local:img_1" alt="붙여 넣은 그림">\n\n설명';
+const drawPasted = (ctx, mod) => {
+    const view = ctx.document.getElementById('render-view');
+    view.innerHTML = `<p><span class="block"><img src="${mod.images.img_1}" alt="붙여 넣은 그림"></span></p>`;
+    vm.runInContext('window.applyWhiteboardVideos', ctx)(mod);
+    return view;
+};
+
+test('그림 작업이 도는 동안 원래 그림으로 되돌려도 간직한 원래 그림 사본을 지운다(기록 없이 남은 같은 값의 사본이 판서 영상·GIF 버튼의 그림 키를 가로채지 않게)', async () => {
+    const mod = motionLesson({ tabContents: { basicLearn: PASTED } });
+    const ctx = domContext(mod);
+    const still = ctx.applyImageMotionData(mod, 'img_1', PNG, GIF);
+    let busy = true;
+    ctx.pictureJobRunning = () => busy; // 다른 차시 일괄 생성·다른 그림 다시 찾기·답을 기다리는 AI 호출 등
+    await ctx.revertImageMotion('img_1');
+    assert.deepStrictEqual([plain(Object.keys(mod.images)), mod.images.img_1, plain(mod.imageMotions)], [['img_1'], PNG, {}], `원래 그림 사본(${still})도 지운다`);
+    assert.deepStrictEqual(ctx.toasts.at(-1), ['원래 그림으로 되돌렸습니다.', 'success']);
+    busy = false;
+    const view = drawPasted(ctx, mod);
+    await flush();
+    assert.deepStrictEqual(actionsIn(view), ['whiteboard-video=img_1', 'image-motion=img_1'], '되돌린 그림의 키에 버튼을 단다');
+    // 다른 곳이 쓰는 원래 그림 키는 그림 작업 중에도 남긴다
+    const shared = motionLesson();
+    const sharedCtx = domContext(shared);
+    const keep = sharedCtx.applyImageMotionData(shared, 'img_1', PNG, GIF);
+    shared.tabContents = { ...shared.tabContents, basicPrac: `실습 ![](local:${keep})` };
+    sharedCtx.pictureJobRunning = () => true;
+    await sharedCtx.revertImageMotion('img_1');
+    assert.deepStrictEqual([shared.images.img_1, shared.images[keep], plain(shared.imageMotions)], [PNG, PNG, {}]);
+});
+
+test('삽화 창에서 GIF로 바꾼 삽화를 지우면(그림 키가 빠짐) 다음에 그릴 때 그 기록과 간직한 원래 그림도 정리한다. 찾지 못한 그림 자리(키는 남음)는 기다린다', async () => {
+    const X = 'img_1793836800123';
+    const mod = motionLesson({
+        tabContents: { basicLearn: `## 구조\n\n<div class="image-wrapper"><img src="local:${X}" alt="서버"></div>\n\n설명` },
+        images: { [X]: PNG }, illustrations: [{ id: 'ill1', imgId: X, title: '서버', svg: '<svg/>' }]
+    });
+    const ctx = domContext(mod);
+    // 삽화 창의 삭제가 부르는 실제 함수(course-illustrations.js placeIllustration·deleteIllustration)
+    const ill = read('course-illustrations.js');
+    ['const ILLUSTRATION_PLACE_NONE', 'const lessonArtTabMd', 'const ILLUSTRATION_BLOCKS'].forEach(start => vm.runInContext(sliceSource(ill, start, ';\n'), ctx));
+    vm.runInContext(sliceSource(read('course-ncs-ref.js'), 'const withoutKey', ';\n'), ctx);
+    ['function findIllustrationBlock(', 'function removeIllustrationMd(', 'function illustrationTab(', 'function updateIllustration(', 'function takeOutIllustration(', 'async function placeIllustration(']
+        .forEach(start => vm.runInContext(sliceSource(ill, start), ctx));
+    const still = ctx.applyImageMotionData(mod, X, PNG, GIF);
+    await vm.runInContext('placeIllustration', ctx)(mod, 'ill1', 'basicLearn', '');
+    mod.illustrations = mod.illustrations.filter(item => item.id !== 'ill1');
+    assert.ok(!mod.tabContents.basicLearn.includes(X) && !(X in mod.images) && still in mod.images, '삽화 그림 키는 빠지고 원래 그림 사본과 기록이 남았다');
+    ctx.document.getElementById('render-view').innerHTML = '<p>설명</p>';
+    vm.runInContext('window.applyWhiteboardVideos', ctx)(mod);
+    await flush();
+    assert.deepStrictEqual([plain(mod.imageMotions), plain(Object.keys(mod.images))], [{}, []], '기록과 원래 그림을 정리한다(다음 저장에 들어간다)');
+    // 그림 작업이 도는 동안에는 두었다가 끝난 뒤 정리한다
+    const later = motionLesson();
+    const laterCtx = domContext(later);
+    const laterStill = laterCtx.applyImageMotionData(later, 'img_1', PNG, GIF);
+    later.images = Object.fromEntries(Object.entries(later.images).filter(([key]) => key !== 'img_1'));
+    laterCtx.pictureJobRunning = () => true;
+    assert.strictEqual(laterCtx.settleImageMotions(later), 0);
+    laterCtx.pictureJobRunning = () => false;
+    assert.deepStrictEqual([laterCtx.settleImageMotions(later), plain(later.imageMotions), laterStill in later.images], [1, {}, false]);
+    // 찾지 못한 그림 자리(따로 담은 백업에서 GIF 파일을 찾지 못함)는 그림 키가 남아 기록을 둔다
+    const waiting = motionLesson();
+    const waitingCtx = domContext(waiting);
+    waitingCtx.applyImageMotionData(waiting, 'img_1', PNG, GIF);
+    waiting.images.img_1 = 'teacher-image:0123456789abcdef1b';
+    assert.deepStrictEqual([waitingCtx.settleImageMotions(waiting), Object.keys(waiting.imageMotions)], [0, ['img_1']]);
+});
+
 test('그림 정리(tabs.js): GIF 그림이 남는 동안 원래 그림 키를 남기고, GIF 그림이 빠지면 원래 그림과 기록도 함께 뺀다', () => {
     const mod = motionLesson();
     const ctx = apiContext(mod);
@@ -753,6 +875,29 @@ test('작업 기록: 기록은 GIF와 원래 그림·기록을 함께 담고, �
     assert.ok(!('imageMotions' in S.lessonFromHistory({ ...entry, images: { img_1: LONG_GIF } }, 10)), '원래 그림이 없는 기록은 넣지 않는다');
 });
 
+test('작업 기록 되돌리기: GIF 자리를 지금 그림으로 두면(다른 탭도 그 그림을 씀) 그 GIF의 원래 그림도 넣지 않는다(기록 없는 같은 값의 사본이 그림 키를 가로채지 않게)', () => {
+    const S = safetyContext();
+    const lesson = recordedLesson();
+    const still = 'img_17938368000001';
+    const entry = S.historyEntry({ title: '차시 · 기본학습', content: '![](local:img_1)', images: lesson.images, tabId: 'basicLearn', lesson }, { id: 2, date: 'd', subjectId: 's1' });
+    assert.deepStrictEqual(Object.keys(entry.images).sort(), ['img_1', still]);
+    // 그 뒤 강사가 원래 그림으로 되돌렸고(img_1은 원래 그림, 사본은 지워짐) 실습 탭도 그 그림을 쓴다
+    const now = { id: 3, title: '차시', content: '', tabContents: { basicLearn: '![](local:img_1) 고친 글', basicPrac: '![](local:img_1) 실습' }, images: { img_1: LONG_PNG } };
+    const plan = S.historyImagePlan(now, entry);
+    assert.deepStrictEqual([plain(plan.kept), Object.keys(plan.images)], [['img_1'], []], 'GIF 자리는 지금 그림, 그 원래 그림도 넣지 않는다');
+    S.applyHistoryEntry(now, entry);
+    assert.deepStrictEqual([plain(Object.keys(now.images)), now.images.img_1, now.imageMotions, now.tabContents.basicLearn], [['img_1'], LONG_PNG, undefined, '![](local:img_1)']);
+    assert.strictEqual(S.historyMatchesNow(now, entry, 'basicLearn'), true, '글이 같으면 원래 그림 사본 때문에 다르다고 하지 않는다');
+    // GIF가 함께 돌아가면 원래 그림과 기록도 함께 돌아온다
+    const emptied = { id: 3, title: '차시', content: '', tabContents: { basicLearn: '새 글' }, images: {} };
+    S.applyHistoryEntry(emptied, entry);
+    assert.deepStrictEqual([Object.keys(emptied.images).sort(), Object.keys(emptied.imageMotions)], [['img_1', still], ['img_1']]);
+    // 기록 글이 그 키를 그림으로 쓰면 기록이 돌아가지 않아도 넣는다
+    const pictured = { ...entry, content: `![](local:img_1) ![](local:${still})` };
+    const keeps = { id: 3, title: '차시', content: '', tabContents: { basicLearn: '글', basicPrac: '![](local:img_1)' }, images: { img_1: LONG_PNG } };
+    assert.deepStrictEqual(Object.keys(S.historyImagePlan(keeps, pictured).images), [still]);
+});
+
 test('내보내기·백업·불러오기의 그림 거르기를 GIF가 지나고, 교수안·슬라이드는 교수안의 옛 사본보다 바꾼 GIF를 쓴다(되돌리면 사본)', () => {
     const S = safetyContext();
     assert.ok(S.window.isSafeImageValue(LONG_GIF), '불러온 상태 검사(SAFE_IMAGE_DATA)');
@@ -861,6 +1006,23 @@ test('GIF 만들기(캔버스): 가로 800(원래가 작으면 원래)으로 30�
     await assert.rejects(canvasContext().ctx.imageMotionCanvas.render('teacher-image:0123456789abcdef1a', plan, {}), /그림을 읽지 못했습니다/);
 });
 
+test('GIF 만들기(캔버스): 4MB를 넘어 줄여 다시 만들 때는 장면 진행에 몇 번째 다시 만들기인지와 그 가로를 함께 넘기고, 크기 알림은 줄이지 않은 GIF에 줄였다고 하지 않는다', async () => {
+    const plan = sanitize(sampleAnswer());
+    const MB = 1024 * 1024;
+    const steps = [];
+    const big = canvasContext({ sizes: width => (width > 480 ? 4.5 * MB : 3 * MB) });
+    await big.ctx.imageMotionCanvas.render(PNG, plan, { onFrame: (done, total, step) => steps.push([done, total, plain(step)]) });
+    assert.deepStrictEqual(steps, [[30, 30, { attempt: 0, width: 800 }], [30, 30, { attempt: 1, width: 640 }], [30, 30, { attempt: 2, width: 480 }]]);
+    const narrow = canvasContext({ width: 300, height: 1600, sizes: () => 7 * MB });
+    const over = await narrow.ctx.imageMotionCanvas.render(PNG, plan, {});
+    assert.deepStrictEqual([over.width, over.reduced, over.over], [300, false, true], '원래 가로 300이면 한 번만 만든다');
+    const note = vm.runInContext('motionResultNote', narrow.ctx);
+    assert.strictEqual(note(over), '가로 300px GIF가 7.0MB입니다(4MB 넘음). 바꾸면 저장 공간을 많이 씁니다.');
+    assert.strictEqual(note({ width: 480, bytes: 5 * MB, reduced: true, over: true }), '가로 480px로 줄여도 5.0MB입니다(4MB 넘음). 바꾸면 저장 공간을 많이 씁니다.');
+    assert.strictEqual(note({ width: 640, bytes: 3 * MB, reduced: true, over: false }), '4MB를 넘어 가로 640px로 줄여 만들었습니다(3.0MB).');
+    assert.strictEqual(note({ width: 800, bytes: MB, reduced: false, over: false }), '');
+});
+
 test('AI에 보낼 그림: 긴 변 1600 이하의 PNG·JPEG·WebP·GIF는 그대로, 크거나 다른 형식은 흰 바탕에 줄여 JPEG로', async () => {
     const large = canvasContext({ width: 2000, height: 1116 });
     const sent = await large.ctx.imageMotionCanvas.inline(PNG);
@@ -936,6 +1098,19 @@ test('보기 화면: 판서 영상 버튼을 단 진짜 그림 가운데 글이 
     ctx.openImageMotion('img_s');
     ctx.openImageMotion('img_g');
     assert.deepStrictEqual(ctx.toasts.map(([text]) => text.includes('GIF로 바꿀 수 없습니다') || text.includes('그림 값이 바로 들어 있어')), [true, true], '원래 그림 키·글에 값으로 쓴 그림은 열지 않는다');
+});
+
+test('보기 화면: 같은 값의 그림 키가 여럿이면 글이 가리키는 키에 판서 영상·GIF 버튼을 단다(기록을 잃은 원래 그림 사본처럼 글에 없는 키가 가로채지 않는다)', async () => {
+    const copy = 'img_17940000000001'; // 기록 없이 남은 원래 그림 사본(예전 작업에서 남은 것)
+    const mod = motionLesson({ tabContents: { basicLearn: PASTED }, images: { img_1: PNG, [copy]: PNG } });
+    const ctx = domContext(mod);
+    const view = drawPasted(ctx, mod);
+    await flush();
+    assert.deepStrictEqual(actionsIn(view), ['whiteboard-video=img_1', 'image-motion=img_1']);
+    const ids = mod2 => plain([...vm.runInContext('whiteboardImageIds', ctx)(mod2).entries()]);
+    assert.deepStrictEqual(ids({ ...mod, images: { [copy]: PNG, img_1: PNG } }), [[PNG, 'img_1']], '차례와 상관없이 글이 가리키는 키');
+    assert.deepStrictEqual(ids({ ...mod, tabContents: { basicLearn: `${PASTED} <img src="local:${copy}">` } }), [[PNG, copy]], '둘 다 가리키면 예전처럼 뒤의 키');
+    assert.deepStrictEqual(ids({ ...mod, tabContents: { basicLearn: '글' } }), [[PNG, copy]], '둘 다 가리키지 않아도 뒤의 키');
 });
 
 /* ======================= 'GIF 만들기' 창 ======================= */
@@ -1091,6 +1266,27 @@ test('창: 기다리는 동안 다른 차시로 옮기거나 그림이 바뀌면
     const missing = domContext(motionLesson({ images: { img_1: 'teacher-image:0123456789abcdef1a' } }));
     missing.openImageMotion('img_1');
     assert.ok(missing.toasts.at(-1)[0].includes('GIF로 바꿀 수 없습니다'));
+});
+
+test('창: 4MB를 넘어 줄여 다시 만드는 동안 장면 수가 처음부터 다시 세어지는 까닭을 보이고, 줄이지 않은 GIF가 4MB를 넘으면 줄였다고 하지 않는다', async () => {
+    const mod = motionLesson();
+    const ctx = domContext(mod, { replies: [aiReply(sampleAnswer())] });
+    const seen = [];
+    ctx.imageMotionCanvas.render = async (source, plan, opts) => {
+        const status = () => ctx.document.querySelector('[data-motion-status]').textContent;
+        opts.onFrame(12, 30, { attempt: 0, width: 300 });
+        seen.push(status());
+        opts.onFrame(5, 30, { attempt: 1, width: 640 });
+        seen.push(status());
+        return { dataUrl: GIF, bytes: 7 * 1024 * 1024, frames: 30, width: 300, height: 1600, reduced: false, over: true };
+    };
+    const overlay = openDialog(ctx, 'img_1');
+    part(overlay, 'start').click();
+    await flush();
+    assert.deepStrictEqual(seen, ['움직이는 GIF를 만들고 있습니다… (12/30)', '4MB를 넘어 가로 640px로 다시 만들고 있습니다… (5/30)']);
+    assert.strictEqual(part(overlay, 'status').textContent, '가로 300px GIF가 7.0MB입니다(4MB 넘음). 바꾸면 저장 공간을 많이 씁니다.');
+    assert.ok(!part(overlay, 'status').textContent.includes('줄여도'));
+    assert.ok(shown(part(overlay, 'apply')), '크기를 알리고 바꾸기는 강사가 고른다');
 });
 
 (async () => {

@@ -333,6 +333,41 @@ test('장면들 → GIF: 여러 장면의 점으로 색을 고르고, 풀면 장
     await assert.rejects(G.gifEncodeAnimation({ width, height, frameCount: 0, frameAt: () => null }), /장면이 없습니다/);
 });
 
+test('매끈한 그러데이션(어두운 남색·밝은 바탕): 색 칸이 4단계씩이라 계단 띠 없이 이어지고(이웃 점 차이 5 이하, 원래 색과 3 이하), 풀면 장면마다 색표 번호 그대로다', async () => {
+    const width = 320;
+    const height = 6;
+    for (const [from, to, name] of [[[15, 23, 42], [30, 58, 138], '어두운 남색'], [[248, 250, 252], [186, 200, 222], '밝은 바탕']]) {
+        const base = new Uint8Array(width * height * 4);
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) base.set([...from.map((v, c) => Math.round(v + (to[c] - v) * x / (width - 1))), 255], (y * width + x) * 4);
+        }
+        const scene = n => { // 그러데이션 위를 지나가는 작은 점
+            const out = base.slice();
+            for (let x = 10 + n * 4; x < 14 + n * 4; x++) out.set([225, 29, 72, 255], (2 * width + x) * 4);
+            return out;
+        };
+        const result = await G.gifEncodeAnimation({ width, height, frameCount: 4, frameAt: scene, delay: 10, fixedColors: [[225, 29, 72], [255, 255, 255]] });
+        const gif = decodeGif(result.bytes);
+        const row = gif.frames[0].rgba.subarray(0, width * 4); // 점이 지나가지 않는 맨 윗줄
+        let error = 0;
+        let step = 0;
+        const shades = new Set();
+        for (let x = 0; x < width; x++) {
+            shades.add(`${row[x * 4]},${row[x * 4 + 1]},${row[x * 4 + 2]}`);
+            for (let c = 0; c < 3; c++) {
+                error = Math.max(error, Math.abs(row[x * 4 + c] - base[x * 4 + c]));
+                if (x) step = Math.max(step, Math.abs(row[x * 4 + c] - row[(x - 1) * 4 + c]));
+            }
+        }
+        assert.ok(error <= 3 && step <= 5 && shades.size >= 30, `${name}: 원래 색과 차이 ${error}, 이웃 점 차이 ${step}, 색 ${shades.size}개`);
+        for (let n = 0; n < 4; n++) {
+            const want = scene(n);
+            for (let i = 0; i < width * height; i++) want.set([...result.palette[result.colorOf(want[i * 4], want[i * 4 + 1], want[i * 4 + 2])], 255], i * 4);
+            assert.ok(sameBytes(gif.frames[n].rgba, want), `${name} 장면 ${n}`);
+        }
+    }
+});
+
 test('base64: 브라우저 btoa가 있든 없든 Buffer와 같은 글이다(조각 경계·채움 글자)', () => {
     const withBtoa = load({ withBtoa: true });
     for (const length of [0, 1, 2, 3, 4, 5, 24575, 24576, 24577, 100001]) {

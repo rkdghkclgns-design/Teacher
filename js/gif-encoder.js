@@ -1,21 +1,24 @@
 // gif-encoder.js - 여러 장면(RGBA 점 배열)을 움직이는 GIF(GIF89a) 파일 바이트로 만든다(움직이는 GIF, image-motion.js)
 // 화면(DOM)을 쓰지 않는 계산만 있어 node 테스트에서 그대로 돈다(tests/gif-encoder.test.js).
-// - 색: 여러 장면에서 고른 점으로 중앙값 자르기를 해 공통 색표 하나(최대 255색 + 투명 1칸)를 만들고, 가까운 색은 32×32×32 표에 적어 둔다
+// - 색: 여러 장면에서 고른 점으로 중앙값 자르기를 해 공통 색표 하나(최대 255색 + 투명 1칸)를 만들고, 가까운 색은 64×64×64 표에 적어 둔다
 // - 장면: 첫 장면은 통째로, 다음 장면은 앞 장면과 달라진 곳만 잘라 넣는다(달라지지 않은 점은 투명, 앞 장면은 그대로 두기 1). 똑같은 장면은 앞 장면 시간에 더한다
 // - 끝없이 되풀이(NETSCAPE2.0). LZW는 코드 길이를 늘려 가며 쓰고 코드 표가 차면 지우기 코드를 넣는다
 
 const GIF_MAX_COLORS = 255; // 색표의 256번째 칸은 투명(앞 장면과 같은 점)
 const GIF_MAX_CODE = 4096; // LZW 코드 표 크기(12비트)
 const GIF_HASH_SIZE = 8192; // LZW 코드 찾기 표(2의 거듭제곱, 코드 표의 두 배)
-const GIF_BINS = 32768; // 가까운 색 표: 빛깔마다 5비트(32×32×32)
+// 색 칸: 빛깔마다 6비트(64×64×64, 4단계씩 한 칸). 중앙값 자르기와 가까운 색 표가 같은 칸을 쓴다.
+// 5비트(8단계씩)면 한 칸에 한 색만 남아 매끈한 바탕(어두운 남색 그러데이션 등)에 계단 띠가 보인다
+const GIF_BIN_TOP = 63; // 칸 번호 한 빛깔의 가장 큰 값
+const GIF_BINS = 262144; // 64×64×64
 const GIF_SAMPLE_LIMIT = 240000; // 색을 고를 때 모으는 점 수 상한
 const GIF_MIN_DELAY = 2; // 장면 시간(1/100초). 브라우저는 1 이하를 0.1초로 읽는다
 const GIF_MAX_DELAY = 65535;
 const GIF_MAX_SIDE = 65535;
-const GIF_CHANNEL = [bin => bin >> 10, bin => (bin >> 5) & 31, bin => bin & 31];
+const GIF_CHANNEL = [bin => bin >> 12, bin => (bin >> 6) & 63, bin => bin & 63];
 
-// 빛깔마다 5비트로 묶은 칸 번호
-const gifBin = (r, g, b) => ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+// 빛깔마다 6비트로 묶은 칸 번호
+const gifBin = (r, g, b) => ((r >> 2) << 12) | ((g >> 2) << 6) | (b >> 2);
 
 // 바이트를 모으는 그릇. 모자라면 두 배로 늘린다
 function gifByteSink(initial = 1 << 16) {
@@ -54,7 +57,7 @@ function gifByteSink(initial = 1 << 16) {
 /* ---------- 색 고르기: 중앙값 자르기 ---------- */
 // 상자: 든 칸, 점 수, 가장 넓은 빛깔(자를 쪽), 자를 차례를 정하는 점수(점 수 × 부피)
 function gifBox(bins, counts) {
-    const low = [31, 31, 31];
+    const low = [GIF_BIN_TOP, GIF_BIN_TOP, GIF_BIN_TOP];
     const high = [0, 0, 0];
     let total = 0;
     for (const bin of bins) {
@@ -84,7 +87,7 @@ function gifSplitBox(box, counts) {
     return [gifBox(sorted.slice(0, cut), counts), gifBox(sorted.slice(cut), counts)];
 }
 
-// RGB 점(r, g, b, r, g, b, …) → 대표 색 목록(최대 maxColors개). 빛깔을 5비트로 묶은 칸에서 상자를 자르고, 대표 색은 상자에 든 점의 평균이다.
+// RGB 점(r, g, b, r, g, b, …) → 대표 색 목록(최대 maxColors개). 빛깔을 6비트로 묶은 칸에서 상자를 자르고, 대표 색은 상자에 든 점의 평균이다.
 // 칸이 하나뿐인 상자는 더 자르지 않으므로 색이 적은 그림은 그 색 그대로 나온다
 function gifMedianCut(samples, maxColors = GIF_MAX_COLORS) {
     const limit = Math.max(0, Math.min(GIF_MAX_COLORS, Math.floor(Number(maxColors) || 0)));
@@ -155,7 +158,7 @@ function gifBuildPalette(samples, fixed = [], maxColors = GIF_MAX_COLORS) {
     return palette;
 }
 
-// 색 → 색표 번호. 칸(5비트씩)마다 처음 한 번만 가장 가까운 색을 찾아 표에 적는다(칸 가운데 색으로 찾아 점의 차례와 상관없이 같은 답).
+// 색 → 색표 번호. 칸(6비트씩)마다 처음 한 번만 가장 가까운 색을 찾아 표에 적는다(칸 가운데 색으로 찾아 점의 차례와 상관없이 같은 답).
 // 색표의 색은 먼저 제 칸에 적어 둔다(앞 칸이 이긴다). 그래서 색표에 있는 색의 점은 늘 그 색이 된다
 function gifColorMapper(palette) {
     const count = palette.length;
@@ -173,9 +176,9 @@ function gifColorMapper(palette) {
         if (cache[bin] < 0) cache[bin] = i;
     });
     const nearest = bin => {
-        const r = (GIF_CHANNEL[0](bin) << 3) | 4;
-        const g = (GIF_CHANNEL[1](bin) << 3) | 4;
-        const b = (GIF_CHANNEL[2](bin) << 3) | 4;
+        const r = (GIF_CHANNEL[0](bin) << 2) | 2;
+        const g = (GIF_CHANNEL[1](bin) << 2) | 2;
+        const b = (GIF_CHANNEL[2](bin) << 2) | 2;
         let best = 0;
         let bestDistance = Infinity;
         for (let i = 0; i < count; i++) {
@@ -200,7 +203,7 @@ function gifColorMapper(palette) {
         // RGBA 점 배열 → 색표 번호 배열(점마다 하나). 알파는 보지 않는다(장면은 불투명하게 그린다)
         indices(rgba, out = new Uint8Array(rgba.length >> 2)) {
             for (let p = 0, q = 0; q < out.length; p += 4, q++) {
-                const bin = ((rgba[p] >> 3) << 10) | ((rgba[p + 1] >> 3) << 5) | (rgba[p + 2] >> 3);
+                const bin = ((rgba[p] >> 2) << 12) | ((rgba[p + 1] >> 2) << 6) | (rgba[p + 2] >> 2);
                 const known = cache[bin];
                 out[q] = known >= 0 ? known : nearest(bin);
             }

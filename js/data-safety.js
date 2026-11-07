@@ -243,17 +243,33 @@ function historyOutsideImageKeys(lesson, part) {
     return new Set([...texts.flatMap(localImageRuns), ...pinned.filter(id => id != null && id !== '').map(String)]);
 }
 
+// 기록이 담은 움직이는 GIF 기록 가운데 그 GIF가 함께 돌아가지 않는 기록(그 GIF 자리는 지금 그림으로 두거나 기록이 틀림)의 원래 그림 키.
+// 원래 그림은 글이 가리키지 않는 사본이라(image-motion.js) 기록 없이 들어가면 같은 값의 그림 키를 가로챈다(판서 영상·GIF 버튼이 사본 키를 잡는다).
+// 기록 글이나 지금 차시 글이 가리키는 키는 그림으로 쓰는 키라 넣는다. images: 돌려놓으려는 기록의 그림
+function historyIdleStills(lesson, entry, images) {
+    if (!isObject(entry.imageMotions)) return new Set();
+    const back = safeImageMotions(entry.imageMotions, { ...(isObject(lesson.images) ? lesson.images : {}), ...images });
+    const coming = new Set(Object.entries(back).filter(([key]) => Object.prototype.hasOwnProperty.call(images, key)).map(([, item]) => item.still));
+    const used = referencedImages(`${historyText(entry)}\n${historyText(lesson)}`, images);
+    return new Set(Object.values(entry.imageMotions)
+        .map(item => (isObject(item) && typeof item.still === 'string' ? item.still : ''))
+        .filter(still => still && !coming.has(still) && !Object.prototype.hasOwnProperty.call(used, still)));
+}
+
 // 그 차시에 돌려놓을 기록의 그림(images)과, 기록에 진짜 그림이 있지만 넣지 않고 지금 그림으로 두는 키(kept).
 // 기록 쪽 값이 찾지 못한 그림 자리·빈 값이면 차시의 진짜 그림을 덮지 않는다(다른 탭이 그 그림을 쓰고 있을 수 있고, 탭 하나 기록의 '되돌리기 전' 기록에는 그 탭 글이 쓰는 그림만 남는다).
 // 차시 쪽이 그림 자리면 기록의 그림으로 채운다. 그 키에 지금 다른 진짜 그림이 있고(다시 찾기·삽화 다시 그리기는 같은 키에 새 그림을 넣는다) 되돌리는 쪽 밖에서도 그 키를 쓰면
-// 기록의 그림을 넣지 않는다(다른 탭·교수안의 새 그림이 옛 그림으로 바뀌지 않게. 기록의 그림은 작업 기록에 그대로 남는다). part를 주지 않으면 그 기록의 탭(historyPart)
+// 기록의 그림을 넣지 않는다(다른 탭·교수안의 새 그림이 옛 그림으로 바뀌지 않게. 기록의 그림은 작업 기록에 그대로 남는다). part를 주지 않으면 그 기록의 탭(historyPart).
+// 움직이는 GIF의 원래 그림은 그 GIF 기록이 함께 돌아갈 때만 넣는다(historyIdleStills)
 function historyImagePlan(lesson, entry, part = historyPart(entry)) {
     const current = isObject(lesson.images) ? lesson.images : {};
     const pairs = Object.entries(historyImages(entry));
     const differs = ([id, data]) => isPictureData(data) && isPictureData(current[id]) && current[id] !== data;
     const outside = pairs.some(differs) ? historyOutsideImageKeys(lesson, part) : new Set();
     const kept = pairs.filter(pair => differs(pair) && outside.has(pair[0])).map(([id]) => id);
-    const images = Object.fromEntries(pairs.filter(([id, data]) => (isPictureData(data) ? !kept.includes(id) : !isPictureData(current[id]))));
+    const planned = Object.fromEntries(pairs.filter(([id, data]) => (isPictureData(data) ? !kept.includes(id) : !isPictureData(current[id]))));
+    const idle = historyIdleStills(lesson, entry, planned);
+    const images = idle.size ? Object.fromEntries(Object.entries(planned).filter(([id]) => !idle.has(id))) : planned;
     return { images, kept };
 }
 

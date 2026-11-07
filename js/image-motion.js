@@ -33,6 +33,7 @@ const MOTION_TEXT = {
     alreadyMoving: "이미 움직이는 GIF입니다. '원래 그림으로'로 되돌린 뒤 다시 만들어 주세요."
 };
 const motionDrawing = (done, total) => `움직이는 GIF를 만들고 있습니다… (${done}/${total})`;
+const motionRedrawing = (width, done, total) => `4MB를 넘어 가로 ${width}px로 다시 만들고 있습니다… (${done}/${total})`;
 
 let _motionSession = null; // 열린 'GIF 만들기' 창(하나만 연다)
 
@@ -72,12 +73,14 @@ function freshMotionStillKey(mod, now = Date.now()) {
     throw new Error('원래 그림을 둘 키를 만들지 못했습니다.');
 }
 
-// 그림 작업(생성·그림 찾기·AI 호출)이 도는 동안에는 그림 값을 지우지 않는다(api.js pictureJobRunning)
+// 그림 작업(생성·그림 찾기·AI 호출)이 도는 동안에는 낡은 기록을 정리하지 않는다(api.js pictureJobRunning, settleImageMotions)
 const motionPictureBusy = () => typeof pictureJobRunning === 'function' && !!pictureJobRunning();
 
-// 원래 그림 키를 아무 데서도 쓰지 않으면(글·삽화·판서 영상·다른 GIF 기록, api.js lessonStillUsesImage) 차시 그림에서 지운다. 지웠으면 true
+// 원래 그림 키를 아무 데서도 쓰지 않으면(글·삽화·판서 영상·다른 GIF 기록, api.js lessonStillUsesImage) 차시 그림에서 지운다. 지웠으면 true.
+// 그림 작업이 도는 동안에도 지운다: 원래 그림 키는 글에 들어가지 않는 키라(freshMotionStillKey) 작업이 쥔 글(고정 섹션 등)도 가리키지 않는다.
+// 기록을 뺀 뒤 사본이 남으면 같은 값의 그림 키를 가로챈다(판서 영상·GIF 버튼이 사본 키를 잡는다, whiteboard-video.js whiteboardImageIds)
 function releaseMotionStill(mod, key) {
-    if (!key || !motionHas(mod?.images, key) || motionPictureBusy()) return false;
+    if (!key || !motionHas(mod?.images, key)) return false;
     if (typeof lessonStillUsesImage !== 'function' || lessonStillUsesImage(mod, key)) return false; // 가릴 수 없으면 남긴다
     const rest = { ...mod.images };
     delete rest[key];
@@ -130,12 +133,14 @@ function undoImageMotion(mod, imgId) {
     return state === 'valid' ? 'restored' : 'stale';
 }
 
-// 그 자리 그림이 그사이 바뀐 기록을 정리한다(지금 그림은 건드리지 않는다). 그림 작업이 도는 동안에는 두고, 바꾼 것은 다음 저장에 함께 들어간다. 정리한 수
+// 그 자리 그림이 그사이 바뀌었거나(낡은 기록) 그 그림 키가 차시에서 빠진(삽화 창에서 삽화를 지움 등) 기록을 정리한다(지금 그림은 건드리지 않는다).
+// 간직한 원래 그림도 아무 데서도 쓰지 않으면 지운다. 찾지 못한 그림 자리(그림 키는 있다)는 두고 기다린다.
+// 그림 작업이 도는 동안에는 두고, 바꾼 것은 다음 저장에 함께 들어간다. 정리한 수
 function settleImageMotions(mod) {
     if (!mod?.imageMotions || typeof mod.imageMotions !== 'object' || motionPictureBusy()) return 0;
     let settled = 0;
     Object.keys(mod.imageMotions).forEach(imgId => {
-        if (imageMotionState(mod, imgId) !== 'stale') return;
+        if (imageMotionState(mod, imgId) !== 'stale' && motionHas(mod.images, imgId)) return;
         releaseMotionStill(mod, dropImageMotion(mod, imgId)?.still);
         settled += 1;
     });
@@ -338,7 +343,8 @@ async function encodeMotionAt(image, plan, timeline, maxWidth, { delay, onFrame,
     return { dataUrl: `data:image/gif;base64,${gifBase64(encoded.bytes)}`, bytes: encoded.bytes.length, frames: encoded.frames, width, height };
 }
 
-// GIF를 만든다. 4MB를 넘으면 가로 640, 480으로 줄여 다시 만든다(그래도 넘으면 그대로 두고 over로 알린다)
+// GIF를 만든다. 4MB를 넘으면 가로 640, 480으로 줄여 다시 만든다(그래도 넘으면 그대로 두고 over로 알린다).
+// onFrame(그린 장면 수, 모든 장면 수, { attempt, width }): attempt는 줄여 다시 만드는 차례(처음 만들 때 0), width는 그 차례의 가로
 async function buildMotionGif(source, plan, { patterns = [], delay = MOTION_DEFAULT_DELAY, onFrame = null, cancelled = () => false } = {}) {
     const image = await loadMotionImage(source);
     const timeline = planMotionTimeline(plan, patterns);
@@ -346,7 +352,8 @@ async function buildMotionGif(source, plan, { patterns = [], delay = MOTION_DEFA
     const widths = [first, ...MOTION_WIDTHS.slice(1).filter(width => width < first)];
     let result = null;
     for (const [attempt, width] of widths.entries()) {
-        result = { ...(await encodeMotionAt(image, plan, timeline, width, { delay, onFrame, cancelled })), reduced: attempt > 0 };
+        const report = typeof onFrame === 'function' ? (done, total) => onFrame(done, total, { attempt, width }) : null;
+        result = { ...(await encodeMotionAt(image, plan, timeline, width, { delay, onFrame: report, cancelled })), reduced: attempt > 0 };
         if (result.bytes <= MOTION_GIF_MAX_BYTES) break;
     }
     return { ...result, over: result.bytes > MOTION_GIF_MAX_BYTES };
@@ -496,8 +503,10 @@ async function readImageMotion(session) {
     await renderImageMotion(session);
 }
 
+// 크기 알림. 줄여 다시 만들지 않은 GIF(원래 그림이 작아 더 줄일 크기가 없음)에는 '줄여도'라고 하지 않는다
 function motionResultNote(gif) {
-    if (gif.over) return `가로 ${gif.width}px로 줄여도 ${motionSize(gif.bytes)}입니다(4MB 넘음). 바꾸면 저장 공간을 많이 씁니다.`;
+    if (gif.over && gif.reduced) return `가로 ${gif.width}px로 줄여도 ${motionSize(gif.bytes)}입니다(4MB 넘음). 바꾸면 저장 공간을 많이 씁니다.`;
+    if (gif.over) return `가로 ${gif.width}px GIF가 ${motionSize(gif.bytes)}입니다(4MB 넘음). 바꾸면 저장 공간을 많이 씁니다.`;
     if (gif.reduced) return `4MB를 넘어 가로 ${gif.width}px로 줄여 만들었습니다(${motionSize(gif.bytes)}).`;
     return '';
 }
@@ -514,7 +523,10 @@ async function renderImageMotion(session) {
         const gif = await window.imageMotionCanvas.render(session.source, session.plan, {
             patterns: session.patterns,
             delay: session.delay,
-            onFrame: (done, total) => { if (current()) motionStatus(session, motionDrawing(done, total), 'busy'); },
+            // 4MB를 넘어 줄여 다시 만들면 장면 수가 처음부터 다시 세어지므로 그 까닭을 함께 보인다
+            onFrame: (done, total, step) => {
+                if (current()) motionStatus(session, step?.attempt > 0 ? motionRedrawing(step.width, done, total) : motionDrawing(done, total), 'busy');
+            },
             cancelled: () => !current()
         });
         if (!current()) return;

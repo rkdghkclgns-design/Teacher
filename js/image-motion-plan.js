@@ -8,7 +8,8 @@ const MOTION_DIRS = ['both', 'forward', 'none'];
 const MOTION_LIMITS = { groups: 4, nodes: 24, edges: 64, title: 40, name: 30, story: 80, id: 12, label: 20, instruction: 300, scan: 400 };
 const MOTION_BOX_MIN = 8; // 상자의 가장 작은 폭·높이(0~1000 비율)
 const MOTION_DENSE = 0.6; // 이을 수 있는 쌍의 이만큼이 이어져 있으면 '서로 연결'
-const MOTION_TIMES = { travel: 0.16, mesh: 0.2, pair: 0.34, pulse: 0.12 }; // 한 바퀴를 1로 본 시간: 한 번 건너가기(중심과 주변·서로 연결·짝), 빛나는 테두리
+// 한 바퀴를 1로 본 시간: 한 번 건너가기(중심과 주변·서로 연결·짝), 빛나는 테두리, 차례 흐름·순환·나무 구조의 한 걸음이 적어도 보이는 시간(30장면에서 3장면 넘게)
+const MOTION_TIMES = { travel: 0.16, mesh: 0.2, pair: 0.34, pulse: 0.12, step: 0.12 };
 const MOTION_SYSTEM = '교육용 그림에서 요소와 연결을 읽어 지정한 JSON 하나만 출력합니다.';
 // 그림이 밝으면 짙은 색, 어두우면 옅은 색. 점에는 흰 테두리와 그림자를 둘러 어느 쪽에서도 보이게 한다
 const MOTION_COLORS = {
@@ -260,8 +261,16 @@ function motionRing(group, graph) {
     return used.map((i, k) => ({ i, angle: motionAngle(middle, centers[k]) })).sort((a, b) => a.angle - b.angle || a.i - b.i).map(item => item.i);
 }
 
-// 점 하나가 연결을 건너간다: 움직임 하나와 도착한 요소의 빛나는 테두리
-function motionSend(out, edge, from, to, start, end, tone) {
+// 점 하나가 연결을 건너간다: 움직임 하나와 도착한 요소의 빛나는 테두리.
+// wrap(순환)이면 한 바퀴 끝(1)을 넘는 걸음을 끝까지와 다음 바퀴 처음으로 나눠 이어 그린다(p0·p1: 그 조각이 맡은 건너가기 몫. 끝과 처음이 끊기지 않게)
+function motionSend(out, edge, from, to, start, end, tone, wrap = false) {
+    if (wrap && end > 1 && start < 1) {
+        const cut = (1 - start) / (end - start);
+        out.events.push({ edge, from, to, start, end: 1, tone, p0: 0, p1: cut });
+        out.events.push({ edge, from, to, start: 0, end: end - 1, tone, p0: cut, p1: 1 });
+        out.pulses.push({ node: to, at: end - 1, tone });
+        return;
+    }
     out.events.push({ edge, from, to, start, end: Math.min(1, end), tone });
     out.pulses.push({ node: to, at: Math.min(1, end), tone });
 }
@@ -355,23 +364,34 @@ function motionWalk(group, graph) {
     return steps;
 }
 
-// 차례 흐름: 점 하나가 연결을 하나씩 차례로 건너며 다음 요소를 밝힌다. 순환은 한 바퀴를 빈틈없이 나눠 끝에서 처음으로 이어진다
+// 차례 흐름: 점 하나가 연결을 하나씩 차례로 건너며 다음 요소를 밝힌다. 순환은 한 바퀴를 빈틈없이 나눠 끝에서 처음으로 이어진다.
+// 걸음이 많아 한 걸음이 MOTION_TIMES.step보다 짧으면(30장면에서 한두 장면뿐이라 움직임으로 보이지 않고, 장면 사이에 끼어 그려지지 않는 걸음도 생긴다)
+// 걸음마다 그만큼 보이게 늘리고 앞 점이 닿기 전에 다음 점이 떠나게 겹친다(여러 점이 차례로 흐른다). 차례 흐름은 마지막 걸음이 끝(0.97)에서 닿게
+// 걸음 사이를 줄이고, 순환은 한 바퀴를 고르게 나눠 끝을 넘는 걸음을 다음 바퀴 처음으로 잇는다
 function motionChain(group, graph, out, wrap = false) {
     const steps = motionWalk(group, graph);
+    const n = steps.length;
     const span = wrap ? 1 : 0.94;
     const offset = wrap ? 0 : 0.03;
+    const overlap = span / n < MOTION_TIMES.step; // 걸음이 여덟 개를 넘을 때
+    const gap = !overlap ? 0 : wrap ? span / n : (span - MOTION_TIMES.step) / (n - 1);
     steps.forEach((step, k) => {
-        const start = offset + span * k / steps.length;
-        const end = offset + span * (k + 1) / steps.length;
-        motionSend(out, step.edge, step.from, step.to, start, end, 'flow');
+        const start = overlap ? offset + gap * k : offset + span * k / n;
+        const end = overlap ? start + MOTION_TIMES.step : offset + span * (k + 1) / n;
+        motionSend(out, step.edge, step.from, step.to, start, end, 'flow', wrap);
     });
 }
 
-// 나무 구조: 맨 위 요소(계획의 center, 없으면 맨 위에 그려진 요소)에서 단계마다 아래 요소로 함께 내려간다. 떨어진 부분은 그 부분의 맨 위에서 함께 시작한다
+// 나무 구조: 맨 위 요소(계획의 center, 없으면 맨 위에 그려진 요소)에서 단계마다 아래 요소로 함께 내려간다. 떨어진 부분은 그 부분의 맨 위 요소에서 함께 시작한다
+// (맨 위, 같은 높이면 더 많이 이어진 요소, 그다음 왼쪽. motionTopmost와 같은 차례). 단계가 많아 한 단계가 MOTION_TIMES.step보다 짧으면
+// 단계마다 그만큼 보이게 늘려 겹친다(마지막 단계는 그대로 0.94에 닿는다)
 function motionTree(group, graph, out) {
     const level = new Map();
     const edgeLevel = new Map();
-    const roots = [motionHubIndex(group, graph, motionTopmost), ...group.nodes.map((node, i) => i)];
+    const degree = motionDegrees(group.nodes, group.edges);
+    const box = i => group.nodes[i].box;
+    const topFirst = (a, b) => box(a)[0] - box(b)[0] || degree.get(group.nodes[b].id) - degree.get(group.nodes[a].id) || box(a)[1] - box(b)[1] || a - b;
+    const roots = [motionHubIndex(group, graph, motionTopmost), ...group.nodes.map((node, i) => i).sort(topFirst)];
     for (const root of roots) {
         if (level.has(root) || !graph.links[root].length) continue;
         level.set(root, 0);
@@ -389,11 +409,14 @@ function motionTree(group, graph, out) {
     }
     const depth = Math.max(...[...edgeLevel.values()].map(item => item.level)) + 1;
     const slot = 0.9 / depth;
+    const overlap = slot * 0.9 < MOTION_TIMES.step; // 단계가 일곱 개를 넘을 때
+    const gap = overlap ? (0.9 - MOTION_TIMES.step) / (depth - 1) : slot;
+    const length = overlap ? MOTION_TIMES.step : slot * 0.9;
     [...edgeLevel.entries()].sort((a, b) => a[1].level - b[1].level || a[0] - b[0]).forEach(([i, item]) => {
         const edge = group.edges[i];
         const down = motionAllows(edge, group.nodes[item.parent].id);
-        const start = 0.04 + item.level * slot;
-        motionSend(out, i, down ? item.parent : item.child, down ? item.child : item.parent, start, start + slot * 0.9, 'flow');
+        const start = 0.04 + item.level * gap;
+        motionSend(out, i, down ? item.parent : item.child, down ? item.child : item.parent, start, start + length, 'flow');
     });
 }
 
@@ -407,7 +430,8 @@ const MOTION_PLANNERS = {
 };
 
 // 한 바퀴(0~1) 동안의 움직임. patterns[i]: 그 묶음에 고른 무늬('auto'나 모르는 값이면 계획의 무늬).
-// 묶음마다 { name, pattern, events: [{ edge, from, to, start, end, tone }], pulses: [{ node, at, tone }] }. from·to·node는 요소 번호, tone은 request·response·flow
+// 묶음마다 { name, pattern, events: [{ edge, from, to, start, end, tone, p0?, p1? }], pulses: [{ node, at, tone }] }. from·to·node는 요소 번호, tone은 request·response·flow,
+// p0·p1은 한 바퀴 끝에서 나눈 걸음(순환)의 조각이 맡은 건너가기 몫(없으면 0과 1)
 function planMotionTimeline(plan, patterns = []) {
     return {
         groups: plan.groups.map((group, index) => {
@@ -458,7 +482,9 @@ function motionScene(plan, timeline, t, width, height, radius) {
         const nodes = plan.groups[g].nodes;
         group.events.forEach(event => {
             if (t < event.start || t >= event.end) return;
-            const p = (t - event.start) / (event.end - event.start);
+            const p0 = typeof event.p0 === 'number' ? event.p0 : 0;
+            const p1 = typeof event.p1 === 'number' ? event.p1 : 1;
+            const p = p0 + (p1 - p0) * (t - event.start) / (event.end - event.start);
             const ends = motionEdgeEnds(nodes[event.from].box, nodes[event.to].box, width, height, radius * 0.6);
             const at = s => ({ x: ends.x1 + (ends.x2 - ends.x1) * s, y: ends.y1 + (ends.y2 - ends.y1) * s });
             lines.push({ ...ends, tone: event.tone, fade: Math.min(1, p / 0.15, (1 - p) / 0.15) });

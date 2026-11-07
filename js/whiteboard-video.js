@@ -209,17 +209,21 @@ window.whiteboardInbox = {
 
 let whiteboardCollecting = null;
 
+// 차시 글: 합친 본문·탭·교수안·편성안
+const whiteboardLessonTexts = mod => [mod.content, ...Object.values(mod.tabContents || {}), mod.gyosuan?.docMd, mod.gyosuan?.deckMd].filter(text => typeof text === 'string');
+
+// 글이 그 그림 키(local:키)를 가리키는지. local:img_1 뒤에 키 글자가 더 이어지면(local:img_10) 다른 그림이다
+function whiteboardTextUsesKey(text, imgId) {
+    const ref = `local:${imgId}`;
+    for (let at = text.indexOf(ref); at !== -1; at = text.indexOf(ref, at + 1)) if (!/[\w-]/.test(text.charAt(at + ref.length))) return true;
+    return false;
+}
+
 // 영상을 붙일 그림이 차시 글(합친 본문·탭·교수안·편성안)에 아직 있는지: local:키(local:img_1과 local:img_10을 가른다)나 그 그림 값(data URL)을 바로 쓴 자리.
 // 영상을 기다리는 동안 그 그림을 지웠으면 없다
 function whiteboardPictureInLesson(mod, imgId) {
-    const ref = `local:${imgId}`;
     const value = typeof mod.images?.[imgId] === 'string' && /^data:image\//.test(mod.images[imgId]) ? mod.images[imgId] : '';
-    const texts = [mod.content, ...Object.values(mod.tabContents || {}), mod.gyosuan?.docMd, mod.gyosuan?.deckMd].filter(text => typeof text === 'string');
-    const usesKey = text => {
-        for (let at = text.indexOf(ref); at !== -1; at = text.indexOf(ref, at + 1)) if (!/[\w-]/.test(text.charAt(at + ref.length))) return true;
-        return false;
-    };
-    return texts.some(text => usesKey(text) || (!!value && text.includes(value)));
+    return whiteboardLessonTexts(mod).some(text => whiteboardTextUsesKey(text, imgId) || (!!value && text.includes(value)));
 }
 
 // 돌아온 영상을 요청한 그림 자리에 붙인다. 차시를 못 찾으면(아직 불러오는 중 등) 받은편지함에 남겨 다음에 다시 본다.
@@ -409,10 +413,20 @@ window.sweepWhiteboardVideos = function () {
 const WB_BUTTON = 'absolute left-1/2 -translate-x-1/2 z-10 whitespace-nowrap inline-flex items-center gap-1 px-2.5 py-1 text-[0.6875rem] font-bold rounded-full shadow transition-opacity';
 let whiteboardObjectUrls = [];
 
-// 그림 값 → 그림 키. 움직이는 GIF가 간직한 원래 그림 키(image-motion.js)는 화면에 그려지지 않는 사본이라 빼고 찾는다
+// 그림 값 → 그림 키. 움직이는 GIF가 간직한 원래 그림 키(image-motion.js)는 화면에 그려지지 않는 사본이라 빼고 찾는다.
+// 같은 값의 키가 여럿이면 글이 가리키는 키를 고른다(기록을 잃은 원래 그림 사본처럼 글에 없는 키가 그 그림의 키를 가로채지 않게).
+// 둘 다 가리키거나 둘 다 가리키지 않으면 뒤의 키다. 글은 값이 겹칠 때만 본다
 function whiteboardImageIds(mod) {
     const stills = new Set(Object.values(mod.imageMotions && typeof mod.imageMotions === 'object' ? mod.imageMotions : {}).map(item => item?.still));
-    return new Map(Object.entries(mod.images || {}).filter(([id]) => !stills.has(id)).map(([id, src]) => [src, id]));
+    let texts = null;
+    const shown = id => (texts = texts || whiteboardLessonTexts(mod)).some(text => whiteboardTextUsesKey(text, id));
+    const ids = new Map();
+    Object.entries(mod.images || {}).forEach(([id, src]) => {
+        if (stills.has(id)) return;
+        if (ids.has(src) && !shown(id) && shown(ids.get(src))) return;
+        ids.set(src, id);
+    });
+    return ids;
 }
 
 function whiteboardButton(action, imgId, html, tone) {
