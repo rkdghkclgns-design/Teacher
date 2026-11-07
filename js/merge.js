@@ -72,7 +72,11 @@ async function fillMergedLearn(subj, lesson, draft, snapshot, target) {
     if (quit || typeof autoFixGeneratedTab !== 'function') return { md: volume.md, volume };
     const fixed = await autoFixGeneratedTab({ tabId: 'basicLearn', md: volume.md, lockedBlocks: [], onStatus: setMergeStatus, rounds: VOLUME_FIX_ROUNDS, minSpokenChars: volume.targetChars, isStopped });
     // 고쳐 받은 체크리스트에도 다시 보기의 옛 (⏱) 시간이 남지 않게 뗀다(lesson-volume.js)
-    const md = typeof volumeChecklistText === 'function' ? volumeChecklistText(fixed, []) : fixed;
+    const checked = typeof volumeChecklistText === 'function' ? volumeChecklistText(fixed, []) : fixed;
+    // 주석이 모자란 코드 블록에는 주석만 더한다(code-comments-tool.js)
+    const md = typeof addGeneratedCodeComments === 'function'
+        ? (await addGeneratedCodeComments({ md: checked, tabId: 'basicLearn', lockedBlocks: [], label: '기본학습', onStatus: setMergeStatus, isStopped, waitSignal: window.aiStopSignal?.() || null })).md
+        : checked;
     return live() ? { md, volume } : { gone: true, md };
 }
 

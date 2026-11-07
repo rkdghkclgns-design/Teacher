@@ -660,6 +660,8 @@ function renderSubjectFlowCard(subject) {
                 <button onclick="downloadSubjectBundle()" class="${button}" title="모든 차시의 교수안과 슬라이드 편성안을 한 파일로 내려받기">교수안·편성안 묶음</button>
                 <button onclick="downloadLessonMaterial('subject')" class="${button}" title="이 교과를 학습자용 직무 교육 자료 양식으로 내려받기">교육 자료</button>
                 <button onclick="downloadLessonMaterial('course')" class="${button}" title="과정 전체를 학습자용 직무 교육 자료 양식으로 내려받기">과정 교육 자료</button>
+                <button onclick="startCodeComments('subject')" class="${button}" title="이 교과의 모든 차시와 최종 평가에서 주석이 모자란 코드 블록에 AI가 주석만 더함">코드 주석 넣기</button>
+                <button onclick="startCodeComments('course')" class="${button}" title="과정 전체의 차시와 최종 평가에서 주석이 모자란 코드 블록에 AI가 주석만 더함">과정 코드 주석 넣기</button>
                 <button onclick="openLessonBackfill()" class="${button}" title="예전에 만든 교과와 차시에 NCS와 삽화를 채움">기존 내용 보강</button>
             </div>`);
 }

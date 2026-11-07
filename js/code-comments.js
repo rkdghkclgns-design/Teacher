@@ -1794,9 +1794,17 @@ function codeCommentParse(text) {
 const ccAnswerCodes = (lines, orig) => [...new Set([ccUnwrap(lines, orig), lines].map(list => list.join('\n')))];
 
 /* ---------- 8. 일괄 작업 ---------- */
-// 주석이 모자란 검사 대상 블록
-function codeCommentTargets(md) {
-    return codeCommentBlocks(md).filter(block => !block.skip && ccCountBlock(block).short);
+// 블록(codeCommentBlocks 결과) 가운데 주석이 모자란 검사 대상을 고칠 블록(targets)과 부르는 쪽이 빼 둔 블록(held: skipBlock(block)이 참, 예: 고정 섹션)으로 나눈다.
+// skipBlock은 주석이 모자란 블록마다 블록(section은 ## 제목 글)을 받는다. 함수가 아니면 빼지 않는다
+function ccSplitTargets(blocks, skipBlock) {
+    const short = blocks.filter(block => !block.skip && ccCountBlock(block).short);
+    const held = typeof skipBlock === 'function' ? short.filter(block => skipBlock(block)) : [];
+    return { targets: short.filter(block => !held.includes(block)), held };
+}
+
+// 주석이 모자란 검사 대상 블록(skipBlock이 참인 블록은 뺀다)
+function codeCommentTargets(md, { skipBlock = null } = {}) {
+    return ccSplitTargets(codeCommentBlocks(md), skipBlock).targets;
 }
 
 // 블록을 묶는다(묶음마다 블록 수·코드 글자 수 한도. 한도보다 큰 블록은 혼자 간다)
@@ -1865,14 +1873,16 @@ async function ccRunBatch(job, batch, { ask, quiz, isStopped, onStatus }) {
 }
 
 // 문서의 주석이 모자란 코드 블록에 AI로 주석만 더한다. ask({ system, user }) → Promise<AI 답 글(가공하지 않은 날 글)>.
+// skipBlock(block)이 참인 블록(고정 섹션 등)은 보내지도 고치지도 않는다.
 // 결과 { md, fixed(주석이 넉넉해진 블록 번호), failed([{ index, reason }] 아직 모자란 블록 모두 — 받은 주석은 넣었을 수 있다.
-//   중지·오류로 멈춰 보내지 못한 블록도 '멈춰서 보내지 않았습니다.'로 든다), remaining(끝난 뒤 주석이 모자란 블록 수), calls(부른 횟수),
-//   stopped(중지), error(일괄 작업을 멈춘 오류 글) }. 원래 코드를 바꾼 문서는 돌려주지 않는다
-async function codeCommentRun({ md, ask, quiz = false, isStopped = () => false, onStatus = () => {}, maxBlocks = CODE_COMMENT_BATCH_BLOCKS, maxChars = CODE_COMMENT_BATCH_CHARS } = {}) {
+//   중지·오류로 멈춰 보내지 못한 블록도 '멈춰서 보내지 않았습니다.'로 든다), remaining(끝난 뒤 주석이 모자란 블록 수, 뺀 블록은 세지 않는다),
+//   held(주석이 모자라지만 skipBlock으로 빼서 고치지 않은 블록 수), calls(부른 횟수), stopped(중지), error(일괄 작업을 멈춘 오류 글) }.
+// 원래 코드를 바꾼 문서는 돌려주지 않는다
+async function codeCommentRun({ md, ask, quiz = false, isStopped = () => false, onStatus = () => {}, maxBlocks = CODE_COMMENT_BATCH_BLOCKS, maxChars = CODE_COMMENT_BATCH_CHARS, skipBlock = null } = {}) {
     if (typeof ask !== 'function') throw new TypeError('codeCommentRun: ask 함수가 필요합니다.');
     const source = String(md ?? '');
     const job = { md: source, calls: 0, fixed: new Set(), failed: new Map(), stopped: false, error: '' };
-    const targets = codeCommentTargets(source);
+    const { targets, held } = ccSplitTargets(codeCommentBlocks(source), skipBlock);
     const batches = ccBatches(targets, ccLimit(maxBlocks, CODE_COMMENT_BATCH_BLOCKS), ccLimit(maxChars, CODE_COMMENT_BATCH_CHARS));
     let done = 0;
     for (const batch of batches) {
@@ -1894,22 +1904,25 @@ async function codeCommentRun({ md, ask, quiz = false, isStopped = () => false, 
         md: finalMd,
         fixed: safe ? [...job.fixed].sort((a, b) => a - b) : [],
         failed: failed.map(([index, reason]) => ({ index, reason })).sort((a, b) => a.index - b.index),
-        remaining: codeCommentTargets(finalMd).length,
+        remaining: codeCommentTargets(finalMd, { skipBlock }).length,
+        held: held.length,
         calls: job.calls, stopped: job.stopped, error: job.error
     };
 }
 
 /* ---------- 9. 예고와 점검 ---------- */
-// 예고: { checked(검사한 블록 수), needs(주석이 필요한 블록 수), calls(예상 AI 호출 수, 다시 부르기 빼고), unknown(모르는 이름표), skipped(검사하지 않은 블록 수) }
-function codeCommentPreview(md, { maxBlocks = CODE_COMMENT_BATCH_BLOCKS, maxChars = CODE_COMMENT_BATCH_CHARS } = {}) {
+// 예고: { checked(검사한 블록 수), needs(주석이 필요한 블록 수), calls(예상 AI 호출 수, 다시 부르기 빼고), unknown(모르는 이름표), skipped(검사하지 않은 블록 수) }.
+// skipBlock을 주면 그 블록을 needs·calls에서 빼고 held(뺀 블록 가운데 주석이 모자란 수)를 더한다(주지 않으면 held 없이 예전 모양)
+function codeCommentPreview(md, { maxBlocks = CODE_COMMENT_BATCH_BLOCKS, maxChars = CODE_COMMENT_BATCH_CHARS, skipBlock = null } = {}) {
     const found = codeCommentBlocks(md);
     const checked = found.filter(block => !block.skip);
-    const needs = checked.filter(block => ccCountBlock(block).short);
+    const { targets: needs, held } = ccSplitTargets(found, skipBlock);
     return {
         checked: checked.length, needs: needs.length,
         calls: ccBatches(needs, ccLimit(maxBlocks, CODE_COMMENT_BATCH_BLOCKS), ccLimit(maxChars, CODE_COMMENT_BATCH_CHARS)).length,
         unknown: [...new Set(found.filter(block => block.skip === 'unknown').map(block => block.label))],
-        skipped: found.length - checked.length
+        skipped: found.length - checked.length,
+        ...(typeof skipBlock === 'function' ? { held: held.length } : {})
     };
 }
 

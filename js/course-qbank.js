@@ -21,7 +21,7 @@ const QBANK_TYPE_FORMATS = {
     객관식: '보기는 ①~⑤로 쓰고, "✅ **정답:** ②"로 정답을 표기합니다. 복수 정답이면 제목 끝에 (복수정답)을 붙이고 문항에 「모두 고르시오」를 밝힙니다.',
     단답식: '"✅ **정답:** 값" 다음 줄에 "🔤 **허용 표기:** 대소문자·띄어쓰기 변형"을 적습니다. 정답은 단어나 값 하나로 확정되어야 합니다.',
     서술형: '"✅ **정답:** 모범 답안" 다음 줄에 "📏 **채점 기준:** 요소 (점수); 요소 (점수)"를 적습니다.',
-    코드제출: '시작 코드가 필요하면 "🧩 **시작 코드:**" 다음 줄에 코드 블록으로 적고, "🧪 **테스트:** 입력과 기대 출력"을 적습니다.',
+    코드제출: '시작 코드가 필요하면 "🧩 **시작 코드:**" 다음 줄에 코드 블록으로 적고, 학습자가 채울 자리마다 무엇을 채울지 한국어 주석으로 적습니다(정답 코드는 주석에 적지 않습니다). "🧪 **테스트:** 입력과 기대 출력"을 적습니다.',
     파일제출: '"📏 **채점 기준:** 평가 기준 — 충족/부분/미흡 조건과 점수"를 관찰 가능한 기준으로 적습니다.'
 };
 // 교안 코드 블록의 언어 표기를 화면에 쓰는 이름으로 바꾼다 (course-rules.js @3a7303f)
@@ -37,7 +37,8 @@ const QBANK_RULES = [
     '- L1은 수업과 같은 상황, L2는 같은 구조를 다른 맥락에 적용, L3는 요구사항만 제시합니다.',
     '- 체크리스트 문장을 그대로 문항으로 쓰지 않습니다. 문항은 구체적 상황에서의 판단을 묻습니다.',
     '- 버전에 의존하는 정보(툴 버전 번호, 단축키, 메뉴 위치)를 문항에 담지 않습니다.',
-    '- 경어체로 쓰고 학습자를 호칭하지 않습니다.'
+    '- 경어체로 쓰고 학습자를 호칭하지 않습니다.',
+    '- 문항 속 코드에도 한국어 주석을 넣습니다. 주석은 코드가 무엇을 하는지만 적고 정답, 출력 결과, 고칠 곳을 알려 주지 않습니다.'
 ].join('\n');
 
 const QBANK_RULE_LIST = [
@@ -360,7 +361,7 @@ function buildReviewPrompt(mod, questions, objectives) {
     return [
         '당신은 평가 문항 검수자입니다. 다른 출제자가 만든 문항을 아래 기준으로 엄격히 검수하세요.',
         `[차시] ${mod.title}`, `[학습 목표]\n${objectives.map((text, i) => `${i + 1}. ${text}`).join('\n')}`,
-        '[기준] 1) 태그한 학습 목표를 실제로 묻는가 2) 밴드 정의에 맞는가(L1 수업과 같은 상황 / L2 같은 구조·다른 맥락 / L3 요구사항만 제시) 3) 정답이 확정되는가 4) 해설과 채점 기준이 정답과 맞는가', '',
+        '[기준] 1) 태그한 학습 목표를 실제로 묻는가 2) 밴드 정의에 맞는가(L1 수업과 같은 상황 / L2 같은 구조·다른 맥락 / L3 요구사항만 제시) 3) 정답이 확정되는가 4) 해설과 채점 기준이 정답과 맞는가 5) 문항 속 코드에 주석이 있고 그 주석이 정답, 출력 결과, 고칠 곳을 알려 주지 않는가', '',
         JSON.stringify(questions.map((q, i) => ({ i, objective: q.objective, band: q.band, type: q.type, multi: q.multi, title: q.title, stem: q.stem, code: q.code, choices: q.choices, answer: q.answer, rubric: q.rubric, tests: q.tests, explanation: q.explanation }))), '',
         'JSON 배열만 출력합니다: [{"i": 0, "ok": true, "notes": "문제가 있으면 무엇을 고쳐야 하는지 경어체 1문장, 없으면 빈 문자열"}]'
     ].join('\n');
@@ -394,8 +395,10 @@ async function crossReviewQuestions(mod, questions, objectives) {
 }
 
 // 자동 검수에 걸린 문항은 한 번 더 고쳐 받는다. trackId: 문항을 넣을 갈래(그 갈래의 원고·목표·기존 문항으로 만든다)
+// 문항 속 코드에 주석이 모자라면 주석만 더한 뒤(code-comments-tool.js, 정답을 알려 주지 않는 문항 모드) 교차 검수한다. 검수자가 주석까지 본다
 async function generateQuestions(mod, spec, trackId = 'basic') {
-    const questions = await draftQuestions(mod, spec, trackId);
+    const drafted = await draftQuestions(mod, spec, trackId);
+    const questions = typeof commentQuestionCode === 'function' ? await commentQuestionCode(drafted) : drafted;
     return crossReviewQuestions(mod, questions, qbankObjectives(mod, trackId));
 }
 

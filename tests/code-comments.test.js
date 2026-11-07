@@ -589,6 +589,49 @@ function ownBlocks(md) {
         await assert.rejects(() => call('codeCommentRun')({ md: RUN_DOC }), /ask/);
     });
 
+    /* ---------- 고정 섹션 빼기(skipBlock) ---------- */
+    // 부르는 쪽이 고치지 않을 블록(고정 섹션)을 skipBlock으로 빼면 대상·일괄 작업·예고에서 빠지고, 그 블록은 held로 센다
+    const HELD_DOC = ['## 1. 합계', '', '```python', 'total = 0', 'for n in [1, 2]:', '    total += n', '```', '', '## 고정 섹션 (⏱ 10분)', '', '```python', 'print(total)', '```', '', '## 3. 출력', '', '```python', 'print(total * 2)', '```'].join('\n');
+    const skipHeld = block => block.section.startsWith('고정');
+
+    await run('skipBlock: 대상에서 빼고, 주지 않거나 함수가 아니면 예전처럼 모두 고른다', () => {
+        assert.deepStrictEqual(plain(call('codeCommentTargets')(HELD_DOC)).map(block => block.index), [0, 1, 2]);
+        assert.deepStrictEqual(plain(call('codeCommentTargets')(HELD_DOC, { skipBlock: skipHeld })).map(block => block.index), [0, 2], '고정 섹션의 블록을 뺀다');
+        assert.deepStrictEqual(plain(call('codeCommentTargets')(HELD_DOC, { skipBlock: null })).map(block => block.index), [0, 1, 2]);
+        assert.deepStrictEqual(plain(call('codeCommentTargets')(HELD_DOC, { skipBlock: 'x' })).map(block => block.index), [0, 1, 2]);
+        const seen = [];
+        call('codeCommentTargets')(HELD_DOC, { skipBlock: block => { seen.push(block.section); return false; } });
+        assert.deepStrictEqual(seen, ['1. 합계', '고정 섹션 (⏱ 10분)', '3. 출력'], 'skipBlock은 주석이 모자란 블록마다 ## 제목(section)을 받는다');
+    });
+
+    await run('skipBlock: 일괄 작업은 뺀 블록을 보내지 않고 바이트 그대로 두며, held로 세고 remaining에는 넣지 않는다', async () => {
+        const log = [];
+        const status = [];
+        const out = await runAll({ md: HELD_DOC, ask: askWith(commentEach, log), skipBlock: skipHeld, onStatus: text => status.push(text) });
+        assert.deepStrictEqual([out.fixed, out.failed, out.remaining, out.held, out.calls], [[0, 2], [], 0, 1, 1]);
+        assert.ok(log[0].user.includes('<<<CODE 1>>>') && log[0].user.includes('<<<CODE 3>>>') && !log[0].user.includes('<<<CODE 2>>>'), log[0].user);
+        assert.ok(!log[0].user.includes('print(total)\n'), '뺀 블록의 코드는 지시에 없다');
+        assert.ok(out.md.includes('## 고정 섹션 (⏱ 10분)\n\n```python\nprint(total)\n```'), '뺀 블록은 그대로');
+        assert.ok(out.md.includes('```python\n# 이 줄이 하는 일입니다\nprint(total * 2)\n```'), out.md);
+        assert.ok(status[0].endsWith('2/2개'), `진행 문구는 뺀 블록을 세지 않는다: ${status[0]}`);
+        const plainRun = await runAll({ md: HELD_DOC, ask: askWith(commentEach, []) });
+        assert.deepStrictEqual([plainRun.fixed, plainRun.held, plainRun.remaining], [[0, 1, 2], 0, 0], '주지 않으면 held는 0');
+        const allHeld = await runAll({ md: HELD_DOC, skipBlock: () => true, ask: async () => { throw new Error('부르면 안 됨'); } });
+        assert.deepStrictEqual([allHeld.md, allHeld.calls, allHeld.fixed, allHeld.failed, allHeld.remaining, allHeld.held], [HELD_DOC, 0, [], [], 0, 3], '모두 빼면 부르지 않는다');
+        const swapped = await runAll({ md: HELD_DOC, skipBlock: skipHeld, ask: askWith(code => `# 설명\n${code.replace('total = 0', 'total = 9')}`, []) });
+        assert.deepStrictEqual([swapped.fixed, swapped.failed.map(item => item.index), swapped.remaining, swapped.held], [[2], [0], 1, 1], '고친 블록 확인은 그대로다');
+        assert.ok(!swapped.md.includes('total = 9'));
+    });
+
+    await run('skipBlock: 예고는 뺀 블록을 needs·calls에서 빼고 held로 알리며, 주지 않으면 예전 모양 그대로다', () => {
+        assert.deepStrictEqual(plain(call('codeCommentPreview')(HELD_DOC, { skipBlock: skipHeld })), { checked: 3, needs: 2, calls: 1, unknown: [], skipped: 0, held: 1 });
+        assert.deepStrictEqual(plain(call('codeCommentPreview')(HELD_DOC, { skipBlock: skipHeld, maxBlocks: 1 })).calls, 2);
+        assert.deepStrictEqual(plain(call('codeCommentPreview')(HELD_DOC, { skipBlock: () => true })), { checked: 3, needs: 0, calls: 0, unknown: [], skipped: 0, held: 3 });
+        assert.deepStrictEqual(plain(call('codeCommentPreview')(HELD_DOC)), { checked: 3, needs: 3, calls: 1, unknown: [], skipped: 0 });
+        const issues = plain(call('codeCommentIssues')(HELD_DOC));
+        assert.deepStrictEqual(issues.map(issue => issue.block), [0, 1, 2], '점검은 고정 섹션의 블록도 보인다');
+    });
+
     /* ---------- 예고·점검 도우미 ---------- */
     await run('예고: 검사한 블록 수·주석이 필요한 블록 수·예상 AI 호출 수', () => {
         const preview = plain(call('codeCommentPreview')(RUN_DOC));
