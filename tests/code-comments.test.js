@@ -482,6 +482,19 @@ function ownBlocks(md) {
         assert.deepStrictEqual(blocks(bash.md)[0].lines, ['# 인사를 찍습니다', 'echo hi', '  ls  # 목록']);
     });
 
+    await run('블록 하나 맞추기(codeCommentFitBlock): 적용과 같은 규칙으로 그 블록의 문서 줄을 돌려주고, ~~~·닫히지 않은 블록도 받으며, 막힌 자리는 까닭을 준다', () => {
+        const fit = (md, index, answer) => plain(call('codeCommentFitBlock')(md, index, answer));
+        const listed = ['1. 단계입니다.', '   ```bash', '   echo hi', '     ls', '   ```', '2. 다음'].join('\r\n');
+        assert.deepStrictEqual(fit(listed, 0, '# 인사를 찍습니다\necho hi\n  ls  # 목록'), { ok: true, lines: ['   # 인사를 찍습니다\r', '   echo hi\r', '     ls  # 목록\r'], reason: '' });
+        const tilde = ['~~~python', 'a = 1', '~~~'].join('\n');
+        assert.deepStrictEqual(fit(tilde, 0, '# 값을 정합니다\na = 1').lines, ['# 값을 정합니다', 'a = 1'], '~~~ 블록');
+        assert.deepStrictEqual(fit('```python\na = 1', 0, 'a = 1  # 하나').lines, ['a = 1  # 하나'], '닫히지 않은 블록');
+        const quoted = fit(['```python', 's = """', '안쪽', '"""', '```'].join('\n'), 0, 's = """\n# 설명\n안쪽\n"""');
+        assert.ok(!quoted.ok && /여러 줄 문자열 안/.test(quoted.reason) && quoted.lines === null, quoted.reason);
+        assert.ok(!fit(APPLY_DOC, 0, '# 설명\na = 9\nb = 2').ok, '코드 줄이 바뀐 답');
+        assert.deepStrictEqual(fit(APPLY_DOC, 9, 'x'), { ok: false, lines: null, reason: '고칠 수 있는 코드 블록이 아닙니다.' });
+    });
+
     /* ---------- AI 지시와 응답 해석 ---------- */
     const parse = text => plain(call('codeCommentParse')(text));
 

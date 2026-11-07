@@ -876,6 +876,8 @@ async function generateModuleContent(moduleId, keyConcepts) {
 
         // 중단하면 끝까지 받지 못한 글이므로 자동 수정과 이미지 생성 비용을 쓰지 않는다
         const stopped = isStopped();
+        const commentLabel = moduleId === 'mainQuest' ? '최종 평가' : '기본학습';
+        let commentRun = null; // 주석 결과는 저장한 뒤에 알린다(그사이 차시가 없어지면 알리지 않고, 중지로 남은 블록은 멈춘 알림에 적는다)
         if (!stopped && !volumeQuit) {
             if (moduleId !== 'mainQuest') {
                 const floor = volume ? { rounds: VOLUME_FIX_ROUNDS, minSpokenChars: volume.targetChars, isStopped } : {}; // 채운 분량 아래로 줄이지 않는다
@@ -885,7 +887,9 @@ async function generateModuleContent(moduleId, keyConcepts) {
             }
             // 주석이 모자란 코드 블록에는 주석만 더한다(code-comments-tool.js). 최종 평가는 정답을 알려 주지 않는 문항 모드다
             if (typeof addGeneratedCodeComments === 'function') {
-                fullContent = (await addGeneratedCodeComments({ md: fullContent, tabId: 'basicLearn', quiz: moduleId === 'mainQuest', lockedBlocks, label: moduleId === 'mainQuest' ? '최종 평가' : '기본학습', onStatus: setLoadingStatus, isStopped, waitSignal: window.aiStopSignal?.() || null })).md;
+                const commented = await addGeneratedCodeComments({ md: fullContent, tabId: 'basicLearn', quiz: moduleId === 'mainQuest', lockedBlocks, label: commentLabel, onStatus: setLoadingStatus, isStopped, waitSignal: window.aiStopSignal?.() || null, notify: false });
+                fullContent = commented.md;
+                commentRun = commented.run;
             }
 
             // ── 이미지 태그 처리 ── 분량을 채운 글은 초안에 넣은 그림 자리만 채운다
@@ -909,9 +913,11 @@ async function generateModuleContent(moduleId, keyConcepts) {
         if (lessonOpenHere(subj, mod)) renderEditor(mod);
 
         const readMinutes = readAloudMinutes(fullContent);
-        if (stopped) {
+        // 주석 단계에서 중지했으면 다음 단계로 가지 않고, 넣은 블록과 중지로 남은 블록을 멈춘 알림에 적는다
+        if (stopped || commentRun?.stopped) {
             reported = true;
-            window.showAlert(`교안 생성을 중단했습니다. 받은 내용까지 저장했습니다(기본학습 낭독 약 ${readMinutes}분). 이전 교안은 작업 기록에 있습니다.`);
+            const commentNote = commentRun?.stopped && typeof commentDoneNote === 'function' ? commentDoneNote(commentRun).text : '';
+            window.showAlert([`교안 생성을 중단했습니다. 받은 내용까지 저장했습니다(기본학습 낭독 약 ${readMinutes}분). 이전 교안은 작업 기록에 있습니다.`, commentNote].filter(Boolean).join(' '));
             return;
         }
         if (volumeHalt) { // 남은 탭도 같은 까닭으로 실패하므로 만들지 않는다
@@ -921,6 +927,9 @@ async function generateModuleContent(moduleId, keyConcepts) {
             window.showAlert(`${volume.error.message}\n기본학습(낭독 약 ${readMinutes}분)은 저장했습니다. 남은 탭은 한도가 풀린 뒤 '전체 생성'으로 만드세요.${shortHint}`);
             return;
         }
+
+        // 주석 결과(넣은 블록·남은 블록·멈춘 오류)는 저장한 뒤에 알린다. 만드는 동안 차시나 교과가 없어졌으면 알리지 않는다
+        if (typeof notifyCodeComments === 'function' && (!subj || lessonStillLive(subj, mod))) notifyCodeComments(commentRun, commentLabel);
 
         // 나머지 탭, 교수안·슬라이드, 문제은행을 차례로 만든다 (기본학습은 이미 완료). 기본 학습이 낭독 목표에 못 미쳤으면 끝 알림에 적는다
         const shortNote = volume && spokenChars(fullContent) < volume.targetChars ? `기본학습(낭독 약 ${readMinutes}분/목표 ${volume.targetMinutes}분)` : '';
@@ -1073,11 +1082,15 @@ async function generateMainQuest() {
 
 
         let markdownContent = extractText(data);
-        // 문항 속 코드에 주석이 모자라면 주석만 더한다(code-comments-tool.js, 정답을 알려 주지 않는 문항 모드). 로딩 화면 글로 진행을 보이고 끝나면 되돌린다
+        // 문항 속 코드에 주석이 모자라면 주석만 더한다(code-comments-tool.js, 정답을 알려 주지 않는 문항 모드). 로딩 화면 글로 진행을 보이고 끝나면 되돌린다.
+        // 결과는 최종 평가를 넣고 저장한 뒤에 알린다(그사이 교과가 없어져 넣지 못하면 알리지 않는다)
+        let commentRun = null;
         if (typeof addGeneratedCodeComments === 'function') {
             const loadingText = document.getElementById('editor-loading-text');
             const shownText = loadingText ? loadingText.textContent : '';
-            markdownContent = (await addGeneratedCodeComments({ md: markdownContent, quiz: true, label: '최종 평가', onStatus: text => { if (loadingText) loadingText.textContent = text; } })).md;
+            const commented = await addGeneratedCodeComments({ md: markdownContent, quiz: true, label: '최종 평가', onStatus: text => { if (loadingText) loadingText.textContent = text; }, notify: false });
+            markdownContent = commented.md;
+            commentRun = commented.run;
             if (loadingText) loadingText.textContent = shownText;
         }
 
@@ -1102,9 +1115,12 @@ async function generateMainQuest() {
         if (lessonOpenHere(subj, mq)) {
             currentEditingModuleId = 'mainQuest';
             renderEditor(mq);
+            if (typeof notifyCodeComments === 'function') notifyCodeComments(commentRun, '최종 평가');
         } else if (globalState.subjects.includes(subj) && subj.mainQuest === mq) {
-            window.showToast?.(`'${subj.title}' 교과의 최종 평가를 만들었습니다. 그 교과를 열면 볼 수 있습니다.`, 'success');
-        } else { // 그사이 교과를 지웠거나 백업·PC 폴더를 불러와 바뀌었다: 넣을 곳이 없다
+            const made = `'${subj.title}' 교과의 최종 평가를 만들었습니다. 그 교과를 열면 볼 수 있습니다.`;
+            const [madeText, commentWarn] = typeof withCommentNote === 'function' ? withCommentNote(made, commentRun) : [made, false];
+            window.showToast?.(madeText, commentWarn ? 'warning' : 'success');
+        } else { // 그사이 교과를 지웠거나 백업·PC 폴더를 불러와 바뀌었다: 넣을 곳이 없다(주석 결과도 알리지 않는다)
             window.showToast?.('최종 평가를 만드는 동안 그 교과를 지웠거나 백업·PC 폴더를 불러와, 만든 최종 평가를 넣지 못했습니다.', 'warning');
         }
 
@@ -3646,34 +3662,44 @@ function codeBlockAtLine(text, line) {
     return codeCommentBlocks(String(text ?? '')).find(item => item.openLine < line && (item.closeLine < 0 || line < item.closeLine)) || null;
 }
 
-// 고른 글이 코드 블록 안의 줄뿐인가. 그렇다면 고를 범위를 줄 단위로 넓힌 { block, start, end }(end는 줄바꿈 앞), 아니면 null.
+// 고른 글이 코드 블록 안의 줄뿐인가. 그렇다면 고를 범위를 줄 단위로 넓힌 { block, start, end(줄바꿈 앞), first(고른 첫 줄의 블록 안 줄 번호, 0부터) }, 아니면 null.
 // 펜스 줄을 걸쳐 고른 글은 코드 블록 안의 줄이 아니다(editAnswerFromResponse가 다룬다)
 function codeEditSpan(text, selStart, selEnd) {
     if (!(selEnd > selStart)) return null;
     const source = String(text ?? '');
-    const block = codeBlockAtLine(source, lineOfOffset(source, selStart));
+    const line = lineOfOffset(source, selStart);
+    const block = codeBlockAtLine(source, line);
     if (!block || (block.closeLine >= 0 && lineOfOffset(source, selEnd - 1) >= block.closeLine)) return null;
     const close = source.indexOf('\n', selEnd - 1);
-    return { block, start: source.lastIndexOf('\n', selStart - 1) + 1, end: close < 0 ? source.length : close };
+    return { block, start: source.lastIndexOf('\n', selStart - 1) + 1, end: close < 0 ? source.length : close, first: line - block.openLine - 1 };
 }
 
 const CODE_FENCE_LINE = /^\s*(?:`{3,}|~{3,})/;
 
-// 코드 블록 안의 줄을 고친 답(data: AI 응답, original: 고른 줄). 글 정리(extractText)를 거치지 않은 날 글에서 앞뒤 빈 줄과 답을 감싼 펜스만 뗀다.
-// extractText는 # 줄 앞 들여쓰기·목록 줄 들여쓰기를 고쳐 코드가 바뀐다. 원래 줄에 주석만 더한 답(code-comments.js codeCommentVerify)이면
-// 원래 줄 그대로에 그 주석을 끼운 글을 넣고, 코드 줄이 바뀐 답이면 확인 창에 알린다(고쳐 달라고 한 것이 코드일 수 있어 막지는 않는다). { text, note }
-function codeEditAnswer(data, block, original) {
+// 코드 블록 안의 줄을 고친 답(data: AI 응답, code: codeEditSpan 결과, doc: 고른 때의 탭 글). 글 정리(extractText)를 거치지 않은 날 글에서 앞뒤 빈 줄과 답을 감싼 펜스만 뗀다.
+// extractText는 # 줄 앞 들여쓰기·목록 줄 들여쓰기를 고쳐 코드가 바뀐다. 확인은 블록 전체로 한다(고른 줄이 여러 줄 문자열·블록 주석 안인지는 앞뒤 줄을 봐야 안다):
+// 블록 줄 가운데 고른 줄 자리에 답 줄(펜스 들여쓰기는 뗀다)을 넣은 코드가 원래 줄에 주석만 더했으면(code-comments.js codeCommentFitBlock) 원래 줄 그대로에
+// 그 주석을 끼운 줄(더한 줄은 펜스 들여쓰기와 문서 줄끝을 붙인다)을 넣고, 아니면 확인 창에 알린다(고쳐 달라고 한 것이 코드일 수 있어 막지는 않는다). { text, note }
+function codeEditAnswer(data, code, doc) {
+    const { block, start, end, first } = code;
     const lines = aiResponseText(data).replace(/\r\n?/g, '\n').split('\n');
     while (lines.length && !lines[0].trim()) lines.shift();
     while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
-    const mine = String(original ?? '').split('\n');
+    const mine = String(doc ?? '').slice(start, end).split('\n');
     const wrapped = lines.length >= 2 && CODE_FENCE_LINE.test(lines[0]) && CODE_FENCE_LINE.test(lines[lines.length - 1])
         && !CODE_FENCE_LINE.test(mine[0]) && !CODE_FENCE_LINE.test(mine[mine.length - 1]);
     const body = wrapped ? lines.slice(1, -1) : lines;
-    if (!block.lang || typeof codeCommentVerify !== 'function') return { text: body.join('\n'), note: '' };
-    const verified = codeCommentVerify({ lang: block.lang, label: block.label, lines: mine }, body);
-    if (verified.ok) return { text: verified.code, note: '' };
-    return { text: body.join('\n'), note: `AI 답이 원래 코드 줄을 바꿨습니다(${verified.reason}). 반영하기 전에 바뀐 곳을 확인해 주세요.` };
+    if (!block.lang || typeof codeCommentFitBlock !== 'function' || typeof ccStripIndent !== 'function') return { text: body.join('\n'), note: '' };
+    const after = first + mine.length; // 고른 줄 뒤 블록 줄의 시작
+    const answer = [...block.lines.slice(0, first), ...body.map(line => ccStripIndent(line, block.indent)), ...block.lines.slice(after)];
+    const fit = codeCommentFitBlock(doc, block.index, answer);
+    const rest = block.raw.length - after;
+    // 고른 줄 앞뒤의 블록 줄은 그대로여야 고른 자리만 바꿔 넣을 수 있다
+    const inPlace = fit.ok && fit.lines.slice(0, first).every((line, k) => line === block.raw[k])
+        && fit.lines.slice(fit.lines.length - rest).every((line, k) => line === block.raw[after + k]);
+    if (inPlace) return { text: fit.lines.slice(first, fit.lines.length - rest).join('\n'), note: '' };
+    const reason = fit.ok ? '고른 줄 밖에 주석이 들어갑니다.' : fit.reason;
+    return { text: body.join('\n'), note: `AI 답의 코드 줄이 바뀌었거나 주석을 넣을 수 없는 자리입니다(${reason}). 반영하기 전에 바뀐 곳을 확인해 주세요.` };
 }
 
 // 고친 글(코드 블록 밖을 고른 답)의 주석이 모자란 코드 블록에는 주석만 더한다(code-comments-tool.js. 문항이면 문항 모드). { text, note(넣은 결과·넣지 못한 블록) }
@@ -3803,7 +3829,7 @@ async function runAICommand() {
 
             // 코드 블록 안에서 시작해 블록 끝을 걸쳐 고른 글은 그 블록의 여는 펜스를 붙여 정리한다(editAnswerFromResponse)
             const openFence = code ? '' : codeBlockAtLine(text, lineOfOffset(text, selStart))?.fence || '';
-            const edited = code ? codeEditAnswer(res, code.block, selectedText) : await commentedEditAnswer(editAnswerFromResponse(res, selectedText, openFence), target.tabId, quiz);
+            const edited = code ? codeEditAnswer(res, code, text) : await commentedEditAnswer(editAnswerFromResponse(res, selectedText, openFence), target.tabId, quiz);
             result = { kind: 'edit', target, selStart, selEnd, selectedText, newText: edited.text, note: edited.note };
 
         } else if (aiCommandMode === 'image') {

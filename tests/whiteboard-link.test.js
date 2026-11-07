@@ -39,6 +39,22 @@ test('검토 V3-1: 코드 블록 안의 html·xml 주석과 C# 제네릭 같은 
     assert.strictEqual(ctx.whiteboardPlainMarkdown(`글 <i>기울임</i>\n\n${CS}\n\n<!-- 끝 -->`), `글 기울임\n\n${CS}`);
 });
 
+test('검토 V4-05: 닫히지 않은 코드 블록은 닫아 넘기고(다음 탭 # 제목이 코드가 되지 않게), 그 블록에 든 그림 틀·data: 주소는 그림 설명으로 바꾼다', () => {
+    const DATA = `data:image/png;base64,${'B'.repeat(3000)}`;
+    const body = ['## 반복', '', '합계를 구합니다.', '', '```python', '# 합계를 구합니다', 'List<int> = 0', '',
+        '<!-- [IMG: loop] -->', '<div class="image-wrapper"><img src="local:img_a" alt="반복 그림"></div>', '', `![붙인 그림](${DATA})`, '', 'print(total)'].join('\n');
+    const mod = lesson({ tabContents: { basicLearn: body, assessment: '## 확인 문제\n\n1. 합계란?' } });
+    const ctx = makeContext({ mod });
+    const md = ctx.buildWhiteboardHandoff(mod, ctx.globalState.subjects[0], 1000).markdown;
+    assert.ok(!/data:image|<img|<div|\[IMG:/.test(md), md.slice(0, 400));
+    assert.ok(md.includes('(그림: 반복 그림)') && md.includes('(그림: 붙인 그림)'), md);
+    assert.ok(md.includes('```python\n# 합계를 구합니다\nList<int> = 0\n'), '그림이 없는 코드 줄은 그대로');
+    assert.ok(md.includes('print(total)\n```\n\n# 학습이해도'), md);
+    assert.ok(ctx.stashCodeFences(md).text.includes('# 학습이해도\n\n## 확인 문제'), '다음 탭 제목은 코드 블록 밖');
+    // 들여쓴 펜스는 같은 들여쓰기로 닫는다
+    assert.strictEqual(ctx.whiteboardPlainMarkdown('1. 설치\n\n   ```bash\n   pip install pygame'), '1. 설치\n\n   ```bash\n   pip install pygame\n   ```');
+});
+
 test('교안이 없으면 넘기지 않고 알린다', () => {
     const empty = lesson({ tabContents: {}, content: '' });
     const ctx = makeContext({ mod: empty });

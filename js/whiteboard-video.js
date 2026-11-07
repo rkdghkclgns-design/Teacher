@@ -31,21 +31,35 @@ function whiteboardHeadingText(text) {
         .trim();
 }
 
-// 그림(local:그림 id)이 든 절: 가장 가까운 위 제목부터 같은 단계 이상의 다음 제목 앞까지. 제목이 없으면 탭 전체
+// 줄마다 코드 블록 안(여는·닫는 펜스 줄 포함)인가(data.js fenceStateAfter). 코드 줄은 제목이 아니다:
+// python·bash 블록의 '# 주석' 줄이나 ■ 줄을 제목으로 읽으면 절이 코드 블록 가운데에서 시작하거나 끝난다
+function whiteboardCodeLines(lines) {
+    if (typeof fenceStateAfter !== 'function') return lines.map(() => false);
+    let fence = 0;
+    return lines.map(line => {
+        const was = fence;
+        fence = fenceStateAfter(fence, line);
+        return !!(was || fence);
+    });
+}
+
+// 그림(local:그림 id)이 든 절: 가장 가까운 위 제목부터 같은 단계 이상의 다음 제목 앞까지(코드 블록 안 줄은 제목으로 보지 않는다). 제목이 없으면 탭 전체
 function whiteboardSectionFor(md, imgId) {
     const lines = String(md || '').replace(/\r\n/g, '\n').split('\n');
+    const code = whiteboardCodeLines(lines);
+    const headingAt = i => (code[i] ? null : whiteboardHeadingOf(lines[i]));
     const at = lines.findIndex(line => line.includes(`local:${imgId}`));
     let start = 0;
     let level = 0;
     let heading = '';
     for (let i = at; i >= 0; i--) {
-        const found = whiteboardHeadingOf(lines[i]);
+        const found = headingAt(i);
         if (found) { start = i; level = found.level; heading = whiteboardHeadingText(found.text); break; }
     }
     let end = lines.length;
     if (level) {
         for (let i = start + 1; i < lines.length; i++) {
-            const found = whiteboardHeadingOf(lines[i]);
+            const found = headingAt(i);
             if (found && found.level <= level) { end = i; break; }
         }
     }

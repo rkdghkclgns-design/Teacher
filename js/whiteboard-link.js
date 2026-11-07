@@ -14,11 +14,9 @@ const WHITEBOARD_NAME_MAX = 100;
 // "3차시: 제목", "1. 교과" 같은 번호를 뗀다
 const stripLessonNumber = text => String(text || '').replace(/^\s*\d+\s*(?:차시|\.)\s*[:.)\-–]?\s*/, '').trim();
 
-// 그림(본문에 든 data: 주소 포함)·그림 틀·버튼·HTML 주석(이미지 자리 표시)은 판서 자료로 쓸 수 없어 빼고, 그림 설명과 글만 남긴다.
-// 코드 블록은 떼어 두었다가 그대로 되돌린다(data.js stashCodeFences): html·xml 코드의 <!-- --> 주석과 List<int> 같은 코드 글자는 지우지 않는다
-function whiteboardPlainMarkdown(md) {
-    const fences = typeof stashCodeFences === 'function' ? stashCodeFences(String(md || '').replace(/\r\n/g, '\n'), { keepSpaces: true }) : null;
-    const prose = (fences ? fences.text : String(md || '').replace(/\r\n/g, '\n'))
+// 그림(본문에 든 data: 주소 포함)·그림 틀·버튼·HTML 주석(이미지 자리 표시)은 판서 자료로 쓸 수 없어 빼고, 그림 설명과 글만 남긴다(코드 블록 밖 글)
+function whiteboardProse(text) {
+    return String(text)
         .replace(/<!--[\s\S]*?-->/g, '')
         .replace(/!\[([^\]]*)\]\([^)]*\)/g, (_, alt) => (alt.trim() ? `(그림: ${alt.trim()})` : ''))
         .replace(/<img\b[^>]*\balt="([^"]*)"[^>]*>/gi, (_, alt) => (alt.trim() ? `(그림: ${alt.trim()})` : ''))
@@ -29,7 +27,35 @@ function whiteboardPlainMarkdown(md) {
         .replace(/^[ \t]+$/gm, '')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
-    return fences ? fences.restore(prose) : prose;
+}
+
+// 앱이 넣는 그림 줄: local:·data: 그림 주소(그림 틀·붙여 넣은 그림)와 이미지 자리 표시(<!-- [IMG: …] -->)
+const WB_PICTURE_LINE = /\bsrc=["']?(?:local|data):|\]\(\s*(?:local|data):|<!--\s*\[IMG:/i;
+
+// 닫히지 않은 코드 블록(data.js fenceStateAfter): { at(여는 펜스 줄), close(같은 들여쓰기·같은 길이의 닫는 펜스) }. 닫혔으면 null
+function whiteboardOpenFence(lines) {
+    let fence = 0;
+    let at = -1;
+    lines.forEach((line, k) => {
+        const was = fence;
+        fence = fenceStateAfter(fence, line);
+        if (!was && fence) at = k;
+    });
+    return fence ? { at, close: `${lines[at].match(/^[ \t]*/)[0]}${'`'.repeat(fence)}` } : null;
+}
+
+// 코드 블록은 떼어 두었다가 그대로 되돌린다(data.js stashCodeFences): html·xml 코드의 <!-- --> 주석과 List<int> 같은 코드 글자는 지우지 않는다.
+// 닫히지 않은 코드 블록(글 끝까지 코드다)은 닫아서 넘기고(이어 붙이는 다음 탭의 # 제목이 코드가 되지 않게), 그 블록 안의 그림 줄만 글처럼 정리한다(그림 틀·data: 주소를 넘기지 않게)
+function whiteboardPlainMarkdown(md) {
+    const text = String(md || '').replace(/\r\n/g, '\n');
+    if (typeof stashCodeFences !== 'function' || typeof fenceStateAfter !== 'function') return whiteboardProse(text);
+    const lines = text.split('\n');
+    const open = whiteboardOpenFence(lines);
+    const closed = open
+        ? [...lines.slice(0, open.at + 1), ...lines.slice(open.at + 1).map(line => (WB_PICTURE_LINE.test(line) ? whiteboardProse(line) : line)), open.close].join('\n')
+        : text;
+    const fences = stashCodeFences(closed, { keepSpaces: true });
+    return fences.restore(whiteboardProse(fences.text));
 }
 
 // 탭마다 # 제목으로 나눠, 스튜디오의 목차에서 쓸 탭만 고를 수 있게 한다

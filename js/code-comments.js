@@ -1698,6 +1698,20 @@ function codeCommentApply(md, fixes) {
     return { md: ccSplice(raw, kept), applied: indexes(kept), rejected: [...rejected, ...dropped] };
 }
 
+// 문서(md)의 블록 하나(index)를 AI 답(answer: 그 블록 전체 코드, 글 또는 줄 배열)으로 고친 그 블록의 문서 줄(펜스 안 줄, 문서에 적힌 그대로).
+// codeCommentApply와 같은 규칙과 확인이다: 원래 줄은 그대로, 줄 끝 주석은 원래 줄 뒤에, 더한 줄은 펜스 들여쓰기와 문서 줄끝을 붙이고, 끼운 문서의 블록 밖 글과 블록 수가 같아야 한다.
+// 고른 줄을 고쳐 달라고 한 것이라(api.js 고른 글 고치기) 언어를 아는 ~~~ 블록·닫히지 않은 블록도 받는다. 결과 { ok, lines, reason }
+function codeCommentFitBlock(md, index, answer) {
+    const source = String(md ?? '');
+    const block = codeCommentBlocks(source)[index];
+    if (!block) return { ok: false, lines: null, reason: '고칠 수 있는 코드 블록이 아닙니다.' };
+    const result = ccVerify(block, answer);
+    if (!result.ok) return { ok: false, lines: null, reason: result.reason };
+    const lines = ccRawLines(block, result.items);
+    if (!ccKeepsCode(source, ccSplice(source.split('\n'), [{ block, lines }]))) return { ok: false, lines: null, reason: '넣은 뒤 다시 확인하지 못했습니다.' };
+    return { ok: true, lines, reason: '' };
+}
+
 /* ---------- 7. AI 지시와 응답 해석 ---------- */
 // 표시줄: 앞의 마크다운 제목(###)·목록 기호(- * +)·강조(** `)와 뒤의 강조·: 는 받아 준다
 const CC_MARK_OPEN = /^\s*(?:#{1,6}\s+|[-*+]\s+)?[*`]*\s*<<<\s*code\s*#?\s*(\d+)\s*>>>\s*[*`]*\s*:?\s*$/i;

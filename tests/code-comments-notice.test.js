@@ -4,7 +4,7 @@
 // 실행 환경(가짜 AI·화면 흉내)은 tests/code-comments-harness.js에 있다. 키는 가짜 값만 쓰고 찍지 않는다.
 const {
     vm, assert, source, reply, NOTE, HISTORY_REASON, PY, fakeElement, route, commentReply, callsOf,
-    appContext, call, lessonOf, openSubject, needsOf, LEARN_GOALS, QUESTION_MD, runner
+    appContext, call, lessonOf, openSubject, needsOf, LEARN_GOALS, QUESTION_MD, PRAC_DRAFT, runner
 } = require('./code-comments-harness');
 
 const { run, finish } = runner();
@@ -89,6 +89,50 @@ function volumeContext({ onVolume = () => {} } = {}) {
         assert.strictEqual(ok.toasts.filter(toast => toast.message.includes('주석을 넣었습니다')).length, 1);
     });
 
+    await run('검토 V4-02: 미리보기에서 섹션 일부만 반영하면 끝 알림은 반영한 글로 다시 세고, 남은 블록이 있으면 경고로 알린다(탭 전체 AI 수정·분량 채우기·탭 다시 만들기)', async () => {
+        const LEFT = "코드 블록 1개는 주석을 다 넣지 못했습니다. 컨벤션 검수의 'AI 수정 제안'이나 도구의 '코드 주석 넣기'로 다시 넣을 수 있습니다.";
+        const sec = (no, title, word) => [`## ${no}. ${title} (⏱ 30분)`, '', `${word} 설명입니다.`, '', PY(`value_${no} = ${no}`, `print(value_${no} * 2)`)].join('\n');
+        const two = word => [sec(1, '첫 섹션', word), sec(2, '둘째 섹션', word)].join('\n\n');
+        // 미리보기에서 둘째 섹션은 지금 글을 그대로 둔다(첫 섹션만 반영)
+        const keepSecond = ctx => vm.runInContext(`previewAiChange = async (before, after, opts) => {
+                window.previews.push({ before, after, opts });
+                const old = mdSections(before);
+                return mdSections(after).map(section => (/^2\\./.test(section.title) ? (old.find(item => item.title === section.title) || section) : section).text).join('\\n\\n');
+            };`, ctx);
+        // 탭 전체 AI 수정: 두 섹션의 설명을 고친 답에 주석 단계가 두 블록 모두 주석을 넣었다
+        const ctx = appContext();
+        const mod = lessonOf({ tabs: { basicLearn: two('원래') } });
+        openSubject(ctx, [mod]);
+        ctx.ai = route(ctx, { other: () => reply(two('고친')), comment: commentReply() });
+        keepSecond(ctx);
+        await call(ctx, 'reinforceCurrentTab')(1, '설명을 다듬어 줘');
+        assert.strictEqual(ctx.previews[0].opts.note, '코드 블록 2개에 주석을 넣었습니다.', '미리보기 안내는 제안 전체를 센다');
+        assert.ok(mod.tabContents.basicLearn.includes('고친 설명입니다.') && mod.tabContents.basicLearn.includes('원래 설명입니다.'), mod.tabContents.basicLearn);
+        assert.strictEqual(needsOf(ctx, mod.tabContents.basicLearn), 1);
+        assert.deepStrictEqual(ctx.toasts.at(-1), { message: `기본학습에 AI 수정을 반영했습니다. 코드 블록 1개에 주석을 넣었습니다. ${LEFT}`, kind: 'warning' });
+        // 분량 채우기: 첫 섹션에 붙인 소주제와 둘째 섹션의 있던 블록에 주석을 넣었고, 둘째 섹션은 반영하지 않았다
+        const { ctx: vol, mod: volMod } = volumeContext();
+        const learn = `${LEARN_GOALS}\n\n${two('원래')}`;
+        vm.runInContext(`setTabMarkdown(courseData[0], 'basicLearn', ${JSON.stringify(learn)});`, vol);
+        const key = call(vol, 'lockTitleKey')('1. 첫 섹션 (⏱ 30분)');
+        vol.volume = () => ({ md: learn.replace('원래 설명입니다.', `원래 설명입니다.${SUBTOPIC}`), spoken: 0, minutes: 0, targetMinutes: 480, targetChars: 120000, calls: 1, added: 1, short: true, stopped: false, gone: false, error: null, reason: 'target', parts: [{ key, text: SUBTOPIC }] });
+        vol.ai = route(vol, { comment: commentReply(), fix: () => reply('') });
+        keepSecond(vol);
+        await call(vol, 'fillLessonVolume')(1, 'basicLearn');
+        assert.strictEqual(vol.previews[0].opts.note.endsWith('코드 블록 3개에 주석을 넣었습니다.'), true, vol.previews[0].opts.note);
+        assert.strictEqual(needsOf(vol, volMod.tabContents.basicLearn), 1, volMod.tabContents.basicLearn);
+        assert.ok(vol.toasts.at(-1).message.endsWith(` 코드 블록 2개에 주석을 넣었습니다. ${LEFT}`) && vol.toasts.at(-1).kind === 'warning', JSON.stringify(vol.toasts.at(-1)));
+        // 탭 다시 만들기(기본실습): 새 글의 두 블록에 주석을 넣었고, 둘째 섹션은 지금 글을 둔다
+        const gen = appContext();
+        const prac = lessonOf({ tabs: { basicLearn: LEARN, basicPrac: two('원래') } });
+        openSubject(gen, [prac]);
+        gen.ai = route(gen, { tab: () => reply(two('새')), comment: commentReply(), fix: () => reply('') });
+        keepSecond(gen);
+        await call(gen, 'runTabJob')(1, 'basicPrac');
+        assert.ok(prac.tabContents.basicPrac.includes('새 설명입니다.') && prac.tabContents.basicPrac.includes('원래 설명입니다.'), prac.tabContents.basicPrac);
+        assert.ok(gen.toasts.at(-1).message.endsWith(` 코드 블록 1개에 주석을 넣었습니다. ${LEFT}`) && gen.toasts.at(-1).kind === 'warning', JSON.stringify(gen.toasts));
+    });
+
     /* ---------- 중지·실패를 숨기지 않는다 ---------- */
     await run('검토 V2-07: 탭 생성의 주석 단계에서 중지하면 남은 블록을 끝 알림에 적고 경고로 알린다(분량 채우기·병합도 같다)', async () => {
         const ctx = appContext();
@@ -111,6 +155,68 @@ function volumeContext({ onVolume = () => {} } = {}) {
         const done = call(ctx, 'mergeDoneText');
         const stopped = { fixed: [0], remaining: 2, held: 0, stopped: true, error: '' };
         assert.ok(done({ md: LEARN, volume: null, comments: stopped }).endsWith("중지해서 코드 블록 2개에는 주석을 넣지 못했습니다. 도구의 '코드 주석 넣기'로 이어서 넣을 수 있습니다."), done({ md: LEARN, volume: null, comments: stopped }));
+    });
+
+    await run('검토 V4-04: 카드 교안 생성·최종 평가 만들기는 주석 결과를 저장한 뒤에 알리고, 중지로 남은 블록은 멈춘 알림에 적으며, 차시·교과가 없어지면 알리지 않는다', async () => {
+        const VOLUME_STUB = `ensureSpokenVolume = async opts => ({ md: opts.md, spoken: 0, minutes: 0, targetMinutes: 480, targetChars: 120000, calls: 0, added: 0, short: true, stopped: false, gone: false, error: null, reason: 'none', parts: [] });`;
+        // 알림마다 그때까지 저장한 횟수를 남긴다(저장한 뒤에 알리는지 본다)
+        const moduleContext = () => {
+            const ctx = appContext();
+            const mod = lessonOf({ tabs: {}, status: 'pending', content: '' });
+            const subject = openSubject(ctx, [mod]);
+            ctx.showToast = (message, kind) => ctx.toasts.push({ message, kind, saved: ctx.saved });
+            vm.runInContext(VOLUME_STUB, ctx);
+            return { ctx, mod, subject };
+        };
+        const learnWith = count => `${LEARN_GOALS}\n\n${Array.from({ length: count }, (_, i) => `## ${i + 1}. 소주제 ${i + 1} (⏱ 30분)\n\n설명 ${i + 1}입니다.\n\n${PY(`step_${i} = ${i}`, `print(step_${i})`)}`).join('\n\n')}`;
+        // 주석 단계에서 막대의 '중지'를 누르면 받은 데까지 저장하고, 남은 블록을 멈춘 창에 적는다(다음 단계로 가지 않는다)
+        const stop = moduleContext();
+        stop.ctx.ai = route(stop.ctx, {
+            module: () => reply(learnWith(12)), fix: () => reply(''),
+            comment: item => { call(stop.ctx, 'requestLessonPipelineStop')(); return commentReply()(item); },
+            other: () => { stop.ctx.continued = true; return reply(''); }
+        });
+        await call(stop.ctx, 'generateModuleContent')(1, []);
+        const saved = stop.mod.tabContents?.basicLearn || stop.mod.content;
+        assert.strictEqual(needsOf(stop.ctx, saved), 4, '받던 묶음까지만 넣고 저장한다');
+        assert.ok(!stop.ctx.continued, '중지하면 다음 단계로 가지 않는다');
+        assert.strictEqual(stop.ctx.alerts.length, 1, JSON.stringify(stop.ctx.alerts));
+        assert.ok(stop.ctx.alerts[0].startsWith('교안 생성을 중단했습니다. 받은 내용까지 저장했습니다(') && stop.ctx.alerts[0].endsWith(" 코드 블록 8개에 주석을 넣었습니다. 중지해서 코드 블록 4개에는 주석을 넣지 못했습니다. 도구의 '코드 주석 넣기'로 이어서 넣을 수 있습니다."), stop.ctx.alerts[0]);
+        assert.ok(!stop.ctx.toasts.some(toast => toast.message.includes('주석')), JSON.stringify(stop.ctx.toasts));
+        // 끝까지 넣으면 저장한 뒤에 알리고 다음 단계로 간다
+        const ok = moduleContext();
+        vm.runInContext(`window.runLessonPipeline = async () => { window.order.push('pipeline'); };`, ok.ctx);
+        ok.ctx.ai = route(ok.ctx, { module: () => reply(learnWith(1)), fix: () => reply(''), comment: commentReply() });
+        await call(ok.ctx, 'generateModuleContent')(1, []);
+        const told = ok.ctx.toasts.find(toast => toast.message === '기본학습 코드 블록 1개에 주석을 넣었습니다.');
+        assert.ok(told && told.kind === 'success' && told.saved > 0, JSON.stringify(ok.ctx.toasts));
+        assert.deepStrictEqual(ok.ctx.order.slice(-2), ['images', 'pipeline']);
+        // 그림을 그리는 동안 차시를 지우면 멈춘 창만 띄우고 주석을 넣었다고 알리지 않는다
+        const gone = moduleContext();
+        vm.runInContext(`window.runLessonPipeline = async () => {};
+            processImageTags = async (m, md) => { courseData.splice(0, courseData.length); return md; };`, gone.ctx);
+        gone.ctx.ai = route(gone.ctx, { module: () => reply(learnWith(1)), fix: () => reply(''), comment: commentReply() });
+        await call(gone.ctx, 'generateModuleContent')(1, []);
+        assert.ok(gone.ctx.alerts.some(text => text.startsWith('차시가 지워졌거나 불러온 내용으로 바뀌어 기본학습 만들기를 멈췄습니다.')), JSON.stringify(gone.ctx.alerts));
+        assert.ok(!gone.ctx.toasts.some(toast => toast.message.includes('주석')), JSON.stringify(gone.ctx.toasts));
+        // 최종 평가 만들기: 넣은 뒤에 알리고, 그사이 교과를 지웠으면 넣지 못했다는 알림만 띄운다
+        const questContext = () => {
+            const ctx = appContext();
+            const quest = { id: 'mainQuest', title: '최종 평가', description: '종합 과제', status: 'pending', images: {} };
+            openSubject(ctx, [lessonOf({ tabs: { basicLearn: PRAC_DRAFT } })], { mainQuest: quest });
+            ctx.showToast = (message, kind) => ctx.toasts.push({ message, kind, saved: ctx.saved });
+            vm.runInContext('cleanForAPI = text => String(text || "");', ctx);
+            ctx.ai = route(ctx, { main: () => reply(QUESTION_MD), comment: commentReply() });
+            return { ctx, quest };
+        };
+        const made = questContext();
+        await call(made.ctx, 'generateMainQuest')();
+        assert.ok(made.quest.content.includes(NOTE), made.quest.content);
+        assert.deepStrictEqual(made.ctx.toasts.map(toast => [toast.message, toast.kind, toast.saved > 0]), [['최종 평가 코드 블록 1개에 주석을 넣었습니다.', 'success', true]]);
+        const lost = questContext();
+        vm.runInContext('processImageTags = async (m, md) => { globalState.subjects.splice(0, globalState.subjects.length); return md; };', lost.ctx);
+        await call(lost.ctx, 'generateMainQuest')();
+        assert.deepStrictEqual(lost.ctx.toasts.map(toast => [toast.message, toast.kind]), [['최종 평가를 만드는 동안 그 교과를 지웠거나 백업·PC 폴더를 불러와, 만든 최종 평가를 넣지 못했습니다.', 'warning']]);
     });
 
     await run('검토 V2-06: 학습 목표 세트 추가는 주석을 넣지 못하면 미리보기 안내에 적는다', async () => {

@@ -598,7 +598,9 @@ async function fillVolumeJob({ mod, subj, before, snapshot, tabId = 'basicLearn'
     if (!isLive() || storedTabMarkdown(mod, tabId) !== base) return window.showAlert(`고르는 동안 ${label}이 바뀌어 반영하지 못했습니다. ${await keep(approved)}`);
     if (!(await commitTabChange(mod, tabId, base, approved, `${label} 분량 채우기(낭독 약 ${readAloudMinutes(approved)}분)`, '분량 채우기 전'))) return;
     const summary = volumeSummaryText(volume, approved, label);
-    const [doneText, commentWarn] = typeof withCommentNote === 'function' ? withCommentNote(summary, comments) : [summary, false];
+    // 미리보기에서 섹션 일부만 반영했을 수 있어 주석 결과는 반영한 글로 다시 센다(code-comments-tool.js appliedCommentRun)
+    const appliedRun = typeof appliedCommentRun === 'function' ? appliedCommentRun(comments, { base, applied: approved, lockedBlocks }) : comments;
+    const [doneText, commentWarn] = typeof withCommentNote === 'function' ? withCommentNote(summary, appliedRun) : [summary, false];
     window.notifyLessonJobDone(doneText, spokenChars(approved) >= volume.targetChars && !commentWarn ? 'success' : 'warning');
 }
 

@@ -92,6 +92,26 @@ function withCommentNote(text, run) {
     return [[text, note.text].filter(Boolean).join(' '), note.warn];
 }
 
+const commentTextCounts = texts => texts.reduce((counts, text) => counts.set(text, (counts.get(text) || 0) + 1), new Map());
+
+// 미리보기에서 고른 글(applied: 반영한 글)에 맞춘 주석 결과(run: codeCommentRun 결과, base: 반영 전 글). 끝 알림(withCommentNote)에 넘긴다.
+// 주석 단계가 넉넉히 넣은 블록(run.fixed, 넣은 뒤 글 run.md의 블록) 가운데 반영한 글에 그대로 들어갔고 반영 전 글에는 없던 블록만 넣은 블록으로 센다
+// (같은 글의 블록이 여럿이면 늘어난 수만큼). 남은 블록과 고정 섹션의 블록은 반영한 글에서 다시 센다(반영하지 않은 섹션의 블록까지 넣었다고 알리지 않고, 남은 블록을 숨기지 않게)
+function appliedCommentRun(run, { base = '', applied = '', lockedBlocks = [] } = {}) {
+    if (!run || typeof codeCommentBlocks !== 'function' || typeof codeCommentPreview !== 'function') return run;
+    const rawOf = block => block.raw.join('\n');
+    const [inBase, inApplied] = [base, applied].map(md => commentTextCounts(codeCommentBlocks(String(md ?? '')).map(rawOf)));
+    const spare = text => (inApplied.get(text) || 0) - (inBase.get(text) || 0);
+    const fixed = new Set(run.fixed || []);
+    const { kept } = codeCommentBlocks(String(run.md ?? '')).filter(block => fixed.has(block.index)).reduce(({ kept, used }, block) => {
+        const text = rawOf(block);
+        const taken = used.get(text) || 0;
+        return taken < spare(text) ? { kept: [...kept, block.index], used: new Map(used).set(text, taken + 1) } : { kept, used };
+    }, { kept: [], used: new Map() });
+    const left = codeCommentPreview(String(applied ?? ''), { skipBlock: lockedCommentSkip(lockedBlocks) || (() => false) });
+    return { ...run, fixed: kept, remaining: left.needs, held: left.held };
+}
+
 // 생성·고치기 뒤 알림(name: 탭 이름). 넣었으면 알리고, 남았거나 같은 오류로 멈췄으면 경고한다. 중지했거나 고칠 블록이 없으면 알리지 않는다
 function notifyCodeComments(run, name) {
     if (!run || run.stopped) return;

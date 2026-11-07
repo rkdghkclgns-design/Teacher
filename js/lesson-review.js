@@ -77,15 +77,29 @@ const isReviewIssue = issue => String(issue?.msg || '').startsWith('AI 교차 �
 const LESSON_LABEL_ISSUE = '코드 블록에 언어를 적습니다.';
 const LESSON_UNCLOSED_ISSUE = '닫히지 않은 코드 블록이 있습니다.';
 
+// 섹션 고치기 지시의 코드 블록 문장(scoped: 이번에 고칠 지적). 코드 줄은 언제나 그대로 두고, 고칠 지적이 요구하는 곳만 고쳐도 된다고 더한다
+// (mergeSectionFix의 sectionCodeLeeway와 같은 조건): 문항 모드의 교차 검수 지적은 정답을 드러내는 주석 줄, 이름표 지적은 여는 펜스 줄의 언어 이름, 닫는 지적은 닫는 펜스 줄
+function fixCodeRule(scoped, quiz) {
+    const review = quiz && scoped.some(isReviewIssue);
+    const labels = scoped.some(issue => issue.msg === LESSON_LABEL_ISSUE);
+    const closing = scoped.some(issue => issue.msg === LESSON_UNCLOSED_ISSUE);
+    const keep = review
+        ? '코드 블록은 코드 줄을 한 글자도 바꾸지 않습니다. 정답·출력 결과·고칠 곳을 드러내는 주석 줄은 고쳐도 됩니다(다른 주석은 그대로 둡니다).'
+        : `코드 블록${labels || closing ? '의 코드 줄' : ''}은 주석을 포함해 한 글자도 바꾸지 않습니다(주석은 따로 넣습니다).`;
+    return [
+        keep,
+        labels ? '이름표가 없는 코드 블록은 여는 펜스 줄에 언어 이름만 적습니다.' : '',
+        closing ? '닫히지 않은 코드 블록은 코드가 끝나는 곳에 닫는 펜스만 넣습니다.' : ''
+    ].filter(Boolean).join(' ');
+}
+
 // quiz: 문항 모드(code-comments-tool.js isCodeCommentQuiz). 교차 검수 지적을 고칠 때는 코드 줄만 지키고 정답을 드러내는 주석 줄은 고쳐도 된다고 적는다(mergeSectionFix가 같은 기준으로 받는다)
 function buildFixPrompt(md, issues, plan, lockedBlocks = [], { quiz = false } = {}) {
     const sections = mdSections(md);
     const targetIndexes = plan.targets.map(target => target.index);
     const reference = sections.filter((section, index) => !targetIndexes.includes(index) && REVIEW_REFERENCE_TITLE.test(section.title));
     const scoped = issues.filter(issue => issue.missing || plan.targets.some(target => target.hits.includes(issue)));
-    const codeRule = quiz && scoped.some(isReviewIssue)
-        ? '코드 블록은 코드 줄을 한 글자도 바꾸지 않습니다. 정답·출력 결과·고칠 곳을 드러내는 주석 줄은 고쳐도 됩니다(다른 주석은 그대로 둡니다).'
-        : '코드 블록은 주석을 포함해 한 글자도 바꾸지 않습니다(주석은 따로 넣습니다).';
+    const codeRule = fixCodeRule(scoped, quiz);
     return [
         ['[작업] 아래 교안이 컨벤션 검수에서 지적을 받았습니다. [고칠 섹션]을 지적이 모두 해결되도록 고칩니다.',
             '- 지적과 관계없는 내용과 표현은 유지하고 분량을 줄이지 않습니다.',

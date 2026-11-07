@@ -78,6 +78,31 @@ test('제목이 없거나 그림을 못 찾으면 탭 전체를 쓴다', () => {
     assert.ok(section.markdown.includes('첫 줄') && section.markdown.includes('둘째 줄'));
 });
 
+test('검토 V4-05: 코드 블록 안의 # 주석 줄·■ 줄은 절 제목으로 보지 않는다(그림 앞뒤의 # 주석으로 시작하는 python 블록)', () => {
+    const ctx = makeContext({ files: ['whiteboard-video.js'] });
+    const PY = (...lines) => ['```python', ...lines, '```'].join('\n');
+    const loop = PY('# 목록의 합계를 구합니다', 'total = 0', 'for n in [1, 2, 3]:', '    total += n  # 값을 하나씩 더합니다', 'print(total)');
+    const DATA = `data:image/png;base64,${'A'.repeat(4000)}`;
+    const md = [
+        '## 1. 변수 (⏱ 30분)', '', '값을 담습니다.', '',
+        '## 2. 반복문 (⏱ 30분)', '', '목록의 값을 하나씩 더합니다.', '',
+        loop, '', '```text', '■ 실행 결과', '6', '```', '',
+        '<!-- [IMG: loop diagram] -->',
+        '<div class="image-wrapper"><img src="local:img_loop" alt="반복 그림"></div>', '',
+        `![붙여 넣은 그림](${DATA})`, '', '반복이 끝나면 합계를 찍습니다.', '',
+        '```bash', '## 설치 확인', 'python --version', '```', '',
+        '## 3. 조건문 (⏱ 30분)', '', '조건에 따라 나눕니다.', '',
+        PY('# 점수에 따라 등급을 고릅니다', 'score = 90', 'if score >= 80:', '    print("A")')
+    ].join('\n');
+    const section = ctx.whiteboardSectionFor(md, 'img_loop');
+    assert.strictEqual(section.heading, '반복문 (⏱ 30분)');
+    assert.ok(section.markdown.startsWith('## 2. 반복문 (⏱ 30분)\n\n목록의 값을 하나씩 더합니다.'), section.markdown);
+    assert.ok(section.markdown.includes(loop) && section.markdown.includes('```bash\n## 설치 확인\npython --version\n```'), '코드 블록은 통째로 그대로 넘긴다');
+    assert.ok(!section.markdown.includes('조건문') && !section.markdown.includes('점수에 따라'), `다음 절은 넘기지 않는다: ${section.markdown}`);
+    assert.ok(section.markdown.includes('(그림: 반복 그림)') && section.markdown.includes('(그림: 붙여 넣은 그림)'), section.markdown);
+    assert.ok(!/<img|<div|<!--|data:image/.test(section.markdown), `그림 틀·주석·data: 주소는 뺀다: ${section.markdown.slice(0, 300)}`);
+});
+
 test('판서 영상으로 바꾸기: 절 내용으로 창을 열고, 돌려받을 곳(returnTo)과 요청을 남긴다', () => {
     const mod = storyLesson();
     const ctx = makeContext({ mod, files: ['whiteboard-video.js'] });

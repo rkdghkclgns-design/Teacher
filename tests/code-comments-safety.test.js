@@ -4,7 +4,7 @@
 // 실행 환경(가짜 AI·화면 흉내)은 tests/code-comments-harness.js에 있다. 키는 가짜 값만 쓰고 찍지 않는다.
 const {
     vm, assert, source, plain, reply, NOTE, HISTORY_REASON, PY, fakeElement, route, commentReply, callsOf,
-    appContext, call, lessonOf, openSubject, onlyComments, needsOf, PRAC_DRAFT, LEARN_GOALS, QUESTION_MD, runner
+    appContext, call, lessonOf, openSubject, onlyComments, needsOf, blocksOf, PRAC_DRAFT, LEARN_GOALS, QUESTION_MD, runner
 } = require('./code-comments-harness');
 
 const { run, finish } = runner();
@@ -562,7 +562,35 @@ const sourceKey = (ctx, mod, track = 'basic') => call(ctx, 'hashSource')(call(ct
         const line = '        result += n';
         ctx.ai = route(ctx, { other: () => reply('        result = result + n  # 더합니다') });
         const swapped = await editSelection(ctx, { text: now, from: now.indexOf(line), to: now.indexOf(line) + line.length });
-        assert.ok(/^AI 답이 원래 코드 줄을 바꿨습니다/.test(swapped.opts?.note || ''), JSON.stringify(swapped.opts));
+        assert.ok(/^AI 답의 코드 줄이 바뀌었거나 주석을 넣을 수 없는 자리입니다\(/.test(swapped.opts?.note || ''), JSON.stringify(swapped.opts));
+    });
+
+    await run('검토 V4-01: 코드 블록 안의 줄을 고친 답은 블록 전체로 확인하고(여러 줄 문자열 안·경계 선택), 목록 안 들여쓴 펜스의 주석 줄은 펜스 들여쓰기로 넣는다', async () => {
+        const greet = ['```python', '# 인사말을 담습니다', 'message = """', '안녕하세요', '반갑습니다', '"""', 'print(message)', '```'].join('\n');
+        const learn = ['## 1. 문자열 (⏱ 30분)', '', '여러 줄 문자열을 씁니다.', '', greet, ''].join('\n');
+        const edit = async (doc, selected, answer) => {
+            const ctx = appContext();
+            const mod = lessonOf({ tabs: { basicLearn: doc } });
+            openSubject(ctx, [mod]);
+            ctx.ai = route(ctx, { other: () => reply(answer) });
+            const at = doc.indexOf(selected);
+            const shown = await editSelection(ctx, { text: doc, from: at, to: at + selected.length });
+            return { ctx, shown, md: mod.tabContents.basicLearn, note: shown?.opts?.note || '' };
+        };
+        // 문자열 안의 줄을 골라 # 줄을 끼운 답: 조각만 보면 주석이지만 블록 전체로는 문자열 값이 바뀌므로 확인 창에 알린다
+        const inside = await edit(learn, '안녕하세요\n반갑습니다', '# 첫 인사입니다\n안녕하세요\n# 둘째 인사입니다\n반갑습니다');
+        assert.ok(/^AI 답의 코드 줄이 바뀌었거나 주석을 넣을 수 없는 자리입니다\(.*여러 줄 문자열 안/.test(inside.note), inside.note);
+        // 문자열 안에서 시작해 뒤 코드까지 고르고 코드 줄 위에만 주석을 단 답: 블록 전체로는 주석만 더했으므로 알리지 않고 넣는다
+        const across = await edit(learn, '반갑습니다\n"""\nprint(message)', '반갑습니다\n"""\n# 인사말을 화면에 보입니다\nprint(message)');
+        assert.strictEqual(across.note, '');
+        assert.ok(across.md.includes('반갑습니다\n"""\n# 인사말을 화면에 보입니다\nprint(message)\n```'), across.md);
+        assert.ok(call(across.ctx, 'codeCommentVerify')(blocksOf(across.ctx, learn)[0], blocksOf(across.ctx, across.md)[0].lines).ok);
+        // 목록 안에 들여쓴 펜스: AI가 주석 줄을 0칸으로 써도 펜스 들여쓰기를 붙여 넣는다(목록이 끊겨 코드 블록이 깨지거나 # 줄이 제목이 되지 않게)
+        const list = ['## 1. 설치 (⏱ 20분)', '', '1. 설치합니다.', '', '   ```bash', '   pip install pygame', '   python -m pygame.examples.aliens', '   ```', '', '2. 실행합니다.'].join('\n');
+        const listed = await edit(list, '   pip install pygame\n   python -m pygame.examples.aliens', '# pygame을 설치합니다\n   pip install pygame\n# 예제 게임을 실행합니다\n   python -m pygame.examples.aliens');
+        assert.strictEqual(listed.note, '');
+        assert.strictEqual(listed.md, list.replace('   pip install pygame\n   python', '   # pygame을 설치합니다\n   pip install pygame\n   # 예제 게임을 실행합니다\n   python'));
+        assert.deepStrictEqual(plain(blocksOf(listed.ctx, listed.md).map(block => [block.indent, block.lines.length])), [['   ', 4]], '코드 블록은 하나이고 펜스 들여쓰기 그대로');
     });
 
     await run('검토 V2-05: 고른 글 AI 고치기의 답에 주석이 모자란 코드 블록이 있으면 주석만 더해 미리 보이고, 넣지 못하면 확인 창에 적는다', async () => {

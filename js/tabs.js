@@ -698,9 +698,11 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         else window.refreshLessonNav(mod);
         const info = tabVolumeInfo(volume, mod.tabContents[tabId]);
         if (!_suppressTabAlert && !opts.quiet) {
-            // 끝 알림에 주석 결과를 잇는다(code-comments-tool.js withCommentNote: 넣은 블록·남은 블록·중지로 못 넣은 블록)
+            // 끝 알림에 주석 결과를 잇는다(code-comments-tool.js withCommentNote: 넣은 블록·남은 블록·중지로 못 넣은 블록).
+            // 다시 만들기 미리보기에서 섹션 일부만 반영했을 수 있어 저장한 글로 다시 센다(appliedCommentRun)
             const tabText = tabDoneText({ label: tabMeta.label, stoppedInChunks, received: fullText.length, archivePartial, volume, info });
-            const [doneText, commentWarn] = typeof withCommentNote === 'function' ? withCommentNote(tabText, commentRun) : [tabText, false];
+            const appliedRun = typeof appliedCommentRun === 'function' ? appliedCommentRun(commentRun, { base: previous || '', applied: mod.tabContents[tabId], lockedBlocks }) : commentRun;
+            const [doneText, commentWarn] = typeof withCommentNote === 'function' ? withCommentNote(tabText, appliedRun) : [tabText, false];
             // 화면을 막지 않고 만든 작업은 끝을 알림으로 알린다. 일부가 빠진 결과와 한도로 멈춘 분량 채우기는 다시 해야 하므로 창으로 알린다
             if (partialDueToError) window.showAlert(partialError?.quota
                 ? `${tabMeta.label} 탭은 만들었지만 뒷부분을 받지 못했습니다. ${partialError.message}`
@@ -883,7 +885,9 @@ async function reinforceCurrentTab(moduleId, command = '') {
             const commandInput = document.getElementById('ai-command-input');
             if (commandInput && commandInput.value.trim() === reinforceCmd) commandInput.value = ''; // 반영한 요청만 지운다
             const applied = `${shownLabel}에 AI 수정을 반영했습니다.`;
-            const [doneText, commentWarn] = typeof withCommentNote === 'function' ? withCommentNote(applied, commented.run) : [applied, false];
+            // 미리보기에서 섹션 일부만 반영했을 수 있어 주석 결과는 반영한 글로 다시 센다(code-comments-tool.js appliedCommentRun)
+            const appliedRun = typeof appliedCommentRun === 'function' ? appliedCommentRun(commented.run, { base: existingContent, applied: approved, lockedBlocks }) : commented.run;
+            const [doneText, commentWarn] = typeof withCommentNote === 'function' ? withCommentNote(applied, appliedRun) : [applied, false];
             window.notifyLessonJobDone(doneText, commentWarn ? 'warning' : 'success');
         } catch (err) {
             if (err?.name === 'AbortError') return; // 중지: 반영할 글이 없다

@@ -263,6 +263,32 @@ const ALL_TABS = ['basicLearn', 'basicPrac', 'advLearn', 'advPrac', 'assessment'
         assert.ok(prompt.includes('- section: "## 제목"으로 시작하는 학습 내용 마크다운입니다. 설명은 "~합니다"로 끝내고 학습자를 호칭하지 않습니다.\n- section에 코드 블록을 쓰면 언어를 적고, 코드 첫 줄 위에 무엇을 하는 코드인지, 핵심 줄 위나 줄 끝에 그 줄이 하는 일을 한국어 주석으로 적어 코드 열 줄마다 주석을 하나 이상 둡니다.\n- checklist:'), prompt);
     });
 
+    await run('검토 V4-03: 섹션 고치기 지시는 이름표·닫는 펜스 지적이 있으면 그 펜스 줄만 고치게 하고 코드 줄은 그대로 두게 한다', () => {
+        const H = require('./code-comments-harness');
+        const actx = H.appContext();
+        const md = ['## 1. 설치 (⏱ 20분)', '', '파이썬 코드로 설치를 확인합니다.', '', '```', 'import pygame', 'print(pygame.ver)', '```', '',
+            '## 2. 실행 (⏱ 20분)', '', '`print()` 함수로 값을 찍는 코드입니다.', '', '```python', 'x = 1', 'print(x)'].join('\n');
+        const mod = H.lessonOf({ title: 'Python 설치', tabs: { basicPrac: md } });
+        H.openSubject(actx, [mod]);
+        const issues = call(actx, 'lintLessonMarkdown')(md, 'basicPrac', call(actx, 'lessonLintContext')(mod, 'basicPrac')).filter(issue => !issue.codeComment && issue.sev !== 'info');
+        assert.deepStrictEqual(plain(issues.map(issue => issue.msg)), ['코드 블록에 언어를 적습니다.', '닫히지 않은 코드 블록이 있습니다.']);
+        const rule = (picked, opts) => call(actx, 'buildFixPrompt')(md, picked, call(actx, 'pickFixSections')(md, picked, []), [], opts).split('\n').find(line => line.startsWith('- 이미지 태그('));
+        const head = '- 이미지 태그(<!-- [IMG: ... ] -->), <img>, <div>, <table>, mermaid는 바꾸지 않고, ';
+        const KEEP = '코드 블록의 코드 줄은 주석을 포함해 한 글자도 바꾸지 않습니다(주석은 따로 넣습니다).';
+        const LABEL = '이름표가 없는 코드 블록은 여는 펜스 줄에 언어 이름만 적습니다.';
+        const CLOSE = '닫히지 않은 코드 블록은 코드가 끝나는 곳에 닫는 펜스만 넣습니다.';
+        assert.strictEqual(rule(issues), `${head}${KEEP} ${LABEL} ${CLOSE}`);
+        assert.strictEqual(rule([issues[0]]), `${head}${KEEP} ${LABEL}`);
+        assert.strictEqual(rule([issues[1]]), `${head}${KEEP} ${CLOSE}`);
+        // 다른 지적만 고칠 때와 문항의 교차 검수 지적은 예전 지시 그대로이고, 교차 검수와 함께면 펜스 줄 문장을 덧붙인다
+        const other = { sev: 'warn', where: '1. 설치 (⏱ 20분)', msg: '문장을 다듬습니다.', snip: '' };
+        assert.strictEqual(rule([other]), `${head}코드 블록은 주석을 포함해 한 글자도 바꾸지 않습니다(주석은 따로 넣습니다).`);
+        const review = { sev: 'warn', where: '1. 설치 (⏱ 20분)', msg: 'AI 교차 검수: 주석이 정답을 드러냅니다.', snip: '' };
+        const REVIEW = '코드 블록은 코드 줄을 한 글자도 바꾸지 않습니다. 정답·출력 결과·고칠 곳을 드러내는 주석 줄은 고쳐도 됩니다(다른 주석은 그대로 둡니다).';
+        assert.strictEqual(rule([review], { quiz: true }), `${head}${REVIEW}`);
+        assert.strictEqual(rule([review, issues[0]], { quiz: true }), `${head}${REVIEW} ${LABEL}`);
+    });
+
     await run('컨벤션 문서와 README: 코드 주석 규칙을 코드 예제 바로 뒤에 적는다', () => {
         const cctx = context(['convention.js']);
         const convention = call(cctx, 'getConventionMarkdown')();
