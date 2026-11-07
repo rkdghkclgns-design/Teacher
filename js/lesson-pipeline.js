@@ -1,4 +1,4 @@
-// lesson-pipeline.js - 차시 전체 생성: 교안 탭 → 삽화 → NCS 요소 → 교수안·슬라이드 → 문제은행을 차례로 만든다
+// lesson-pipeline.js - 차시 전체 생성: 교안 탭 → 삽화 → NCS 요소 → 기본학습·심화학습 교수안·슬라이드 → 두 문제은행을 차례로 만든다
 // 화면을 막지 않으므로 생성하는 동안 끝난 항목을 읽을 수 있다. 진행은 아래쪽 막대와 탐색줄 표시로 보여 준다.
 // 탭 하나 만들기·탭 전체 AI 수정·탭 모두 다시 만들기·일괄 이미지 찾기도 같은 막대와 중지를 쓴다 (runLessonJob).
 // 있는 항목은 건드리지 않고 빈 항목만 채운다. 항목마다 저장하므로 멈춰도 만든 내용은 남는다.
@@ -15,27 +15,43 @@ window.isLessonPipelineRunning = moduleId => (moduleId === undefined ? !!_pipeli
 window.isPipelineStep = (id, moduleId) => isPipelineLesson(moduleId) && _pipeline.current === id;
 
 /* ---------- 문제은행 채우기 ---------- */
-function questionBankGaps(mod) {
-    const covered = new Set(qbankQuestions(mod).map(question => question.objective));
-    return qbankObjectives(mod).map((_, index) => index + 1).filter(no => !covered.has(no));
+// 그 갈래의 문제은행에서 문항이 없는 학습 목표 번호. 학습·실습 탭이 빈 갈래는 문항을 만들 원고가 없어 채우지 않는다
+function questionBankGaps(mod, trackId = 'basic') {
+    if (!trackHasContent(mod, trackId)) return [];
+    const covered = new Set(qbankQuestions(mod, trackId).map(question => question.objective));
+    return qbankObjectives(mod, trackId).map((_, index) => index + 1).filter(no => !covered.has(no));
 }
 
-// 학습 목표마다 문항이 있도록 빠진 목표의 문항을 채운다. 문제은행은 학습이해도 탭의 마크다운을 쓴다
+// 두 갈래 문제은행의 빈 목표 수를 더한다(일괄 생성 대기열·전체 생성의 단계)
+const lessonQuestionGaps = mod => LESSON_TRACKS.reduce((sum, track) => sum + questionBankGaps(mod, track.id).length, 0);
+
+// 갈래마다 학습 목표에 문항이 있도록 빠진 목표의 문항을 채운다(기본학습 → 심화학습). 문제은행은 그 갈래 문제은행 탭(학습이해도·심화이해도)의 마크다운을 쓴다
 async function fillQuestionBank(moduleId, { isStopped = () => false, onStatus = () => {} } = {}) {
     const lesson = getEditingModule(moduleId);
     if (!lesson) return { ok: false, error: '차시를 찾지 못했습니다.' };
-    for (const objective of questionBankGaps(lesson)) {
-        if (isStopped()) return { ok: false, stopped: true };
-        onStatus(`학습 목표 ${objective}의 문항을 만들고 있습니다...`);
-        const mod = getEditingModule(moduleId);
-        if (!mod) return { ok: false, error: '차시를 찾지 못했습니다.' };
-        const questions = await generateQuestions(mod, { objective, band: 'L1', type: '객관식', multi: false, count: QBANK_FILL_COUNT });
-        setTabMarkdown(mod, 'assessment', appendQuestionsMd(qbankMarkdown(mod), questions));
-        Object.assign(mod, withHistoryNote(mod, `문제은행 문항 생성 (학습 목표 ${objective}, ${questions.length}개)`));
-        await saveState();
+    for (const track of LESSON_TRACKS) {
+        for (const objective of questionBankGaps(lesson, track.id)) {
+            if (isStopped()) return { ok: false, stopped: true };
+            onStatus(`${track.label} 학습 목표 ${objective}의 문항을 만들고 있습니다...`);
+            const mod = getEditingModule(moduleId);
+            if (!mod) return { ok: false, error: '차시를 찾지 못했습니다.' };
+            const questions = await generateQuestions(mod, { objective, band: 'L1', type: '객관식', multi: false, count: QBANK_FILL_COUNT }, track.id);
+            setTabMarkdown(mod, track.bank, appendQuestionsMd(qbankMarkdown(mod, track.id), questions));
+            Object.assign(mod, withHistoryNote(mod, `${track.label} 문제은행 문항 생성 (학습 목표 ${objective}, ${questions.length}개)`));
+            await saveState();
+        }
     }
     return { ok: true };
 }
+
+// 그 갈래의 학습·실습 탭 가운데 아직 없는 탭이 있는가(전체 생성·일괄 생성은 빈 탭을 먼저 만든다)
+function trackTabsMissing(mod, trackId) {
+    const track = lessonTrack(trackId);
+    return lessonMissingTabs(mod).some(id => id === track.learn || id === track.practice);
+}
+
+// 미리 보기에 셀 문제은행 채우기 수(갈래마다 하나): 빈 목표가 있거나 이번에 학습·실습 탭을 만드는 갈래. overwrite: 모두 다시 만든다
+const qbankFillCount = (lesson, overwrite = false) => LESSON_TRACKS.filter(track => overwrite || questionBankGaps(lesson, track.id).length > 0 || trackTabsMissing(lesson, track.id)).length;
 
 /* ---------- 교안 뒤 보강 ---------- */
 // 교안 본문에는 이미지 태그 생성이 따로 돌아 호출이 겹치므로 삽화는 일괄 생성 창에서 켠 경우에만 그린다
@@ -82,11 +98,17 @@ function pipelineSteps(moduleId, lockedByTab) {
         run: () => generateTabContent(moduleId, tab.id, { quiet: true, background: true, lockedBlocks: lockedByTab[tab.id], onStatus: window.setPipelineStatus })
     }));
     if (moduleId === 'mainQuest') return tabs;
+    // 교수안·슬라이드는 갈래마다 따로 만든다. 단계 id는 그 교수안을 담는 차시 칸 이름이다(gyosuan · gyosuanAdv, tabs.js LESSON_PANELS)
+    const gyosuanSteps = LESSON_TRACKS.map(track => ({
+        id: track.field, label: `${track.label} 교수안·슬라이드`, afterTabs: true, gyosuan: true,
+        needed: mod => lessonNeedsGyosuan(mod, track.id),
+        run: () => runGyosuanGeneration(moduleId, { background: true, track: track.id, onStatus: window.setPipelineStatus })
+    }));
     return [
         ...tabs,
         ...lessonExtraSteps(moduleId, { isStopped: () => !!_pipeline?.stopped, onStatus: window.setPipelineStatus }),
-        { id: 'gyosuan', label: '교수안·슬라이드', afterTabs: true, needed: lessonNeedsGyosuan, run: () => runGyosuanGeneration(moduleId, { background: true, onStatus: window.setPipelineStatus }) },
-        { id: 'qbank', label: '문제은행', afterTabs: true, needed: mod => questionBankGaps(mod).length > 0, run: () => fillQuestionBank(moduleId, { isStopped: () => !!_pipeline?.stopped, onStatus: window.setPipelineStatus }) }
+        ...gyosuanSteps,
+        { id: 'qbank', label: '문제은행', afterTabs: true, needed: mod => qbankFillCount(mod) > 0, run:() => fillQuestionBank(moduleId, { isStopped: () => !!_pipeline?.stopped, onStatus: window.setPipelineStatus }) }
     ];
 }
 
@@ -343,14 +365,15 @@ window.startLessonGeneration = function (moduleId) {
         const has = id => needed.some(step => step.id === id);
         const work = lessonWork({
             tabs: needed.filter(step => LESSON_TABS.some(tab => tab.id === step.id)).map(step => step.id), // 탭마다 그림 자리 수가 달라 탭 id로 센다
-            gyosuan: has('gyosuan'), qbank: has('qbank'), art: has('art'), ncs: has('ncsElements'), fillsVolume: moduleId !== 'mainQuest', volumeMinutes: lessonVolumeMinutes(mod),
+            gyosuan: needed.filter(step => step.gyosuan).length, // 갈래마다 교수안을 하나씩 만든다
+            qbank: has('qbank') ? qbankFillCount(mod) : 0, art: has('art'), ncs: has('ncsElements'), fillsVolume: moduleId !== 'mainQuest', volumeMinutes: lessonVolumeMinutes(mod),
             practiceMinutes: lessonPracticeWork(mod) // 실습 시간을 정한 실습 탭은 이어쓰기 호출이 늘어난다
         }, currentEstimateSettings().imageAmount);
         return confirmWithEstimate(`빈 항목 ${needed.length}개(${needed.map(step => step.label).join(', ')})를 차례로 만듭니다.`, work, { title: '전체 생성', okLabel: '만들기' })
             .then(ok => ok && window.runLessonPipeline(moduleId));
     }
     const rebuild = lessonWork({ tabs: LESSON_TABS.map(tab => tab.id), fillsVolume: moduleId !== 'mainQuest', volumeMinutes: lessonVolumeMinutes(mod), practiceMinutes: lessonPracticeWork(mod) }, currentEstimateSettings().imageAmount); // 최종 평가는 분량을 채우지 않는다
-    return confirmWithEstimate('모든 항목이 있습니다. 교안 탭 5개를 모두 다시 만듭니다(지금 글은 작업 기록에 남습니다).', rebuild, { title: '모두 다시 만들기', okLabel: '모두 다시 만들기' })
+    return confirmWithEstimate(`모든 항목이 있습니다. 교안 탭 ${LESSON_TABS.length}개를 모두 다시 만듭니다(지금 글은 작업 기록에 남습니다).`, rebuild, { title: '모두 다시 만들기', okLabel: '모두 다시 만들기' })
         .then(ok => ok && generateAllTabs(moduleId));
 };
 

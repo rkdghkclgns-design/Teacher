@@ -14,7 +14,7 @@ function lessonBadge(text, style, title = '') {
 
 function lessonListBadges(mod) {
     const required = lessonRequiredIssues(mod);
-    const questions = lessonQuestionSpans(qbankMarkdown(mod)).length;
+    const questions = LESSON_TRACKS.reduce((sum, track) => sum + lessonQuestionSpans(qbankMarkdown(mod, track.id)).length, 0); // 두 문제은행(학습이해도·심화이해도)의 문항
     const elements = (mod.ncsElements || []).length;
     const brokenPrereqs = (mod.prereqs || []).filter(item => findLessonPrereq(item, mod.id).state !== 'ok').length;
     return [

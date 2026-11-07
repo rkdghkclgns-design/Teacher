@@ -947,7 +947,16 @@ test('내보내기·백업·불러오기의 그림 거르기를 GIF가 지나고
     mod.images = { ...mod.images, img_1: GIF };
     api.undoImageMotion(mod, 'img_1');
     assert.strictEqual(resolve(), `![](${PNG})`, '되돌리면 교수안 사본');
-    assert.ok(read('gyosuan-view.js').includes('const images = gyosuanImageMap(mod);'), '교수안 HTML 내려받기도 같은 그림을 쓴다');
+    assert.ok(read('gyosuan-view.js').includes('const images = gyosuanImageMap(mod, trackId);'), '교수안 HTML 내려받기도 같은 그림을 쓴다(그 갈래의 교수안)');
+    // 심화학습 교수안(gyosuanAdv)도 같은 규칙: 그 갈래의 사본보다 바꾼 GIF가 이긴다
+    const adv = motionLesson({ gyosuanAdv: { docMd: '![](local:img_1)', deckMd: '![](local:img_1)', images: { img_1: PNG } } });
+    const advApi = apiContext(adv);
+    vm.runInContext(sliceSource(read('gyosuan.js'), 'function gyosuanImageMap('), advApi);
+    vm.runInContext(sliceSource(read('gyosuan.js'), 'function resolveGyosuanImages('), advApi);
+    const resolveAdv = () => call(advApi, 'resolveGyosuanImages')('![](local:img_1)', adv, 'adv');
+    assert.strictEqual(resolveAdv(), `![](${PNG})`, '심화학습 교수안의 사본');
+    advApi.applyImageMotionData(adv, 'img_1', PNG, GIF);
+    assert.strictEqual(resolveAdv(), `![](${GIF})`, '심화학습 교수안도 바꾼 GIF');
 });
 
 /* ======================= 그리기(캔버스) ======================= */

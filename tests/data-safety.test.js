@@ -816,7 +816,7 @@ function loadSubjectZip(stored = {}) {
     });
     const listAll = env.c.document.querySelectorAll;
     env.c.document.querySelectorAll = selector => (selector === '.subj-zip-cb:checked' ? [{ dataset: { subjId: 's1' } }] : listAll(selector));
-    vm.runInContext([fnFrom(COURSE_FLOW_SRC, 'course-flow.js')('function zipImageParts('),
+    vm.runInContext([fnFrom(COURSE_FLOW_SRC, 'course-flow.js')('function zipImageParts('), uiFn('const ZIP_TAB_FILE_NAMES = ', ';\n'),
         uiFn('window.exportSelectedToZip = async function', '\n};\n'), uiFn('window.exportAllToZip = async function', '\n};\n')].join('\n'), env.c);
     return env;
 }
@@ -1479,7 +1479,7 @@ test('작업 기록 목록 한 줄: 어떤 기록인지와 버튼 이름', () =>
     const tab = { tabId: 'basicPrac' };
     assert.deepStrictEqual(plainJson(ctx.historyRowLabels(tab, { mode: 'replace' })), { kind: '기본실습 탭', button: '되돌리기', tip: '그 차시의 기본실습 탭만 이 기록으로 되돌립니다' });
     assert.deepStrictEqual(plainJson(ctx.historyRowLabels(tab, { mode: 'new' })), { kind: '기본실습 탭', button: '새 차시로 되살리기', tip: '이 기록을 지금 연 교과에 새 차시로 되살립니다' });
-    assert.strictEqual(ctx.historyRowLabels({ tabContents: {} }, { mode: 'replace' }).kind, '5개 탭');
+    assert.strictEqual(ctx.historyRowLabels({ tabContents: {} }, { mode: 'replace' }).kind, '전체 탭', '차시 전체 기록(예전 다섯 탭·지금 여섯 탭)');
     assert.strictEqual(ctx.historyRowLabels({ tabContents: {} }, { mode: 'replace' }).tip, '그 차시를 이 기록으로 되돌립니다');
     assert.strictEqual(ctx.historyRowLabels({}, { mode: 'new' }).kind, '');
     // 최종 평가(탭 없음)를 고친 기록: 기록의 탭 id가 무엇이든 본문 전체를 되돌린다고 말한다

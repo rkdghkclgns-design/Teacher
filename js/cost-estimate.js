@@ -6,18 +6,18 @@ const ESTIMATE_RULES = {
     tabCalls: 2,                                    // 탭 하나: 본문(학습 탭은 이어쓰기가 잦아 2~6회, 나머지 1~3회) + 가끔 생성 직후 자동 수정
     // 탭마다 그림 자리(설정의 교안 이미지 양). 탭 글 규칙(ui.js 탭 작성 지시)의 최소 섹션 수로 센다(api.js autoInjectImageTags·pendingImageTags):
     // 핵심만은 ## 섹션마다 한 장(기본·심화 학습은 학습 목표·개요를 빼고 6개, 실습 3개), 모두는 긴 ### 소주제마다 한 장 더(기본·심화 학습 16개).
-    // 학습 이해도는 문제(짧은 ###)뿐이라 그림이 거의 없다. 글이 길면 더 늘어난다(모두는 정해진 상한이 없다)
+    // 학습이해도·심화이해도는 문제(짧은 ###)뿐이라 그림이 거의 없다. 글이 길면 더 늘어난다(모두는 정해진 상한이 없다)
     imagesPerTab: {
-        all: { basicLearn: 22, basicPrac: 3, advLearn: 22, advPrac: 3, assessment: 0 },
-        section: { basicLearn: 6, basicPrac: 3, advLearn: 6, advPrac: 3, assessment: 0 },
+        all: { basicLearn: 22, basicPrac: 3, advLearn: 22, advPrac: 3, assessment: 0, advAssessment: 0 },
+        section: { basicLearn: 6, basicPrac: 3, advLearn: 6, advPrac: 3, assessment: 0, advAssessment: 0 },
         none: {}
     },
     shortCallsPerImage: 1,                          // 교안 그림 하나: 검색어 정하기(검색 키가 있으면 고르기 판정이 하나 더)
     shortCallsPerSlideImage: 2,                     // 슬라이드 그림 하나: 장면 글로 바꾸기 + 그림 속 글자 확인(kbuilder/auto-images.js)
     ncsCalls: 1,                                    // NCS 배정(교과·차시)
-    gyosuanCalls: 12,                               // 교수안: 머리말 1 + 전개(섹션마다 1, 최대 14) + 도입·정리 1
+    gyosuanCalls: 12,                               // 교수안 하나(갈래마다 하나): 머리말 1 + 전개(섹션마다 1, 최대 14) + 도입·정리 1
     gyosuanWaitCalls: 6,                            // 전개는 셋씩 함께 부르므로 기다리는 시간은 호출 6번쯤
-    qbankCalls: 2,                                  // 문제은행 채우기
+    qbankCalls: 2,                                  // 문제은행 하나(갈래마다 하나) 채우기
     artCalls: 4,                                    // SVG 삽화(후보 1회 + 그림 최대 3장)
     ocrMaxCallsPerPdf: 8,                           // 스캔 PDF: 30쪽까지 4쪽마다 1회
     // 학습 탭(기본학습·심화학습) 분량 보강(lesson-volume.js): 호출 하나가 낭독 글자 약 5,000자를 늘린다고 보고, 탭마다 호출 상한(목표 글자 ÷ 5,000, 480분이면 24번, 최대 48번)까지 센다.
@@ -57,7 +57,7 @@ function defaultSlideImageCount() {
     return count > 0 ? count : 0;
 }
 
-// 만들 탭들의 그림 자리 수. tabs: 탭 id 목록(탭마다 센다)이나 탭 수(어느 탭인지 모르면 탭 하나를 다섯 탭의 평균으로 센다)
+// 만들 탭들의 그림 자리 수. tabs: 탭 id 목록(탭마다 센다)이나 탭 수(어느 탭인지 모르면 탭 하나를 모든 탭의 평균으로 센다)
 function tabImageCount(tabs, imageAmount = 'section') {
     const perTab = ESTIMATE_RULES.imagesPerTab[imageAmount] || ESTIMATE_RULES.imagesPerTab.section;
     if (Array.isArray(tabs)) return tabs.reduce((sum, id) => sum + (Object.prototype.hasOwnProperty.call(perTab, id) ? perTab[id] : 0), 0);
@@ -88,12 +88,18 @@ function practiceExtraCalls(minutes) {
     return Math.min(rule.practiceChunkCap, Math.max(rule.practiceChunkBase, Math.ceil(n / rule.practiceMinutesPerChunk))) - rule.practiceChunkBase;
 }
 
-// 차시 하나에서 할 일. tabs: 만들 탭 id 목록(또는 탭 수) / imageAmount: 설정의 교안 이미지 양(all·section·none) / slideImages: 교수안을 만들면 슬라이드에 넣는 그림 수
+// 교수안·문제은행 수: true는 하나, 숫자는 그만큼(갈래마다 하나씩, 기본학습·심화학습이면 2)
+const workCount = value => (value === true ? 1 : Math.max(0, Math.floor(Number(value) || 0)));
+
+// 차시 하나에서 할 일. tabs: 만들 탭 id 목록(또는 탭 수) / imageAmount: 설정의 교안 이미지 양(all·section·none) / slideImages: 교수안 하나를 만들면 슬라이드에 넣는 그림 수
+// gyosuan·qbank: 만들 교수안 수와 채울 문제은행 수(true면 하나). 갈래(기본학습·심화학습)마다 따로 만든다
 // 학습 탭(기본학습·심화학습)을 만들면 탭마다 낭독 분량 채우기(volume: 탭 수, volumeAdv: 그 가운데 심화학습 수, volumeCalls: 긴 호출 수, volumeMinutes: 낭독 목표 분)도 센다.
 // 탭 수만 알면 어느 탭인지 몰라 세지 않는다. 분량을 채우지 않는 최종 평가는 fillsVolume: false. volumeMinutes: 학습 탭의 낭독 목표(480분)
 // practiceMinutes: 실습 탭마다 강사가 정한 실습 시간({ basicPrac, advPrac }). 정한 실습 탭은 이어쓰기 호출(practiceCalls)을 더 센다
 function lessonWork({ tabs = 0, gyosuan = false, qbank = false, art = false, ncs, fillsVolume = true, volumeMinutes = ESTIMATE_VOLUME.minutes, practiceMinutes = {} } = {}, imageAmount = 'section', slideImages = defaultSlideImageCount()) {
     const tabCount = Array.isArray(tabs) ? tabs.length : (Number(tabs) || 0);
+    const plans = workCount(gyosuan);
+    const banks = workCount(qbank);
     const withNcs = ncs === undefined ? tabCount > 0 : ncs;
     const minutes = Number(volumeMinutes) > 0 ? Number(volumeMinutes) : ESTIMATE_VOLUME.minutes;
     const learnTabs = fillsVolume && Array.isArray(tabs) ? tabs.filter(id => ESTIMATE_VOLUME.tabs.includes(id)) : [];
@@ -101,7 +107,7 @@ function lessonWork({ tabs = 0, gyosuan = false, qbank = false, art = false, ncs
     const volume = learnTabs.length ? { volume: learnTabs.length, volumeCalls: learnTabs.length * volumeCallsFor(minutes), volumeMinutes: minutes, ...(adv ? { volumeAdv: adv } : {}) } : {};
     const practiceCalls = Array.isArray(tabs) && practiceMinutes && typeof practiceMinutes === 'object'
         ? tabs.filter(id => ESTIMATE_VOLUME.practiceTabs.includes(id)).reduce((sum, id) => sum + practiceExtraCalls(practiceMinutes[id]), 0) : 0;
-    return { tabs: tabCount, images: tabImageCount(tabs, imageAmount), slideImages: gyosuan ? slideImages : 0, ncs: withNcs ? 1 : 0, gyosuan: gyosuan ? 1 : 0, qbank: qbank ? 1 : 0, art: art ? 1 : 0, ...volume, ...(practiceCalls ? { practiceCalls } : {}) };
+    return { tabs: tabCount, images: tabImageCount(tabs, imageAmount), slideImages: plans * slideImages, ncs: withNcs ? 1 : 0, gyosuan: plans, qbank: banks, art: art ? 1 : 0, ...volume, ...(practiceCalls ? { practiceCalls } : {}) };
 }
 
 // 차시마다 할 일을 더한다. 낭독 목표(volumeMinutes)는 더하지 않고 가장 긴 것을 쓴다(안내 글에 보인다)

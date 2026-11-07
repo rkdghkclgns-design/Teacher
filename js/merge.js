@@ -65,7 +65,7 @@ async function executeMerge() {
         status: 'generating',
         content: null,
         images: {},
-        tabContents: { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null }
+        tabContents: { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null, advAssessment: null }
     };
     subj.lessons.push(newLesson);
     courseData = subj.lessons;

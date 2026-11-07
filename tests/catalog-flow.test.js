@@ -4,6 +4,7 @@ const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
 const assert = require('assert');
+const { loadLessonTracks } = require('./lesson-tracks');
 const root = path.join(__dirname, '..', 'js') + path.sep;
 const FILES = ['kbuilder/ncs-catalog.js', 'lesson-lint.js', 'ai-routing.js', 'course-ncs.js', 'course-ncs-ref.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'course-elements.js', 'course-list.js', 'course-art.js', 'course-illustrations.js', 'course-qbank.js', 'lesson-editor-tools.js', 'course-refs.js'];
 
@@ -33,6 +34,7 @@ function makeContext(callGemini, keys = { gemini: '' }) {
     };
     ctx.window = ctx;
     vm.createContext(ctx);
+    loadLessonTracks(ctx, { tabs: true }); // 탭 목록과 갈래(기본학습·심화학습) 정의
     FILES.forEach(file => vm.runInContext(fs.readFileSync(root + file, 'utf8'), ctx));
     return ctx;
 }

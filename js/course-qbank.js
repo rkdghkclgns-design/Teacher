@@ -1,6 +1,7 @@
-// course-qbank.js - 차시 문제은행: 학습이해도 탭의 마크다운을 문항 단위로 관리한다
+// course-qbank.js - 차시 문제은행: 갈래(data.js LESSON_TRACKS)마다 문제은행 탭의 마크다운을 문항 단위로 관리한다
+// 기본학습 갈래는 학습이해도 탭(tabContents.assessment), 심화학습 갈래는 심화이해도 탭(tabContents.advAssessment)이고 저장 형식은 같다.
 // develocket-slide(assets/course-qbank.js, course-rules.js @3a7303f)의 분포·검수·CSV·문항 생성을 옮겼다.
-// 원본은 마크다운 그대로 두고 문항만 읽고 고쳐 쓴다. 저장 형식은 학습이해도 탭과 같다.
+// 원본은 마크다운 그대로 두고 문항만 읽고 고쳐 쓴다. 갈래(trackId)를 주지 않으면 기본학습 문제은행을 본다.
 
 const QBANK_BANDS = {
     L1: { name: '수업과 같은 상황', desc: '수업에서 다룬 상황을 그대로 묻습니다. 배운 내용을 기억하고 있는지 확인합니다.', recommend: 10 },
@@ -50,46 +51,60 @@ let _qbank = null;
 
 const qbankMod = () => getEditingModule(_qbank?.moduleId);
 const uniqueTexts = items => [...new Set(items)];
+const qbankTrackId = () => lessonTrack(_qbank?.track).id; // 열어 둔 문제은행의 갈래
+const qbankBankLabel = trackId => LESSON_TABS.find(tab => tab.id === lessonTrack(trackId).bank)?.label || '학습이해도'; // 학습이해도 | 심화이해도
 
-function qbankMarkdown(mod) {
-    return String(mod.tabContents?.assessment || '').replace(/\r\n/g, '\n');
+function qbankMarkdown(mod, trackId = 'basic') {
+    return String(mod.tabContents?.[lessonTrack(trackId).bank] || '').replace(/\r\n/g, '\n');
 }
 
-function qbankQuestions(mod) {
-    return lessonLintQuestions(qbankMarkdown(mod)).map(parseQuestionBlock);
+function qbankQuestions(mod, trackId = 'basic') {
+    return lessonLintQuestions(qbankMarkdown(mod, trackId)).map(parseQuestionBlock);
 }
 
-function qbankTabBullets(mod, title) {
-    return Object.values(mod.tabContents || {}).flatMap(md => (md ? lessonLintBullets(String(md).replace(/\r\n/g, '\n'), title) : []));
+// 탭 글의 불릿. trackId를 주면 그 갈래의 학습·실습 탭만, 주지 않으면 모든 탭(차시 전체)
+function qbankTabBullets(mod, title, trackId = null) {
+    const track = trackId ? lessonTrack(trackId) : null;
+    const texts = track ? [mod.tabContents?.[track.learn], mod.tabContents?.[track.practice]] : Object.values(mod.tabContents || {});
+    return texts.flatMap(md => (md ? lessonLintBullets(String(md).replace(/\r\n/g, '\n'), title) : []));
 }
 
-function qbankObjectives(mod) {
+// 학습 목표 목록. 문항의 목표 번호는 이 목록의 순서다.
+// trackId를 주면 그 갈래의 학습·실습 탭에 적힌 목표(없으면 차시 전체 탭의 목표, 그것도 없으면 과정 설계의 목표). 주지 않으면 차시 전체(NCS 배정·교육 자료가 쓴다)
+function qbankObjectives(mod, trackId = null) {
+    const own = trackId ? uniqueTexts(qbankTabBullets(mod, '학습\\s*목표', trackId)) : [];
+    if (own.length) return own;
     const fromTabs = uniqueTexts(qbankTabBullets(mod, '학습\\s*목표'));
     return fromTabs.length ? fromTabs : (mod.objectives || []);
 }
 
-const qbankChecklist = mod => qbankTabBullets(mod, '학습\\s*후\\s*체크리스트');
+const qbankChecklist = (mod, trackId = null) => qbankTabBullets(mod, '학습\\s*후\\s*체크리스트', trackId);
 
 // 화면에서 쓰는 문항 검수. 학습 목표를 지운 뒤 남은 번호도 잡는다
 function lintBankQuestion(q, checklist) {
     const mod = _qbank ? qbankMod() : null;
-    return lintQuestion(q, checklist, (mod && qbankObjectives(mod).length) || Infinity);
+    return lintQuestion(q, checklist, (mod && qbankObjectives(mod, qbankTrackId()).length) || Infinity);
 }
 
-function lessonCodeTags(mod) {
-    const sources = [...Object.values(mod.tabContents || {}), mod.content];
+// 교안 코드 블록의 언어 표기. trackId를 주면 그 갈래의 학습·실습·문제은행 탭(옛 차시의 본문은 기본학습)만 본다
+function lessonCodeTags(mod, trackId = null) {
+    const track = trackId ? lessonTrack(trackId) : null;
+    const legacy = !LESSON_TABS.some(tab => mod.tabContents?.[tab.id]);
+    const sources = track
+        ? [mod.tabContents?.[track.learn], mod.tabContents?.[track.practice], mod.tabContents?.[track.bank], ...(legacy && track.id === LESSON_TRACKS[0].id ? [mod.content] : [])]
+        : [...Object.values(mod.tabContents || {}), mod.content];
     const tags = sources.flatMap(md => [...String(md || '').matchAll(/^[ \t]*```[ \t]*([\w#+.-]+)[ \t]*$/gm)].map(match => match[1].toLowerCase()));
     return uniqueTexts(tags).filter(tag => !QBANK_NON_CODE_TAGS.has(tag));
 }
 
-const lessonCodeLangs = mod => uniqueTexts(lessonCodeTags(mod).map(tag => QBANK_LANG_NAMES[tag] || tag));
+const lessonCodeLangs = (mod, trackId = null) => uniqueTexts(lessonCodeTags(mod, trackId).map(tag => QBANK_LANG_NAMES[tag] || tag));
 
 // 사람이 직접 쓰는 빈 문항. 생성 폼에서 고른 목표·밴드·유형으로 시작한다.
-function blankQuestion(spec, mod) {
+function blankQuestion(spec, mod, trackId = 'basic') {
     return {
         no: 0, title: '', objective: spec.objective, band: spec.band, type: spec.type, typed: true,
         multi: spec.type === '객관식' && !!spec.multi, stem: '', media: '', choices: [], answer: '', accepted: '', hint: '',
-        code: '', lang: spec.type === '코드제출' ? (lessonCodeTags(mod)[0] || '') : '',
+        code: '', lang: spec.type === '코드제출' ? (lessonCodeTags(mod, trackId)[0] || '') : '',
         explanation: '', rubric: '', tests: '', review: ''
     };
 }
@@ -221,10 +236,20 @@ function questionsCsv(questions, objectives, context) {
     return toCsv(questionCsvRows(questions, objectives, context));
 }
 
+// CSV 한 차시·갈래의 칸 값. 갈래는 학습모듈 칸에 '차시 · 기본학습/심화학습'으로 보이고, 심화학습 문항ID는 '차시 id-adv-번호'다(두 문제은행을 한 파일에 담아도 겹치지 않게)
+function qbankCsvContext(subject, lesson, trackId) {
+    const track = lessonTrack(trackId);
+    const basic = track.id === LESSON_TRACKS[0].id;
+    return { subject: subject?.title || '', lesson: `${lesson.title} · ${track.label}`, lessonId: basic ? lesson.id : `${lesson.id}-${track.id}`, checklist: qbankChecklist(lesson, track.id) };
+}
+
+function lessonBankCsvRows(subject, lesson, trackId) {
+    return questionCsvRows(qbankQuestions(lesson, trackId), qbankObjectives(lesson, trackId), qbankCsvContext(subject, lesson, trackId));
+}
+
+// 교과 CSV: 차시마다 기본학습 문제은행 다음에 심화학습 문제은행(문항이 든 탭만)
 function subjectCsvRows(subject) {
-    return subjectLessons(subject).flatMap(lesson => (lesson.tabContents?.assessment
-        ? questionCsvRows(qbankQuestions(lesson), qbankObjectives(lesson), { subject: subject.title, lesson: lesson.title, lessonId: lesson.id, checklist: qbankChecklist(lesson) })
-        : []));
+    return subjectLessons(subject).flatMap(lesson => LESSON_TRACKS.flatMap(track => (lesson.tabContents?.[track.bank] ? lessonBankCsvRows(subject, lesson, track.id) : [])));
 }
 
 function subjectQuestionsCsv(subject) {
@@ -238,8 +263,8 @@ function courseQuestionsCsv() {
 }
 
 /* ---------- AI 문항 생성 ---------- */
-function qbankCodeRule(mod, type) {
-    const langs = lessonCodeLangs(mod);
+function qbankCodeRule(mod, type, trackId = 'basic') {
+    const langs = lessonCodeLangs(mod, trackId);
     if (langs.length) return `학습내용에 쓰인 언어(${langs.join(', ')})를 그대로 사용합니다.`;
     const tools = (mod.tools || []).map(toolLabel).join(', ') || '없음';
     const pick = type === '코드제출' ? ' 코드제출 유형이므로 학습내용과 사용 툴에 맞는 언어 하나를 골라 문항 첫 줄에 언어를 밝힙니다.' : '';
@@ -251,13 +276,20 @@ function qbankChoiceRule(spec) {
     return spec.multi ? '[정답 수] 정답 2개 이상, 오답 1개 이상이며 문항에 「모두 고르시오」를 밝힙니다.' : '[정답 수] 정답이 될 수 있는 보기는 정확히 하나입니다.';
 }
 
-function buildQuestionPrompt(mod, spec, objectives, questions) {
-    const source = String(mod.tabContents?.basicLearn || mod.content || '').slice(0, QBANK_LESSON_CHARS);
+// 문항을 만들 교안 원고: 그 갈래의 학습 탭, 이어서 실습 탭(앞부분만 보낸다). 탭 글이 하나도 없는 옛 차시의 본문은 기본학습 갈래의 원고다
+function qbankLessonSource(mod, trackId = 'basic') {
+    const track = lessonTrack(trackId);
+    const legacy = track.id === LESSON_TRACKS[0].id && !LESSON_TABS.some(tab => mod.tabContents?.[tab.id]) ? mod.content : '';
+    return [mod.tabContents?.[track.learn] || legacy, mod.tabContents?.[track.practice]].filter(Boolean).map(String).join('\n\n').slice(0, QBANK_LESSON_CHARS);
+}
+
+function buildQuestionPrompt(mod, spec, objectives, questions, trackId = 'basic') {
+    const source = qbankLessonSource(mod, trackId);
     return [
         `아래 차시의 문제은행 문항을 ${spec.count}개 만드세요.`, '', QBANK_RULES, '',
         `[학습 목표 ${spec.objective}] ${objectives[spec.objective - 1] || mod.title}`,
         `[밴드] ${spec.band} — ${QBANK_BANDS[spec.band].name}`, `[유형] ${spec.type}${spec.multi ? ' (복수 정답)' : ''}: ${QBANK_TYPE_FORMATS[spec.type]}`,
-        qbankChoiceRule(spec), `[코드] ${qbankCodeRule(mod, spec.type)}`,
+        qbankChoiceRule(spec), `[코드] ${qbankCodeRule(mod, spec.type, trackId)}`,
         questions.length ? `[겹치면 안 되는 기존 문항]\n${questions.map(q => `- ${q.title} ${q.stem}`.trim()).join('\n')}` : '',
         source ? `[교안]\n${source}` : '', '',
         '[출력 형식] 문항마다 아래 형식의 마크다운만 출력합니다.',
@@ -322,17 +354,17 @@ async function crossReviewQuestions(mod, questions, objectives) {
     }
 }
 
-// 자동 검수에 걸린 문항은 한 번 더 고쳐 받는다
-async function generateQuestions(mod, spec) {
-    const questions = await draftQuestions(mod, spec);
-    return crossReviewQuestions(mod, questions, qbankObjectives(mod));
+// 자동 검수에 걸린 문항은 한 번 더 고쳐 받는다. trackId: 문항을 넣을 갈래(그 갈래의 원고·목표·기존 문항으로 만든다)
+async function generateQuestions(mod, spec, trackId = 'basic') {
+    const questions = await draftQuestions(mod, spec, trackId);
+    return crossReviewQuestions(mod, questions, qbankObjectives(mod, trackId));
 }
 
-async function draftQuestions(mod, spec) {
-    const objectives = qbankObjectives(mod);
-    const existing = qbankQuestions(mod);
-    const checklist = qbankChecklist(mod);
-    const prompt = buildQuestionPrompt(mod, spec, objectives, existing);
+async function draftQuestions(mod, spec, trackId = 'basic') {
+    const objectives = qbankObjectives(mod, trackId);
+    const existing = qbankQuestions(mod, trackId);
+    const checklist = qbankChecklist(mod, trackId);
+    const prompt = buildQuestionPrompt(mod, spec, objectives, existing, trackId);
     const draft = await askQuestionModel(prompt);
     const first = parseGeneratedQuestions(draft, spec);
     if (!first.length) throw new Error('문항을 읽지 못했습니다. 다시 생성해주세요.');
@@ -380,7 +412,7 @@ function qbankFormHtml(objectives, mod) {
     const { spec } = _qbank;
     const select = 'px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white';
     const types = QUESTION_BAND_TYPES[spec.band];
-    const langs = lessonCodeLangs(mod);
+    const langs = lessonCodeLangs(mod, qbankTrackId());
     return `
         <div class="flex flex-wrap items-center gap-2">
             <select data-qbank-spec="objective" class="${select} max-w-[210px]">${(objectives.length ? objectives : ['학습 목표 없음']).map((text, i) => qbankOption(i + 1, `${i + 1}. ${text}`, spec.objective)).join('')}</select>
@@ -453,20 +485,33 @@ function qbankListHtml(questions, objectives, checklist) {
     const shown = questions.map((q, index) => ({ q, index })).filter(({ q }) => (!_qbank.band || q.band === _qbank.band) && (!_qbank.objective || q.objective === Number(_qbank.objective)));
     const adding = _qbank.editing === 'new' ? qbankEditHtml(_qbank.draft, 'new', objectives) : '';
     const rows = shown.map(({ q, index }) => (_qbank.editing === index ? qbankEditHtml(_qbank.draft || q, index, objectives) : qbankCardHtml(q, index, checklist))).join('');
-    return adding + rows || '<p class="text-xs text-textMuted p-2">문항이 없습니다. 학습이해도 탭을 생성하거나 AI로 문항을 만들어주세요.</p>';
+    return adding + rows || `<p class="text-xs text-textMuted p-2">문항이 없습니다. ${escapeHtml(qbankBankLabel(qbankTrackId()))} 탭을 생성하거나 AI로 문항을 만들어주세요.</p>`;
+}
+
+// 그 갈래의 학습·실습 탭이 비어 있으면 문항을 만들 원고가 없다고 알린다
+function qbankEmptyTrackHtml(mod, trackId) {
+    if (trackHasContent(mod, trackId)) return '';
+    const track = lessonTrack(trackId);
+    const tabs = [track.learn, track.practice].map(id => LESSON_TABS.find(tab => tab.id === id)?.label || id).join('·');
+    return `<p class="text-xs text-amber-300">${escapeHtml(`${tabs} 탭에 아직 교안이 없습니다. 먼저 그 탭을 만들면 그 내용과 학습 목표로 문항을 만듭니다.`)}</p>`;
 }
 
 function renderQbank() {
     const body = document.getElementById('qbank-body');
     const mod = qbankMod();
     if (!body || !mod) return;
-    const questions = qbankQuestions(mod);
-    const objectives = qbankObjectives(mod);
-    const checklist = qbankChecklist(mod);
+    const trackId = qbankTrackId();
+    const questions = qbankQuestions(mod, trackId);
+    const objectives = qbankObjectives(mod, trackId);
+    const checklist = qbankChecklist(mod, trackId);
     const passed = questions.filter(q => !lintBankQuestion(q, checklist).length).length;
     const select = 'px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white';
     const button = 'px-2 py-1 text-xs font-bold text-textLight bg-white/10 rounded hover:bg-white/20';
+    const heading = document.getElementById('qbank-title');
+    if (heading) heading.textContent = `문제은행 · ${mod.title} · ${lessonTrack(trackId).label}`;
     body.innerHTML = `
+        ${typeof lessonTrackSwitchHtml === 'function' ? lessonTrackSwitchHtml(mod, 'qbank', 'dark') : ''}
+        ${qbankEmptyTrackHtml(mod, trackId)}
         <div class="p-2 rounded-lg bg-black/20">${qbankDistributionHtml(questions, objectives)}
             <p class="text-xs text-textMuted mt-1">권장: L1 10 · L2 5 · L3 3. L4는 프로젝트에서 다룹니다. <button data-qbank-action="help" class="underline text-textLight">밴드란? · ${_qbank.help ? '접기' : '펼치기'}</button></p>
             ${_qbank.help ? qbankBandCardsHtml() : ''}
@@ -485,21 +530,21 @@ function renderQbank() {
         <details class="text-[0.6875rem] text-textMuted"><summary class="cursor-pointer">검사 규칙 목록</summary><ul class="mt-1 space-y-0.5">${QBANK_RULE_LIST.map(rule => `<li>• ${escapeHtml(rule)}</li>`).join('')}</ul></details>`;
 }
 
-// opts.inline: 대화상자 대신 탐색줄의 문제은행 자리에 넣는다
+// opts.inline: 대화상자 대신 탐색줄의 문제은행 자리에 넣는다 / opts.track: 볼 갈래(basic | adv, 없으면 기본학습)
 window.openQuestionBank = function (moduleId, opts = {}) {
     const mod = getEditingModule(moduleId);
     if (!mod?.tabContents) return window.showAlert('문제은행은 차시에서 사용할 수 있습니다.');
     if (document.getElementById('qbank-dialog')) return;
     const spec = { objective: 1, band: 'L1', type: '객관식', multi: false, count: 3 };
     const host = opts.inline ? document.getElementById('lesson-inline-panel') : null;
-    _qbank = { moduleId, band: '', objective: '', editing: null, draft: null, help: false, status: '', spec, dirty: false, busy: false, inline: !!host };
+    _qbank = { moduleId, track: lessonTrack(opts.track).id, band: '', objective: '', editing: null, draft: null, help: false, status: '', spec, dirty: false, busy: false, inline: !!host };
     const overlay = document.createElement('div');
     overlay.id = 'qbank-dialog';
     overlay.className = host ? '' : 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9000]';
     overlay.innerHTML = `
         <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl ${host ? 'w-full' : 'w-[720px] max-h-[88vh]'} flex flex-col shadow-2xl">
             <div class="p-4 border-b border-white/10 flex items-center">
-                <h2 class="text-sm font-bold text-textLight">문제은행 · ${escapeHtml(mod.title)}</h2>
+                <h2 id="qbank-title" class="text-sm font-bold text-textLight">문제은행 · ${escapeHtml(mod.title)}</h2>
                 <button data-qbank-action="close" class="ml-auto px-3 py-1 text-xs font-bold text-textLight bg-white/10 rounded hover:bg-white/20">닫기</button>
             </div>
             <div id="qbank-body" class="flex-1 overflow-y-auto p-4 space-y-3"></div>
@@ -512,6 +557,17 @@ window.openQuestionBank = function (moduleId, opts = {}) {
 
 window.forgetInlineQbank = function () {
     if (_qbank?.inline) _qbank = null;
+};
+
+// 문항을 고치거나 만들거나 저장하는 중이면 갈래를 바꾸지 않는다(그 문항은 지금 갈래의 문제은행에 들어간다)
+window.qbankTrackLocked = () => !!_qbank && (_qbank.busy || _qbank.editing !== null);
+
+// 열어 둔 문제은행을 다른 갈래로 바꿔 그 자리에서 다시 그린다(목표 번호는 갈래마다 달라 1번부터). 열어 둔 문제은행이 없으면 false
+window.switchQbankTrack = function (trackId) {
+    if (!_qbank) return false;
+    _qbank = { ..._qbank, track: lessonTrack(trackId).id, band: '', objective: '', editing: null, draft: null, status: '', spec: { ..._qbank.spec, objective: 1 } };
+    renderQbank();
+    return true;
 };
 
 function qbankSpecValue(target, name) {
@@ -534,12 +590,14 @@ function onQbankChange(event) {
 }
 
 // 저장이 끝날 때까지 다음 쓰기를 막아, 낡은 화면 번호로 다른 문항을 고치지 않게 한다. 바꾸기 전 내용은 히스토리에 남긴다.
+// 열어 둔 갈래의 문제은행 탭(학습이해도·심화이해도)에 쓰고, 작업 기록(그 탭 이름)과 변경 이력(갈래 이름)에 어느 문제은행인지 적는다
 async function commitQbankMarkdown(mod, md) {
     const { moduleId } = _qbank;
+    const track = lessonTrack(qbankTrackId());
     _qbank = { ..._qbank, busy: true };
-    await archiveContent({ title: `${mod.title} · 학습이해도`, content: qbankMarkdown(mod), images: mod.images, tabId: 'assessment', lesson: mod }, '문제은행 수정 전');
-    mod.tabContents = { ...mod.tabContents, assessment: md };
-    Object.assign(mod, withHistoryNote(mod, `문제은행 수정 (문항 ${lessonLintQuestions(md).length}개)`));
+    await archiveContent({ title: `${mod.title} · ${qbankBankLabel(track.id)}`, content: qbankMarkdown(mod, track.id), images: mod.images, tabId: track.bank, lesson: mod }, '문제은행 수정 전');
+    mod.tabContents = { ...mod.tabContents, [track.bank]: md };
+    Object.assign(mod, withHistoryNote(mod, `${track.label} 문제은행 수정 (문항 ${lessonLintQuestions(md).length}개)`));
     await saveState();
     // 그사이 창을 닫았으면 그 차시(같은 객체)를 보고 있을 때만 다시 그린다. 다른 교과의 같은 번호 차시 화면은 그대로 둔다
     if (_qbank?.moduleId !== moduleId) return getEditingModule() === mod ? renderEditor(mod) : undefined;
@@ -581,13 +639,14 @@ function jumpToQuestion(index) {
 }
 
 async function saveQuestionDraft(mod, index) {
-    if (index !== 'new') return commitQbankMarkdown(mod, updateQuestionMd(qbankMarkdown(mod), Number(index), readQuestionForm(_qbank.draft)));
+    const trackId = qbankTrackId();
+    if (index !== 'new') return commitQbankMarkdown(mod, updateQuestionMd(qbankMarkdown(mod, trackId), Number(index), readQuestionForm(_qbank.draft)));
     const question = readQuestionForm(_qbank.draft);
     if (!`${question.title}${question.stem}`.trim()) {
         _qbank = { ..._qbank, draft: question, status: '제목이나 문항 내용을 입력해주세요.' };
         return renderQbank();
     }
-    return commitQbankMarkdown(mod, appendQuestionsMd(qbankMarkdown(mod), [question]));
+    return commitQbankMarkdown(mod, appendQuestionsMd(qbankMarkdown(mod, trackId), [question]));
 }
 
 function downloadCsv(csv, name) {
@@ -598,9 +657,10 @@ function downloadCsv(csv, name) {
     URL.revokeObjectURL(a.href);
 }
 
-function saveQbankCsv(mod) {
+// 보고 있는 갈래의 문제은행만 받는다. 파일 이름에 갈래를 붙인다(…_기본학습_문제은행.csv)
+function saveQbankCsv(mod, trackId = qbankTrackId()) {
     const subject = globalState.subjects.find(item => item.id === currentSubjectId);
-    downloadCsv(questionsCsv(qbankQuestions(mod), qbankObjectives(mod), { subject: subject?.title || '', lesson: mod.title, lessonId: mod.id, checklist: qbankChecklist(mod) }), lessonFileBase(mod, subject));
+    downloadCsv(toCsv(lessonBankCsvRows(subject, mod, trackId)), `${lessonFileBase(mod, subject)}_${lessonTrack(trackId).label}`);
 }
 
 function saveCourseCsv() {
@@ -616,14 +676,16 @@ function saveSubjectCsv() {
     downloadCsv(csv, subject.title);
 }
 
+// 만들기 시작한 갈래를 잡아 두고 그 갈래의 문제은행에 넣는다(만드는 동안 창을 닫거나 다시 열어도 같다)
 async function runQuestionGenerate(mod) {
     const { moduleId, spec } = _qbank;
+    const trackId = qbankTrackId();
     keepQbankDraft();
     _qbank = { ..._qbank, busy: true, status: '문항을 만들고 검수하고 있습니다...' };
     renderQbank();
     try {
-        const questions = await generateQuestions(mod, spec);
-        await writeQuestionsIfOpen(mod, moduleId, questions);
+        const questions = await generateQuestions(mod, spec, trackId);
+        await writeQuestionsIfOpen(mod, moduleId, questions, trackId);
     } catch (err) {
         console.error('[문제은행] 문항 생성 실패:', err);
         if (_qbank?.moduleId === moduleId) _qbank = { ..._qbank, status: `생성 실패: ${err.message}` };
@@ -634,12 +696,13 @@ async function runQuestionGenerate(mod) {
     }
 }
 
-// 생성 중에 대화상자를 닫아도 비용을 들여 만든 문항은 버리지 않는다
-async function writeQuestionsIfOpen(mod, moduleId, questions) {
-    const md = appendQuestionsMd(qbankMarkdown(mod), questions);
-    mod.tabContents = { ...mod.tabContents, assessment: md };
+// 생성 중에 대화상자를 닫아도 비용을 들여 만든 문항은 버리지 않는다. trackId: 만들기 시작한 갈래
+async function writeQuestionsIfOpen(mod, moduleId, questions, trackId = 'basic') {
+    const track = lessonTrack(trackId);
+    const md = appendQuestionsMd(qbankMarkdown(mod, track.id), questions);
+    mod.tabContents = { ...mod.tabContents, [track.bank]: md };
     await saveState();
-    if (_qbank?.moduleId === moduleId) _qbank = { ..._qbank, dirty: true, status: `${questions.length}문항을 추가했습니다.` };
+    if (_qbank?.moduleId === moduleId) _qbank = { ..._qbank, dirty: true, status: `${track.label} 문제은행에 ${questions.length}문항을 추가했습니다.` };
 }
 
 function closeQbank() {
@@ -664,14 +727,16 @@ async function onQbankClick(event) {
         keepQbankDraft();
         _qbank = { ..._qbank, help: !_qbank.help };
     }
-    if (action === 'add') _qbank = { ..._qbank, editing: 'new', draft: blankQuestion(_qbank.spec, mod), status: '' };
-    if (action === 'edit') _qbank = { ..._qbank, editing: index, draft: qbankQuestions(mod)[index] };
+    const trackId = qbankTrackId();
+    if (action === 'add') _qbank = { ..._qbank, editing: 'new', draft: blankQuestion(_qbank.spec, mod, trackId), status: '' };
+    if (action === 'edit') _qbank = { ..._qbank, editing: index, draft: qbankQuestions(mod, trackId)[index] };
     if (action === 'cancel') _qbank = { ..._qbank, editing: null, draft: null };
-    if (action === 'csv') saveQbankCsv(mod);
+    if (action === 'csv') saveQbankCsv(mod, trackId);
     if (action === 'subject-csv') saveSubjectCsv();
     if (action === 'course-csv') saveCourseCsv();
     if (action === 'generate') return runQuestionGenerate(mod);
-    if (action === 'delete') return window.showConfirm('이 문항을 삭제할까요? 삭제 전 내용은 작업 기록에 남습니다.', () => commitQbankMarkdown(mod, removeQuestionMd(qbankMarkdown(mod), index)));
+    // 묻는 동안 문제은행을 닫았거나 다른 갈래로 바꿨으면 지우지 않는다(번호가 다른 갈래의 문항을 가리킨다)
+    if (action === 'delete') return window.showConfirm('이 문항을 삭제할까요? 삭제 전 내용은 작업 기록에 남습니다.', () => (_qbank && qbankTrackId() === trackId ? commitQbankMarkdown(mod, removeQuestionMd(qbankMarkdown(mod, trackId), index)) : undefined));
     if (action === 'save') return saveQuestionDraft(mod, button.dataset.index);
     renderQbank();
 }

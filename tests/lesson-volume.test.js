@@ -650,7 +650,7 @@ async function run(name, fn) {
         order.length = 0;
         ctx.generateTabContent = async (id, tabId) => { order.push(tabId); return tabId === 'basicLearn' ? { ok: true, short: true, readMinutes: 420, targetMinutes: 480 } : { ok: true }; };
         await call(ctx, 'generateAllTabs')(1);
-        assert.strictEqual(order.length, 5);
+        assert.strictEqual(order.length, 6, '심화이해도까지 여섯 탭');
         assert.ok(ctx.toasts.at(-1).message.includes('기본학습(낭독 약 420분)') && ctx.toasts.at(-1).kind === 'warning', JSON.stringify(ctx.toasts.at(-1)));
     });
 

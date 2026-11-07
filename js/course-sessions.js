@@ -1,6 +1,7 @@
 // course-sessions.js - 1차시(1시간) 단위 분할과 차시별 교수안·슬라이드 편성안
 // 분할 규칙과 산출물 구성은 develocket-slide(assets/course-sessions.js @3a7303f)를 따른다.
 // 진행 단계를 60분마다 자르되 블록 설계는 바꾸지 않는다. 차시는 산출물을 나누는 단위다.
+// 교수안을 읽는 함수는 갈래(trackId: basic | adv, data.js LESSON_TRACKS)를 받고, 주지 않으면 기본학습 교수안(mod.gyosuan)을 읽는다.
 
 const SESSION_MINUTES = 60;
 const SESSION_FRAME_MINUTES = 5;
@@ -166,9 +167,10 @@ function gyosuanFlowMinutes(sections, rows, mod) {
     return sections.map(section => fixed(section) || shared[next++]);
 }
 
-function gyosuanFlow(mod) {
-    const sections = gyosuanSections(mod.gyosuan?.docMd);
-    const minutes = gyosuanFlowMinutes(sections, gyosuanFlowRows(mod.gyosuan?.docMd), mod);
+function gyosuanFlow(mod, trackId = 'basic') {
+    const docMd = gyosuanOf(mod, trackId)?.docMd;
+    const sections = gyosuanSections(docMd);
+    const minutes = gyosuanFlowMinutes(sections, gyosuanFlowRows(docMd), mod);
     return sections.map((section, index) => ({
         phase: /^도입/.test(section.heading) ? '도입' : /^정리/.test(section.heading) ? '정리' : '전개',
         title: section.heading.replace(/^(도입|전개\s*\d*|정리)\s*-\s*/, ''),
@@ -210,9 +212,18 @@ function gyosuanOverviewRows(docMd) {
         .filter(cells => cells.length >= 2);
 }
 
-// 교안의 '학습 후 체크리스트' 항목 (없으면 빈 배열)
-function lessonChecklist(mod) {
-    const lines = [...Object.values(mod.tabContents || {}), mod.content].filter(Boolean).flatMap(text => String(text).split('\n'));
+// 그 갈래 교안의 글: 학습·실습·문제은행 탭. 탭 글이 하나도 없는 옛 차시의 본문은 기본학습 갈래다
+function trackLessonTexts(mod, trackId) {
+    const track = lessonTrack(trackId);
+    const tabs = mod.tabContents || {};
+    const legacy = !LESSON_TABS.some(tab => tabs[tab.id]) && track.id === LESSON_TRACKS[0].id ? [mod.content] : [];
+    return [tabs[track.learn], tabs[track.practice], tabs[track.bank], ...legacy];
+}
+
+// 교안의 '학습 후 체크리스트' 항목 (없으면 빈 배열). trackId를 주면 그 갈래의 탭에서만 찾는다
+function lessonChecklist(mod, trackId = null) {
+    const texts = trackId ? trackLessonTexts(mod, trackId) : [...Object.values(mod.tabContents || {}), mod.content];
+    const lines = texts.filter(Boolean).flatMap(text => String(text).split('\n'));
     const start = lines.findIndex(line => /^#{1,4}\s.*학습 후 체크리스트/.test(line));
     if (start === -1) return [];
     const end = lines.findIndex((line, index) => index > start && /^#{1,4}\s/.test(line));
@@ -222,8 +233,9 @@ function lessonChecklist(mod) {
         .map(item => item.replace(/<[^>]+>/g, '').replace(/\s*\(다시 보기:[^)]*\)\s*$/, '').trim());
 }
 
-function lessonQuestionCount(mod) {
-    return (String(mod.tabContents?.assessment || '').match(/^#{2,4}\s*문제\s*\d+/gm) || []).length;
+// 그 갈래 문제은행 탭(학습이해도·심화이해도)의 문항 수
+function lessonQuestionCount(mod, trackId = 'basic') {
+    return (String(mod.tabContents?.[lessonTrack(trackId).bank] || '').match(/^#{2,4}\s*문제\s*\d+/gm) || []).length;
 }
 
 /* ---------- 슬라이드를 차시에 나누기 ---------- */
@@ -264,24 +276,26 @@ function sessionSlideGroups(sessions, slides) {
     return sessions.map((session, index) => slides.filter(slide => placed.get(slide) === index));
 }
 
-// 교수안 하나를 차시 산출물로 나누는 데 필요한 값을 모은다. 교수안이 없으면 null
-function gyosuanSessionPlan(mod) {
-    const flow = gyosuanFlow(mod);
+// 그 갈래의 교수안 하나를 차시 산출물로 나누는 데 필요한 값을 모은다. 교수안이 없으면 null.
+// 체크리스트와 문제은행 문항 수도 그 갈래의 탭에서 센다(기본학습 교수안은 학습이해도, 심화학습 교수안은 심화이해도)
+function gyosuanSessionPlan(mod, trackId = 'basic') {
+    const flow = gyosuanFlow(mod, trackId);
     if (!flow.length) return null;
-    const docMd = mod.gyosuan.docMd;
+    const gyosuan = gyosuanOf(mod, trackId);
+    const docMd = gyosuan.docMd;
     const front = gyosuanFront(docMd);
     const title = front['주제'] || mod.title; // 완성 MD로 만든 교수안은 차시 이름과 주제가 다를 수 있다
     const modules = [{ title, minutes: flow.reduce((sum, step) => sum + step.minutes, 0), flow }];
     const sessions = splitSessions(modules);
-    const contentSlides = parseDeckSlides(mod.gyosuan.deckMd).filter(slide => !isFrameSlide(slide));
+    const contentSlides = parseDeckSlides(gyosuan.deckMd).filter(slide => !isFrameSlide(slide));
     return {
         mod, title, modules, sessions, front,
         overview: gyosuanOverviewRows(docMd),
         objectives: gyosuanBullets(docMd, '학습 목표'),
         assessment: gyosuanBullets(docMd, '평가·체크포인트'),
         notes: gyosuanBullets(docMd, '강사 유의사항'),
-        checklist: lessonChecklist(mod),
-        questions: lessonQuestionCount(mod),
+        checklist: lessonChecklist(mod, trackId),
+        questions: lessonQuestionCount(mod, trackId),
         slides: sessionSlideGroups(sessions, contentSlides)
     };
 }
@@ -426,8 +440,8 @@ function sessionFrontLines(plan, topic, extra = []) {
         .concat(['date', 'status'].filter(key => front[key]).map(key => `${key}: ${front[key]}`), ['---', '']);
 }
 
-function gyosuanSessionsMd(mod) {
-    const plan = gyosuanSessionPlan(mod);
+function gyosuanSessionsMd(mod, trackId = 'basic') {
+    const plan = gyosuanSessionPlan(mod, trackId);
     if (!plan) return '';
     return [
         ...sessionFrontLines(plan, `${plan.title} (차시별 교수안)`, [`소요: ${plan.sessions.length}차시`]),
@@ -437,8 +451,8 @@ function gyosuanSessionsMd(mod) {
 }
 
 // 차시 하나의 교수안 (HTML 내보내기에 내장)
-function gyosuanSessionPlanMd(mod, index) {
-    const plan = gyosuanSessionPlan(mod);
+function gyosuanSessionPlanMd(mod, index, trackId = 'basic') {
+    const plan = gyosuanSessionPlan(mod, trackId);
     return plan?.sessions[index] ? sessionPlanLines(plan, index).join('\n') : '';
 }
 
@@ -523,13 +537,13 @@ function sessionDeckLines(plan, index) {
 }
 
 // 스튜디오가 한 차시를 덱으로 여는 데 쓰는 목록과 편성안
-function gyosuanSessionList(mod) {
-    const plan = gyosuanSessionPlan(mod);
+function gyosuanSessionList(mod, trackId = 'basic') {
+    const plan = gyosuanSessionPlan(mod, trackId);
     return plan ? plan.sessions.map((session, index) => ({ index, title: sessionTitle(plan.modules, session), minutes: session.minutes })) : [];
 }
 
-function gyosuanSessionDeckMd(mod, index) {
-    const plan = gyosuanSessionPlan(mod);
+function gyosuanSessionDeckMd(mod, index, trackId = 'basic') {
+    const plan = gyosuanSessionPlan(mod, trackId);
     if (!plan?.sessions[index]) return '';
     const title = sessionTitle(plan.modules, plan.sessions[index]);
     return [
@@ -540,8 +554,8 @@ function gyosuanSessionDeckMd(mod, index) {
 }
 
 // 차시마다 슬라이드 번호를 1번부터 다시 매긴 편성안을 한 파일로 묶는다
-function gyosuanSessionDecksMd(mod) {
-    const plan = gyosuanSessionPlan(mod);
+function gyosuanSessionDecksMd(mod, trackId = 'basic') {
+    const plan = gyosuanSessionPlan(mod, trackId);
     if (!plan) return '';
     return [
         ...sessionFrontLines(plan, `${plan.title} (차시별 슬라이드)`),
@@ -557,27 +571,31 @@ function downloadMd(md, name) {
     URL.revokeObjectURL(a.href);
 }
 
-// 고른 값은 "doc:차시 번호" 또는 "deck:차시 번호"다
-window.downloadGyosuanSession = function (moduleId, picked) {
+// 내려받는 갈래 파일 이름의 꼬리: 기본학습은 예전과 같고 심화학습은 '심화'를 붙인다
+const sessionFileTag = trackId => (lessonTrack(trackId).id === LESSON_TRACKS[0].id ? '' : '심화');
+
+// 고른 값은 "doc:차시 번호" 또는 "deck:차시 번호"다. trackId: 교수안 화면에서 고른 갈래
+window.downloadGyosuanSession = function (moduleId, picked, trackId = 'basic') {
     const mod = getEditingModule(moduleId);
     const [kind, index] = String(picked).split(':');
     const deck = kind === 'deck';
-    const md = mod && (deck ? gyosuanSessionDeckMd(mod, Number(index)) : gyosuanSessionPlanMd(mod, Number(index)));
+    const md = mod && (deck ? gyosuanSessionDeckMd(mod, Number(index), trackId) : gyosuanSessionPlanMd(mod, Number(index), trackId));
     if (!md) return window.showAlert('차시를 찾지 못했습니다. 교수안을 확인해주세요.');
-    downloadMd(resolveGyosuanImages(md, mod), `${lessonFileBase(mod)}_${Number(index) + 1}차시_${deck ? '편성안' : '교수안'}`);
+    downloadMd(resolveGyosuanImages(md, mod, trackId), `${lessonFileBase(mod)}_${Number(index) + 1}차시_${sessionFileTag(trackId)}${deck ? '편성안' : '교수안'}`);
 };
 
-window.downloadGyosuanSessionDecks = function (moduleId) {
+window.downloadGyosuanSessionDecks = function (moduleId, trackId = 'basic') {
     const mod = getEditingModule(moduleId);
-    if (!mod?.gyosuan?.deckMd) return window.showAlert('먼저 슬라이드 편성안을 생성해주세요.');
-    const md = gyosuanSessionDecksMd(mod);
-    if (!md) return window.showAlert('먼저 교수안을 생성해주세요.');
-    downloadMd(resolveGyosuanImages(md, mod), `${lessonFileBase(mod)}_차시별편성안`);
+    const label = lessonTrack(trackId).label;
+    if (!gyosuanOf(mod, trackId)?.deckMd) return window.showAlert(`먼저 ${label} 슬라이드 편성안을 생성해주세요.`);
+    const md = gyosuanSessionDecksMd(mod, trackId);
+    if (!md) return window.showAlert(`먼저 ${label} 교수안을 생성해주세요.`);
+    downloadMd(resolveGyosuanImages(md, mod, trackId), `${lessonFileBase(mod)}_${sessionFileTag(trackId)}차시별편성안`);
 };
 
-window.downloadGyosuanSessions = function (moduleId) {
+window.downloadGyosuanSessions = function (moduleId, trackId = 'basic') {
     const mod = getEditingModule(moduleId);
-    const md = mod && gyosuanSessionsMd(mod);
-    if (!md) return window.showAlert('먼저 교수안을 생성해주세요.');
-    downloadMd(resolveGyosuanImages(md, mod), `${lessonFileBase(mod)}_차시별교수안`);
+    const md = mod && gyosuanSessionsMd(mod, trackId);
+    if (!md) return window.showAlert(`먼저 ${lessonTrack(trackId).label} 교수안을 생성해주세요.`);
+    downloadMd(resolveGyosuanImages(md, mod, trackId), `${lessonFileBase(mod)}_${sessionFileTag(trackId)}차시별교수안`);
 };

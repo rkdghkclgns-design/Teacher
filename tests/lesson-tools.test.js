@@ -4,6 +4,7 @@ const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
 const assert = require('assert');
+const { loadLessonTracks } = require('./lesson-tracks');
 const root = path.join(__dirname, '..', 'js') + path.sep;
 const FILES = ['kbuilder/ncs-catalog.js', 'lesson-lint.js', 'ai-routing.js', 'course-ncs.js', 'course-ncs-ref.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'course-elements.js', 'course-list.js', 'lesson-ncs-pop.js', 'course-art.js', 'course-illustrations.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js', 'course-refs.js', 'filename-convention.js'];
 
@@ -34,6 +35,7 @@ function makeContext(callGemini, keys = { gemini: '' }) {
     };
     ctx.window = ctx;
     vm.createContext(ctx);
+    loadLessonTracks(ctx, { tabs: true }); // 탭 목록과 갈래(기본학습·심화학습) 정의
     FILES.forEach(file => vm.runInContext(fs.readFileSync(root + file, 'utf8'), ctx));
     return ctx;
 }
@@ -615,7 +617,15 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
         assert.strictEqual(items[0].lesson, mod);
         assert.strictEqual(items[0].reason, '문제은행 수정 전');
         assert.strictEqual(items[0].content, QB);
+        assert.strictEqual(items[0].title, '차시 · 학습이해도');
         assert.strictEqual(mod.tabContents.assessment, next);
+        assert.ok(mod.history[0].note.startsWith('기본학습 문제은행 수정'), mod.history[0].note);
+        // 심화학습 문제은행은 심화이해도 탭에 쓰고 그 탭으로 남긴다
+        vm.runInContext("_qbank = { moduleId: 1, track: 'adv', busy: false };", local);
+        await vm.runInContext('commitQbankMarkdown', local)(mod, '### 문제 1. 심화 문항\n\n내용');
+        assert.deepStrictEqual([items[1].tabId, items[1].title, items[1].content], ['advAssessment', '차시 · 심화이해도', '']);
+        assert.deepStrictEqual([mod.tabContents.assessment, mod.tabContents.advAssessment], [next, '### 문제 1. 심화 문항\n\n내용'], '기본학습 문제은행은 그대로');
+        assert.ok(mod.history[0].note.startsWith('심화학습 문제은행 수정'), mod.history[0].note);
     });
 
     console.log('ALL PASSED');

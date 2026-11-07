@@ -853,6 +853,43 @@ test('F27 다시 연결: 폴더 저장본을 읽지 못하면 사본을 남길 �
     assert.deepStrictEqual(dir.shared.log, [], '덮어쓰지도 사본을 만들지도 않는다');
 });
 
+test('F28 기본학습·심화학습 갈래: 심화학습 교수안(gyosuanAdv)의 그림도 그림 파일로 따로 담겨 다른 브라우저에서 열면 돌아오고 심화이해도 탭도 그대로다. 예전 차시는 심화이해도가 빈 채로 열리고, 폴더의 심화학습 교수안도 기본학습 교수안과 같은 검사를 받는다', async () => {
+    const src = makeApp({ mode: 'separate' });
+    const key = dataUrl => src.ctx.window.backupImageKey(dataUrl);
+    const adv = { docMd: '# 심화 교수안 <img src="local:g">', deckMd: '# 심화 편성안', images: { g: PNG2 }, sessionDecks: { 0: '<p>심화 1차시</p>' } };
+    const srcState = { courseTitle: '원본', subjects: [{ id: 's1', title: '교과', lessons: [
+        { id: 1, title: '새 차시', content: '글', images: { a: PNG }, gyosuan: { docMd: '# 기본 교수안', images: {} }, gyosuanAdv: adv,
+            tabContents: { basicLearn: '기본 글 <img src="local:a">', basicPrac: '기본 실습', advLearn: '심화 글', advPrac: '심화 실습', assessment: '### 문제 1. 기본', advAssessment: '### 문제 1. 심화' } },
+        { id: 2, title: '예전 차시', content: '옛 글', images: {}, tabContents: { basicLearn: '옛 기본', basicPrac: null, advLearn: null, advPrac: null, assessment: '### 문제 1. 옛' } }
+    ] }] };
+    src.exec(`globalState = sanitizeState(${JSON.stringify(srcState)}); currentSubjectId = 's1'; courseData = globalState.subjects[0].lessons;`);
+    const a = fakeDir('A');
+    await connect(src.ctx, a);
+    const yaml = await readText(a, 'save_data.yaml');
+    assert.ok(a.shared.log.includes(`그림/${key(PNG2)}.png`), a.shared.log.join(','));
+    assert.ok(yaml.includes(`teacher-image:${key(PNG2)}`) && !yaml.includes(PNG2.split(',')[1]), '저장본에는 그림 이름만');
+    // 다른 브라우저에서 같은 폴더를 연다
+    const { ctx, exec } = makeApp({ mode: 'inline' });
+    seed(exec, { title: '지금 작업' });
+    ctx.showDirectoryPicker = async () => a;
+    await ctx.loadFromProjectFolder();
+    const [fresh, old] = plain(exec('globalState.subjects[0].lessons'));
+    assert.deepStrictEqual(fresh.gyosuanAdv, adv, '심화학습 교수안이 그림까지 돌아온다');
+    assert.deepStrictEqual([fresh.gyosuan.docMd, fresh.tabContents.advAssessment], ['# 기본 교수안', '### 문제 1. 심화']);
+    assert.ok(!old.tabContents.advAssessment && old.tabContents.assessment === '### 문제 1. 옛' && !('gyosuanAdv' in old), '예전 차시는 심화이해도가 빈 채로 열린다');
+    // 손으로 고친 폴더 저장본: 심화학습 교수안도 기본학습 교수안과 같은 규칙으로 고른다
+    const b = fakeDir('B');
+    const ref = `teacher-image:${key(PNG)}`;
+    const junk = { docMd: 5, deckMd: '# 편성안', deckHtml: {}, images: { ok: ref, 'bad key!': ref }, sessionDecks: { 0: '<p>1차시</p>', 1: 7 } };
+    await putFile(b, `그림/${key(PNG)}.png`, imageBytes(PNG));
+    await putFile(b, 'save_data.yaml', `state:\n  courseTitle: "폴더"\n  subjects: ${JSON.stringify([{ id: 's9', title: '폴더 교과', lessons: [{ id: 3, title: '고친 차시', content: '글', gyosuan: junk, gyosuanAdv: junk }] }])}\n`);
+    ctx.showDirectoryPicker = async () => b;
+    await ctx.loadFromProjectFolder();
+    const fixed = plain(exec('globalState.subjects[0].lessons[0]'));
+    assert.deepStrictEqual(fixed.gyosuanAdv, { docMd: null, deckMd: '# 편성안', deckHtml: null, images: { ok: PNG }, sessionDecks: { 0: '<p>1차시</p>' } });
+    assert.deepStrictEqual(fixed.gyosuanAdv, fixed.gyosuan, '두 갈래를 같은 규칙으로');
+});
+
 (async () => {
     let failed = 0;
     for (const { name, fn } of cases) {

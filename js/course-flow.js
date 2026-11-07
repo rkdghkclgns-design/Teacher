@@ -9,15 +9,19 @@ let _replanRun = 0;
 
 /* ---------- 일괄 생성 대기열 ---------- */
 // 업로드한 MD는 탭 생성이 읽지 않으므로 그 차시는 대기열에서 빼고 안내한다 (차시 카드의 '교안 생성'이 읽는다)
-// withGyosuan: 탭이 다 찼어도 교수안이나 문제은행이 빈 차시를 넣는다
+// withGyosuan: 탭이 다 찼어도 갈래(기본학습·심화학습)의 교수안이나 문제은행이 빈 차시를 넣는다
 // overwrite: 내용이 있어도 모두 다시 만든다
 function pendingLessons(subjects, withGyosuan = false, overwrite = false) {
     return subjects.flatMap(subject => (subject.lessons || [])
-        .filter(lesson => lesson.id !== 'mainQuest' && (overwrite || lessonMissingTabs(lesson).length || (withGyosuan && (lessonNeedsGyosuan(lesson) || questionBankGaps(lesson).length))))
+        .filter(lesson => lesson.id !== 'mainQuest' && (overwrite || lessonMissingTabs(lesson).length || (withGyosuan && (gyosuanBuildCount(lesson) > 0 || lessonQuestionGaps(lesson) > 0))))
         .map(lesson => ({ subject, lessonId: lesson.id, title: lesson.title, uploaded: !!lesson.uploadedMdContent })));
 }
 
-const lessonNeedsGyosuan = lesson => !lesson.gyosuan?.docMd;
+// 그 갈래의 교수안을 만들어야 하는가: 교수안이 없고, 학습·실습 탭에 글이 있거나 이번에 그 탭을 만든다(빈 탭을 먼저 만든다, lesson-pipeline.js trackTabsMissing)
+const lessonNeedsGyosuan = (lesson, trackId = 'basic') => !gyosuanOf(lesson, trackId)?.docMd && (trackHasContent(lesson, trackId) || trackTabsMissing(lesson, trackId));
+
+// 만들 교수안 수(갈래마다 하나). 미리 보기와 일괄 생성 대기열이 센다
+const gyosuanBuildCount = lesson => LESSON_TRACKS.filter(track => lessonNeedsGyosuan(lesson, track.id)).length;
 const runnableLessons = (subjects, withGyosuan = false, overwrite = false) => pendingLessons(subjects, withGyosuan, overwrite).filter(item => !item.uploaded);
 
 async function attemptSafely(attempt, item, tryNumber) {
@@ -86,7 +90,7 @@ async function runLessonQueue(queue, attempt, { isStopped = () => false, onLesso
 }
 
 // 비울 것이 하나라도 있는 차시만 휴지통에 넣는다(아무것도 없는 차시의 빈 사본이 휴지통을 채우지 않게)
-const lessonHasRewriteContent = lesson => lessonHasContent(lesson) || !!lesson.gyosuan
+const lessonHasRewriteContent = lesson => lessonHasContent(lesson) || LESSON_TRACKS.some(track => !!lesson[track.field])
     || Object.keys(lesson.images || {}).length > 0 || (lesson.illustrations || []).length > 0;
 
 // 덮어쓰기: 비우기 직전에 차시를 통째로 휴지통에 넣고(30일 동안 되살린다. 작업 기록 칸은 쓰지 않는다) 빈 탭을 채우는 같은 경로로 다시 만든다
@@ -102,7 +106,7 @@ async function clearLessonForRewrite(mod, withGyosuan, subjectId, batch = '') {
     const lockedByTab = Object.fromEntries(LESSON_TABS.map(tab => [tab.id, lockedSectionBlocks(mod, tab.id)]));
     const redraw = globalState.courseDesign?.autoArt ? { illustrations: [], artAutoDone: false } : {};
     const note = trashed ? '일괄 생성으로 내용을 다시 만듦(이전 내용은 휴지통)' : '일괄 생성으로 내용을 다시 만듦';
-    const emptied = { content: null, tabContents: {}, ...redraw, ...(withGyosuan ? { gyosuan: null } : {}) };
+    const emptied = { content: null, tabContents: {}, ...redraw, ...(withGyosuan ? Object.fromEntries(LESSON_TRACKS.map(track => [track.field, null])) : {}) };
     const isMap = value => !!value && typeof value === 'object' && !Array.isArray(value);
     const hasImages = !!mod.images && typeof mod.images === 'object';
     const motions = isMap(mod.imageMotions) ? { imageMotions: { ...mod.imageMotions } } : {};
@@ -156,7 +160,21 @@ async function attemptLesson(item, run) {
     }
 }
 
-// 차시 하나의 빈 탭, 보강(삽화·NCS), 교수안·슬라이드와 문제은행을 차례로 만든다(attemptLesson)
+// 갈래마다(기본학습 → 심화학습) 빠진 교수안·슬라이드를 만든다. 실패하거나 멈추면 그 결과를 돌려주고 남은 갈래는 만들지 않는다
+async function fillRunGyosuan(lessonId, run) {
+    let partial = false;
+    for (const track of LESSON_TRACKS) {
+        if (run.stopped) return { ok: false, stopped: true, partial };
+        const mod = getEditingModule(lessonId);
+        if (!mod || !lessonNeedsGyosuan(mod, track.id)) continue;
+        const result = await runGyosuanGeneration(lessonId, { track: track.id, onStatus: setLessonRunStatus });
+        partial = partial || !!result.partial;
+        if (!result.ok) return { ...result, partial };
+    }
+    return { ok: true, partial };
+}
+
+// 차시 하나의 빈 탭, 보강(삽화·NCS), 갈래마다 교수안·슬라이드와 두 문제은행을 차례로 만든다(attemptLesson)
 async function fillRunLesson(item, run, key) {
     window.viewModule(item.lessonId);
     const tabs = await fillMissingTabs(item.lessonId, {
@@ -169,8 +187,7 @@ async function fillRunLesson(item, run, key) {
     await runLessonExtras(item.lessonId, { isStopped: () => run.stopped, onStatus: setLessonRunStatus });
     if (run.stopped) return { ...tabs, ok: false, stopped: true };
     if (!run.withGyosuan) return tabs;
-    const needsGyosuan = lessonNeedsGyosuan(getEditingModule(item.lessonId));
-    const gyosuan = needsGyosuan ? await runGyosuanGeneration(item.lessonId, { onStatus: setLessonRunStatus }) : { ok: true };
+    const gyosuan = await fillRunGyosuan(item.lessonId, run);
     const partial = !!(tabs.partial || gyosuan.partial);
     const short = tabs.short ? { short: true, readMinutes: tabs.readMinutes, ...(tabs.shortTabs ? { shortTabs: tabs.shortTabs } : {}) } : {}; // 학습 탭이 낭독 목표에 못 미쳤으면 보고에 남긴다
     if (!gyosuan.ok) return { ok: false, stopped: gyosuan.stopped, error: gyosuan.error, partial, ...short };
@@ -228,7 +245,7 @@ function lessonRunIntroHtml(queue, uploaded, withGyosuan = false) {
         <div id="lesson-run-estimate"></div>
         <label class="flex items-start gap-2 text-xs text-textLight">
             <input id="lesson-run-gyosuan" type="checkbox" ${withGyosuan ? 'checked' : ''}>
-            <span>교수안, 슬라이드, 문제은행까지 만들기<span class="block text-[0.6875rem] text-textMuted">빠진 항목만 만듭니다. 차시마다 호출이 늘고, 슬라이드 자동 이미지를 켜 두면 이미지 비용도 듭니다.</span></span>
+            <span>교수안, 슬라이드, 문제은행까지 만들기<span class="block text-[0.6875rem] text-textMuted">기본학습과 심화학습을 따로 만들고 빠진 항목만 만듭니다. 차시마다 호출이 늘고, 슬라이드 자동 이미지를 켜 두면 이미지 비용도 듭니다.</span></span>
         </label>
         <label class="flex items-start gap-2 text-xs text-textLight">
             <input id="lesson-run-overwrite" type="checkbox">
@@ -330,8 +347,8 @@ function lessonRunWork(queue, { withGyosuan, overwrite, art, genOptions }) {
         const tabs = overwrite ? LESSON_TABS.map(tab => tab.id) : lessonMissingTabs(lesson); // 탭마다 그림 자리 수가 달라 탭 id로 센다
         return lessonWork({
             tabs,
-            gyosuan: withGyosuan && (overwrite || lessonNeedsGyosuan(lesson)),
-            qbank: withGyosuan && (overwrite || questionBankGaps(lesson).length > 0),
+            gyosuan: withGyosuan ? (overwrite ? LESSON_TRACKS.length : gyosuanBuildCount(lesson)) : 0, // 갈래마다 교수안을 하나씩 만든다
+            qbank: withGyosuan ? qbankFillCount(lesson, overwrite) : 0,
             art: art && tabs.length > 0,
             volumeMinutes: lessonVolumeMinutes(lesson), // 학습 탭의 낭독 목표(차시 시간과 관계없이 480분)
             practiceMinutes: lessonPracticeWork(lesson, genOptions)
@@ -372,7 +389,7 @@ function rewriteConfirmText(scope, withGyosuan, art = false) {
     const queue = runnableLessons(runSubjects(scope), withGyosuan, true);
     const lessonOf = item => item.subject.lessons.find(lesson => lesson.id === item.lessonId);
     const kept = queue.filter(item => lessonOf(item) && lessonHasRewriteContent(lessonOf(item))).length;
-    const edited = withGyosuan ? queue.filter(item => lessonOf(item)?.gyosuan && gyosuanHasScreenEdits(lessonOf(item).gyosuan)).length : 0;
+    const edited = withGyosuan ? queue.filter(item => LESSON_TRACKS.some(track => lessonOf(item)?.[track.field] && gyosuanHasScreenEdits(lessonOf(item)[track.field]))).length : 0;
     const erase = withGyosuan
         ? `차시 ${queue.length}개의 교안 탭과 교수안·슬라이드를 지우고 다시 만듭니다.`
         : `차시 ${queue.length}개의 교안 탭을 지우고 다시 만듭니다. 교수안·슬라이드는 그대로 둡니다.`;
@@ -437,7 +454,7 @@ async function startLessonRun(scope, button = null) {
 
 /* ---------- 블록 다시 설계 ---------- */
 function lessonHasContent(lesson) {
-    return LESSON_TABS.some(tab => lesson.tabContents?.[tab.id]) || !!lesson.content || !!lesson.gyosuan?.docMd || !!lesson.uploadedMdContent;
+    return LESSON_TABS.some(tab => lesson.tabContents?.[tab.id]) || !!lesson.content || LESSON_TRACKS.some(track => !!lesson[track.field]?.docMd) || !!lesson.uploadedMdContent;
 }
 
 function subjectPlanHours(subject) {
@@ -558,13 +575,21 @@ async function runSubjectReplan(button, subject) {
 /* ---------- 교수안·편성안 묶음 ---------- */
 const stripFrontmatter = md => String(md || '').replace(/^---\r?\n[\s\S]*?\r?\n---\s*/, '').trim();
 
-// ZIP에 넣을 차시의 교수안·편성안 파일
+// ZIP에 넣을 차시의 교수안·편성안 파일. 번호는 탭 파일(01_기본학습 … 06_심화이해도) 다음이고, 심화학습 교수안은 '심화'를 붙인다.
+// 이름이 교수안·편성안으로 끝나 '내보낸 교안 다시 불러오기'가 교안 탭으로 넣지 않는다(output-import.js OUTPUT_GYOSUAN_NAME)
+const GYOSUAN_ZIP_FILES = {
+    basic: { doc: '07_교수안.md', deck: '08_슬라이드편성안.md' },
+    adv: { doc: '09_심화교수안.md', deck: '10_심화슬라이드편성안.md' }
+};
 function lessonGyosuanFiles(mod) {
-    const { docMd, deckMd } = mod?.gyosuan || {};
-    return [
-        ...(docMd ? [{ name: '06_교수안.md', content: docMd }] : []),
-        ...(deckMd ? [{ name: '07_슬라이드편성안.md', content: deckMd }] : [])
-    ];
+    return LESSON_TRACKS.flatMap(track => {
+        const { docMd, deckMd } = mod?.[track.field] || {};
+        const names = GYOSUAN_ZIP_FILES[track.id];
+        return [
+            ...(docMd ? [{ name: names.doc, content: docMd }] : []),
+            ...(deckMd ? [{ name: names.deck, content: deckMd }] : [])
+        ];
+    });
 }
 
 // 이미지 data URL을 ZIP용 확장자와 base64 본문으로 나눈다. svg+xml도 읽고, base64가 아니면 본문이 비어 건너뛰게 한다
@@ -573,16 +598,22 @@ function zipImageParts(dataUrl) {
     return { ext, data };
 }
 
+// 교과의 교수안·편성안을 차시 순서로 묶는다. 차시마다 기본학습 교수안 다음에 심화학습 교수안이다
 function subjectBundleMd(subject) {
     const lessons = (subject.lessons || []).filter(lesson => lesson.id !== 'mainQuest');
-    const ready = lessons.filter(lesson => lesson.gyosuan?.docMd || lesson.gyosuan?.deckMd);
+    const hasPlan = (lesson, track) => !!(lesson[track.field]?.docMd || lesson[track.field]?.deckMd);
+    const ready = lessons.filter(lesson => LESSON_TRACKS.some(track => hasPlan(lesson, track)));
     if (!ready.length) return '';
-    const missing = lessons.filter(lesson => !ready.includes(lesson));
-    const parts = ready.flatMap(lesson => [lesson.gyosuan.docMd, lesson.gyosuan.deckMd].filter(Boolean).map(stripFrontmatter));
+    // 교안이 있거나 교수안이 하나도 없는 차시에서 아직 없는 갈래의 교수안
+    const missing = lessons.flatMap(lesson => LESSON_TRACKS
+        .filter(track => !hasPlan(lesson, track) && (trackHasContent(lesson, track.id) || (!ready.includes(lesson) && track.id === LESSON_TRACKS[0].id)))
+        .map(track => `- ${lesson.title} · ${track.label}`));
+    const parts = ready.flatMap(lesson => LESSON_TRACKS.flatMap(track => [lesson[track.field]?.docMd, lesson[track.field]?.deckMd]).filter(Boolean).map(stripFrontmatter));
+    const titles = lesson => LESSON_TRACKS.filter(track => hasPlan(lesson, track)).map(track => track.label).join('·');
     return [
         `# 교수안·슬라이드 편성안 모음 - ${subject.title}`, '',
-        '## 차시', '', ...ready.map((lesson, i) => `${i + 1}. ${lesson.title}`), '',
-        ...(missing.length ? ['## 교수안이 아직 없는 차시', '', ...missing.map(lesson => `- ${lesson.title}`), ''] : []),
+        '## 차시', '', ...ready.map((lesson, i) => `${i + 1}. ${lesson.title} (${titles(lesson)})`), '',
+        ...(missing.length ? ['## 교수안이 아직 없는 차시', '', ...missing, ''] : []),
         ...parts.flatMap(part => ['---', '', part, ''])
     ].join('\n');
 }

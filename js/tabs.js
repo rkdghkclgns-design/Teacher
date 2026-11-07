@@ -1,7 +1,8 @@
-// tabs.js — 5탭 에디터 시스템
+// tabs.js — 6탭 에디터 시스템
 
 let currentLessonTab = 'basicLearn';
 let _lessonPanel = null; // 탭 대신 보고 있는 항목: gyosuan | slides | qbank
+let _lessonTrack = 'basic'; // 교수안·슬라이드·문제은행에서 고른 갈래(data.js LESSON_TRACKS). 페이지를 연 동안 마지막 선택을 기억한다
 let _suppressTabAlert = false;
 let _tabGenStop = false; // 중단을 누르면 받고 있는 단락까지만 저장하고 다음 단락과 다음 탭을 건너뛴다
 let _tabGenAbort = null; // 중지를 누르면 그림 호출과 다시 보내려고 기다리던 호출도 끊는다. 생성을 시작할 때마다 새로 만든다(resetTabGenStop)
@@ -13,14 +14,29 @@ const TAB_COLORS = {
     emerald: { active: 'bg-emerald-500 border-emerald-500 text-white shadow-md', inactive: 'bg-gray-100 text-gray-500 border-transparent hover:bg-gray-200' },
     amber:   { active: 'bg-amber-500 border-amber-500 text-white shadow-md', inactive: 'bg-gray-100 text-gray-500 border-transparent hover:bg-gray-200' },
     red:     { active: 'bg-red-500 border-red-500 text-white shadow-md', inactive: 'bg-gray-100 text-gray-500 border-transparent hover:bg-gray-200' },
-    violet:  { active: 'bg-violet-500 border-violet-500 text-white shadow-md', inactive: 'bg-gray-100 text-gray-500 border-transparent hover:bg-gray-200' }
+    violet:  { active: 'bg-violet-500 border-violet-500 text-white shadow-md', inactive: 'bg-gray-100 text-gray-500 border-transparent hover:bg-gray-200' },
+    fuchsia: { active: 'bg-fuchsia-500 border-fuchsia-500 text-white shadow-md', inactive: 'bg-gray-100 text-gray-500 border-transparent hover:bg-gray-200' }
 };
 
-// 교안 탭 뒤에 이어지는 항목. 교수안과 슬라이드는 한 번에 만들어진다
+// 갈래(기본학습·심화학습)마다 그 항목이 있는가: 교수안 문서, 슬라이드(편성안·화면 편집본), 문제은행(목표가 붙은 문항)
+const PANEL_TRACK_DONE = {
+    gyosuan: (mod, track) => !!gyosuanOf(mod, track.id)?.docMd,
+    slides: (mod, track) => !!(gyosuanOf(mod, track.id)?.deckMd || gyosuanOf(mod, track.id)?.deckHtml),
+    qbank: (mod, track) => qbankQuestions(mod, track.id).some(question => question.objective)
+};
+
+// 탐색줄 점: 학습 내용이 있는 갈래가 모두 그 항목을 가졌으면 켠다. 내용이 있는 갈래가 없으면(완성 MD로 만든 교수안만 있는 차시 등) 항목이 하나라도 있으면 켠다
+function lessonPanelDone(mod, panelId) {
+    const has = track => PANEL_TRACK_DONE[panelId](mod, track);
+    const filled = LESSON_TRACKS.filter(track => trackHasContent(mod, track.id));
+    return filled.length ? filled.every(has) : LESSON_TRACKS.some(has);
+}
+
+// 교안 탭 뒤에 이어지는 항목. 교수안과 슬라이드는 갈래마다 한 번에 만들어진다(전체 생성의 단계: lesson-pipeline.js)
 const LESSON_PANELS = [
-    { id: 'gyosuan', step: 'gyosuan', label: '교수안', icon: 'ph-chalkboard-teacher', color: 'violet', done: mod => !!mod.gyosuan?.docMd },
-    { id: 'slides', step: 'gyosuan', label: '슬라이드', icon: 'ph-presentation-chart', color: 'blue', done: mod => !!(mod.gyosuan?.deckMd || mod.gyosuan?.deckHtml) },
-    { id: 'qbank', step: 'qbank', label: '문제은행', icon: 'ph-list-checks', color: 'emerald', done: mod => qbankQuestions(mod).some(question => question.objective) }
+    { id: 'gyosuan', steps: ['gyosuan', 'gyosuanAdv'], label: '교수안', icon: 'ph-chalkboard-teacher', color: 'violet', done: mod => lessonPanelDone(mod, 'gyosuan') },
+    { id: 'slides', steps: ['gyosuan', 'gyosuanAdv'], label: '슬라이드', icon: 'ph-presentation-chart', color: 'blue', done: mod => lessonPanelDone(mod, 'slides') },
+    { id: 'qbank', steps: ['qbank'], label: '문제은행', icon: 'ph-list-checks', color: 'emerald', done: mod => lessonPanelDone(mod, 'qbank') }
 ];
 
 function lessonNavDot(done, running) {
@@ -30,13 +46,57 @@ function lessonNavDot(done, running) {
 
 function lessonPanelButton(mod, panel) {
     const colors = TAB_COLORS[panel.color];
+    const running = panel.steps.some(step => !!window.isPipelineStep?.(step, mod.id));
     return `<button onclick="showLessonPanel('${panel.id}')"
             class="px-3 py-2 text-[0.75rem] font-bold rounded-t-lg border-b-2 transition-all cursor-pointer select-none flex items-center gap-1.5 whitespace-nowrap ${_lessonPanel === panel.id ? colors.active : colors.inactive}">
             <i class="ph-bold ${panel.icon} text-sm"></i>
             ${panel.label}
-            ${lessonNavDot(panel.done(mod), !!window.isPipelineStep?.(panel.step, mod.id))}
+            ${lessonNavDot(panel.done(mod), running)}
         </button>`;
 }
+
+/* ---------- 기본학습 | 심화학습 고르기 (교수안·슬라이드·문제은행 위) ---------- */
+// 지금 고른 갈래 id
+window.lessonPanelTrack = () => _lessonTrack;
+
+const TRACK_SWITCH_ITEM = { gyosuan: '교수안이', slides: '슬라이드가', qbank: '문항이' };
+const TRACK_SWITCH_STYLE = {
+    light: { box: 'bg-gray-100 border-gray-200', on: 'bg-white text-gray-900 shadow-sm', off: 'text-gray-500 hover:text-gray-800', muted: 'text-gray-400' },
+    dark: { box: 'bg-black/30 border-white/10', on: 'bg-accent text-white', off: 'text-textMuted hover:text-textLight', muted: 'text-textMuted' }
+};
+
+// 두 갈래 단추. 점은 그 갈래에 이 항목이 있다는 뜻이고, 학습·실습 탭이 비어 있는 갈래는 '교안 없음'을 붙인다
+// panelId: gyosuan | slides | qbank / theme: light(교수안·슬라이드) | dark(문제은행)
+function lessonTrackSwitchHtml(mod, panelId, theme = 'light') {
+    const style = TRACK_SWITCH_STYLE[theme] || TRACK_SWITCH_STYLE.light;
+    const item = TRACK_SWITCH_ITEM[panelId] || '항목이';
+    const label = id => LESSON_TABS.find(tab => tab.id === id)?.label || id;
+    const buttons = LESSON_TRACKS.map(track => {
+        const on = _lessonTrack === track.id;
+        const filled = trackHasContent(mod, track.id);
+        const done = !!PANEL_TRACK_DONE[panelId]?.(mod, track);
+        const tip = !filled ? `${label(track.learn)}·${label(track.practice)} 탭에 아직 교안이 없습니다` : `${track.label} ${item} ${done ? '있습니다' : '아직 없습니다'}`;
+        return `<button type="button" onclick="setLessonPanelTrack('${track.id}')" aria-pressed="${on ? 'true' : 'false'}" title="${escapeHtml(tip)}"
+            class="px-3 py-1 text-xs font-bold rounded-md flex items-center gap-1.5 transition-colors ${on ? style.on : style.off}">
+            ${escapeHtml(track.label)}${lessonNavDot(done, false)}${filled ? '' : `<span class="text-[0.6875rem] font-normal ${style.muted}">교안 없음</span>`}
+        </button>`;
+    }).join('');
+    return `<div class="lesson-track-switch inline-flex items-center gap-0.5 p-0.5 mb-3 rounded-lg border ${style.box}" role="group" aria-label="기본학습·심화학습 고르기">${buttons}</div>`;
+}
+
+// 갈래를 바꾸고 보고 있는 교수안·슬라이드·문제은행을 그 갈래로 다시 그린다. 열어 둔 문제은행에서 문항을 고치거나 만드는 중이면 바꾸지 않는다
+window.setLessonPanelTrack = function (trackId) {
+    const next = lessonTrack(trackId).id;
+    if (next === _lessonTrack) return;
+    if (window.qbankTrackLocked?.()) {
+        window.showToast?.('문항을 고치거나 만드는 중입니다. 저장하거나 취소한 뒤 바꿔 주세요.', 'warning');
+        return;
+    }
+    _lessonTrack = next;
+    if (window.switchQbankTrack?.(next)) return; // 열어 둔 문제은행은 그 자리에서 그 갈래로 다시 그린다(고른 목표·밴드 등은 그대로)
+    const mod = getEditingModule();
+    if (mod && _lessonPanel) renderEditor(mod); // 교수안·슬라이드(연 스튜디오도 닫고 그 갈래로)
+};
 
 // 탭이 없는 최종 평가(차시 목록의 카드로 만든 본문 하나). 기본학습 칸에 본문을 보이고 탭 단추·탭 생성은 두지 않는다(탭 생성은 본문을 버리고 새 탭을 만든다)
 const isTablessQuest = mod => mod?.id === 'mainQuest' && !mod.tabContents;
@@ -97,7 +157,7 @@ function applyLessonPanel(mod) {
     document.getElementById('lesson-practice-time')?.classList.toggle('hidden', !!_lessonPanel); // 실습 탭의 실습 시간 단추(course-design.js)
     document.getElementById('ai-command-bar')?.classList.toggle('hidden', !!_lessonPanel);
     document.getElementById('lesson-edit-hint')?.classList.toggle('hidden', !!_lessonPanel || !!window.lessonEditHintHidden?.());
-    if (_lessonPanel === 'qbank') window.openQuestionBank(mod.id, { inline: true });
+    if (_lessonPanel === 'qbank') window.openQuestionBank(mod.id, { inline: true, track: _lessonTrack });
 }
 
 // 보기/수정 전환 뒤에도 고른 항목만 보이게 한다
@@ -135,7 +195,7 @@ function latestTabMarkdown(mod, tabId, fallback) {
     return (mod.tabContents ? mod.tabContents[tabId] : mod.content) ?? fallback;
 }
 
-// 탭 글이 하나도 없는 차시(탭으로 나뉘기 전 옛 차시, 탭이 없는 최종 평가)의 본문(content). 이 본문은 기본학습 글이다.
+// 탭 글이 하나도 없는 차시(탭으로 나뉘기 전 옛 차시, 탭이 없는 최종 평가)의 본문(content). 이 본문은 기본학습 글이다(data.js trackHasContent도 같은 규칙).
 // 다른 탭에 글이 있으면 content는 그 탭들을 합친 글이라 기본학습이 아니다(비운 기본학습에 다른 탭 글을 보이거나, 고쳐서 옮겨 넣지 않게)
 function legacyLessonBody(mod) {
     if (!mod?.content) return '';
@@ -170,7 +230,7 @@ function tabSourceFor(mod, tabId) {
 function migrateMonolithicContent(mod) {
     if (mod && mod.content && !LESSON_TABS.some(tab => mod.tabContents?.[tab.id])) {
         if (!mod.tabContents) {
-            mod.tabContents = { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null };
+            mod.tabContents = { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null, advAssessment: null };
         }
         mod.tabContents.basicLearn = mod.content;
     }
@@ -194,13 +254,15 @@ function setTabMarkdown(mod, tabId, md) {
     mod.content = LESSON_TABS.map(tab => mod.tabContents[tab.id] || '').filter(Boolean).join('\n\n---\n\n');
 }
 
-// 차시 안에서 그림(local:그림 id)을 가리킬 수 있는 글: 합친 본문, 탭 글, 교수안·편성안(원문 칸에 붙여 넣은 그림은 mod.images에 있다),
+// 차시 안에서 그림(local:그림 id)을 가리킬 수 있는 글: 합친 본문, 탭 글, 두 갈래(기본학습·심화학습)의 교수안·편성안(원문 칸에 붙여 넣은 그림은 mod.images에 있다),
 // 슬라이드 화면 편집본, 부른 쪽이 더 주는 글(다시 만든 탭에 돌려 넣을 고정 섹션). 'local:'이 없는 글과 글이 아닌 값은 뺀다
 function lessonImageRefTexts(mod, extraTexts = []) {
     const isMap = value => !!value && typeof value === 'object';
-    const gyosuan = isMap(mod?.gyosuan) ? mod.gyosuan : {};
-    return [mod?.content, ...(isMap(mod?.tabContents) ? Object.values(mod.tabContents) : []), gyosuan.docMd, gyosuan.deckMd, gyosuan.deckHtml,
-        ...(isMap(gyosuan.sessionDecks) ? Object.values(gyosuan.sessionDecks) : []), ...(Array.isArray(extraTexts) ? extraTexts : [])]
+    const gyosuanTexts = LESSON_TRACKS.flatMap(track => {
+        const gyosuan = isMap(mod?.[track.field]) ? mod[track.field] : {};
+        return [gyosuan.docMd, gyosuan.deckMd, gyosuan.deckHtml, ...(isMap(gyosuan.sessionDecks) ? Object.values(gyosuan.sessionDecks) : [])];
+    });
+    return [mod?.content, ...(isMap(mod?.tabContents) ? Object.values(mod.tabContents) : []), ...gyosuanTexts, ...(Array.isArray(extraTexts) ? extraTexts : [])]
         .filter(text => typeof text === 'string' && text.includes('local:'));
 }
 
@@ -271,10 +333,12 @@ window.requestTabGenerationStop = function () {
 const ASSESSMENT_MIN_QUESTIONS = 10;
 const REINFORCE_WARN_CHARS = 80000; // 이보다 긴 탭을 통째로 고치면 응답이 출력 한도에서 잘릴 수 있어 먼저 묻는다
 
-// 학습이해도가 묻지 않은 학습 목표가 있으면 생성 직후 알린다. 빠진 목표는 문제은행에서 그 목표로 문항을 만들어 채운다
-function warnUncoveredObjectives(mod, md) {
-    const [issue] = lintObjectiveCoverage(String(md || ''), qbankObjectives(mod).length);
-    if (issue) window.showToast?.(`학습이해도 점검: ${issue.snip}. 문제은행에서 그 목표로 문항을 만들어 채우세요.`, 'warning');
+// 문제은행 탭(학습이해도·심화이해도)이 묻지 않은 그 갈래의 학습 목표가 있으면 생성 직후 알린다. 빠진 목표는 문제은행에서 그 갈래를 골라 그 목표로 문항을 만들어 채운다
+function warnUncoveredObjectives(mod, md, tabId = 'assessment') {
+    const track = tabTrack(tabId) || lessonTrack('basic');
+    const [issue] = lintObjectiveCoverage(String(md || ''), qbankObjectives(mod, track.id).length);
+    const label = LESSON_TABS.find(tab => tab.id === tabId)?.label || '학습이해도';
+    if (issue) window.showToast?.(`${label} 점검: ${issue.snip}. 문제은행의 ${track.label}에서 그 목표로 문항을 만들어 채우세요.`, 'warning');
 }
 
 // 강사가 실습 시간을 정한 실습 탭은 ## 제목의 (⏱ N분) 합계가 그 시간에서 10%보다 벗어나거나 시간 표시가 없으면 생성 직후 한 번 알린다(막지 않는다, lesson-lint.js)
@@ -283,10 +347,10 @@ function warnPracticeTime(minutes, md, label) {
     if (note) window.showToast?.(note, 'warning');
 }
 
-// 학습이해도 문항을 문제은행에서 바로 쓰도록 목표 번호를 함께 준다. 목표가 기본 문제 수보다 많으면 목표 수만큼 낸다
+// 문제은행 탭(학습이해도·심화이해도) 문항을 문제은행에서 바로 쓰도록 그 갈래의 목표 번호를 함께 준다. 목표가 기본 문제 수보다 많으면 목표 수만큼 낸다
 function assessmentObjectivePrompt(mod, tabId) {
-    if (tabId !== 'assessment' || typeof qbankObjectives !== 'function') return '';
-    const goals = qbankObjectives(mod);
+    if (!isQuestionBankTab(tabId) || typeof qbankObjectives !== 'function') return '';
+    const goals = qbankObjectives(mod, tabTrack(tabId).id);
     if (!goals.length) return '';
     const count = Math.max(ASSESSMENT_MIN_QUESTIONS, goals.length);
     return `\n\n[학습 목표 목록 — 문제마다 이 번호를 쓰고, 모든 목표를 1문제 이상 묻습니다. 문제는 ${count}개 이상 냅니다]\n${goals.map((goal, i) => `${i + 1}. ${goal}`).join('\n')}`;
@@ -476,7 +540,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
 
         // 탭이 없는 최종 평가·옛 차시의 본문은 기본 학습 탭으로 옮긴다. 새 탭이 본문을 지우지 않고, 기본 학습을 다시 만들면 미리 보고 작업 기록에 남긴다
         migrateMonolithicContent(mod);
-        if (!mod.tabContents) mod.tabContents = { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null };
+        if (!mod.tabContents) mod.tabContents = { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null, advAssessment: null };
         resultText = cleanLessonOpening(restoreLockedSections(resultText, lockedBlocks));
         if (typeof checklistLast === 'function') resultText = checklistLast(resultText, tabId);
         if (!resultText.trim()) throw new Error('AI 응답이 비어 있습니다.');
@@ -533,7 +597,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         const archivePartial = !!previous && (stoppedEarly || partialDueToError || previewed || _suppressTabAlert);
         if (archivePartial) await archiveContent({ title: `${mod.title} · ${tabMeta.label}`, content: previous, images: mod.images, tabId, lesson: mod }, '다시 생성 전');
         mod.tabContents[tabId] = resultText;
-        if (tabId === 'assessment') warnUncoveredObjectives(mod, resultText);
+        if (isQuestionBankTab(tabId)) warnUncoveredObjectives(mod, resultText, tabId);
         mod.status = 'done';
         Object.assign(mod, withHistoryNote(mod, `${tabMeta.label} ${previous ? 'AI 재생성' : 'AI 생성'}`));
 
@@ -705,7 +769,7 @@ async function reinforceCurrentTab(moduleId, command = '') {
                 CONTEXT_CORE.rules.content_design + '\n- ' +
                 CONTEXT_CORE.rules.korean_period + '\n- ' +
                 (CONTEXT_CORE.rules.emoji_rule || '') +
-                (tabId !== 'assessment' && CONTEXT_CORE.rules.code_examples ? '\n- ' + CONTEXT_CORE.rules.code_examples : '');
+                (!isQuestionBankTab(tabId) && CONTEXT_CORE.rules.code_examples ? '\n- ' + CONTEXT_CORE.rules.code_examples : '');
 
             const userPrompt = `[현재 작업: ${tabMeta.label} 보강 재생성]\n모듈명: ${mod.title}\n\n[사용자 보강 명령]\n${reinforceCmd}\n\n[기존 교안 내용 — 이 내용을 기반으로 보강하세요]\n${existingContent}`;
 

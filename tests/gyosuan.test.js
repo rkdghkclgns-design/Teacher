@@ -4,6 +4,7 @@ const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
 const assert = require('assert');
+const { loadLessonTracks } = require('./lesson-tracks');
 const root = path.join(__dirname, '..', 'js') + path.sep;
 
 // data.js 전체를 읽어 실제 stripInstructorCallouts를 가져온다
@@ -37,6 +38,7 @@ function makeContext(aiStub) {
     ctx.showToast = () => {};
     ctx.callGemini = aiStub;
     vm.createContext(ctx);
+    loadLessonTracks(ctx); // 갈래(기본학습·심화학습) 정의
     vm.runInContext(fs.readFileSync(root + 'kbuilder/parser.js', 'utf8'), ctx);
     ctx.stripInstructorCallouts = stripCallouts;
     ['gyosuan.js', 'filename-convention.js', 'lesson-lint.js', 'course-ncs.js', 'course-design.js', 'course-sessions.js', 'course-meta.js'].forEach(file => vm.runInContext(fs.readFileSync(root + file, 'utf8'), ctx));

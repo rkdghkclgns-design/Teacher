@@ -617,7 +617,7 @@ async function handleGenerate() {
 
             images: {},
 
-            tabContents: { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null },
+            tabContents: { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null, advAssessment: null },
 
             uploadedMdName: null,
 
@@ -678,8 +678,8 @@ async function generateModuleContent(moduleId, keyConcepts) {
     // 이전엔 status==='done'이면 tabContents가 남아있어 5탭 자동생성이 스킵되고
     // mod.content와 tabContents가 어긋나 같은 내용이 2회 이상 보이는 문제 발생.
     if (mod.status === 'done' || (mod.tabContents && Object.values(mod.tabContents).some(v => v))) {
-        await archiveContents([mod], '다시 생성 전'); // 중단하거나 실패해도 히스토리에서 이전 교안(5개 탭)으로 되돌릴 수 있게 한다
-        mod.tabContents = { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null };
+        await archiveContents([mod], '다시 생성 전'); // 중단하거나 실패해도 히스토리에서 이전 교안(모든 탭)으로 되돌릴 수 있게 한다
+        mod.tabContents = { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null, advAssessment: null };
         mod.content = '';
         // 다시 만들면 옛 본문 그림은 비운다(새 본문에 맞는 그림으로 갱신). 교수안·편성안에 붙여 넣은 그림, 삽화·판서 영상이 쓰는 그림,
         // 다시 만든 탭에 그대로 돌려 넣을 고정 섹션의 그림은 남긴다(tabs.js dropUnusedLessonImages)
@@ -969,22 +969,22 @@ window.promptAndGenerateModule = function (moduleId) {
     const regenerating = mod.status === 'done';
     const label = regenerating ? `다시 생성: ${mod.title}` : `교안 생성: ${mod.title}`;
     const opts = regenerating
-        ? { warning: '5개 탭과 그림을 모두 새로 만듭니다. 손으로 고친 내용도 바뀝니다. 지금 내용은 작업 기록에 남아 되돌릴 수 있습니다. 한 탭만 바꾸려면 그 탭의 "이 탭 생성"을 쓰세요.', okLabel: '모두 다시 생성' }
+        ? { warning: `${LESSON_TABS.length}개 탭과 그림을 모두 새로 만듭니다. 손으로 고친 내용도 바뀝니다. 지금 내용은 작업 기록에 남아 되돌릴 수 있습니다. 한 탭만 바꾸려면 그 탭의 "이 탭 생성"을 쓰세요.`, okLabel: '모두 다시 생성' }
         : {};
     showKeyConceptsPrompt(label, existing, (concepts) => {
         generateModuleContent(moduleId, concepts);
     }, { ...opts, estimateHtml: moduleGenerationEstimate(mod) });
 };
 
-// 카드의 교안 생성·다시 생성이 이어서 할 일(전체 생성과 같은 미리 보기, cost-estimate.js): 5개 탭(기본 학습부터 다시 만든다),
-// 이어지는 전체 생성이 채우는 삽화·NCS 요소·교수안·슬라이드와 문제은행. 미리 보기를 만들 수 없으면 ''
+// 카드의 교안 생성·다시 생성이 이어서 할 일(전체 생성과 같은 미리 보기, cost-estimate.js): 모든 탭(기본 학습부터 다시 만든다),
+// 이어지는 전체 생성이 채우는 삽화·NCS 요소·갈래(기본학습·심화학습)마다 교수안·슬라이드와 문제은행. 미리 보기를 만들 수 없으면 ''
 function moduleGenerationEstimate(mod) {
     if (typeof lessonWork !== 'function' || typeof estimateBoxHtml !== 'function') return '';
     try {
         return estimateBoxHtml(lessonWork({
             tabs: LESSON_TABS.map(tab => tab.id),
-            gyosuan: typeof lessonNeedsGyosuan === 'function' ? lessonNeedsGyosuan(mod) : !mod.gyosuan?.docMd,
-            qbank: true,
+            gyosuan: LESSON_TRACKS.filter(track => !gyosuanOf(mod, track.id)?.docMd).length, // 탭을 모두 다시 만들어 두 갈래 모두 글이 생긴다
+            qbank: LESSON_TRACKS.length,
             art: typeof lessonWantsArt === 'function' && lessonWantsArt(mod),
             ncs: typeof needsElementAutoAssign === 'function' && needsElementAutoAssign(mod),
             fillsVolume: mod.id !== 'mainQuest', // 최종 평가는 학습 탭 분량을 채우지 않는다
@@ -2943,8 +2943,8 @@ function renderEditor(mod) {
 
 
 
-    // 생성 중에는 빈 차시도 탐색줄을 보여 준다
-    if (!mod.content && !mod.gyosuan && !window.isLessonPipelineRunning(mod.id)) {
+    // 생성 중에는 빈 차시도 탐색줄을 보여 준다. 교안이 없어도 교수안(기본학습·심화학습)이 있으면 탐색줄을 보인다
+    if (!mod.content && !LESSON_TRACKS.some(track => mod[track.field]) && !window.isLessonPipelineRunning(mod.id)) {
 
         area.innerHTML = `
 
@@ -3107,10 +3107,11 @@ ${tabGenerateButtonsHtml(mod, tabless)}
 
                 <!-- v7.5: 슬라이드 뷰 영역 (기본 노출, 빈 상태) -->
                 <div id="slide-view-panel" class="hidden border-t-2 border-indigo-500/30 bg-gradient-to-b from-gray-50 to-white">
+                    <div id="slide-track-switch" class="px-6 pt-3"></div>
                     <div class="flex items-center justify-between px-6 py-3 bg-indigo-50/50 border-b border-indigo-200/50">
                         <div class="flex items-center gap-2">
                             <i class="ph-bold ph-presentation-chart text-indigo-500"></i>
-                            <span class="text-sm font-bold text-indigo-700">슬라이드 미리보기</span>
+                            <span id="slide-panel-title" class="text-sm font-bold text-indigo-700">슬라이드 미리보기</span>
                             <span id="slide-status-badge" class="text-[0.6875rem] px-2 py-0.5 rounded-full bg-gray-200 text-gray-500 font-bold">미생성</span>
                         </div>
                         <div class="flex items-center gap-2">

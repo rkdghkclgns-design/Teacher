@@ -26,7 +26,7 @@ const OUTPUT_IMG_ATTR_RE = /\s([^\s=>"'\/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^
 const OUTPUT_NUMBER_HEAD = /^\d+[_.\s-]*/; // ZIP 파일 이름·머리의 01_ 같은 번호
 const OUTPUT_HTML_NAME = /\.html?$/i;
 const OUTPUT_MD_NAME = /\.(md|markdown|txt)$/i;
-const OUTPUT_GYOSUAN_NAME = /(교수안|편성안)(_묶음)?$/; // 06_교수안, 07_슬라이드편성안, …_교수안, …_차시별편성안, …_교수안_편성안_묶음
+const OUTPUT_GYOSUAN_NAME = /(교수안|편성안)(_묶음)?$/; // 07_교수안·09_심화교수안(예전 ZIP은 06_교수안), 08_슬라이드편성안, …_교수안, …_심화교수안, …_차시별편성안, …_교수안_편성안_묶음
 const OUTPUT_GYOSUAN_TEXT = /^##\s*진행\s*$|^(?:###\s*슬라이드|##\s*슬라이드\s*편성)/m; // gyosuan-io.js gyosuanFileKind와 같은 표시
 const OUTPUT_TAB_SEPARATOR = '\n\n---\n\n';
 const OUTPUT_CONFIRM_LESSONS = 5; // 확인 창에 제목을 보일 차시 수(나머지는 '외 N개')
@@ -36,6 +36,11 @@ const OUTPUT_DEDUPE_SCAN = 20; // 탭 글이 같은 차시끼리 견줄 때 앞�
 const OUTPUT_FILE_LESSONS = 2000; // 한 파일에서 받는 차시 수. 남이 만든 아주 긴 목록으로 확인 창 앞에서 멈추지 않게 한다(교과 HTML 하나에는 넉넉하다)
 const OUTPUT_IMPORT_LESSONS = OUTPUT_FILE_LESSONS; // 한 번에 불러오는 차시 수(고른 파일을 모두 합쳐). 넘으면 아무것도 넣지 않고 나눠 불러오라고 알린다
 const OUTPUT_NOTE_KEYS = ['old', 'diagrams', 'videosLost', 'unlabeled', 'unknownTabs', 'oversized']; // 확인 창이 세는 것(output-old-html.js)
+// 교수안을 담는 차시 칸(갈래마다 하나). data.js LESSON_TRACKS의 id·field와 같다(이 파일의 테스트는 data.js 없이 돈다).
+// 예전 교수안 HTML은 gyosuan 칸에만 담겨 기본학습 교수안으로 되살아난다
+const OUTPUT_GYOSUAN_FIELDS = [{ track: 'basic', field: 'gyosuan', label: '기본학습 교수안' }, { track: 'adv', field: 'gyosuanAdv', label: '심화학습 교수안' }];
+const outputIsMap = value => !!value && typeof value === 'object' && !Array.isArray(value);
+const outputGyosuanSlots = lesson => OUTPUT_GYOSUAN_FIELDS.filter(slot => outputIsMap(lesson?.[slot.field]));
 
 const outputText = value => (typeof value === 'string' ? value : '');
 
@@ -73,9 +78,11 @@ function outputReaderTabs(tabs) {
 }
 
 // withGyosuan: 교수안·편성안과 그 그림까지 담는다(교수안 화면의 HTML만). 메뉴의 차시·교과 HTML과 ZIP의 교안.html(읽기용)에는 담지 않는다
+// track: 담을 교수안의 갈래(basic | adv). 기본학습은 gyosuan, 심화학습은 gyosuanAdv 칸에 담아 다시 불러오면 같은 갈래로 들어간다
 // shown: 차시 순서대로 Map(그림 키 → 화면에 보인 그림). lesson-export.js markShownImages가 채운다
 // mods는 화면(내보낸 본문)을 그린 바로 그 차시 객체여야 한다. 그리지 않은 그림은 원본에 그림 그대로 담기기 때문이다
-function lessonSourcePayload(mods, { tabIds = null, withGyosuan = false, shown = [] } = {}) {
+function lessonSourcePayload(mods, { tabIds = null, withGyosuan = false, track = 'basic', shown = [] } = {}) {
+    const slot = OUTPUT_GYOSUAN_FIELDS.find(item => item.track === track) || OUTPUT_GYOSUAN_FIELDS[0];
     return {
         format: OUTPUT_FORMAT,
         version: OUTPUT_VERSION,
@@ -83,16 +90,18 @@ function lessonSourcePayload(mods, { tabIds = null, withGyosuan = false, shown =
         lessons: mods.map((mod, index) => {
             const tabs = lessonSourceTabs(mod, tabIds);
             const tabContents = withGyosuan ? tabs : outputReaderTabs(tabs);
-            const docMd = withGyosuan ? mod.gyosuan?.docMd || '' : '';
-            const deckMd = docMd ? mod.gyosuan.deckMd || '' : '';
-            const gyosuan = docMd ? { docMd, deckMd, images: outputSourceImages(usedLessonImages(mod.gyosuan.images, [docMd, deckMd]), shown[index]) } : null;
+            const source = withGyosuan && outputIsMap(mod[slot.field]) ? mod[slot.field] : null;
+            const docMd = source?.docMd || '';
+            const deckMd = docMd ? source.deckMd || '' : '';
+            const gyosuan = docMd ? { docMd, deckMd, images: outputSourceImages(usedLessonImages(source.images, [docMd, deckMd]), shown[index]) } : null;
             return {
                 title: mod.title || '',
                 description: mod.description || '',
                 hours: mod.hours,
                 tabContents,
                 images: outputSourceImages(usedLessonImages(mod.images, [...Object.values(tabContents), docMd, deckMd]), shown[index]),
-                gyosuan
+                gyosuan: slot.field === 'gyosuan' ? gyosuan : null,
+                ...(slot.field !== 'gyosuan' && gyosuan ? { [slot.field]: gyosuan } : {})
             };
         })
     };
@@ -234,13 +243,14 @@ function outputRestoredLesson(lesson, read) {
     if (!read.count) return rest;
     const text = value => (typeof value === 'string' ? read.restore(value) : value);
     const values = map => (map && typeof map === 'object' && !Array.isArray(map) ? Object.fromEntries(Object.entries(map).map(([key, value]) => [key, text(value)])) : map);
-    const gyosuan = rest.gyosuan && typeof rest.gyosuan === 'object'
-        ? { ...rest.gyosuan, docMd: text(rest.gyosuan.docMd), deckMd: text(rest.gyosuan.deckMd), images: values(rest.gyosuan.images) }
-        : rest.gyosuan;
-    return { ...rest, title: text(rest.title), description: text(rest.description), tabContents: values(rest.tabContents), images: values(rest.images), gyosuan };
+    // 두 갈래의 교수안(기본학습 gyosuan · 심화학습 gyosuanAdv)을 같은 방법으로 되돌린다
+    const plans = Object.fromEntries(outputGyosuanSlots(rest).map(({ field }) => [field, { ...rest[field], docMd: text(rest[field].docMd), deckMd: text(rest[field].deckMd), images: values(rest[field].images) }]));
+    return { ...rest, title: text(rest.title), description: text(rest.description), tabContents: values(rest.tabContents), images: values(rest.images), ...plans };
 }
 
 const outputHasShownImage = images => !!images && typeof images === 'object' && Object.values(images).some(data => data === null);
+// 차시 그림이나 어느 갈래의 교수안 그림에 화면에서 읽을 그림(null)이 있는가
+const outputLessonHasShown = lesson => outputHasShownImage(lesson.images) || outputGyosuanSlots(lesson).some(({ field }) => outputHasShownImage(lesson[field].images));
 
 // 원본에 null로 적힌 그림을 화면의 <img>에서 채운다. 못 찾으면 뺀다(그 자리는 빈 그림으로 남고 확인 창이 센다)
 function fillShownImages(images, index, shown) {
@@ -278,15 +288,15 @@ function parseOutputHtml(text, read = streamPlain(text)) {
     const dom = outputDomOnce(html);
     const lessons = data.lessons.map(lesson => (isObject(lesson) ? outputRestoredLesson(lesson, read) : lesson));
     // 예전(version 1) 파일처럼 그림이 모두 원본에 들어 있으면 화면 그림은 읽지 않는다. 교수안 그림이 원본에 없던 version 1 교수안 HTML은 화면 교수안에서 되찾는다
-    if (!lessons.some(lesson => isObject(lesson) && (outputHasShownImage(lesson.images) || outputHasShownImage(lesson.gyosuan?.images)))) {
+    if (!lessons.some(lesson => isObject(lesson) && outputLessonHasShown(lesson))) {
         const filled = data.version === 1 && lessons.length === 1 ? [withOldGyosuanImages(lessons[0], html, read, dom)] : lessons;
         return withOutputVideos(filled, html, read, dom);
     }
     const shown = readShownImages(html, read, dom);
     const filled = lessons.map((lesson, index) => {
         if (!isObject(lesson)) return lesson;
-        const gyosuan = isObject(lesson.gyosuan) ? { ...lesson.gyosuan, images: fillShownImages(lesson.gyosuan.images, index, shown) } : lesson.gyosuan;
-        return { ...lesson, images: fillShownImages(lesson.images, index, shown), gyosuan };
+        const plans = Object.fromEntries(outputGyosuanSlots(lesson).map(({ field }) => [field, { ...lesson[field], images: fillShownImages(lesson[field].images, index, shown) }]));
+        return { ...lesson, images: fillShownImages(lesson.images, index, shown), ...plans };
     });
     return withOutputVideos(filled, html, read, dom);
 }
@@ -361,7 +371,7 @@ function parseOutputMarkdown(text, fileName = '') {
     return [{ title: title || fallbackTitle, tabContents, images: {} }];
 }
 
-// 교수안·편성안 MD(ZIP의 06_교수안.md·07_슬라이드편성안.md, 교수안 화면에서 받은 …_교수안.md 등)는 교안 차시로 넣지 않는다
+// 교수안·편성안 MD(ZIP의 07_교수안.md·08_슬라이드편성안.md·09_심화교수안.md 등과 예전 ZIP의 06_교수안.md, 교수안 화면에서 받은 …_교수안.md 등)는 교안 차시로 넣지 않는다
 // 이름과 내용이 함께 맞을 때만 본다. 차시·탭 표시가 있는 MD(이 앱의 교안 MD)는 제목에 '교수안'이 있어도 교안이다
 function isGyosuanMdFile(text, fileName) {
     const src = String(text || '').replace(/\r\n/g, '\n');
@@ -400,13 +410,19 @@ function outputImportNotes(raw) {
     return Object.keys(notes).length ? notes : null;
 }
 
+// 받은 교수안 하나(글은 문자열만, 그림은 검사를 지난 것만). 교수안 문서가 없으면 null
+function outputValidGyosuan(raw) {
+    const docMd = outputText(raw?.docMd);
+    return docMd ? { docMd, deckMd: outputText(raw.deckMd), images: outputValidImages(raw.images), updatedAt: new Date().toISOString() } : null;
+}
+
 function normalizeImportedLesson(raw, id) {
     const source = raw && typeof raw === 'object' ? raw : {};
     const tabs = source.tabContents && typeof source.tabContents === 'object' ? source.tabContents : {};
     const tabContents = Object.fromEntries(LESSON_TABS.map(tab => [tab.id, outputText(tabs[tab.id]) || null]));
     const images = outputValidImages(source.images);
-    const gyosuanSource = source.gyosuan && typeof source.gyosuan === 'object' ? source.gyosuan : null;
-    const docMd = outputText(gyosuanSource?.docMd);
+    // 갈래마다 교수안(기본학습 gyosuan · 심화학습 gyosuanAdv). 예전 파일은 gyosuan 칸뿐이라 기본학습 교수안이 된다
+    const plans = Object.fromEntries(OUTPUT_GYOSUAN_FIELDS.map(({ field }) => [field, outputValidGyosuan(outputIsMap(source[field]) ? source[field] : null)]).filter(([, plan]) => plan));
     const content = LESSON_TABS.map(tab => tabContents[tab.id] || '').filter(Boolean).join(OUTPUT_TAB_SEPARATOR);
     const hours = Number(source.hours);
     const videos = outputValidVideos(source.videos, images);
@@ -420,7 +436,7 @@ function normalizeImportedLesson(raw, id) {
         content: content || null,
         tabContents,
         images,
-        ...(docMd ? { gyosuan: { docMd, deckMd: outputText(gyosuanSource.deckMd), images: outputValidImages(gyosuanSource.images), updatedAt: new Date().toISOString() } } : {}),
+        ...plans,
         uploadedMdName: null,
         uploadedMdContent: null,
         // 넣기 전에 떼는 칸: 저장할 판서 영상(importOutputFiles가 영상 파일로 저장한다)과 확인 창에 셀 것
@@ -438,9 +454,9 @@ const outputTabsKey = lesson => {
     });
     return texts.some(Boolean) ? texts.join('\u0000') : '';
 };
-const outputImageKeys = lesson => Object.keys({ ...lesson.images, ...(lesson.gyosuan?.images || {}) });
-// 겹친 차시 가운데 남길 쪽: 교수안이 있는 쪽, 다음은 HTML(제목·설명·그림이 있다), 다음은 그림이 많은 쪽
-const outputKeepRank = item => (item.lesson.gyosuan ? 2e6 : 0) + (item.from === 'html' ? 1e6 : 0) + outputImageKeys(item.lesson).length;
+const outputImageKeys = lesson => Object.keys(Object.assign({ ...lesson.images }, ...outputGyosuanSlots(lesson).map(({ field }) => lesson[field].images || {})));
+// 겹친 차시 가운데 남길 쪽: 교수안(어느 갈래든)이 있는 쪽, 다음은 HTML(제목·설명·그림이 있다), 다음은 그림이 많은 쪽
+const outputKeepRank = item => (outputGyosuanSlots(item.lesson).length ? 2e6 : 0) + (item.from === 'html' ? 1e6 : 0) + outputImageKeys(item.lesson).length;
 // 제목이 어디서 왔는지(readOutputText): 2 = 파일 안에 적힌 제목(HTML 원본, MD 차시 표시), 1 = 파일 이름에서 딴 제목, 0 = 없음('불러온 차시')
 const outputTitleRank = item => item.titleRank || 0;
 // 둘 다 가진 키의 그림은 같아야 한다(한쪽에서 다시 그린 그림이면 다른 차시로 본다)
@@ -454,8 +470,9 @@ function outputSameLesson(entry, item) {
     if (entry.files.has(item.file)) return false;
     if (outputTitleRank(entry.item) === 2 && outputTitleRank(item) === 2 && a.title !== b.title) return false;
     if (entry.item.from === 'html' && item.from === 'html' && (a.description !== b.description || a.hours !== b.hours)) return false;
-    if (a.gyosuan && b.gyosuan && (a.gyosuan.docMd !== b.gyosuan.docMd || a.gyosuan.deckMd !== b.gyosuan.deckMd)) return false;
-    return outputSameImages(a.images, b.images) && outputSameImages(a.gyosuan?.images, b.gyosuan?.images);
+    // 같은 갈래의 교수안이 둘 다 있으면 글이 같아야 한다(갈래가 다른 교수안은 서로 견주지 않는다)
+    if (OUTPUT_GYOSUAN_FIELDS.some(({ field }) => a[field] && b[field] && (a[field].docMd !== b[field].docMd || a[field].deckMd !== b[field].deckMd))) return false;
+    return outputSameImages(a.images, b.images) && OUTPUT_GYOSUAN_FIELDS.every(({ field }) => outputSameImages(a[field]?.images, b[field]?.images));
 }
 
 // 버리는 쪽에만 있는 것(그림, 교수안 그림, 더 확실한 제목)을 남기는 쪽에 더한 새 항목. 받은 항목·차시 객체는 바꾸지 않는다
@@ -463,13 +480,17 @@ function outputAbsorbLesson(keep, drop) {
     const lesson = keep.lesson;
     const other = drop.lesson;
     const title = outputTitleRank(drop) > outputTitleRank(keep) ? { title: other.title } : {};
-    const gyosuan = lesson.gyosuan && other.gyosuan ? { gyosuan: { ...lesson.gyosuan, images: { ...other.gyosuan.images, ...lesson.gyosuan.images } } } : {};
+    // 갈래마다: 둘 다 있으면 버리는 쪽의 그림만 더하고, 버리는 쪽에만 있는 갈래의 교수안은 그대로 옮긴다
+    const plans = Object.fromEntries(OUTPUT_GYOSUAN_FIELDS.flatMap(({ field }) => {
+        if (lesson[field] && other[field]) return [[field, { ...lesson[field], images: { ...other[field].images, ...lesson[field].images } }]];
+        return !lesson[field] && other[field] ? [[field, other[field]]] : [];
+    }));
     const kept = lesson.videos || [];
     const videos = [...kept, ...(other.videos || []).filter(video => !kept.some(item => item.key === video.key))];
     return {
         ...keep,
         titleRank: Math.max(outputTitleRank(keep), outputTitleRank(drop)),
-        lesson: { ...lesson, ...title, images: { ...other.images, ...lesson.images }, ...gyosuan, ...(videos.length ? { videos } : {}) }
+        lesson: { ...lesson, ...title, images: { ...other.images, ...lesson.images }, ...plans, ...(videos.length ? { videos } : {}) }
     };
 }
 
@@ -483,7 +504,7 @@ function dedupeImported(items) {
     const byKey = new Map(); // 탭 글 → 그 글인 kept 자리들
     items.forEach(item => {
         const key = outputTabsKey(item.lesson);
-        const comparable = Boolean(key || item.lesson.gyosuan); // 글도 교수안도 없는 차시는 견주지 않는다(제목만 다른 빈 차시가 하나로 접히지 않게)
+        const comparable = Boolean(key || outputGyosuanSlots(item.lesson).length); // 글도 교수안도 없는 차시는 견주지 않는다(제목만 다른 빈 차시가 하나로 접히지 않게)
         if (comparable && !byKey.has(key)) byKey.set(key, []);
         const places = comparable ? byKey.get(key) : [];
         const at = places.slice(0, OUTPUT_DEDUPE_SCAN).find(place => outputSameLesson(kept[place], item));
@@ -504,7 +525,7 @@ function dedupeImported(items) {
 // 글에는 있는데 파일에 그림이 없는 자리(local:키) 수
 function missingImageCount(lesson) {
     const have = new Set(outputImageKeys(lesson));
-    const texts = [...Object.values(lesson.tabContents || {}), lesson.gyosuan?.docMd, lesson.gyosuan?.deckMd].filter(Boolean).join('\n');
+    const texts = [...Object.values(lesson.tabContents || {}), ...outputGyosuanSlots(lesson).flatMap(({ field }) => [lesson[field].docMd, lesson[field].deckMd])].filter(Boolean).join('\n');
     return new Set([...texts.matchAll(/local:([\w-]+)/g)].map(match => match[1]).filter(key => !have.has(key))).size;
 }
 
@@ -523,7 +544,7 @@ function outputLessonLine(lesson) {
     const tabs = LESSON_TABS.filter(tab => lesson.tabContents[tab.id]).map(tab => `${tab.label} ${outputCount(lesson.tabContents[tab.id].length)}자`);
     const images = outputImageKeys(lesson).length;
     const videos = (lesson.videos || []).length;
-    const parts = [...tabs, ...(images ? [`그림 ${images}장`] : []), ...(videos ? [`판서 영상 ${videos}개`] : []), ...(lesson.gyosuan ? ['교수안'] : [])];
+    const parts = [...tabs, ...(images ? [`그림 ${images}장`] : []), ...(videos ? [`판서 영상 ${videos}개`] : []), ...outputGyosuanSlots(lesson).map(slot => slot.label)];
     return `· ${outputShortTitle(lesson.title)}\n   ${parts.join(' · ') || '글 없음'}`;
 }
 
@@ -566,7 +587,7 @@ function describeOutputImport(items, { fileCount, where, dropped = 0, failed = [
         ...outputRestoreNotes(lessons),
         items.some(item => item.from === 'md') && `· MD 파일에는 그림이 담기지 않습니다.${mdMissing ? ` 그림 자리 ${mdMissing}곳은 빈칸이 됩니다. 그림까지 옮기려면 HTML이나 백업 ZIP을 쓰세요.` : ''}`,
         htmlMissing && `· 그림 ${htmlMissing}곳은 파일에서 찾지 못해 빈칸이 됩니다.`,
-        !lessons.some(lesson => lesson.gyosuan) && '· 교수안은 들어 있지 않습니다. 교수안까지 되살리려면 교수안 화면의 HTML 버튼으로 받은 파일을 고르세요.',
+        !lessons.some(lesson => outputGyosuanSlots(lesson).length) && '· 교수안은 들어 있지 않습니다. 교수안까지 되살리려면 교수안 화면의 HTML 버튼으로 받은 파일을 고르세요. 기본학습·심화학습 교수안은 갈래마다 따로 받습니다.',
         "· 되살리는 것은 파일에 담긴 차시 제목·설명·시간, 탭 글, 그림, 판서 영상, 교수안뿐입니다. 차시 정보의 나머지 칸, 섹션 고정, 수동 검수 기록, 슬라이드 화면 편집, 참고 이미지, 삽화 목록, NCS 같은 것은 돌아오지 않습니다. 모두 되살리려면 '백업 ZIP으로 되살리기'를 쓰세요.",
         dropped && `· 여러 파일에 같은 차시가 있어 겹친 ${dropped}개는 빼고 한 번만 넣습니다.`
     ].filter(Boolean);

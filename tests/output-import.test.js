@@ -298,7 +298,7 @@ test('확인 창 글: 제목·탭별 글자 수·그림, 숨은 원본, MD 그�
     assert.ok(text.includes('· 여러 파일에 같은 차시가 있어 겹친 1개는 빼고 한 번만 넣습니다.'), '찾은 차시 수와 헷갈리지 않게 뺀 수라고 말한다');
     assert.ok(text.includes('건너뛰는 파일 4개') && text.includes('· a.zip: x') && text.includes('· 외 1개') && !text.includes('d.zip'));
     const one = describeOutputImport([{ from: 'html', lesson: plain(normalizeImportedLesson({ title: 'G', gyosuan: { docMd: '## 진행' } }, 1)) }], { fileCount: 1, where: 'x' });
-    assert.ok(one.includes('· G\n   교수안') && !one.includes('교수안은 들어 있지 않습니다') && !one.includes('건너뛰는') && !one.includes('MD 파일'));
+    assert.ok(one.includes('· G\n   기본학습 교수안') && !one.includes('교수안은 들어 있지 않습니다') && !one.includes('건너뛰는') && !one.includes('MD 파일'), '예전 교수안 HTML은 기본학습 교수안으로 들어온다');
 });
 
 test('읽지 못하는 파일은 까닭과 쓸 메뉴를 알린다: ZIP, 다른 형식, 원본 없는 HTML, 잘린 원본, 빈 원본, 슬라이드 HTML, 교수안 MD(크기로는 거르지 않는다)', () => {

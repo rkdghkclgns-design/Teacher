@@ -50,8 +50,10 @@ const LESSON_QUESTION_WARNINGS = [
     `보기는 ${LESSON_LINT_MIN_CHOICES}개 이상 둡니다.`, '복수 정답 문제에 정답이 하나입니다.', '정답이 단어나 값 하나로 확정되는지 확인합니다.',
     '채점 요소마다 점수를 적습니다.', '버전에 의존하는 정보를 쓰지 않습니다.', '학습자를 호칭하지 않습니다.'
 ];
-// 개요·목표·체크리스트 구조를 갖는 탭. 실습·학습이해도 탭은 구조가 달라 어구와 문항만 검사한다.
+// 개요·목표·체크리스트 구조를 갖는 탭. 실습·학습이해도·심화이해도 탭은 구조가 달라 어구와 문항만 검사한다.
 const LESSON_STRUCTURED_TABS = ['basicLearn', 'advLearn'];
+// 문제은행 탭(학습이해도·심화이해도). data.js LESSON_TRACKS의 bank와 같다(이 파일은 data.js 없이도 돈다). 목표 대응을 보고 코드 예제 규칙은 보지 않는다
+const LESSON_BANK_TABS = ['assessment', 'advAssessment'];
 const LESSON_HEADING_PREFIX = '^(?:[^\\s\\w가-힣]+\\s*)?(?:\\d+[.)]\\s*)?';
 const LESSON_OVERVIEW_TITLE = new RegExp(`${LESSON_HEADING_PREFIX}(?:차시\\s*|수업\\s*|학습\\s*)?개요(?!서)`);
 const LESSON_FRAME_TITLE = new RegExp(`${LESSON_HEADING_PREFIX}(?:학습\\s*목표|학습\\s*후\\s*체크리스트)`);
@@ -637,14 +639,14 @@ function codeSignalSnip(text) {
     return hit ? prose.slice(Math.max(0, hit.index - 12), hit.index + hit[0].length + 10).replace(/\s+/g, ' ').trim() : '';
 }
 
-// 코드를 다루는 차시에서만 본다: 코드를 설명하는 내용 섹션에 예제가 없음(학습이해도 제외), 언어를 적지 않은 코드 블록, 닫지 않은 코드 블록
+// 코드를 다루는 차시에서만 본다: 코드를 설명하는 내용 섹션에 예제가 없음(학습이해도·심화이해도 제외), 언어를 적지 않은 코드 블록, 닫지 않은 코드 블록
 function lintCodeExamples(source, tabId, codeTopic) {
     if (!codeTopic) return [];
     return lessonCodeSections(source).flatMap(section => {
         const where = section.title || '본문';
         const fences = lessonFences(section.text);
         const content = !!section.title && !LESSON_FRAME_TITLE.test(section.title) && !LESSON_OVERVIEW_TITLE.test(section.title);
-        const missing = tabId !== 'assessment' && content && !fences.some(isCodeExampleFence) && lessonCodeSignals(section.text);
+        const missing = !LESSON_BANK_TABS.includes(tabId) && content && !fences.some(isCodeExampleFence) && lessonCodeSignals(section.text);
         return [
             missing && { sev: 'warn', where, msg: LESSON_CODE_EXAMPLE_MSG, snip: codeSignalSnip(section.text) },
             ...fences.filter(fence => !fence.lang).map(fence => ({ sev: 'warn', where, msg: '코드 블록에 언어를 적습니다.', snip: fence.code || fence.line })),
@@ -654,7 +656,7 @@ function lintCodeExamples(source, tabId, codeTopic) {
 }
 
 // tabId를 주면 그 탭의 구조까지 검사한다. 지적은 { sev, where, msg, snip, missing } 형식이다. missing은 없는 섹션을 새로 써야 한다는 뜻이다.
-// context.objectiveCount: 차시의 학습 목표 수(qbankObjectives). 주면 학습이해도의 목표 대응과 번호 범위를 검사한다.
+// context.objectiveCount: 그 갈래의 학습 목표 수(qbankObjectives). 주면 문제은행 탭(학습이해도·심화이해도)의 목표 대응과 번호 범위를 검사한다.
 // context.codeTopic: 코드를 다루는 차시(lessonCodeTopic)면 코드 예제 규칙도 검사한다
 function lintLessonMarkdown(md, tabId, { objectiveCount = 0, codeTopic = false } = {}) {
     const source = String(md || '').replace(/\r\n/g, '\n');
@@ -665,7 +667,7 @@ function lintLessonMarkdown(md, tabId, { objectiveCount = 0, codeTopic = false }
         ...lintObjectiveBullets(goals),
         ...lintChecklistBullets(goals, checks),
         ...lessonLintQuestions(source).flatMap(block => lintQuestionBlock(block, checks, objectiveCount || Infinity)),
-        ...(tabId === 'assessment' ? lintObjectiveCoverage(source, objectiveCount) : []),
+        ...(LESSON_BANK_TABS.includes(tabId) ? lintObjectiveCoverage(source, objectiveCount) : []),
         ...lessonLintSections(source).flatMap(section => lintLessonPhrases(section.text, section.title)),
         ...lintCodeExamples(source, tabId, codeTopic)
     ];

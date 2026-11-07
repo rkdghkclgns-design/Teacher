@@ -141,20 +141,23 @@ async function runObjectiveAdd(mod, tabId, button) {
     }
 }
 
+// 목표를 지운 탭이 든 갈래(기본학습·심화학습)의 문제은행 탭 문항 번호를 고친다
 async function runObjectiveRemove(mod, tabId, index) {
     const dialog = document.getElementById('objective-dialog');
+    const track = tabTrack(tabId) || lessonTrack('basic');
+    const bankLabel = LESSON_TABS.find(tab => tab.id === track.bank)?.label || track.bank;
     const before = storedTabMarkdown(mod, tabId);
     const goal = lessonLintBullets(objectiveTabMd(mod, tabId), OBJECTIVE_BULLETS)[index];
-    const objectivesBefore = qbankObjectives(mod);
+    const objectivesBefore = qbankObjectives(mod, track.id);
     const sections = [...dialog.querySelectorAll('[data-objective-section]:checked')].map(box => Number(box.dataset.objectiveSection));
     const deleteLinked = dialog.querySelector('[name="objective-questions"]:checked')?.value === 'delete';
     if (!(await commitTabChange(mod, tabId, before, removeObjectiveSet(before, index, sections), `학습 목표 삭제: ${goal}`))) return;
     mod.objectives = (mod.objectives || []).filter(text => text !== goal); // 문제은행 목록이 이 값을 쓸 수 있어 번호를 고치기 전에 뺀다
-    const assessment = qbankMarkdown(mod);
-    const remapped = remappedAssessment(assessment, objectivesBefore, qbankObjectives(mod), deleteLinked);
+    const assessment = qbankMarkdown(mod, track.id);
+    const remapped = remappedAssessment(assessment, objectivesBefore, qbankObjectives(mod, track.id), deleteLinked);
     if (remapped !== assessment) {
-        await archiveContent({ title: `${mod.title} · 학습이해도`, content: assessment, images: mod.images, tabId: 'assessment', lesson: mod }, '학습 목표 삭제 전');
-        setTabMarkdown(mod, 'assessment', remapped);
+        await archiveContent({ title: `${mod.title} · ${bankLabel}`, content: assessment, images: mod.images, tabId: track.bank, lesson: mod }, '학습 목표 삭제 전');
+        setTabMarkdown(mod, track.bank, remapped);
     }
     _objectiveDialog = { ..._objectiveDialog, pick: null };
     await saveState();
@@ -169,8 +172,9 @@ function setObjectiveStatus(text) {
 
 function objectiveImpactHtml(mod, md, index) {
     const goals = lessonLintBullets(md, OBJECTIVE_BULLETS);
-    const linkedNo = qbankObjectives(mod).indexOf(goals[index]) + 1;
-    const linked = qbankQuestions(mod).filter(question => linkedNo && question.objective === linkedNo).length;
+    const trackId = (tabTrack(_objectiveDialog?.tabId) || lessonTrack('basic')).id; // 그 탭이 든 갈래의 문제은행 문항
+    const linkedNo = qbankObjectives(mod, trackId).indexOf(goals[index]) + 1;
+    const linked = qbankQuestions(mod, trackId).filter(question => linkedNo && question.objective === linkedNo).length;
     const chosen = new Set(objectiveContentRange(md, index).map(section => section.index));
     const check = lessonLintBullets(md, CHECKLIST_BULLETS)[index];
     const rows = objectiveContentSections(md).map(({ title, index: at }) => `

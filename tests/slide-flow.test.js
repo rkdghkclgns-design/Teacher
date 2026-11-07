@@ -5,6 +5,7 @@ const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
 const assert = require('assert');
+const { loadLessonTracks } = require('./lesson-tracks');
 const root = path.join(__dirname, '..', 'js') + path.sep;
 const FILES = [
     'filename-convention.js',
@@ -63,6 +64,7 @@ function makeContext(options = {}) {
     ctx.channels = channels;
     ctx.stored = stored;
     vm.createContext(ctx);
+    loadLessonTracks(ctx); // 갈래(기본학습·심화학습) 정의
     FILES.forEach(file => vm.runInContext(fs.readFileSync(root + file, 'utf8'), ctx));
     return ctx;
 }
@@ -355,7 +357,7 @@ const draftLesson = () => ({ id: 'm1', title: '재미', hours: 1, tabContents: {
         const ctx = withLesson(mod, { confirm: () => { ctx.getEditingModule = () => lesson(); return true; } });
         ctx.generateSlideView = async () => { ctx.opened = true; };
         await ctx.rebuildGyosuanDeck('m1');
-        assert.deepStrictEqual(plain(ctx.asked.map(ask => [ask.opts.title, ask.opts.okLabel, ask.opts.tone])), [['슬라이드 다시 만들기', '다시 만들기', 'danger']]);
+        assert.deepStrictEqual(plain(ctx.asked.map(ask => [ask.opts.title, ask.opts.okLabel, ask.opts.tone])), [['기본학습 슬라이드 다시 만들기', '다시 만들기', 'danger']]);
         assert.deepStrictEqual([mod.gyosuan.deckHtml, mod.gyosuan.deckRev, ctx.opened], ['<x>', 1, undefined], '덱을 비우지도 스튜디오를 열지도 않는다');
         assert.ok(ctx.toasts.at(-1).includes('차시가 바뀌어'), ctx.toasts.at(-1));
     });
@@ -379,7 +381,7 @@ const draftLesson = () => ({ id: 'm1', title: '재미', hours: 1, tabContents: {
         assert.deepStrictEqual(made, [['m1', true]], '묻는 동안 차시가 바뀌면 만들지 않는다');
         assert.ok(ctx.toasts.at(-1).includes('차시가 바뀌어'));
         assert.deepStrictEqual(plain(ctx.asked.map(ask => [ask.opts.title, ask.opts.okLabel, ask.opts.tone])),
-            [['교수안 다시 생성', '다시 생성', 'danger'], ['슬라이드 다시 생성', '다시 생성', 'danger'], ['교수안 다시 생성', '다시 생성', 'danger']]);
+            [['기본학습 교수안 다시 생성', '다시 생성', 'danger'], ['기본학습 슬라이드 다시 생성', '다시 생성', 'danger'], ['기본학습 교수안 다시 생성', '다시 생성', 'danger']]);
     });
 
     await run('스튜디오 저장: 다시 만든 뒤 도착한 이전 덱의 저장은 버린다', async () => {
@@ -816,7 +818,7 @@ const draftLesson = () => ({ id: 'm1', title: '재미', hours: 1, tabContents: {
         ctx.getEditingModule = () => mod;
         assert.deepStrictEqual(plain(await ctx.importGyosuanHtml('m1', '<html>')), { ok: true });
         assert.strictEqual(mod.gyosuan.deckHtml, '<새 덱>');
-        assert.deepStrictEqual(plain(ctx.asked[0].opts), { title: '슬라이드 바꾸기', okLabel: '바꾸기', tone: 'danger' });
+        assert.deepStrictEqual(plain(ctx.asked[0].opts), { title: '기본학습 슬라이드 바꾸기', okLabel: '바꾸기', tone: 'danger' });
     });
 
     await run('완성 MD 불러오기: 있던 교수안을 바꾸기 전에 앱의 확인 창으로 묻고, 취소하거나 묻는 동안 차시가 바뀌면 그대로 둔다', async () => {
@@ -832,7 +834,7 @@ const draftLesson = () => ({ id: 'm1', title: '재미', hours: 1, tabContents: {
         assert.strictEqual(mod.gyosuan.docMd, DOC, '취소하면 바꾸지 않는다');
         await ctx.importGyosuanMdFiles('m1');
         assert.strictEqual(mod.gyosuan.docMd, DOC, '묻는 동안 차시가 바뀌면 바꾸지 않는다');
-        assert.deepStrictEqual(plain(ctx.asked.map(ask => ask.opts)), [{ title: '교수안 바꾸기', okLabel: '바꾸기', tone: 'danger' }, { title: '교수안 바꾸기', okLabel: '바꾸기', tone: 'danger' }]);
+        assert.deepStrictEqual(plain(ctx.asked.map(ask => ask.opts)), [{ title: '기본학습 교수안 바꾸기', okLabel: '바꾸기', tone: 'danger' }, { title: '기본학습 교수안 바꾸기', okLabel: '바꾸기', tone: 'danger' }]);
         assert.strictEqual(ctx.saved, undefined, '저장하지 않는다');
     });
 

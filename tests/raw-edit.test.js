@@ -409,9 +409,9 @@ async function run(name, fn) {
         const lesson = { id: 3, title: '차시', tabContents: tabsOf({ basicLearn: '글' }) };
         assert.deepStrictEqual([tabless(quest), tabless(tabbedQuest), tabless(lesson), tabless(null), tabless({ id: 'mainQuest', content: null })], [true, false, false, false, true]);
         assert.strictEqual(bar(quest), '');
-        assert.strictEqual((bar(tabbedQuest).match(/switchLessonTab\(/g) || []).length, 5, '이미 탭이 있는 최종 평가는 탭을 둔다');
+        assert.strictEqual((bar(tabbedQuest).match(/switchLessonTab\(/g) || []).length, 6, '이미 탭이 있는 최종 평가는 탭을 둔다(심화이해도까지 여섯 탭)');
         assert.ok(!bar(tabbedQuest).includes('showLessonPanel('), '최종 평가에는 교수안·슬라이드·문제은행 항목이 없다');
-        assert.strictEqual((bar(lesson).match(/switchLessonTab\(/g) || []).length, 5);
+        assert.strictEqual((bar(lesson).match(/switchLessonTab\(/g) || []).length, 6);
         assert.ok(bar(lesson).includes('showLessonPanel('));
     });
 

@@ -433,12 +433,12 @@ async function run(name, fn) {
         batch.callGemini = volumeModel(batch, { tabReply: () => reply('## 실습 (⏱ 60분)\n\n본문입니다.') });
         const filled = plain(await call(batch, 'fillMissingTabs')(1));
         assert.strictEqual(filled.ok, true);
-        assert.deepStrictEqual(tabPrompts(batch).map(askOf), ['tab_content|basicPrac|60', 'tab_content|advPrac|180']);
+        assert.deepStrictEqual(tabPrompts(batch).map(askOf), ['tab_content|basicPrac|60', 'tab_content|advPrac|180', 'tab_content|advAssessment|0'], '빈 심화이해도 탭도 채운다(실습 시간은 없다)');
         const pipeline = genContext();
         pipeline.currentMod = make({ advPracMinutes: 90 }, { basicLearn: '## 본문\n\n글입니다.', advLearn: '## 본문\n\n글입니다.', assessment: '### 문제 1. 가\n\n글' });
         pipeline.callGemini = volumeModel(pipeline, { tabReply: () => reply('## 실습 (⏱ 60분)\n\n본문입니다.') });
         await call(pipeline, 'runLessonPipeline')(1);
-        assert.deepStrictEqual(tabPrompts(pipeline).map(askOf), ['tab_content|basicPrac|0', 'tab_content|advPrac|90'], '정하지 않은 탭은 0(예전 지시)');
+        assert.deepStrictEqual(tabPrompts(pipeline).map(askOf), ['tab_content|basicPrac|0', 'tab_content|advPrac|90', 'tab_content|advAssessment|0'], '정하지 않은 탭은 0(예전 지시)');
     });
 
     await run('실습 탭 단추: 이 탭 생성 옆과 빈 탭 안내에 실습 시간을 보이고, 앱 입력 창으로 바꾸면 변경 이력에 남기고 다음 생성에 쓴다', async () => {
@@ -557,7 +557,7 @@ async function run(name, fn) {
 
     await run('일괄 생성 보고: 낭독 목표에 못 미친 학습 탭을 탭마다 적고, 다시 시도한 탭과 합친다', async () => {
         const ctx = genContext();
-        ctx.currentMod = lessonOf({ basicPrac: '글', advPrac: '글', assessment: '글' });
+        ctx.currentMod = lessonOf({ basicPrac: '글', advPrac: '글', assessment: '글', advAssessment: '글' }); // 빈 탭은 두 학습 탭뿐
         vm.runInContext("generateTabContent = async (id, tabId) => { window.currentMod.tabContents[tabId] = '## 글'; return { ok: true, short: true, readMinutes: tabId === 'basicLearn' ? 300 : 410, targetMinutes: 480 }; };", ctx);
         const filled = plain(await call(ctx, 'fillMissingTabs')(1));
         assert.deepStrictEqual([filled.short, filled.readMinutes, filled.shortTabs], [true, 300, [{ tabId: 'basicLearn', label: '기본학습', readMinutes: 300 }, { tabId: 'advLearn', label: '심화학습', readMinutes: 410 }]]);

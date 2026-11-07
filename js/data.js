@@ -1048,14 +1048,42 @@ const INSTRUCTOR_TONE_PRESETS = [
     { id: 'coaching', label: '코치형', promptSuffix: '헤딩: 체언종결(~음, ~함). 본문: 코칭형(~해봅시다, ~해볼까요?). 함께 배워가는 동료 멘토 느낌으로.' }
 ];
 
-// 2-3. 5탭 교안 분류 상수
+// 2-3. 6탭 교안 분류 상수
 const LESSON_TABS = [
     { id: 'basicLearn',  label: '기본학습',   icon: 'ph-book-open',     color: 'blue' },
     { id: 'basicPrac',   label: '기본실습',   icon: 'ph-code',          color: 'emerald' },
     { id: 'advLearn',    label: '심화학습',   icon: 'ph-brain',         color: 'amber' },
     { id: 'advPrac',     label: '심화실습',   icon: 'ph-rocket-launch', color: 'red' },
-    { id: 'assessment',  label: '학습이해도', icon: 'ph-exam',          color: 'violet' }
+    { id: 'assessment',  label: '학습이해도', icon: 'ph-exam',          color: 'violet' },
+    { id: 'advAssessment', label: '심화이해도', icon: 'ph-seal-check',  color: 'fuchsia' }
 ];
+
+// 2-4. 차시의 두 갈래. 교수안·슬라이드와 문제은행을 기본학습과 심화학습으로 나누어 만든다
+// learn·practice: 교수안을 만드는 학습·실습 탭 / bank: 문제은행 탭 / field: 교수안·편성안·슬라이드를 담는 차시 칸
+const LESSON_TRACKS = [
+    { id: 'basic', label: '기본학습', learn: 'basicLearn', practice: 'basicPrac', bank: 'assessment', field: 'gyosuan' },
+    { id: 'adv', label: '심화학습', learn: 'advLearn', practice: 'advPrac', bank: 'advAssessment', field: 'gyosuanAdv' }
+];
+
+// 갈래 id로 찾는다. 모르는 값(예전 호출, 남이 준 값)은 기본학습이다
+const lessonTrack = id => LESSON_TRACKS.find(track => track.id === id) || LESSON_TRACKS[0];
+
+// 탭이 든 갈래(학습·실습·문제은행 탭). 어느 갈래에도 들지 않으면 null
+const tabTrack = tabId => LESSON_TRACKS.find(track => track.learn === tabId || track.practice === tabId || track.bank === tabId) || null;
+
+// 문제은행 탭(학습이해도·심화이해도)인가
+const isQuestionBankTab = tabId => LESSON_TRACKS.some(track => track.bank === tabId);
+
+// 그 갈래의 교수안(교수안·편성안·슬라이드). 없으면 undefined
+const gyosuanOf = (mod, trackId) => (mod ? mod[lessonTrack(trackId).field] : undefined);
+
+// 그 갈래의 학습·실습 탭에 글이 있는가. 탭 글이 하나도 없는 옛 차시의 본문(content)은 기본학습 갈래의 글이다
+function trackHasContent(mod, trackId) {
+    const track = lessonTrack(trackId);
+    const tabs = mod?.tabContents && typeof mod.tabContents === 'object' ? mod.tabContents : {};
+    if ([track.learn, track.practice].some(id => typeof tabs[id] === 'string' && tabs[id].trim())) return true;
+    return track.id === LESSON_TRACKS[0].id && typeof mod?.content === 'string' && !!mod.content.trim() && !LESSON_TABS.some(tab => tabs[tab.id]);
+}
 
 // 3. 모의 데이터 (Mock Data)
 const MOCK_IMAGE_B64 = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4MDAiIGhlaWdodD0iNDAwIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjMWUxZTJlIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJzYW5zLXNlcmlmIiBmb250LXNpemU9IjI0IiBmaWxsPSIjOGE4YWI1IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBkeT0iLjNlbSI+R2FtZSBEZXNpZ24gRGlhZ3JhbSBNb2NrPC90ZXh0Pjwvc3ZnPg==";

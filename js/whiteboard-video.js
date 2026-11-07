@@ -209,8 +209,11 @@ window.whiteboardInbox = {
 
 let whiteboardCollecting = null;
 
-// 차시 글: 합친 본문·탭·교수안·편성안
-const whiteboardLessonTexts = mod => [mod.content, ...Object.values(mod.tabContents || {}), mod.gyosuan?.docMd, mod.gyosuan?.deckMd].filter(text => typeof text === 'string');
+// 차시 글: 합친 본문·탭·두 갈래의 교수안·편성안
+function whiteboardLessonTexts(mod) {
+    const plans = LESSON_TRACKS.flatMap(track => [mod[track.field]?.docMd, mod[track.field]?.deckMd]);
+    return [mod.content, ...Object.values(mod.tabContents || {}), ...plans].filter(text => typeof text === 'string');
+}
 
 // 글이 그 그림 키(local:키)를 가리키는지. local:img_1 뒤에 키 글자가 더 이어지면(local:img_10) 다른 그림이다
 function whiteboardTextUsesKey(text, imgId) {
@@ -219,7 +222,7 @@ function whiteboardTextUsesKey(text, imgId) {
     return false;
 }
 
-// 영상을 붙일 그림이 차시 글(합친 본문·탭·교수안·편성안)에 아직 있는지: local:키(local:img_1과 local:img_10을 가른다)나 그 그림 값(data URL)을 바로 쓴 자리.
+// 영상을 붙일 그림이 차시 글(합친 본문·탭·두 갈래의 교수안·편성안)에 아직 있는지: local:키(local:img_1과 local:img_10을 가른다)나 그 그림 값(data URL)을 바로 쓴 자리.
 // 영상을 기다리는 동안 그 그림을 지웠으면 없다
 function whiteboardPictureInLesson(mod, imgId) {
     const value = typeof mod.images?.[imgId] === 'string' && /^data:image\//.test(mod.images[imgId]) ? mod.images[imgId] : '';

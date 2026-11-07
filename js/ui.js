@@ -948,7 +948,7 @@ function closeAllDropdowns(exceptId) {
 
 // v7.2: 내보내기 드롭다운 (PDF → 통합 내보내기)
 let _exportScope = 'current'; // 'current' | 'subject'
-let _exportTabs = 'all'; // 현재 차시를 내보낼 탭 범위: 'all'(5개 탭 전체) | 'current'(지금 탭)
+let _exportTabs = 'all'; // 현재 차시를 내보낼 탭 범위: 'all'(모든 탭) | 'current'(지금 탭)
 
 function toggleExportDropdown(event) {
     if (event) event.stopPropagation();
@@ -1114,6 +1114,9 @@ window.updateZipSelection = function () {
     }
 };
 
+// ZIP의 차시 폴더에 넣는 탭 MD 파일 이름(번호는 탭 순서). '내보낸 교안 다시 불러오기'는 번호를 떼고 탭 이름으로 읽는다(output-import.js tabIdOf)
+const ZIP_TAB_FILE_NAMES = { basicLearn: '01_기본학습', basicPrac: '02_기본실습', advLearn: '03_심화학습', advPrac: '04_심화실습', assessment: '05_학습이해도', advAssessment: '06_심화이해도' };
+
 window.exportSelectedToZip = async function () {
     if (typeof JSZip === 'undefined') return window.showAlert('JSZip을 불러오는 중입니다.');
     const checkedIds = [...document.querySelectorAll('.subj-zip-cb:checked')].map(cb => cb.dataset.subjId);
@@ -1137,7 +1140,7 @@ window.exportSelectedToZip = async function () {
             const modName = uniqueFileBase(lessonFileBase(mod, subj), usedNames);
             const modFolder = subjFolder.folder(modName);
             const tabs = mod.tabContents || {};
-            const tabNames = { basicLearn: '01_기본학습', basicPrac: '02_기본실습', advLearn: '03_심화학습', advPrac: '04_심화실습', assessment: '05_학습이해도' };
+            const tabNames = ZIP_TAB_FILE_NAMES;
             let hasTabContent = false;
 
             Object.entries(tabs).forEach(([tabId, content]) => {
@@ -1189,7 +1192,7 @@ window.exportSelectedToZip = async function () {
     }
 };
 
-// 차시마다 화면과 같은 모양의 교안.html(5개 탭, 그림 포함)을 ZIP에 넣는다. PDF는 인쇄로 만들므로 ZIP에는 HTML로 넣는다
+// 차시마다 화면과 같은 모양의 교안.html(모든 탭, 그림 포함)을 ZIP에 넣는다. PDF는 인쇄로 만들므로 ZIP에는 HTML로 넣는다
 async function addLessonHtmlToZip(jobs) {
     let added = 0;
     for (const { folder, mod } of jobs) {
@@ -1250,7 +1253,7 @@ window.exportAllToZip = async function () {
 
         // 각 탭의 마크다운 저장
         const tabs = mod.tabContents || {};
-        const tabNames = { basicLearn: '01_기본학습', basicPrac: '02_기본실습', advLearn: '03_심화학습', advPrac: '04_심화실습', assessment: '05_학습이해도' };
+        const tabNames = ZIP_TAB_FILE_NAMES;
         let hasTabContent = false;
 
         Object.entries(tabs).forEach(([tabId, content]) => {
@@ -1838,6 +1841,43 @@ function advPracTabPrompt(minutes) {
         '- 팀 프로젝트 진행 시 역할 분배 가이드';
 }
 
+// 문제은행 탭(학습이해도·심화이해도)의 형식 규칙. 두 탭이 같은 문항 형식을 쓴다(문제은행 course-qbank.js가 이 형식으로 문항을 읽는다)
+const ASSESSMENT_FORMAT_RULE =
+    '[형식 규칙 — 반드시 준수]\n' +
+    '1. **문제 10개 이상**: 학습 목표가 10개보다 많으면 목표 수만큼 내어 모든 학습 목표를 1문제 이상 묻습니다. 유형은 밴드에 맞춥니다(L1 객관식·단답식, L2 서술형·코드제출, L3 파일제출). 객관식은 ①②③④⑤ 5개의 선택지를 주고 정답 1개 또는 복수정답으로 냅니다.\n' +
+    '2. 복수정답 문제는 제목에 "(복수정답)" 라벨 표기.\n' +
+    '3. 각 문제에 **힌트** 1줄 제공 (예: "💡 힌트: ○○ 섹션을 복습하세요").\n' +
+    '4. **정답 표기**: 정답 선택지는 <span style="color: #22c55e; font-weight: bold;"> 태그로 감싸서 녹색 강조.\n' +
+    '5. 각 문제 하단에 **해설** 포함.\n' +
+    '6. 각 문제 제목(### 문제 N. 제목) 바로 다음 줄에 "학습 목표 번호 · 밴드 · 유형"을 적으세요. 예: 학습 목표 1 · 밴드 L1 · 객관식. 밴드는 L1(수업과 같은 상황), L2(같은 구조를 다른 맥락에 적용), L3(요구사항만 제시) 중 하나입니다.\n' +
+    '7. 마지막에 **채점 기준표**를 100점 만점 루브릭(S/A/B/C/F)으로 작성.\n' +
+    '   - [필수] 채점 기준표는 반드시 인라인 스타일 HTML <table>로 출력하세요. 마크다운 파이프 표(| ... |)나 줄글로 작성하지 마세요.\n' +
+    '   - 표 구조: 1열 "등급"(S/A/B/C/F), 2열 "점수 범위"(예: 90~100점), 3열 "평가 기준 설명". 5개 등급을 각각 한 행으로 작성.\n' +
+    '   - 표 양식 예시: <table style="border-collapse: collapse; width: 100%;"><thead><tr><th style="border: 1px solid black; padding: 10px; background-color: #f2f2f2; text-align: center; width: 100px;">등급</th><th style="border: 1px solid black; padding: 10px; background-color: #f2f2f2; text-align: center; width: 140px;">점수 범위</th><th style="border: 1px solid black; padding: 10px; background-color: #f2f2f2; text-align: center;">평가 기준</th></tr></thead><tbody><tr><td style="border: 1px solid black; padding: 10px; font-weight: bold; text-align: center;">S</td><td style="border: 1px solid black; padding: 10px; text-align: center;">90~100점</td><td style="border: 1px solid black; padding: 10px; text-align: left;">설명...</td></tr></tbody></table>\n\n' +
+    '[단락 구분 규칙 — 절대 준수]\n' +
+    '- 각 문제는 반드시 `---` 수평선으로 구분하세요.\n' +
+    '- 문제 번호는 `### 문제 N.` 형식(H3 제목)으로 시작하세요.\n' +
+    '- 객관식 선택지는 각 줄에 하나씩 작성하세요 (① ② ③ ④ ⑤).\n' +
+    '- 힌트, 정답, 해설은 각각 별도 줄에 빈 줄로 구분하세요.\n' +
+    '- 복수정답인 경우 정답을 한 줄에 횡으로 나열하세요: `✅ **정답:** ①, ②, ④`\n' +
+    '- 단일정답인 경우: `✅ **정답:** ③`\n' +
+    '- 구조 예시:\n' +
+    '```\n### 문제 1. 제목\n학습 목표 1 · 밴드 L1 · 객관식\n\n① 선택지1\n② 선택지2\n③ 선택지3\n④ 선택지4\n⑤ 선택지5\n\n💡 **힌트:** 힌트 내용\n\n✅ **정답:** ②\n\n📝 **해설:** 해설 내용\n\n---\n\n### 문제 2. 제목\n학습 목표 2 · 밴드 L2 · 서술형\n\n문제 상황과 요구사항\n\n💡 **힌트:** 힌트 내용\n\n✅ **정답:** 모범 답안\n\n📏 **채점 기준:** 요소 (점수); 요소 (점수)\n\n📝 **해설:** 해설 내용\n\n---\n```';
+
+// 이해도 점검 탭 작성 지시. 학습이해도는 기본 학습 본과정을(예전 지시 그대로), 심화이해도는 심화 학습·심화 실습을 점검한다. 형식 규칙은 같다
+function assessmentTabPrompt(tabId) {
+    if (tabId !== 'advAssessment') {
+        return '이 교안의 "학습 이해도 점검" 영역을 작성하세요.\n' +
+            '[시간 배분 — 이 탭: 30~60분]\n' +
+            '이 탭은 "기본 학습" 본과정의 이해도를 점검하는 독립 평가 모듈로, 30~60분 분량입니다.\n\n' +
+            ASSESSMENT_FORMAT_RULE;
+    }
+    return '이 교안의 "심화 학습 이해도 점검" 영역을 작성하세요.\n' +
+        '[시간 배분 — 이 탭: 30~60분]\n' +
+        '이 탭은 "심화 학습"과 "심화 실습"의 이해도를 점검하는 독립 평가 모듈로, 30~60분 분량입니다. 기본 학습의 개념을 그대로 되묻지 않고, 심화 학습의 고급 이론·업계 사례·실무 분석과 심화 실습의 프로젝트를 이해하고 적용할 수 있는지 묻습니다. 문제마다 적는 학습 목표 번호는 심화 학습의 학습 목표 번호입니다.\n\n' +
+        ASSESSMENT_FORMAT_RULE;
+}
+
 // 탭 이어쓰기의 분량·시간 지시. 학습 탭은 첫 청크와 같은 낭독 기준(심화학습은 역할도 함께), 실습 시간을 정한 실습 탭은 그 시간. 그 밖에는 ''(예전과 같다)
 function tabContinueVolumeRule(tabId, { targetMinutes = 0, practiceMinutes = 0 } = {}) {
     if (tabId === 'basicLearn' || tabId === 'advLearn') {
@@ -1847,13 +1887,15 @@ function tabContinueVolumeRule(tabId, { targetMinutes = 0, practiceMinutes = 0 }
     return spec ? `- 이 탭은 ${spec.minutes}분 실습입니다. 이어 쓰는 ## 제목에도 (⏱ N분)을 적고, 앞 청크까지 모든 (⏱ N분)의 합계가 정확히 ${spec.minutes}분이 되게 합니다.\n` : '';
 }
 
-// 탭별 규칙 필터링 — 학습탭에 실습/평가/강사가이드 혼입 방지. 학습이해도는 코드제출 문항 형식을 따로 쓰므로 코드 예제 규칙을 뺀다
+// 탭별 규칙 필터링 — 학습탭에 실습/평가/강사가이드 혼입 방지. 문제은행 탭(학습이해도·심화이해도)은 코드제출 문항 형식을 따로 쓰므로 코드 예제 규칙을 뺀다
+const ASSESSMENT_RULE_EXCLUSIONS = ['time_allocation', 'image_tags', 'mermaid_rules', 'learning_checklist', 'code_examples'];
 const TAB_RULE_EXCLUSIONS = {
     basicLearn: ['rubric_100', 'quiz_format', 'assessment_design'],
     advLearn: ['rubric_100', 'quiz_format', 'assessment_design'],
     basicPrac: ['rubric_100', 'quiz_format', 'assessment_design', 'learning_checklist'],
     advPrac: ['rubric_100', 'quiz_format', 'assessment_design', 'learning_checklist'],
-    assessment: ['time_allocation', 'image_tags', 'mermaid_rules', 'learning_checklist', 'code_examples']
+    assessment: ASSESSMENT_RULE_EXCLUSIONS,
+    advAssessment: ASSESSMENT_RULE_EXCLUSIONS
 };
 
 // 탭 전용 규칙 빌더 (buildFullRules 변형). 탭 생성과 탭 이어쓰기가 같은 규칙을 쓴다
@@ -1918,7 +1960,7 @@ function buildTabRules(tabId, keyConcepts, { exclude = [], fewshot = true } = {}
         '- 이들은 집필 지시용 표시일 뿐이며, 학생이 읽는 교안 본문에 그대로 노출되어서는 안 됩니다.\n' +
         '- 교안은 실제 학습 내용(## 섹션 → 본문)으로 바로 시작하세요. 작업 설명·메타 헤더·따옴표로 감싼 라벨로 문서를 시작하지 마세요.';
 
-    if (fewshot && CONTEXT_CORE.fewshot_cases && tabId !== 'assessment') {
+    if (fewshot && CONTEXT_CORE.fewshot_cases && !isQuestionBankTab(tabId)) {
         rules += '\n\n' + CONTEXT_CORE.fewshot_cases;
     }
 
@@ -2165,34 +2207,14 @@ function buildTaskContext(taskScope, additionalContext = "") {
                 // 심화 학습은 기본 학습처럼 이 탭 하나가 낭독 480분이다(심화 역할은 그대로)
                 advLearn: advLearnTabPrompt(learnMinutes),
                 advPrac: advPracTabPrompt(practiceMinutes),
-                assessment: '이 교안의 "학습 이해도 점검" 영역을 작성하세요.\n' +
-                    '[시간 배분 — 이 탭: 30~60분]\n' +
-                    '이 탭은 "기본 학습" 본과정의 이해도를 점검하는 독립 평가 모듈로, 30~60분 분량입니다.\n\n' +
-                    '[형식 규칙 — 반드시 준수]\n' +
-                    '1. **문제 10개 이상**: 학습 목표가 10개보다 많으면 목표 수만큼 내어 모든 학습 목표를 1문제 이상 묻습니다. 유형은 밴드에 맞춥니다(L1 객관식·단답식, L2 서술형·코드제출, L3 파일제출). 객관식은 ①②③④⑤ 5개의 선택지를 주고 정답 1개 또는 복수정답으로 냅니다.\n' +
-                    '2. 복수정답 문제는 제목에 "(복수정답)" 라벨 표기.\n' +
-                    '3. 각 문제에 **힌트** 1줄 제공 (예: "💡 힌트: ○○ 섹션을 복습하세요").\n' +
-                    '4. **정답 표기**: 정답 선택지는 <span style="color: #22c55e; font-weight: bold;"> 태그로 감싸서 녹색 강조.\n' +
-                    '5. 각 문제 하단에 **해설** 포함.\n' +
-                    '6. 각 문제 제목(### 문제 N. 제목) 바로 다음 줄에 "학습 목표 번호 · 밴드 · 유형"을 적으세요. 예: 학습 목표 1 · 밴드 L1 · 객관식. 밴드는 L1(수업과 같은 상황), L2(같은 구조를 다른 맥락에 적용), L3(요구사항만 제시) 중 하나입니다.\n' +
-                    '7. 마지막에 **채점 기준표**를 100점 만점 루브릭(S/A/B/C/F)으로 작성.\n' +
-                    '   - [필수] 채점 기준표는 반드시 인라인 스타일 HTML <table>로 출력하세요. 마크다운 파이프 표(| ... |)나 줄글로 작성하지 마세요.\n' +
-                    '   - 표 구조: 1열 "등급"(S/A/B/C/F), 2열 "점수 범위"(예: 90~100점), 3열 "평가 기준 설명". 5개 등급을 각각 한 행으로 작성.\n' +
-                    '   - 표 양식 예시: <table style="border-collapse: collapse; width: 100%;"><thead><tr><th style="border: 1px solid black; padding: 10px; background-color: #f2f2f2; text-align: center; width: 100px;">등급</th><th style="border: 1px solid black; padding: 10px; background-color: #f2f2f2; text-align: center; width: 140px;">점수 범위</th><th style="border: 1px solid black; padding: 10px; background-color: #f2f2f2; text-align: center;">평가 기준</th></tr></thead><tbody><tr><td style="border: 1px solid black; padding: 10px; font-weight: bold; text-align: center;">S</td><td style="border: 1px solid black; padding: 10px; text-align: center;">90~100점</td><td style="border: 1px solid black; padding: 10px; text-align: left;">설명...</td></tr></tbody></table>\n\n' +
-                    '[단락 구분 규칙 — 절대 준수]\n' +
-                    '- 각 문제는 반드시 `---` 수평선으로 구분하세요.\n' +
-                    '- 문제 번호는 `### 문제 N.` 형식(H3 제목)으로 시작하세요.\n' +
-                    '- 객관식 선택지는 각 줄에 하나씩 작성하세요 (① ② ③ ④ ⑤).\n' +
-                    '- 힌트, 정답, 해설은 각각 별도 줄에 빈 줄로 구분하세요.\n' +
-                    '- 복수정답인 경우 정답을 한 줄에 횡으로 나열하세요: `✅ **정답:** ①, ②, ④`\n' +
-                    '- 단일정답인 경우: `✅ **정답:** ③`\n' +
-                    '- 구조 예시:\n' +
-                    '```\n### 문제 1. 제목\n학습 목표 1 · 밴드 L1 · 객관식\n\n① 선택지1\n② 선택지2\n③ 선택지3\n④ 선택지4\n⑤ 선택지5\n\n💡 **힌트:** 힌트 내용\n\n✅ **정답:** ②\n\n📝 **해설:** 해설 내용\n\n---\n\n### 문제 2. 제목\n학습 목표 2 · 밴드 L2 · 서술형\n\n문제 상황과 요구사항\n\n💡 **힌트:** 힌트 내용\n\n✅ **정답:** 모범 답안\n\n📏 **채점 기준:** 요소 (점수); 요소 (점수)\n\n📝 **해설:** 해설 내용\n\n---\n```'
+                assessment: assessmentTabPrompt('assessment'),
+                // 심화이해도는 학습이해도와 같은 형식으로 심화 학습·심화 실습의 학습 목표를 점검한다
+                advAssessment: assessmentTabPrompt('advAssessment')
             };
             const tabInstruction = tabPrompts[additionalContext.tabId] || tabPrompts.basicLearn;
 
             userPrompt = `${thinkingPrefix}[현재 작업: 탭별 교안 작성 — ${additionalContext.tabLabel}]\n모듈명: ${additionalContext.title}\n설명: ${additionalContext.description}\n\n[탭 작성 지시]\n${tabInstruction}` +
-                (additionalContext.codeTopic && additionalContext.tabId !== 'assessment' ? codeTopicPrompt(additionalContext.tabId) : '');
+                (additionalContext.codeTopic && !isQuestionBankTab(additionalContext.tabId) ? codeTopicPrompt(additionalContext.tabId) : '');
             userPrompt += getCurriculumOutline();
             userPrompt += getReferenceContext(8000);
 
@@ -2225,7 +2247,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
             userPrompt = `[현재 작업: 탭 이어쓰기 (${additionalContext.chunkIndex}번째 연속) — ${additionalContext.tabLabel}]\n모듈명: ${additionalContext.title}\n설명: ${additionalContext.description}` +
                 (writtenHeadings ? `\n\n[지금까지 쓴 ## 제목 — 다시 쓰지 않습니다]\n${writtenHeadings}` : '') +
                 `\n\n[이전 작성 내용 — 여기서부터 이어쓰세요. 반복 금지]\n${additionalContext.previousContent}`;
-            if (additionalContext.codeTopic && additionalContext.tabId !== 'assessment') userPrompt += codeTopicPrompt(additionalContext.tabId);
+            if (additionalContext.codeTopic && !isQuestionBankTab(additionalContext.tabId)) userPrompt += codeTopicPrompt(additionalContext.tabId);
             break;
         }
 

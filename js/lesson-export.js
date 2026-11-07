@@ -216,7 +216,7 @@ async function printHtmlDocument(doc) {
 }
 
 /* ---------- 내보내기 메뉴에서 부른다 ---------- */
-// format: 'html' | 'pdf'. tabIds: null이면 차시 전체(5개 탭), 아니면 그 탭만
+// format: 'html' | 'pdf'. tabIds: null이면 차시 전체(모든 탭), 아니면 그 탭만
 window.exportLessonDocument = async function (mod, format, tabIds) {
     if (!mod) return window.showAlert('차시를 먼저 선택해주세요. (좌측 목록에서 차시 클릭)');
     try {
@@ -261,8 +261,8 @@ window.exportSubjectDocument = async function (subj, format) {
     }
 };
 
-// ZIP에 넣을 차시 교안 HTML(5개 탭, 그림 포함). 내용이 없으면 null
-// 원본도 담아 이 파일 하나로 '내보낸 교안 다시 불러오기'가 된다. 교수안은 넣지 않는다(ZIP의 06_교수안.md·07_슬라이드편성안.md에 있다)
+// ZIP에 넣을 차시 교안 HTML(모든 탭, 그림 포함). 내용이 없으면 null
+// 원본도 담아 이 파일 하나로 '내보낸 교안 다시 불러오기'가 된다. 교수안은 넣지 않는다(ZIP의 07_교수안.md·08_슬라이드편성안.md, 심화학습은 09·10번 파일에 있다)
 // 원본은 그린 바로 그 차시(mod)로 만든다(그림 담기 '빼기'는 백업 정보에만 쓰고 읽기용 교안.html의 그림은 그대로 둔다)
 window.lessonHtmlForZip = async function (mod) {
     const shown = new Map();

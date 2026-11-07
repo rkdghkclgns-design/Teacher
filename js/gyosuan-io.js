@@ -103,7 +103,9 @@ function refreshGyosuanViews(mod) {
     renderGyosuanView(mod);
 }
 
-window.importGyosuanMdFiles = async function (moduleId) {
+// trackId: 넣을 갈래(basic | adv). 화면에서 고른 갈래를 넘긴다. 예전에 받은 교수안·편성안 파일도 고른 갈래에 넣는다
+window.importGyosuanMdFiles = async function (moduleId, trackId = currentGyosuanTrack()) {
+    const track = lessonTrack(trackId);
     const files = await pickGyosuanFiles(GYOSUAN_MD_ACCEPT, true);
     const mod = getEditingModule(moduleId);
     if (!mod || !files.length) return;
@@ -111,16 +113,16 @@ window.importGyosuanMdFiles = async function (moduleId) {
         const texts = await Promise.all(files.map(readGyosuanFile));
         const sorted = sortGyosuanFiles(files.map((file, index) => ({ name: file.name, text: texts[index] })));
         if (sorted.error) return window.showAlert(sorted.error);
-        const replacing = mod.gyosuan?.docMd || gyosuanHasDeck(mod);
+        const replacing = mod[track.field]?.docMd || gyosuanHasDeck(mod, track.id);
         if (replacing) {
-            const ok = await confirmAsync('올린 파일로 이 차시의 교수안·편성안을 바꿉니다. 편성안을 바꾸면 슬라이드 화면 편집 내용도 사라집니다. 계속할까요?', { title: '교수안 바꾸기', okLabel: '바꾸기', tone: 'danger' });
+            const ok = await confirmAsync(`올린 파일로 이 차시의 ${track.label} 교수안·편성안을 바꿉니다. 편성안을 바꾸면 슬라이드 화면 편집 내용도 사라집니다. 계속할까요?`, { title: `${track.label} 교수안 바꾸기`, okLabel: '바꾸기', tone: 'danger' });
             if (!ok) return;
             if (gyosuanTargetMoved(moduleId, mod)) return;
         }
-        mod.gyosuan = convertedGyosuan(mod.gyosuan, sorted);
+        mod[track.field] = convertedGyosuan(mod[track.field], sorted);
         await saveGyosuan(mod);
         refreshGyosuanViews(mod);
-        window.showToast?.('완성 MD로 교수안과 슬라이드를 만들었습니다.', 'success');
+        window.showToast?.(`완성 MD로 ${track.label} 교수안과 슬라이드를 만들었습니다.`, 'success');
     } catch (err) {
         console.error('[교수안] MD 변환 실패:', err);
         window.showAlert('MD를 불러오지 못했습니다: ' + (err?.message || err));
@@ -162,8 +164,11 @@ function rememberImportedTheme(theme) {
 }
 
 // 스튜디오와 강사뷰가 함께 쓴다. session: 지금 연 차시 덱 번호, 없으면 null
+// moduleKey: 스튜디오 주소의 module 값(gyosuan.js studioModuleKey. 심화학습은 '차시 id~adv'). 그 갈래의 교수안에 넣는다
 // read: 조각으로 읽은 파일(importGyosuanHtmlFile). 있으면 그림을 떼어 둔 글로 읽는다(readExportedGyosuanHtml)
-window.importGyosuanHtml = async function (moduleId, text, session = null, read = null) {
+window.importGyosuanHtml = async function (moduleKey, text, session = null, read = null) {
+    const { moduleId, track: trackId } = parseStudioModuleKey(moduleKey);
+    const track = lessonTrack(trackId);
     const mod = getEditingModule(moduleId);
     if (!mod) return { ok: false, error: '교안을 먼저 선택해주세요.' };
     let imported;
@@ -175,14 +180,14 @@ window.importGyosuanHtml = async function (moduleId, text, session = null, read 
         return { ok: false, error: isBackupTooBig(err) ? gyosuanTooBig('HTML').message : err?.message || 'HTML을 불러오지 못했습니다.' };
     }
     try {
-        const target = importTarget(imported, session, mod.gyosuan?.docMd ? gyosuanSessionList(mod).length : 0);
+        const target = importTarget(imported, session, mod[track.field]?.docMd ? gyosuanSessionList(mod, track.id).length : 0);
         if (target.error) return { ok: false, error: target.error };
-        if (gyosuanHasDeck(mod)) {
+        if (gyosuanHasDeck(mod, track.id)) {
             // 스튜디오 창(z 9000) 위에 뜬다. 취소하거나 묻는 동안 차시가 바뀌면 아무것도 바꾸지 않는다
-            const ok = await confirmAsync('불러온 파일로 이 슬라이드를 바꿉니다. 지금 슬라이드 내용은 사라집니다. 계속할까요?', { title: '슬라이드 바꾸기', okLabel: '바꾸기', tone: 'danger' });
+            const ok = await confirmAsync(`불러온 파일로 이 ${track.label} 슬라이드를 바꿉니다. 지금 슬라이드 내용은 사라집니다. 계속할까요?`, { title: `${track.label} 슬라이드 바꾸기`, okLabel: '바꾸기', tone: 'danger' });
             if (!ok || gyosuanTargetMoved(moduleId, mod)) return { ok: false };
         }
-        mod.gyosuan = importedGyosuan(mod.gyosuan, imported, target.session);
+        mod[track.field] = importedGyosuan(mod[track.field], imported, target.session);
         if (imported.source?.refs.length) mod.refImages = imported.source.refs;
         rememberImportedTheme(imported.theme);
         await saveGyosuan(mod);
@@ -194,14 +199,16 @@ window.importGyosuanHtml = async function (moduleId, text, session = null, read 
     }
 };
 
-window.importGyosuanHtmlFile = async function (moduleId) {
+// trackId: 넣을 갈래. 화면에서 고른 갈래를 넘긴다
+window.importGyosuanHtmlFile = async function (moduleId, trackId = currentGyosuanTrack()) {
+    const track = lessonTrack(trackId).id;
     const [file] = await pickGyosuanFiles('.html,.htm');
     if (!file) return;
     try {
         const read = await readGyosuanSkeleton(file);
-        const result = await window.importGyosuanHtml(moduleId, read.text, null, read);
+        const result = await window.importGyosuanHtml(studioModuleKey(moduleId, track), read.text, null, read);
         if (result.error) return window.showAlert(result.error);
-        if (result.ok) window.openSlideStudio(moduleId);
+        if (result.ok) window.openSlideStudio(moduleId, track);
     } catch (err) {
         console.error('[슬라이드] HTML 읽기 실패:', err);
         window.showAlert('HTML을 불러오지 못했습니다: ' + (err?.message || err));

@@ -1,11 +1,16 @@
 // gyosuan-view.js - 강사뷰: 교수안 보기, 교수안·편성안 MD 수정, 슬라이드 다시 만들기, 다른 탭 변경 안내
 // 생성과 스튜디오 연결은 gyosuan.js, 변환·불러오기·참고 이미지는 gyosuan-io.js에 있다.
+// 위쪽 기본학습 | 심화학습 고르기(tabs.js)로 고른 갈래의 교수안(mod.gyosuan · mod.gyosuanAdv)을 보인다.
 
 const GYOSUAN_EDIT_LABELS = { docMd: 'MD 수정', deckMd: '편성안 수정' };
 const _gyosuanTabs = typeof BroadcastChannel === 'function' ? new BroadcastChannel('gyosuan-lesson') : null;
 let _gyosuanForeignChange = null; // 다른 탭이 고친 차시 id
 let _gyosuanSampleFor = null; // 샘플을 펼친 차시 id
-let _gyosuanDeckViewFor = null; // 편성안을 문서로 펼친 차시 id
+let _gyosuanDeckViewFor = null; // 편성안을 문서로 펼친 '차시 id~갈래'(gyosuanViewKey)
+const LEGACY_GYOSUAN_NOTE = '예전 방식으로 기본·심화를 함께 담은 교수안입니다. 다시 만들면 기본학습과 기본실습만으로 만듭니다.';
+
+// 차시와 갈래를 함께 가리키는 키(편성안 펼침·원문 수정 상태)
+const gyosuanViewKey = (mod, trackId) => `${mod.id}~${lessonTrack(trackId).id}`;
 
 /* ---------- 다른 탭 변경 안내 ---------- */
 // 저장은 브라우저 저장소를 통째로 덮어쓴다. 다른 탭이 고친 차시를 이 탭의 낡은 내용으로 덮기 전에 알리고 묻는다
@@ -52,30 +57,31 @@ function clearGyosuanForeignChange(mod) {
 
 /* ---------- 강사뷰 ---------- */
 // mark(mount): 그린 문서를 글로 바꾸기 전에 고친다(HTML 내려받기의 다시 불러오기 표시, gyosuanExportDocument)
-function gyosuanDocHtml(mod, mark = null) {
-    if (!mod?.gyosuan?.docMd) return null;
+function gyosuanDocHtml(mod, mark = null, trackId = 'basic') {
+    const gyosuan = gyosuanOf(mod, trackId);
+    if (!gyosuan?.docMd) return null;
     const mount = document.createElement('div');
-    const parsed = window.KBuilder.parseDoc(resolveGyosuanImages(mod.gyosuan.docMd, mod));
+    const parsed = window.KBuilder.parseDoc(resolveGyosuanImages(gyosuan.docMd, mod, trackId));
     window.KBuilder.buildDoc(parsed, mount, { refs: mod.refImages || [] });
     if (mark) mark(mount);
     return mount.innerHTML;
 }
 
-function gyosuanDeckHtml(mod) {
-    const md = stripFrontmatter(resolveGyosuanImages(mod.gyosuan.deckMd, mod));
+function gyosuanDeckHtml(mod, trackId = 'basic') {
+    const md = stripFrontmatter(resolveGyosuanImages(gyosuanOf(mod, trackId).deckMd, mod, trackId));
     return `<div class="gyosuan-deck-view">${sanitizeLessonHtml(marked.parse(md))}</div>`;
 }
 
 // 차시가 하나면 차시별 내려받기와 같으므로 보여 주지 않는다
-function gyosuanSessionPickHtml(mod) {
-    const sessions = gyosuanSessionList(mod);
+function gyosuanSessionPickHtml(mod, trackId = 'basic') {
+    const sessions = gyosuanSessionList(mod, trackId);
     if (sessions.length < 2) return '';
     const options = (kind, label) => `<optgroup label="${label}">${sessions.map(session => `<option value="${kind}:${session.index}">${session.index + 1}차시 ${label}</option>`).join('')}</optgroup>`;
     return `
-        <select aria-label="차시 하나 받기" onchange="downloadGyosuanSession('${mod.id}', this.value); this.value = ''" class="gyosuan-tool">
+        <select aria-label="차시 하나 받기" onchange="downloadGyosuanSession('${mod.id}', this.value, '${lessonTrack(trackId).id}'); this.value = ''" class="gyosuan-tool">
             <option value="">차시 하나 받기</option>
             ${options('doc', '교수안')}
-            ${mod.gyosuan.deckMd ? options('deck', '편성안') : ''}
+            ${gyosuanOf(mod, trackId).deckMd ? options('deck', '편성안') : ''}
         </select>`;
 }
 
@@ -91,25 +97,32 @@ function gyosuanOptionsHtml() {
         </label>`;
 }
 
-function gyosuanSourceToolsHtml(mod) {
+function gyosuanSourceToolsHtml(mod, trackId = 'basic') {
+    const track = lessonTrack(trackId).id;
     const button = (action, icon, label) => `<button onclick="${action}" class="gyosuan-tool"><i class="ph-bold ${icon}"></i> ${label}</button>`;
-    return button(`importGyosuanMdFiles('${mod.id}')`, 'ph-file-arrow-up', '완성 MD 불러오기') +
-        button(`importGyosuanHtmlFile('${mod.id}')`, 'ph-file-html', '내보낸 HTML 불러오기');
+    return button(`importGyosuanMdFiles('${mod.id}', '${track}')`, 'ph-file-arrow-up', '완성 MD 불러오기') +
+        button(`importGyosuanHtmlFile('${mod.id}', '${track}')`, 'ph-file-html', '내보낸 HTML 불러오기');
 }
 
-function gyosuanEmptyHtml(mod) {
+// 그 갈래의 교수안이 없을 때. 갈래의 학습·실습 탭이 비어 있으면 먼저 만들라고 알린다(만들기를 누르면 같은 안내가 뜬다)
+function gyosuanEmptyHtml(mod, trackId = 'basic') {
+    const track = lessonTrack(trackId);
+    const tabs = trackTabsLabel(track);
+    const empty = !trackHasContent(mod, track.id)
+        ? `<p class="text-sm text-amber-600 mb-4">${escapeHtml(`${tabs} 탭에 아직 교안이 없습니다. 먼저 그 탭을 만든 뒤 교수안을 만드세요.`)}</p>` : '';
     return `
         <div class="flex flex-col items-center justify-center text-center py-20 px-6 select-none">
             <div class="w-16 h-16 mb-5 flex items-center justify-center rounded-2xl bg-orange-50 text-orange-500 text-3xl">
                 <i class="ph-bold ph-chalkboard-teacher"></i>
             </div>
-            <h3 class="text-lg font-bold text-gray-800 mb-2">이 차시의 교수안이 아직 없습니다</h3>
-            <p class="text-sm text-gray-500 mb-6 leading-relaxed">교안을 바탕으로 AI가 강사 활동·설명 내용·멘트 예시·학생 활동을 담은 교수안과<br>슬라이드 편성안을 함께 만듭니다. 차시 분량에 따라 몇 분 걸릴 수 있습니다.</p>
+            <h3 class="text-lg font-bold text-gray-800 mb-2">이 차시의 ${escapeHtml(track.label)} 교수안이 아직 없습니다</h3>
+            <p class="text-sm text-gray-500 mb-6 leading-relaxed">${escapeHtml(tabs)} 탭 교안을 바탕으로 AI가 강사 활동·설명 내용·멘트 예시·학생 활동을 담은 교수안과<br>슬라이드 편성안을 함께 만듭니다. 차시 분량에 따라 몇 분 걸릴 수 있습니다.</p>
+            ${empty}
             <div class="gyosuan-toolbar center">${gyosuanOptionsHtml()}</div>
             <div class="flex items-center gap-2">
-                <button onclick="generateGyosuan('${mod.id}')"
+                <button onclick="generateGyosuan('${mod.id}', { track: '${track.id}' })"
                     class="px-5 py-2.5 text-sm font-bold text-white bg-accent rounded-lg hover:bg-accentHover transition-colors flex items-center gap-2 shadow-sm hover:-translate-y-0.5">
-                    <i class="ph-bold ph-sparkle"></i> 교수안·슬라이드 생성
+                    <i class="ph-bold ph-sparkle"></i> ${escapeHtml(track.label)} 교수안·슬라이드 만들기
                 </button>
                 <button onclick="showLessonView()"
                     class="px-5 py-2.5 text-sm font-bold text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
@@ -117,50 +130,56 @@ function gyosuanEmptyHtml(mod) {
                 </button>
             </div>
             <div class="gyosuan-toolbar center">
-                ${gyosuanSourceToolsHtml(mod)}
+                ${gyosuanSourceToolsHtml(mod, track.id)}
                 <button onclick="toggleGyosuanSample()" class="gyosuan-tool"><i class="ph-bold ph-eye"></i> 샘플 미리보기</button>
             </div>
             ${gyosuanRefTrayHtml(mod)}
         </div>`;
 }
 
-function gyosuanNoteText(mod) {
-    const gyosuan = mod.gyosuan;
+function gyosuanNoteText(mod, trackId = currentGyosuanTrack()) {
+    const track = lessonTrack(trackId);
+    const gyosuan = gyosuanOf(mod, track.id);
     if (isGyosuanForeignChanged(mod)) return '⚠️ 다른 탭에서 이 차시가 바뀌었습니다. 새로고침하면 최신 내용을 불러옵니다.';
     if (gyosuan.deckDirty) return '⚠️ 편성안이 바뀌었습니다. 슬라이드를 다시 만들면 반영됩니다.';
-    if (!gyosuan.sourceKey) return '불러온 교수안입니다. 탭별 교안은 위 탐색줄에서 볼 수 있습니다.';
-    return gyosuan.sourceKey !== hashSource(collectLessonSource(mod))
+    if (!gyosuan.sourceKey) return `불러온 교수안입니다(${track.label}). 탭별 교안은 위 탐색줄에서 볼 수 있습니다.`;
+    if (track.id === LESSON_TRACKS[0].id && isLegacyGyosuan(mod)) return LEGACY_GYOSUAN_NOTE;
+    return gyosuan.sourceKey !== hashSource(collectLessonSource(mod, track.id))
         ? '⚠️ 교안이 바뀌었습니다. 교수안을 다시 생성하면 반영됩니다.'
-        : '차시 전체 기준 교수안입니다. 탭별 교안은 위 탐색줄에서 볼 수 있습니다.';
+        : `${trackTabsLabel(track)} 탭으로 만든 ${track.label} 교수안입니다. 탭별 교안은 위 탐색줄에서 볼 수 있습니다.`;
 }
 
-function gyosuanToolbarHtml(mod) {
-    const editing = gyosuanEditField(mod);
-    const hasDoc = !!mod.gyosuan.docMd;
+function gyosuanToolbarHtml(mod, trackId = 'basic') {
+    const track = lessonTrack(trackId).id;
+    const gyosuan = gyosuanOf(mod, track);
+    const editing = gyosuanEditField(mod, track);
+    const hasDoc = !!gyosuan.docMd;
     const button = (action, icon, label) => `<button onclick="${action}" class="gyosuan-tool"><i class="ph-bold ${icon}"></i> ${label}</button>`;
     const editButton = (field, icon) => button(`toggleGyosuanEdit('${field}')`, icon, editing === field ? '보기' : GYOSUAN_EDIT_LABELS[field]);
+    const id = `'${mod.id}', '${track}'`;
     return `
         <div class="gyosuan-toolbar">
-            <span class="gyosuan-note">${gyosuanNoteText(mod)}</span>
+            <span class="gyosuan-note">${escapeHtml(gyosuanNoteText(mod, track))}</span>
             ${editButton('docMd', 'ph-pencil-simple')}
             ${editButton('deckMd', 'ph-slideshow')}
-            ${mod.gyosuan.deckMd && !editing ? button('toggleGyosuanDeckView()', 'ph-eye', _gyosuanDeckViewFor === mod.id ? '교수안 보기' : '편성안 보기') : ''}
-            ${editing === 'deckMd' || mod.gyosuan.deckDirty ? button(`rebuildGyosuanDeck('${mod.id}')`, 'ph-arrows-clockwise', '슬라이드 다시 만들기') : ''}
-            ${hasDoc ? button(`downloadGyosuanMd('${mod.id}')`, 'ph-download-simple', 'MD') : ''}
-            ${mod.gyosuan.deckMd ? button(`downloadGyosuanMd('${mod.id}', 'deckMd')`, 'ph-download-simple', '편성안 MD') : ''}
-            ${hasDoc ? button(`downloadGyosuanSessions('${mod.id}')`, 'ph-clock', '차시별 MD') : ''}
-            ${hasDoc ? button(`downloadGyosuanSessionDecks('${mod.id}')`, 'ph-presentation', '차시별 편성안') : ''}
-            ${hasDoc ? gyosuanSessionPickHtml(mod) : ''}
-            ${hasDoc ? button(`downloadGyosuanHtml('${mod.id}')`, 'ph-file-html', 'HTML') : ''}
-            ${hasDoc ? button(`printGyosuan('${mod.id}')`, 'ph-file-pdf', 'PDF') : ''}
-            ${button(`regenerateGyosuan('${mod.id}')`, 'ph-arrow-clockwise', '재생성')}
+            ${gyosuan.deckMd && !editing ? button('toggleGyosuanDeckView()', 'ph-eye', _gyosuanDeckViewFor === gyosuanViewKey(mod, track) ? '교수안 보기' : '편성안 보기') : ''}
+            ${editing === 'deckMd' || gyosuan.deckDirty ? button(`rebuildGyosuanDeck(${id})`, 'ph-arrows-clockwise', '슬라이드 다시 만들기') : ''}
+            ${hasDoc ? button(`downloadGyosuanMd('${mod.id}', 'docMd', '${track}')`, 'ph-download-simple', 'MD') : ''}
+            ${gyosuan.deckMd ? button(`downloadGyosuanMd('${mod.id}', 'deckMd', '${track}')`, 'ph-download-simple', '편성안 MD') : ''}
+            ${hasDoc ? button(`downloadGyosuanSessions(${id})`, 'ph-clock', '차시별 MD') : ''}
+            ${hasDoc ? button(`downloadGyosuanSessionDecks(${id})`, 'ph-presentation', '차시별 편성안') : ''}
+            ${hasDoc ? gyosuanSessionPickHtml(mod, track) : ''}
+            ${hasDoc ? button(`downloadGyosuanHtml(${id})`, 'ph-file-html', 'HTML') : ''}
+            ${hasDoc ? button(`printGyosuan(${id})`, 'ph-file-pdf', 'PDF') : ''}
+            ${button(`regenerateGyosuan(${id})`, 'ph-arrow-clockwise', '재생성')}
         </div>
-        <div class="gyosuan-toolbar sub">${gyosuanOptionsHtml()}${gyosuanSourceToolsHtml(mod)}</div>
+        <div class="gyosuan-toolbar sub">${gyosuanOptionsHtml()}${gyosuanSourceToolsHtml(mod, track)}</div>
         ${gyosuanRefTrayHtml(mod)}`;
 }
 
-function gyosuanEditField(mod) {
-    return _gyosuanEditing?.id === mod.id ? _gyosuanEditing.field : null;
+// 고치는 중인 칸(docMd | deckMd). 그 차시의 그 갈래를 고치는 중일 때만
+function gyosuanEditField(mod, trackId = currentGyosuanTrack()) {
+    return _gyosuanEditing?.id === mod.id && (_gyosuanEditing.track || LESSON_TRACKS[0].id) === lessonTrack(trackId).id ? _gyosuanEditing.field : null;
 }
 
 function gyosuanSampleHtml() {
@@ -175,27 +194,30 @@ function gyosuanSampleHtml() {
         ${gyosuanSampleDocHtml()}`;
 }
 
-function gyosuanBodyHtml(mod) {
-    if (gyosuanEditField(mod)) return '<textarea id="gyosuan-raw" class="gyosuan-raw" spellcheck="false" onchange="saveGyosuanRaw()"></textarea>';
-    if (_gyosuanDeckViewFor === mod.id && mod.gyosuan.deckMd) return gyosuanDeckHtml(mod);
-    return gyosuanDocHtml(mod) || '<p class="gyosuan-note">교수안이 없습니다. 완성 MD를 불러오거나 재생성으로 만들 수 있습니다.</p>';
+function gyosuanBodyHtml(mod, trackId = 'basic') {
+    if (gyosuanEditField(mod, trackId)) return '<textarea id="gyosuan-raw" class="gyosuan-raw" spellcheck="false" onchange="saveGyosuanRaw()"></textarea>';
+    if (_gyosuanDeckViewFor === gyosuanViewKey(mod, trackId) && gyosuanOf(mod, trackId).deckMd) return gyosuanDeckHtml(mod, trackId);
+    return gyosuanDocHtml(mod, null, trackId) || '<p class="gyosuan-note">교수안이 없습니다. 완성 MD를 불러오거나 재생성으로 만들 수 있습니다.</p>';
 }
 
+// 위쪽에 기본학습 | 심화학습 고르기를 두고, 고른 갈래의 교수안(없으면 만들기 안내)을 그린다
 function renderGyosuanView(mod) {
     const el = document.getElementById('gyosuan-view');
     if (!el || !mod) return;
+    const track = currentGyosuanTrack();
+    const switcher = typeof lessonTrackSwitchHtml === 'function' ? lessonTrackSwitchHtml(mod, 'gyosuan') : '';
     if (_gyosuanSampleFor === mod.id) {
-        el.innerHTML = gyosuanSampleHtml();
+        el.innerHTML = switcher + gyosuanSampleHtml();
         return;
     }
-    if (!mod.gyosuan?.docMd && !gyosuanHasDeck(mod)) {
-        el.innerHTML = gyosuanEmptyHtml(mod);
+    if (!gyosuanOf(mod, track)?.docMd && !gyosuanHasDeck(mod, track)) {
+        el.innerHTML = switcher + gyosuanEmptyHtml(mod, track);
     } else {
-        el.innerHTML = gyosuanToolbarHtml(mod) + gyosuanBodyHtml(mod);
+        el.innerHTML = switcher + gyosuanToolbarHtml(mod, track) + gyosuanBodyHtml(mod, track);
     }
     window.KBuilder.autoImages?.wireSelects(el);
     const raw = document.getElementById('gyosuan-raw');
-    if (raw) raw.value = mod.gyosuan[gyosuanEditField(mod)] || '';
+    if (raw) raw.value = gyosuanOf(mod, track)[gyosuanEditField(mod, track)] || '';
 }
 
 // 보기 모드에서 강사뷰이면 교안 대신 교수안을 보여 준다. 수정 모드는 기존대로 탭 교안 원문을 편집한다.
@@ -218,17 +240,20 @@ window.showLessonView = function () {
     if (mod) renderEditor(mod);
 };
 
+// 고른 갈래의 교수안·편성안 원문 칸을 열고 닫는다
 window.toggleGyosuanEdit = function (field = 'docMd') {
     const mod = getEditingModule();
     if (!mod) return;
-    _gyosuanEditing = gyosuanEditField(mod) === field ? null : { id: mod.id, field };
+    const track = currentGyosuanTrack();
+    _gyosuanEditing = gyosuanEditField(mod, track) === field ? null : { id: mod.id, field, track };
     renderGyosuanView(mod);
 };
 
 window.toggleGyosuanDeckView = function () {
     const mod = getEditingModule();
     if (!mod) return;
-    _gyosuanDeckViewFor = _gyosuanDeckViewFor === mod.id ? null : mod.id;
+    const key = gyosuanViewKey(mod, currentGyosuanTrack());
+    _gyosuanDeckViewFor = _gyosuanDeckViewFor === key ? null : key;
     renderGyosuanView(mod);
 };
 
@@ -241,13 +266,15 @@ window.toggleGyosuanSample = function () {
 
 const gyosuanHasScreenEdits = gyosuan => !!gyosuan.deckHtml || Object.keys(gyosuan.sessionDecks || {}).length > 0;
 
-// 교수안 원문 칸에 아직 넣지 않은 글 { mod, raw, field }. 없으면 null(칸은 mod.gyosuan[field] || ''로 채운다)
+// 교수안 원문 칸에 아직 넣지 않은 글 { mod, raw, field, track }. 없으면 null(칸은 고치는 갈래의 교수안[field] || ''로 채운다)
 function pendingGyosuanRaw() {
     const mod = getEditingModule();
     const raw = document.getElementById('gyosuan-raw');
-    const field = mod && gyosuanEditField(mod);
-    if (!mod?.gyosuan || !raw || !field || raw.value === (mod.gyosuan[field] || '')) return null;
-    return { mod, raw, field };
+    const track = lessonTrack(_gyosuanEditing?.track).id;
+    const field = mod && gyosuanEditField(mod, track);
+    const gyosuan = gyosuanOf(mod, track);
+    if (!gyosuan || !raw || !field || raw.value === (gyosuan[field] || '')) return null;
+    return { mod, raw, field, track };
 }
 
 // 안내 문구만 바꾼다(누르는 중인 버튼이나 쓰던 원문 칸은 다시 그리지 않는다)
@@ -261,13 +288,14 @@ function refreshGyosuanNote(mod) {
 window.saveGyosuanRaw = async function () {
     const pending = pendingGyosuanRaw();
     if (!pending) return;
-    const { mod, raw, field } = pending;
+    const { mod, raw, field, track } = pending;
+    const slot = lessonTrack(track).field; // 고치던 갈래의 교수안 칸(묻는 동안 갈래를 바꿔도 그 칸에 넣는다)
     if (!(await allowGyosuanOverwrite(mod))) return;
-    // 같은 답을 기다린 다른 저장이 이 글을 이미 넣었으면 다시 저장하지 않는다
-    if (raw.value === (mod.gyosuan?.[field] || '')) return;
+    // 같은 답을 기다린 다른 저장이 이 글을 이미 넣었으면 다시 저장하지 않는다. 묻는 동안 그 교수안이 없어졌으면(다시 만들기·불러오기) 넣지 않는다
+    if (!mod[slot] || raw.value === (mod[slot][field] || '')) return;
     // 슬라이드 화면 편집은 편성안을 고쳤다고 지우지 않는다. '슬라이드 다시 만들기'를 눌러야 바뀐다
-    const deckDirty = field === 'deckMd' ? gyosuanHasScreenEdits(mod.gyosuan) : !!mod.gyosuan.deckDirty;
-    mod.gyosuan = { ...mod.gyosuan, [field]: raw.value, deckDirty, updatedAt: new Date().toISOString() };
+    const deckDirty = field === 'deckMd' ? gyosuanHasScreenEdits(mod[slot]) : !!mod[slot].deckDirty;
+    mod[slot] = { ...mod[slot], [field]: raw.value, deckDirty, updatedAt: new Date().toISOString() };
     clearGyosuanForeignChange(mod);
     await saveGyosuan(mod);
     // 그사이 다른 차시를 열었으면 그 차시의 슬라이드 패널과 안내는 건드리지 않는다
@@ -280,61 +308,66 @@ window.saveGyosuanRaw = async function () {
 // 교수안 원문 칸에 넣지 않은 글이 있는가(Ctrl+S 결과·창을 닫기 전에 묻는다)
 window.hasPendingGyosuanRaw = () => !!pendingGyosuanRaw();
 
-window.rebuildGyosuanDeck = async function (moduleId) {
+window.rebuildGyosuanDeck = async function (moduleId, trackId = currentGyosuanTrack()) {
     await window.saveGyosuanRaw();
     const mod = getEditingModule(moduleId);
-    const deckMd = mod?.gyosuan?.deckMd || '';
+    const track = lessonTrack(trackId);
+    const deckMd = gyosuanOf(mod, track.id)?.deckMd || '';
     if (!window.KBuilder.parseDeck(deckMd).slides.length) return window.showAlert('슬라이드를 찾지 못했습니다. 편성안에 "### 슬라이드 1 - 제목" 형식의 블록이 있어야 합니다.');
-    if (gyosuanHasScreenEdits(mod.gyosuan) && !(await confirmAsync('편성안으로 슬라이드를 다시 만듭니다. 슬라이드 화면에서 편집한 내용은 사라집니다. 계속할까요?', { title: '슬라이드 다시 만들기', okLabel: '다시 만들기', tone: 'danger' }))) return;
+    if (gyosuanHasScreenEdits(mod[track.field]) && !(await confirmAsync(`${track.label} 편성안으로 슬라이드를 다시 만듭니다. 슬라이드 화면에서 편집한 내용은 사라집니다. 계속할까요?`, { title: `${track.label} 슬라이드 다시 만들기`, okLabel: '다시 만들기', tone: 'danger' }))) return;
     if (!(await allowGyosuanOverwrite(mod))) return;
-    // 묻는 동안 다른 교과로 옮겼으면 그 교과의 같은 번호 차시로 슬라이드를 만들지 않는다
-    if (gyosuanTargetMoved(moduleId, mod)) return;
-    mod.gyosuan = { ...mod.gyosuan, ...freshDeckState(mod.gyosuan), updatedAt: new Date().toISOString() };
+    // 묻는 동안 다른 교과로 옮겼으면 그 교과의 같은 번호 차시로 슬라이드를 만들지 않는다. 그 교수안이 없어졌어도 만들지 않는다
+    if (gyosuanTargetMoved(moduleId, mod) || !mod[track.field]) return;
+    mod[track.field] = { ...mod[track.field], ...freshDeckState(mod[track.field]), updatedAt: new Date().toISOString() };
     clearGyosuanForeignChange(mod);
     await saveGyosuan(mod);
     refreshGyosuanViews(mod); // 지금 연 차시일 때만 다시 그린다(gyosuan-io.js)
-    window.generateSlideView(mod.id);
+    window.generateSlideView(mod.id, track.id);
 };
 
-window.downloadGyosuanMd = function (moduleId, field = 'docMd') {
+// 갈래 교수안 파일 이름의 꼬리: 기본학습은 예전과 같고(교수안·슬라이드편성안), 심화학습은 '심화'를 붙인다
+const gyosuanFileTag = (trackId, name) => `${lessonTrack(trackId).id === LESSON_TRACKS[0].id ? '' : '심화'}${name}`;
+
+window.downloadGyosuanMd = function (moduleId, field = 'docMd', trackId = currentGyosuanTrack()) {
     const mod = getEditingModule(moduleId);
-    const md = mod?.gyosuan?.[field];
+    const md = gyosuanOf(mod, trackId)?.[field];
     if (!md) return;
-    downloadMd(resolveGyosuanImages(md, mod), `${lessonFileBase(mod)}_${field === 'deckMd' ? '슬라이드편성안' : '교수안'}`);
+    downloadMd(resolveGyosuanImages(md, mod, trackId), `${lessonFileBase(mod)}_${gyosuanFileTag(trackId, field === 'deckMd' ? '슬라이드편성안' : '교수안')}`);
 };
 
 // 교수안 문서(HTML 한 파일). 교수안 서식(css/gyosuan-doc.css)을 문서 안에 넣어 따로 열어도 같은 모양이다
 // shown(Map)을 주면 보이는 그림에 다시 불러오기 표시를 달고 그 그림을 모은다(HTML 내려받기). 인쇄에는 주지 않는다
-async function gyosuanExportDocument(mod, shown = null) {
-    const images = gyosuanImageMap(mod); // 그릴 때와 같은 그림(교수안 그림이 이기고 움직이는 GIF는 GIF가 이긴다, gyosuan.js resolveGyosuanImages)
-    const html = gyosuanDocHtml(mod, shown ? mount => markShownImages(mount, images, 0, shown) : null);
+async function gyosuanExportDocument(mod, shown = null, trackId = 'basic') {
+    const images = gyosuanImageMap(mod, trackId); // 그릴 때와 같은 그림(교수안 그림이 이기고 움직이는 GIF는 GIF가 이긴다, gyosuan.js resolveGyosuanImages)
+    const html = gyosuanDocHtml(mod, shown ? mount => markShownImages(mount, images, 0, shown) : null, trackId);
     if (!html) return null;
     const cssUrl = new URL('css/gyosuan-doc.css', location.href).href;
     const css = await fetch(cssUrl).then(res => (res.ok ? res.text() : '')).catch(() => '');
     const style = css ? `<style>${css}</style>` : `<link rel="stylesheet" href="${cssUrl}">`;
     const print = '<style>@media print { @page { size: A4; margin: 1.5cm; } body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }</style>';
-    const title = `${mod.title || '차시'} 교수안`;
+    const title = `${mod.title || '차시'} ${gyosuanFileTag(trackId, '교수안')}`;
     return `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title>${style}${print}</head><body class="gyosuan-view">${html}</body></html>`;
 }
 
-window.downloadGyosuanHtml = async function (moduleId) {
+window.downloadGyosuanHtml = async function (moduleId, trackId = currentGyosuanTrack()) {
     const mod = getEditingModule(moduleId);
+    const track = lessonTrack(trackId).id;
     const shown = new Map();
-    const doc = mod && await gyosuanExportDocument(mod, shown);
-    if (!doc) return window.showAlert('내보낼 교수안이 없습니다.');
-    // 다시 불러오면 이 차시(교안 탭, 교수안·편성안, 교수안 그림)가 고칠 수 있게 되살아난다(output-import.js)
+    const doc = mod && await gyosuanExportDocument(mod, shown, track);
+    if (!doc) return window.showAlert(`내보낼 ${lessonTrack(track).label} 교수안이 없습니다.`);
+    // 다시 불러오면 이 차시(교안 탭, 그 갈래의 교수안·편성안, 교수안 그림)가 고칠 수 있게 되살아난다(output-import.js)
     // 교수안을 원본에 담는 내보내기는 이것뿐이다. 메뉴의 차시·교과 HTML과 ZIP의 교안.html(읽기용)에는 넣지 않는다
     // 바꿀 글을 함수로 넘긴다. 글자로 넘기면 교안 속 $$·$'·$& 가 치환 패턴으로 읽혀 원본이 깨진다
-    const source = lessonSourceScript(lessonSourcePayload([mod], { withGyosuan: true, shown: [shown] }));
+    const source = lessonSourceScript(lessonSourcePayload([mod], { withGyosuan: true, track, shown: [shown] }));
     const withSource = doc.replace('</body>', () => `${source}</body>`);
-    downloadTextFile(withSource, `${lessonFileBase(mod)}_교수안.html`, 'text/html;charset=utf-8');
+    downloadTextFile(withSource, `${lessonFileBase(mod)}_${gyosuanFileTag(track, '교수안')}.html`, 'text/html;charset=utf-8');
 };
 
 // 새 창 없이 인쇄 창을 연다(lesson-export.js). 인쇄 창에서 'PDF로 저장'을 고른다
-window.printGyosuan = async function (moduleId) {
+window.printGyosuan = async function (moduleId, trackId = currentGyosuanTrack()) {
     const mod = getEditingModule(moduleId);
-    const doc = mod && await gyosuanExportDocument(mod);
-    if (!doc) return window.showAlert('내보낼 교수안이 없습니다.');
+    const doc = mod && await gyosuanExportDocument(mod, null, trackId);
+    if (!doc) return window.showAlert(`내보낼 ${lessonTrack(trackId).label} 교수안이 없습니다.`);
     window.showToast?.('인쇄 창에서 "PDF로 저장"을 고르세요.', 'info');
     await printHtmlDocument(doc);
 };

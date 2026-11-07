@@ -9,9 +9,9 @@ const REVIEW_MAX_OUTPUT_TOKENS = 65536;
 const REVIEW_FRAME_WHERE = ['학습 목표', '학습 후 체크리스트'];
 const REVIEW_REFERENCE_TITLE = /학습\s*목표|학습\s*후\s*체크리스트/;
 const LESSON_CHECKLIST_TITLE = /학습\s*후\s*체크리스트/;
-// 학습이해도는 차시의 학습 목표 수를 알아야 목표마다 문제가 있는지 본다. 코드를 다루는 차시는 코드 예제 규칙도 본다
+// 문제은행 탭(학습이해도·심화이해도)은 그 갈래의 학습 목표 수를 알아야 목표마다 문제가 있는지 본다. 코드를 다루는 차시는 코드 예제 규칙도 본다
 const lessonLintContext = (mod, tabId) => ({
-    ...(tabId === 'assessment' && mod ? { objectiveCount: qbankObjectives(mod).length } : {}),
+    ...(isQuestionBankTab(tabId) && mod ? { objectiveCount: qbankObjectives(mod, tabTrack(tabId).id).length } : {}),
     ...(mod && typeof lessonCodeTopic === 'function' && lessonCodeTopic(mod) ? { codeTopic: true } : {})
 });
 const REVIEW_MARKERS = /<!--\s*(?:CONTINUE|END)\s*-->/g;
@@ -62,8 +62,8 @@ function reviewSystemPrompt(tabId) {
     return [
         personas.instructor, '[작성 규칙]', rules.content_design,
         LESSON_STRUCTURED_TABS.includes(tabId) && rules.learning_checklist,
-        tabId === 'assessment' && rules.assessment_design,
-        tabId !== 'assessment' && rules.code_examples,
+        isQuestionBankTab(tabId) && rules.assessment_design,
+        !isQuestionBankTab(tabId) && rules.code_examples,
         rules.korean_period, rules.emoji_rule,
         '수정한 마크다운만 출력합니다. 설명이나 코드 펜스를 붙이지 않습니다.'
     ].filter(Boolean).join('\n');
@@ -320,7 +320,7 @@ function reviewRuleItems(sev) {
 }
 
 function reviewRulesHtml(tabId) {
-    const questionRules = tabId === 'assessment' ? `<h4 class="font-bold text-textLight mt-2">문항</h4><ul class="space-y-1">${QBANK_RULE_LIST.map(rule => `<li>${escapeHtml(rule)}</li>`).join('')}</ul>` : '';
+    const questionRules = isQuestionBankTab(tabId) ? `<h4 class="font-bold text-textLight mt-2">문항</h4><ul class="space-y-1">${QBANK_RULE_LIST.map(rule => `<li>${escapeHtml(rule)}</li>`).join('')}</ul>` : '';
     return `
         <details class="text-[0.6875rem] text-textMuted">
             <summary class="cursor-pointer text-xs font-bold text-textLight">검사 규칙 목록</summary>

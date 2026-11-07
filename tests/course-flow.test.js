@@ -4,6 +4,7 @@ const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
 const assert = require('assert');
+const { loadLessonTracks } = require('./lesson-tracks');
 const root = path.join(__dirname, '..', 'js') + path.sep;
 const FILES = ['kbuilder/ncs-catalog.js', 'ai-errors.js', 'lesson-lint.js', 'lesson-opening.js', 'course-qbank.js', 'lesson-pipeline.js', 'ai-routing.js', 'course-ncs.js', 'course-design.js', 'course-design-edit.js', 'course-sessions.js', 'course-meta.js', 'lesson-editor-tools.js', 'lesson-attachments.js', 'tabs.js', 'course-flow.js'];
 const TABS = [['basicLearn', '기본 학습'], ['basicPrac', '기본 실습'], ['advLearn', '심화 학습'], ['advPrac', '심화 실습'], ['assessment', '학습 이해도']].map(([id, label]) => ({ id, label }));
@@ -48,6 +49,7 @@ function makeContext(callGemini = async () => reply('## 본문\n\n내용')) {
     ctx.showAlert = message => ctx.alerts.push(message);
     ctx.showToast = (message, type) => ctx.toasts.push({ message, type });
     vm.createContext(ctx);
+    loadLessonTracks(ctx); // 갈래(기본학습·심화학습) 정의
     FILES.forEach(file => vm.runInContext(fs.readFileSync(root + file, 'utf8'), ctx));
     return ctx;
 }
@@ -816,9 +818,11 @@ async function run(name, fn) {
         assert.strictEqual(call('subjectBundleMd')({ title: '빈 교과', lessons: [{ id: 1, title: '차시' }] }), '');
     });
 
-    await run('ZIP: 교수안·편성안 파일 목록', async () => {
-        assert.deepStrictEqual(plain(call('lessonGyosuanFiles')({ gyosuan: { docMd: '교수안', deckMd: '편성안', deckHtml: null } })), [{ name: '06_교수안.md', content: '교수안' }, { name: '07_슬라이드편성안.md', content: '편성안' }]);
-        assert.deepStrictEqual(plain(call('lessonGyosuanFiles')({ gyosuan: { docMd: '교수안' } })).map(file => file.name), ['06_교수안.md']);
+    await run('ZIP: 교수안·편성안 파일 목록(탭 파일 01~06 다음 번호, 심화학습 교수안은 따로)', async () => {
+        assert.deepStrictEqual(plain(call('lessonGyosuanFiles')({ gyosuan: { docMd: '교수안', deckMd: '편성안', deckHtml: null } })), [{ name: '07_교수안.md', content: '교수안' }, { name: '08_슬라이드편성안.md', content: '편성안' }]);
+        assert.deepStrictEqual(plain(call('lessonGyosuanFiles')({ gyosuan: { docMd: '교수안' } })).map(file => file.name), ['07_교수안.md']);
+        assert.deepStrictEqual(plain(call('lessonGyosuanFiles')({ gyosuan: { docMd: '기본' }, gyosuanAdv: { docMd: '심화', deckMd: '심화 편성안' } })),
+            [{ name: '07_교수안.md', content: '기본' }, { name: '09_심화교수안.md', content: '심화' }, { name: '10_심화슬라이드편성안.md', content: '심화 편성안' }]);
         assert.deepStrictEqual(plain(call('lessonGyosuanFiles')({})), []);
     });
 

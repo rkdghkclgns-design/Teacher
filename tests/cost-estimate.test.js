@@ -41,8 +41,8 @@ test('비용 수준: 빠른 모델은 낮음, 최고 모델은 높음, 나머지
 });
 
 test('할 일 개수: 탭·교안 그림·슬라이드 그림·교수안·문제은행·삽화·NCS를 더한다', () => {
-    // 탭 수만 알면 다섯 탭의 평균으로 그림을 센다(심화학습도 기본학습처럼 ## 섹션 6개라 18장). 아래 시험은 15장짜리 FULL을 그대로 쓴다
-    assert.deepStrictEqual(plain(lessonWork({ tabs: 5, gyosuan: true, qbank: true }, 'section', 4)), { ...FULL, images: 18 });
+    // 탭 수만 알면 여섯 탭(심화이해도 포함)의 평균으로 그림을 센다(탭 하나에 3장, 다섯 탭이면 15장으로 FULL과 같다)
+    assert.deepStrictEqual(plain(lessonWork({ tabs: 5, gyosuan: true, qbank: true }, 'section', 4)), FULL);
     assert.strictEqual(plain(lessonWork({ tabs: 5 }, 'section', 4)).slideImages, 0, '교수안을 만들지 않으면 슬라이드 그림도 없다');
     assert.strictEqual(plain(lessonWork({ tabs: 1, gyosuan: true }, 'section')).slideImages, 0, '슬라이드 자동 이미지를 모르면 0장');
     ctx.window.KBuilder = { autoImages: { count: () => 8 } };
@@ -55,20 +55,30 @@ test('할 일 개수: 탭·교안 그림·슬라이드 그림·교수안·문제
 });
 
 test('그림 자리: 탭마다 탭 글 규칙의 최소 섹션 수로 센다(모두는 학습 탭의 긴 소주제까지, 학습 이해도는 0)', () => {
-    const ALL_TABS = ['basicLearn', 'basicPrac', 'advLearn', 'advPrac', 'assessment'];
+    const ALL_TABS = ['basicLearn', 'basicPrac', 'advLearn', 'advPrac', 'assessment', 'advAssessment'];
     // 핵심만: ## 섹션마다(기본·심화 학습은 학습 목표·개요를 빼고 6개) / 모두: ## 섹션과 긴 ### 소주제마다(기본·심화 학습 6+16)
     assert.strictEqual(tabImageCount(ALL_TABS, 'section'), 18);
     assert.strictEqual(tabImageCount(ALL_TABS, 'all'), 50, '모두는 탭 다섯 개에 4장씩(20장)이 아니라 50장');
     assert.strictEqual(tabImageCount(['basicLearn'], 'all'), 22);
     assert.strictEqual(tabImageCount(['advLearn'], 'all'), 22, '심화 학습도 기본 학습과 같은 구조(## 8개·### 16개)');
     assert.strictEqual(tabImageCount(['assessment'], 'all'), 0, '학습 이해도는 문제(짧은 소주제)뿐');
+    assert.strictEqual(tabImageCount(['advAssessment'], 'all'), 0, '심화 이해도도 문제뿐');
     assert.strictEqual(tabImageCount(['basicPrac', 'advPrac'], 'section'), 6);
     assert.strictEqual(tabImageCount(ALL_TABS, 'none'), 0);
     assert.strictEqual(tabImageCount(['constructor', '__proto__'], 'all'), 0, '모르는 탭 이름은 세지 않는다');
     // 심화 학습을 만들면 기본 학습처럼 낭독 분량 채우기(긴 호출 27번)도 센다
     assert.deepStrictEqual(plain(lessonWork({ tabs: ['basicPrac', 'advLearn'] }, 'all', 0)), { tabs: 2, images: 25, slideImages: 0, ncs: 1, gyosuan: 0, qbank: 0, art: 0, volume: 1, volumeCalls: 27, volumeMinutes: 480, volumeAdv: 1 });
     assert.strictEqual(plain(lessonWork({ tabs: [] }, 'all')).ncs, 0, '빈 탭 목록이면 NCS 배정도 없다');
-    assert.strictEqual(plain(lessonWork({ tabs: 5 }, 'all', 0)).images, 50, '탭 수만 알면 다섯 탭의 평균으로 센다');
+    assert.strictEqual(plain(lessonWork({ tabs: 6 }, 'all', 0)).images, 50, '탭 수만 알면 여섯 탭의 평균으로 센다');
+});
+
+test('교수안·문제은행은 갈래(기본학습·심화학습)마다 하나씩 센다: 교수안 둘이면 교수안 호출과 슬라이드 그림도 두 배', () => {
+    const one = plain(lessonWork({ tabs: 0, gyosuan: true, qbank: true, ncs: false }, 'section', 4));
+    const two = plain(lessonWork({ tabs: 0, gyosuan: 2, qbank: 2, ncs: false }, 'section', 4));
+    assert.deepStrictEqual([one.gyosuan, one.qbank, one.slideImages], [1, 1, 4]);
+    assert.deepStrictEqual([two.gyosuan, two.qbank, two.slideImages], [2, 2, 8]);
+    assert.strictEqual(plain(estimateCallSplit(two)).body, 2 * 12 + 2 * 2, '교수안 12번 × 2 + 문제은행 2번 × 2');
+    assert.deepStrictEqual([plain(lessonWork({ gyosuan: 0, qbank: false }, 'section', 4)).gyosuan, plain(lessonWork({ gyosuan: -3, qbank: 'x' }, 'section', 4)).qbank], [0, 0], '이상한 값은 0');
 });
 
 test('호출 수: 본문·짧은 호출·그림을 나눠 세고, SVG 삽화면 그림 장수만큼 글 호출이 는다', () => {

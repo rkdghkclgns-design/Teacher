@@ -203,7 +203,7 @@ function sanitizeState(state) {
             l.description = stateText(l.description);
             cleanLessonFields(l); // 그림 키·값, 글, 탭 글, 목록, 교수안(data-safety.js)
             l.tabContents = l.tabContents || {
-                basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null
+                basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null, advAssessment: null
             };
         });
     });

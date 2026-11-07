@@ -1,8 +1,10 @@
 // gyosuan.js - 교수안·슬라이드 편성안 생성과 슬라이드 스튜디오 연결 (강사뷰는 gyosuan-view.js)
 // 문서 양식과 조립은 develocket-slide(assets/generate.js @3a7303f)의 컨벤션을 따르고,
 // 생성 프롬프트는 이 앱의 교안 생성 방식(페르소나·어투·참고 자료·멀티턴 few-shot)을 쓴다.
-// 생성물은 차시에 mod.gyosuan = { docMd, deckMd, deckHtml, sessionDecks, deckRev, deckDirty, images, slideStyle, sourceKey, updatedAt } 으로 저장한다.
+// 교수안은 갈래(data.js LESSON_TRACKS)마다 따로 만든다. 기본학습 갈래는 기본학습·기본실습 탭으로 mod.gyosuan에, 심화학습 갈래는 심화학습·심화실습 탭으로 mod.gyosuanAdv에
+// { docMd, deckMd, deckHtml, sessionDecks, deckRev, deckDirty, images, slideStyle, sourceKey, updatedAt } 으로 저장한다.
 // images는 교수안·편성안의 ![설명](local:id)가 가리키는 래스터 data URL이고, sessionDecks는 차시별로 연 덱의 편집본이다.
+// 예전에 네 탭을 함께 담아 만든 mod.gyosuan은 그대로 기본학습 교수안으로 둔다(gyosuan-view.js가 그렇다고 알린다).
 
 const GYOSUAN_MAX_SECTIONS = 14;
 const GYOSUAN_SECTION_CHARS = 8000;
@@ -97,12 +99,31 @@ window.setGyosuanSlideStyle = function (style) {
 };
 
 /* ---------- 원고 수집 ---------- */
-function collectLessonSource(mod) {
-    const tabs = LESSON_TABS.filter(t => t.id !== 'assessment');
-    const parts = tabs
-        .map(t => ({ practice: /Prac$/.test(t.id), text: mod.tabContents?.[t.id] }))
+// 그 갈래의 학습·실습 탭 글. 탭 글이 하나도 없는 옛 차시의 본문(content)은 기본학습 갈래의 원고다
+function collectLessonSource(mod, trackId = 'basic') {
+    const track = lessonTrack(trackId);
+    const parts = [track.learn, track.practice]
+        .map(id => ({ practice: id === track.practice, text: mod.tabContents?.[id] }))
+        .filter(p => p.text && p.text.trim());
+    const legacyBody = !!mod.content && !LESSON_TABS.some(tab => mod.tabContents?.[tab.id]);
+    return parts.length || !legacyBody || track.id !== LESSON_TRACKS[0].id ? parts : [{ practice: false, text: mod.content }];
+}
+
+// 예전에 네 탭(기본학습·기본실습·심화학습·심화실습)을 함께 담아 교수안을 만들 때의 원고(교안이 그대로면 그때의 sourceKey와 같다)
+const LEGACY_GYOSUAN_TABS = ['basicLearn', 'basicPrac', 'advLearn', 'advPrac'];
+function legacyLessonSource(mod) {
+    const parts = LEGACY_GYOSUAN_TABS
+        .map(id => ({ practice: /Prac$/.test(id), text: mod.tabContents?.[id] }))
         .filter(p => p.text && p.text.trim());
     return parts.length || !mod.content ? parts : [{ practice: false, text: mod.content }];
+}
+
+// 기본학습 교수안이 예전 방식(네 탭을 함께 담음)으로 만든 것인가. 교안이 그대로이고 지금 방식의 원고와 다를 때만 그렇다고 본다
+function isLegacyGyosuan(mod) {
+    const key = mod?.gyosuan?.sourceKey;
+    if (!key) return false;
+    const legacy = hashSource(legacyLessonSource(mod));
+    return key === legacy && legacy !== hashSource(collectLessonSource(mod, 'basic'));
 }
 
 function cleanGyosuanSource(md) {
@@ -426,12 +447,15 @@ function stopGyosuanIfRequested() {
     if (window.isTabGenerationStopped?.()) throw new Error('교수안 생성을 중지했습니다.');
 }
 
-async function buildGyosuanFromLesson(mod, parts, style) {
+// 교수안 주제. 심화학습 갈래는 갈래 이름을 붙여 기본학습 교수안·슬라이드와 구별한다(기본학습은 예전과 같다)
+const gyosuanTopic = (mod, trackId) => (lessonTrack(trackId).id === LESSON_TRACKS[0].id ? mod.title : `${mod.title} (${lessonTrack(trackId).label})`);
+
+async function buildGyosuanFromLesson(mod, parts, style, trackId = 'basic') {
     const subject = globalState.subjects.find(s => s.id === currentSubjectId);
     const hours = Number(mod.hours) || 0;
     const info = {
         subject: subject?.title || globalState.courseTitle || mod.title,
-        topic: mod.title,
+        topic: gyosuanTopic(mod, trackId),
         description: mod.description || '',
         duration: hours ? `${hours}시수(약 ${Math.round(hours * 60)}분)` : '',
         ncs: subjectNcsText(subject),
@@ -489,18 +513,18 @@ function usedGyosuanImages(gyosuan) {
     return Object.fromEntries(Object.entries(gyosuan.images || {}).filter(([id]) => text.includes(`local:${id}`)));
 }
 
-// 교수안·편성안이 쓰는 그림: 차시 그림 위에 교수안 그림(교수안을 만들 때 옮겨 둔 사본)이 이긴다.
+// 교수안·편성안이 쓰는 그림: 차시 그림 위에 그 갈래 교수안의 그림(교수안을 만들 때 옮겨 둔 사본)이 이긴다.
 // 다만 차시에서 움직이는 GIF로 바꾼 그림(image-motion.js)은 GIF가 이긴다(원래 그림으로 되돌리면 교수안의 사본이 다시 보인다)
-function gyosuanImageMap(mod) {
-    const images = { ...(mod?.images || {}), ...(mod?.gyosuan?.images || {}) };
+function gyosuanImageMap(mod, trackId = 'basic') {
+    const images = { ...(mod?.images || {}), ...(gyosuanOf(mod, trackId)?.images || {}) };
     const motions = mod?.imageMotions && typeof mod.imageMotions === 'object' ? Object.keys(mod.imageMotions) : [];
     if (typeof imageMotionState === 'function') motions.filter(id => imageMotionState(mod, id) === 'valid').forEach(id => { images[id] = mod.images[id]; });
     return images;
 }
 
 // 교수안·편성안의 ![설명](local:id)를 data URL로 바꾼다. 찾지 못한 이미지(빈 값·폴더에서 찾지 못한 teacher-image 참조)는 줄에서 뺀다
-function resolveGyosuanImages(md, mod) {
-    const images = gyosuanImageMap(mod);
+function resolveGyosuanImages(md, mod, trackId = 'basic') {
+    const images = gyosuanImageMap(mod, trackId);
     return String(md || '').replace(/!\[([^\]]*)\]\(local:([^)\s]+)\)/g, (match, alt, id) => (/^data:image\//.test(images[id] || '') ? `![${alt}](${images[id]})` : ''));
 }
 
@@ -509,8 +533,8 @@ async function saveGyosuan(mod) {
     window.announceGyosuanChange?.(mod.id);
 }
 
-function nextGyosuan(mod, parts, draft, style, keepDoc) {
-    const base = mod.gyosuan;
+function nextGyosuan(mod, parts, draft, style, keepDoc, trackId = 'basic') {
+    const base = gyosuanOf(mod, trackId);
     const next = {
         docMd: keepDoc ? base.docMd : draft.docMd,
         deckMd: draft.deckMd,
@@ -523,18 +547,23 @@ function nextGyosuan(mod, parts, draft, style, keepDoc) {
     return { ...next, images: usedGyosuanImages(next) };
 }
 
-function reportGyosuanBuilt(built, draft) {
-    if (built.failedCount) window.showAlert(`전개 ${built.failedCount}개를 생성하지 못해 빈칸으로 두었습니다. 다시 생성하거나 직접 작성해 주세요.`);
-    else if (window.showToast) window.showToast(draft.note || '교수안과 슬라이드 편성안을 생성했습니다.', 'success');
+// 갈래의 학습·실습 탭 이름(예: 심화학습·심화실습)
+const trackTabsLabel = track => [track.learn, track.practice].map(id => LESSON_TABS.find(tab => tab.id === id)?.label || id).join('·');
+
+function reportGyosuanBuilt(built, draft, trackId = 'basic') {
+    const label = lessonTrack(trackId).label;
+    if (built.failedCount) window.showAlert(`${label} 교수안의 전개 ${built.failedCount}개를 생성하지 못해 빈칸으로 두었습니다. 다시 생성하거나 직접 작성해 주세요.`);
+    else if (window.showToast) window.showToast(`${label} 교수안과 슬라이드 편성안을 만들었습니다.${draft.note ? ` ${draft.note}` : ''}`, 'success');
 }
 
 // 실패를 던지지 않고 결과로 돌려준다. 일괄 생성은 차시별로 모으고, 버튼에서 부르면 generateGyosuan이 알린다
-// opts.keepDoc: 강사가 고친 교수안은 두고 슬라이드 편성안만 교체 / opts.onStatus: 진행 문구를 받는다
+// opts.track: 만들 갈래(basic | adv, 없으면 기본학습) / opts.keepDoc: 강사가 고친 교수안은 두고 슬라이드 편성안만 교체 / opts.onStatus: 진행 문구를 받는다
 async function runGyosuanGeneration(moduleId, opts = {}) {
     const mod = getEditingModule(moduleId);
     if (!mod) return { ok: false, error: '교안을 먼저 선택해주세요.' };
-    const parts = collectLessonSource(mod);
-    if (!parts.length) return { ok: false, error: '교안 내용이 없습니다. 먼저 탭을 생성해주세요.' };
+    const track = lessonTrack(opts.track);
+    const parts = collectLessonSource(mod, track.id);
+    if (!parts.length) return { ok: false, error: `${trackTabsLabel(track)} 탭에 교안 내용이 없습니다. 먼저 그 탭을 생성해주세요.` };
     const loading = document.getElementById('editor-loading');
     if (_gyosuanRunning || loading?.style.display === 'flex') return { ok: false, error: '진행 중인 생성이 끝난 뒤 다시 시도해주세요.' };
     // 진행 막대의 작업(분량 채우기·탭 만들기 등)은 로딩 화면을 띄우지 않는다. 같은 중지 표시를 써서 함께 돌면 서로의 중지를 풀거나 멈추므로 끝난 뒤에 만든다
@@ -548,24 +577,24 @@ async function runGyosuanGeneration(moduleId, opts = {}) {
     if (!opts.background) window.beginGenerationStop?.(GYOSUAN_STOP_LABELS);
     try {
         const style = gyosuanSlideStyle();
-        const built = await buildGyosuanFromLesson(mod, parts, style);
+        const built = await buildGyosuanFromLesson(mod, parts, style, track.id);
         if (!opts.background) window.endGenerationStop?.(); // 이미지 단계는 자체 건너뛰기 버튼을 쓴다
-        const keepDoc = !!(opts.keepDoc && mod.gyosuan?.docMd);
+        const keepDoc = !!(opts.keepDoc && mod[track.field]?.docMd);
         const texts = { docMd: keepDoc ? '' : built.docMd, deckMd: built.deckMd };
-        const draft = window.attachGyosuanImages ? await window.attachGyosuanImages(mod, texts) : texts;
-        mod.gyosuan = nextGyosuan(mod, parts, draft, style, keepDoc);
-        Object.assign(mod, withHistoryNote(mod, keepDoc ? '슬라이드 편성안 AI 생성' : '교수안·슬라이드 편성안 AI 생성'));
+        const draft = window.attachGyosuanImages ? await window.attachGyosuanImages(mod, texts, track.id) : texts;
+        mod[track.field] = nextGyosuan(mod, parts, draft, style, keepDoc, track.id);
+        Object.assign(mod, withHistoryNote(mod, `${track.label} ${keepDoc ? '슬라이드 편성안 AI 생성' : '교수안·슬라이드 편성안 AI 생성'}`));
         _gyosuanEditing = null;
         await saveGyosuan(mod);
         if (getEditingModule() === mod) { // 그 차시(같은 객체)를 보고 있을 때만. 다른 교과의 같은 번호 차시 화면은 그대로 둔다
             if (opts.background) window.refreshAfterGyosuan(mod);
             else renderEditor(mod);
         }
-        return { ok: true, built, draft, partial: built.failedCount > 0 };
+        return { ok: true, built, draft, track: track.id, partial: built.failedCount > 0 };
     } catch (err) {
         if (window.isTabGenerationStopped?.()) return { ok: false, stopped: true };
         console.error('[교수안] 생성 실패:', err);
-        return { ok: false, error: `교수안 생성 실패: ${err && err.message ? err.message : err}` };
+        return { ok: false, error: `${track.label} 교수안 생성 실패: ${err && err.message ? err.message : err}` };
     } finally {
         _gyosuanRunning = false;
         _gyosuanOnStatus = null;
@@ -578,11 +607,13 @@ async function runGyosuanGeneration(moduleId, opts = {}) {
     }
 }
 
+// opts.track: 만들 갈래(basic | adv). 버튼은 화면에서 고른 갈래를 넘긴다
 window.generateGyosuan = async function (moduleId, opts = {}) {
     const result = await runGyosuanGeneration(moduleId, opts);
+    const label = lessonTrack(opts.track).label;
     if (result.error) window.showAlert(result.error);
-    else if (result.stopped) window.showToast?.('교수안 생성을 중지했습니다. 기존 교수안은 그대로입니다.', 'warning');
-    else reportGyosuanBuilt(result.built, result.draft);
+    else if (result.stopped) window.showToast?.(`${label} 교수안 생성을 중지했습니다. 기존 교수안은 그대로입니다.`, 'warning');
+    else reportGyosuanBuilt(result.built, result.draft, result.track);
     return result.ok;
 };
 
@@ -593,50 +624,74 @@ function gyosuanTargetMoved(moduleId, mod) {
     return true;
 }
 
-window.regenerateGyosuan = async function (moduleId) {
+window.regenerateGyosuan = async function (moduleId, trackId = 'basic') {
     const mod = getEditingModule(moduleId);
     if (!mod) return window.showAlert('교안을 먼저 선택해주세요.');
-    const ok = await confirmAsync('교수안을 다시 생성합니다. 직접 수정한 내용과 슬라이드 편집 내용은 사라집니다. 계속할까요?', { title: '교수안 다시 생성', okLabel: '다시 생성', tone: 'danger' });
+    const track = lessonTrack(trackId);
+    const ok = await confirmAsync(`${track.label} 교수안을 다시 생성합니다. 직접 수정한 내용과 슬라이드 편집 내용은 사라집니다. 계속할까요?`, { title: `${track.label} 교수안 다시 생성`, okLabel: '다시 생성', tone: 'danger' });
     if (!ok || gyosuanTargetMoved(moduleId, mod)) return;
-    window.generateGyosuan(moduleId);
+    window.generateGyosuan(moduleId, { track: track.id });
 };
 
 /* ---------- 슬라이드 스튜디오 (slide-studio.html) ---------- */
-function gyosuanHasDeck(mod) {
-    return !!(mod?.gyosuan?.deckMd || mod?.gyosuan?.deckHtml);
+function gyosuanHasDeck(mod, trackId = 'basic') {
+    const gyosuan = gyosuanOf(mod, trackId);
+    return !!(gyosuan?.deckMd || gyosuan?.deckHtml);
 }
 
-// session: 한 차시만 여는 번호, null이면 전체 덱. 범위를 벗어나면 전체 덱을 준다
-window.getSlideStudioPayload = function (moduleId, session = null) {
+// 화면에서 고른 갈래(tabs.js). 그 파일이 없으면 기본학습
+const currentGyosuanTrack = () => lessonTrack(window.lessonPanelTrack?.()).id;
+
+// 스튜디오 주소의 module 값. 스튜디오(js/kbuilder)는 이 값을 그대로 부모에 넘긴다(getSlideStudioPayload·saveSlideStudioHtml·importGyosuanHtml과 저장 알림 채널 이름).
+// 기본학습은 차시 id 그대로(열어 둔 스튜디오가 그대로 돈다), 심화학습은 '차시 id~adv'다. 차시 id에는 '~'가 들어가지 않는다(data-safety.js SAFE_STATE_ID)
+const STUDIO_TRACK_MARK = '~';
+const studioModuleKey = (moduleId, trackId = 'basic') => (lessonTrack(trackId).id === LESSON_TRACKS[0].id ? moduleId : `${moduleId}${STUDIO_TRACK_MARK}${lessonTrack(trackId).id}`);
+
+// module 값 → { moduleId, track }. 갈래 표시가 없거나 모르는 표시면 받은 값 그대로 기본학습이다
+function parseStudioModuleKey(key) {
+    const text = String(key ?? '');
+    const at = text.lastIndexOf(STUDIO_TRACK_MARK);
+    const track = at > 0 ? LESSON_TRACKS.find(item => item.id === text.slice(at + 1) && item.id !== LESSON_TRACKS[0].id) : null;
+    return track ? { moduleId: text.slice(0, at), track: track.id } : { moduleId: key, track: LESSON_TRACKS[0].id };
+}
+
+// session: 한 차시만 여는 번호, null이면 전체 덱. 범위를 벗어나면 전체 덱을 준다. moduleKey: studioModuleKey(심화학습은 '~adv'가 붙는다)
+window.getSlideStudioPayload = function (moduleKey, session = null) {
+    const { moduleId, track } = parseStudioModuleKey(moduleKey);
     const mod = getEditingModule(moduleId);
-    const gyosuan = mod?.gyosuan;
+    const gyosuan = gyosuanOf(mod, track);
     const subject = globalState.subjects.find(s => s.id === currentSubjectId);
-    const sessions = gyosuan?.docMd ? gyosuanSessionList(mod) : [];
+    const sessions = gyosuan?.docMd ? gyosuanSessionList(mod, track) : [];
     const index = sessions.some(item => item.index === session) ? session : null;
     const whole = index === null;
+    const advanced = track !== LESSON_TRACKS[0].id;
     return {
-        deckMd: resolveGyosuanImages(whole ? gyosuan?.deckMd : gyosuanSessionDeckMd(mod, index), mod),
+        deckMd: resolveGyosuanImages(whole ? gyosuan?.deckMd : gyosuanSessionDeckMd(mod, index, track), mod, track),
         deckHtml: (whole ? gyosuan?.deckHtml : gyosuan?.sessionDecks?.[index]) || null,
-        docMd: resolveGyosuanImages(whole ? gyosuan?.docMd : gyosuanSessionPlanMd(mod, index), mod),
-        title: mod?.title || '',
+        docMd: resolveGyosuanImages(whole ? gyosuan?.docMd : gyosuanSessionPlanMd(mod, index, track), mod, track),
+        title: mod ? gyosuanTopic(mod, track) : '',
         subject: subject?.title || '',
-        fileBase: mod ? `${lessonFileBase(mod, subject)}${whole ? '' : `_${index + 1}차시`}` : '',
+        fileBase: mod ? `${lessonFileBase(mod, subject)}${advanced ? '_심화' : ''}${whole ? '' : `_${index + 1}차시`}` : '',
         ncs: { list: (subject?.ncs?.units || []).map(unit => ({ code: unit.code, name: unit.name })), auto: !subject?.ncs?.confirmed },
         sessions,
         session: index,
+        track,
         rev: gyosuan?.deckRev || 0,
         refs: mod?.refImages || []
     };
 };
 
-// target: 스튜디오가 연 덱 { rev, session }. 그사이 덱을 다시 만들었으면 false를 돌려주고 저장하지 않는다
-window.saveSlideStudioHtml = function (moduleId, html, target = {}) {
+// target: 스튜디오가 연 덱 { rev, session }. 그사이 덱을 다시 만들었으면 false를 돌려주고 저장하지 않는다. moduleKey: studioModuleKey
+window.saveSlideStudioHtml = function (moduleKey, html, target = {}) {
+    const { moduleId, track } = parseStudioModuleKey(moduleKey);
     const mod = getEditingModule(moduleId);
-    if (!mod?.gyosuan) return false;
-    if (target.rev !== undefined && target.rev !== (mod.gyosuan.deckRev || 0)) return false;
-    mod.gyosuan = Number.isInteger(target.session)
-        ? { ...mod.gyosuan, sessionDecks: { ...mod.gyosuan.sessionDecks, [target.session]: html } }
-        : { ...mod.gyosuan, deckHtml: html };
+    const field = lessonTrack(track).field;
+    const gyosuan = mod?.[field];
+    if (!gyosuan) return false;
+    if (target.rev !== undefined && target.rev !== (gyosuan.deckRev || 0)) return false;
+    mod[field] = Number.isInteger(target.session)
+        ? { ...gyosuan, sessionDecks: { ...gyosuan.sessionDecks, [target.session]: html } }
+        : { ...gyosuan, deckHtml: html };
     clearTimeout(_gyosuanSaveTimer);
     _gyosuanSaveTimer = setTimeout(() => saveGyosuan(mod), 1000);
     return true;
@@ -649,7 +704,7 @@ function createSlideStudioFrame(query) {
     return iframe;
 }
 
-const slideStudioQuery = moduleId => `module=${encodeURIComponent(moduleId)}`;
+const slideStudioQuery = (moduleId, trackId = 'basic') => `module=${encodeURIComponent(studioModuleKey(moduleId, trackId))}`;
 
 function showSlideStudioOverlay(query) {
     if (document.getElementById('slide-studio-overlay')) return;
@@ -661,11 +716,17 @@ function showSlideStudioOverlay(query) {
     document.body.appendChild(overlay);
 }
 
+// 슬라이드 패널: 위쪽 기본학습 | 심화학습 고르기, 고른 갈래의 상태 표시와 단추 글
 window.syncSlidePanel = function (mod) {
-    const hasDeck = gyosuanHasDeck(mod);
+    const track = lessonTrack(currentGyosuanTrack());
+    const hasDeck = gyosuanHasDeck(mod, track.id);
     const badge = document.getElementById('slide-status-badge');
     const regenBtn = document.getElementById('slide-regen-btn');
     const generateLabel = document.getElementById('slide-generate-label');
+    const switcher = document.getElementById('slide-track-switch');
+    const title = document.getElementById('slide-panel-title');
+    if (switcher && mod && typeof lessonTrackSwitchHtml === 'function') switcher.innerHTML = lessonTrackSwitchHtml(mod, 'slides');
+    if (title) title.textContent = `${track.label} 슬라이드 미리보기`;
     if (badge) {
         badge.textContent = hasDeck ? '생성됨' : '미생성';
         badge.className = `text-[0.6875rem] px-2 py-0.5 rounded-full font-bold ${hasDeck ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-200 text-gray-500'}`;
@@ -676,41 +737,48 @@ window.syncSlidePanel = function (mod) {
 };
 
 // 교수안만 있으면(완성 MD 변환) 그 교수안은 두고 편성안만 만든다
-async function ensureGyosuanDeck(mod) {
-    return gyosuanHasDeck(mod) || window.generateGyosuan(mod.id, { keepDoc: true });
+async function ensureGyosuanDeck(mod, trackId = 'basic') {
+    return gyosuanHasDeck(mod, trackId) || window.generateGyosuan(mod.id, { keepDoc: true, track: trackId });
 }
 
-window.generateSlideView = async function (moduleId) {
+// trackId: 열 갈래. 주지 않으면 화면에서 고른 갈래
+window.generateSlideView = async function (moduleId, trackId = currentGyosuanTrack()) {
     const mod = getEditingModule(moduleId);
     if (!mod) return window.showAlert('교안을 먼저 선택해주세요.');
-    if (!(await ensureGyosuanDeck(mod))) return;
-    // 생성하는 동안 다른 차시로 옮겼다면 그 차시 패널에 넣지 않는다
-    const area = String(currentEditingModuleId) === String(mod.id) && document.getElementById('slide-preview-area');
+    const track = lessonTrack(trackId).id;
+    if (!(await ensureGyosuanDeck(mod, track))) return;
+    // 생성하는 동안 다른 차시로 옮겼거나 다른 갈래를 골랐다면 그 패널에 넣지 않는다
+    const area = String(currentEditingModuleId) === String(mod.id) && currentGyosuanTrack() === track && document.getElementById('slide-preview-area');
     if (!area) return;
-    const iframe = createSlideStudioFrame(slideStudioQuery(moduleId));
+    const iframe = createSlideStudioFrame(slideStudioQuery(moduleId, track));
     iframe.className = 'slide-studio-inline';
     area.innerHTML = '';
     area.appendChild(iframe);
     area.scrollIntoView({ behavior: 'smooth', block: 'start' });
 };
 
-window.regenerateSlideView = async function (moduleId) {
+window.regenerateSlideView = async function (moduleId, trackId = currentGyosuanTrack()) {
     const mod = getEditingModule(moduleId);
     if (!mod) return window.showAlert('교안을 먼저 선택해주세요.');
-    const ok = await confirmAsync('슬라이드 편성안을 다시 생성합니다. 슬라이드에서 편집한 내용은 사라집니다. 계속할까요?', { title: '슬라이드 다시 생성', okLabel: '다시 생성', tone: 'danger' });
+    const track = lessonTrack(trackId);
+    const ok = await confirmAsync(`${track.label} 슬라이드 편성안을 다시 생성합니다. 슬라이드에서 편집한 내용은 사라집니다. 계속할까요?`, { title: `${track.label} 슬라이드 다시 생성`, okLabel: '다시 생성', tone: 'danger' });
     if (!ok || gyosuanTargetMoved(moduleId, mod)) return;
-    if (await window.generateGyosuan(mod.id, { keepDoc: true })) window.generateSlideView(mod.id);
+    if (await window.generateGyosuan(mod.id, { keepDoc: true, track: track.id })) window.generateSlideView(mod.id, track.id);
 };
 
-// 내보내기 메뉴의 슬라이드 항목: 슬라이드는 차시 단위로 만들고 스튜디오에서 PPTX·HTML로 내보낸다
+// 내보내기 메뉴의 슬라이드 항목: 슬라이드는 차시 단위로 만들고 스튜디오에서 PPTX·HTML로 내보낸다. 화면에서 고른 갈래를 연다
 window.openCurrentSlideStudio = function () {
     const mod = getEditingModule();
     if (!mod) return window.showAlert('슬라이드는 차시별로 만듭니다. 좌측 목록에서 차시를 먼저 선택해주세요.');
-    window.openSlideStudio(mod.id);
+    window.openSlideStudio(mod.id, currentGyosuanTrack());
 };
 
-window.openSlideStudio = async function (moduleId) {
+window.openSlideStudio = async function (moduleId, trackId = currentGyosuanTrack()) {
     const mod = getEditingModule(moduleId);
     if (!mod) return window.showAlert('교안을 먼저 선택해주세요.');
-    if (await ensureGyosuanDeck(mod)) showSlideStudioOverlay(slideStudioQuery(moduleId));
+    const track = lessonTrack(trackId).id;
+    if (await ensureGyosuanDeck(mod, track)) showSlideStudioOverlay(slideStudioQuery(moduleId, track));
 };
+
+// 테스트가 읽는다(화살표 함수 const는 window에 붙지 않는다)
+Object.assign(window, { collectLessonSource, isLegacyGyosuan, studioModuleKey, parseStudioModuleKey, gyosuanTopic });

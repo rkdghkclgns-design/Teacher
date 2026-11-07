@@ -4,6 +4,7 @@ const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
 const assert = require('assert');
+const { loadLessonTracks } = require('./lesson-tracks');
 const root = path.join(__dirname, '..', 'js') + path.sep;
 const FILES = [
     'lesson-sanitize.js', 'filename-convention.js', 'kbuilder/ncs-catalog.js', 'lesson-lint.js', 'lesson-opening.js', 'lesson-objectives.js', 'lesson-material.js', 'lesson-pipeline.js', 'ai-routing.js', 'course-ncs.js', 'course-ncs-ref.js', 'course-design.js', 'course-design-edit.js',
@@ -45,6 +46,7 @@ function makeContext(extra = {}) {
     };
     ctx.window = ctx;
     vm.createContext(ctx);
+    loadLessonTracks(ctx); // 갈래(기본학습·심화학습) 정의
     FILES.forEach(file => vm.runInContext(fs.readFileSync(root + file, 'utf8'), ctx));
     return ctx;
 }
@@ -305,26 +307,35 @@ const LESSON_MD = [
         assert.strictEqual(call('lessonNeedsArt')(failing), false, '끝까지 돌면 다시 하지 않는다');
     });
 
-    await run('일괄 생성: 교수안 옵션은 탭이 찬 차시도 넣고 교수안까지 만든다', async () => {
+    await run('일괄 생성: 교수안 옵션은 탭이 찬 차시도 넣고 갈래(기본학습·심화학습)마다 교수안까지 만든다', async () => {
         const tabs = Object.fromEntries(TAB_IDS.map(id => [id, '내용']));
-        const subject = { id: 's1', title: '기획', lessons: [{ id: 1, title: '가', tabContents: tabs }, { id: 2, title: '나', tabContents: tabs, gyosuan: { docMd: '#' } }] };
+        const subject = { id: 's1', title: '기획', lessons: [
+            { id: 1, title: '가', tabContents: tabs },
+            { id: 2, title: '나', tabContents: tabs, gyosuan: { docMd: '#' }, gyosuanAdv: { docMd: '#' } },
+            { id: 3, title: '다', tabContents: tabs, gyosuan: { docMd: '#' } }
+        ] };
         ctx.globalState.subjects = [subject];
         ctx.courseData = subject.lessons;
         assert.strictEqual(plain(call('runnableLessons')([subject])).length, 0);
-        assert.deepStrictEqual(plain(call('runnableLessons')([subject], true)).map(item => item.lessonId), [1]);
+        assert.deepStrictEqual(plain(call('runnableLessons')([subject], true)).map(item => item.lessonId), [1, 3], '두 갈래 교수안이 다 있는 차시만 뺀다');
         const calls = [];
-        ctx.runGyosuanGeneration = async (id, opts) => { calls.push(id); opts.onStatus('진행'); return { ok: true, partial: true, built: {}, draft: {} }; };
+        ctx.runGyosuanGeneration = async (id, opts) => { calls.push(`${id}:${opts.track}`); opts.onStatus('진행'); return { ok: true, partial: true, built: {}, draft: {} }; };
         const attempt = call('attemptLesson');
         const item = { subject, lessonId: 1, title: '가' };
         assert.deepStrictEqual(plain(await attempt(item, { stopped: false, withGyosuan: false })), { ok: true, partial: false });
         assert.deepStrictEqual(calls, [], '옵션을 끄면 부르지 않는다');
         assert.deepStrictEqual(plain(await attempt(item, { stopped: false, withGyosuan: true })), { ok: true, partial: true });
-        assert.deepStrictEqual(calls, [1]);
+        assert.deepStrictEqual(calls, ['1:basic', '1:adv'], '기본학습 교수안 다음에 심화학습 교수안');
         const stopped = plain(await attempt(item, { stopped: true, withGyosuan: true }));
         assert.strictEqual(stopped.ok, false);
         assert.strictEqual(stopped.stopped, true);
         await attempt({ ...item, lessonId: 2 }, { stopped: false, withGyosuan: true });
-        assert.deepStrictEqual(calls, [1], '교수안이 있는 차시는 다시 만들지 않는다');
+        assert.deepStrictEqual(calls, ['1:basic', '1:adv'], '교수안이 있는 차시는 다시 만들지 않는다');
+        await attempt({ ...item, lessonId: 3 }, { stopped: false, withGyosuan: true });
+        assert.deepStrictEqual(calls.slice(2), ['3:adv'], '빠진 갈래의 교수안만 만든다');
+        ctx.runGyosuanGeneration = async (id, opts) => { calls.push(`실패:${opts.track}`); return { ok: false, error: '교수안 실패' }; };
+        const failed = plain(await attempt(item, { stopped: false, withGyosuan: true }));
+        assert.deepStrictEqual([failed.ok, failed.error, calls.at(-1)], [false, '교수안 실패', '실패:basic'], '기본학습 교수안이 실패하면 심화학습으로 넘어가지 않고 실패로 센다');
     });
 
     await run('교안 첫머리: 머리말의 목표·시간표·특징 목록과 이미지를 뺀다', async () => {
@@ -363,15 +374,16 @@ const LESSON_MD = [
         const order = [];
         const options = [];
         ctx.generateTabContent = async (id, tabId, opts) => { order.push(tabId); options.push(opts); lesson.tabContents[tabId] = `## ${tabId}\n\n- 내용입니다.`; return { ok: true }; };
-        ctx.runGyosuanGeneration = async () => { order.push('gyosuan'); lesson.gyosuan = { docMd: '#' }; return { ok: true }; };
-        ctx.generateQuestions = async (mod, spec) => { order.push(`qbank:${spec.objective}`); return [{ no: 0, title: '문항', objective: spec.objective, band: 'L1', type: '객관식', typed: true, multi: false, stem: '내용', media: '', choices: [{ mark: '①', text: '가' }], answer: '①', accepted: '', hint: '', code: '', lang: '', explanation: '', rubric: '', tests: '', review: '' }]; };
+        ctx.runGyosuanGeneration = async (id, opts) => { order.push(`gyosuan:${opts.track}`); lesson[opts.track === 'adv' ? 'gyosuanAdv' : 'gyosuan'] = { docMd: '#' }; return { ok: true }; };
+        ctx.generateQuestions = async (mod, spec, trackId) => { order.push(`qbank:${trackId}:${spec.objective}`); return [{ no: 0, title: '문항', objective: spec.objective, band: 'L1', type: '객관식', typed: true, multi: false, stem: '내용', media: '', choices: [{ mark: '①', text: '가' }], answer: '①', accepted: '', hint: '', code: '', lang: '', explanation: '', rubric: '', tests: '', review: '' }]; };
         const toasts = [];
         ctx.showToast = text => toasts.push(text);
         await call('runLessonPipeline')(1);
-        assert.deepStrictEqual(order, ['basicPrac', 'advLearn', 'advPrac', 'assessment', 'gyosuan', 'qbank:1']);
+        assert.deepStrictEqual(order, ['basicPrac', 'advLearn', 'advPrac', 'assessment', 'gyosuan:basic', 'gyosuan:adv', 'qbank:basic:1', 'qbank:adv:1'], '교수안·슬라이드와 문제은행을 갈래마다 만든다');
         assert.ok(options.every(opts => opts.background && opts.quiet), '화면을 막지 않는다');
-        assert.ok(lesson.tabContents.assessment.includes('학습 목표 1'), '문제은행은 학습이해도 탭에 저장한다');
-        assert.ok(lesson.history.some(row => row.note.includes('문제은행')));
+        assert.ok(lesson.tabContents.assessment.includes('학습 목표 1'), '기본학습 문제은행은 학습이해도 탭에 저장한다');
+        assert.ok(lesson.tabContents.advAssessment.includes('학습 목표 1'), '심화학습 문제은행은 심화이해도 탭에 저장한다');
+        assert.ok(lesson.history.some(row => row.note.includes('기본학습 문제은행')) && lesson.history.some(row => row.note.includes('심화학습 문제은행')));
         assert.ok(toasts.at(-1).includes('마쳤습니다'));
         assert.strictEqual(call('isLessonPipelineRunning')(), false);
         order.length = 0;
@@ -425,7 +437,7 @@ const LESSON_MD = [
 
     await run('전체 생성: 그림 모델이 막혀 남긴 자리를 끝에 창으로 알리고, 연 쪽만 닫는다', async () => {
         const originalTab = ctx.generateTabContent;
-        const full = () => ({ id: 1, title: '재미', gyosuan: { docMd: '#' }, tabContents: Object.fromEntries(TAB_IDS.map(id => [id, `## ${id}\n\n- 내용입니다.`])) });
+        const full = () => ({ id: 1, title: '재미', gyosuan: { docMd: '#' }, gyosuanAdv: { docMd: '#' }, tabContents: Object.fromEntries(TAB_IDS.map(id => [id, `## ${id}\n\n- 내용입니다.`])) });
         let ended = 0;
         const toasts = [];
         ctx.showToast = text => toasts.push(text);
@@ -477,11 +489,11 @@ const LESSON_MD = [
         ctx.needsElementAutoAssign = () => !order.includes('ncs');
         ctx.fillLessonArt = async mod => { order.push('art'); mod.artAutoDone = true; };
         ctx.assignLessonElements = async () => { order.push('ncs'); throw new Error('호출 한도'); };
-        ctx.runGyosuanGeneration = async () => { order.push('gyosuan'); lesson.gyosuan = { docMd: '#' }; return { ok: true }; };
+        ctx.runGyosuanGeneration = async (id, opts) => { order.push('gyosuan'); lesson[opts.track === 'adv' ? 'gyosuanAdv' : 'gyosuan'] = { docMd: '#' }; return { ok: true }; };
         ctx.generateQuestions = async () => { order.push('qbank'); return []; };
         await call('runLessonPipeline')(1);
-        assert.deepStrictEqual(order.slice(0, 3), ['art', 'ncs', 'gyosuan'], 'NCS 요소가 교수안 프롬프트에 들어가도록 먼저 만든다');
-        assert.strictEqual(order[3], 'qbank');
+        assert.deepStrictEqual(order.slice(0, 4), ['art', 'ncs', 'gyosuan', 'gyosuan'], 'NCS 요소가 두 갈래 교수안 프롬프트에 들어가도록 먼저 만든다');
+        assert.strictEqual(order[4], 'qbank');
         assert.ok(ctx.alerts.at(-1).includes('NCS 요소 배정: 호출 한도'));
         order.length = 0;
         ctx.needsElementAutoAssign = () => !order.includes('ncs');
@@ -692,9 +704,10 @@ const LESSON_MD = [
         ctx.alerts.length = 0;
         ctx.runGyosuanGeneration = async () => ({ ok: false, error: '호출 한도' });
         const asked = [];
-        ctx.generateQuestions = async (mod, spec) => { asked.push(spec.objective); return []; };
+        ctx.generateQuestions = async (mod, spec, trackId) => { asked.push(`${trackId}:${spec.objective}`); return []; };
         await call('runLessonPipeline')(1);
-        assert.deepStrictEqual(asked, [1]);
+        // 심화학습 탭에 학습 목표가 없으면 차시의 학습 목표로 심화학습 문제은행을 채운다
+        assert.deepStrictEqual(asked, ['basic:1', 'adv:1']);
         assert.ok(ctx.alerts.at(-1).includes('호출 한도') && !ctx.alerts.at(-1).includes('건너뛴'));
     });
 

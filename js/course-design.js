@@ -219,7 +219,7 @@ function moduleToLesson(module, id) {
         status: 'waiting',
         content: null,
         images: {},
-        tabContents: { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null },
+        tabContents: { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null, advAssessment: null },
         uploadedMdName: null,
         uploadedMdContent: null
     };

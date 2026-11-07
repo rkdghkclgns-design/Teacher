@@ -12,15 +12,19 @@ function subjectBadge(text, title, style = 'bg-white/10 text-textLight') {
 
 function subjectStatusBadges(subject) {
     const lessons = courseLessons(subject);
-    const plans = lessons.filter(lesson => lesson.gyosuan?.docMd).length;
-    const questions = lessons.reduce((sum, lesson) => sum + qbankQuestions(lesson).length, 0);
+    // 교수안: 교안이 있는 갈래(기본학습·심화학습)마다 교수안을 갖춘 차시. 문항: 두 문제은행의 문항
+    const plans = lessons.filter(lesson => {
+        const filled = LESSON_TRACKS.filter(track => trackHasContent(lesson, track.id));
+        return filled.length ? filled.every(track => lesson[track.field]?.docMd) : LESSON_TRACKS.some(track => lesson[track.field]?.docMd);
+    }).length;
+    const questions = lessons.reduce((sum, lesson) => sum + LESSON_TRACKS.reduce((count, track) => count + qbankQuestions(lesson, track.id).length, 0), 0);
     const done = lessons.filter(lesson => lessonStatus(lesson) === '완료').length;
     const units = subject.ncs?.units?.length || 0;
     const confirmed = !!subject.ncs?.confirmed;
     return [
-        plans ? subjectBadge(`교수안 ${plans}/${lessons.length}`, '교수안이 있는 차시') : '',
+        plans ? subjectBadge(`교수안 ${plans}/${lessons.length}`, '교안이 있는 갈래(기본학습·심화학습)의 교수안을 모두 갖춘 차시') : '',
         units ? subjectBadge(`NCS ${units}${confirmed ? '' : ' 확정 전'}`, confirmed ? 'NCS 능력단위 확정' : 'NCS 능력단위 자동 배정 · 확정 전', confirmed ? undefined : 'bg-amber-500/20 text-amber-300') : '',
-        questions ? subjectBadge(`문항 ${questions}`, '학습이해도 탭의 문항 수') : '',
+        questions ? subjectBadge(`문항 ${questions}`, '학습이해도·심화이해도 탭의 문항 수') : '',
         done ? subjectBadge(`완료 ${done}/${lessons.length}`, '작업 상태가 완료인 차시') : ''
     ].join('');
 }

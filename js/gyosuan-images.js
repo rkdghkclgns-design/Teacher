@@ -1,6 +1,6 @@
 // gyosuan-images.js - 교수안을 만들 때 슬라이드 이미지를 함께 만든다
 // 고르기·생성·재사용은 kbuilder/auto-images.js(develocket-slide @3a7303f)를 그대로 쓴다.
-// 다만 [이미지:id] 표시는 IndexedDB에만 있어 내보내기에 남지 않으므로, 끝나면 mod.gyosuan.images와 local: 참조로 옮긴다.
+// 다만 [이미지:id] 표시는 IndexedDB에만 있어 내보내기에 남지 않으므로, 끝나면 그 갈래 교수안의 images(mod.gyosuan · mod.gyosuanAdv)와 local: 참조로 옮긴다.
 
 const GYOSUAN_IMAGE_TAG = /\[이미지:([^\]\s]+)\]/g;
 const LESSON_IMAGE_TEXT_LINES = 5; // 이미지 아래에서 내용 비교에 쓸 줄 수
@@ -38,8 +38,9 @@ function lessonImageContext(lines, at) {
     return { title: alt || heading.replace(/^#+\s*/, ''), text: [heading.replace(/^#+\s*/, ''), ...near].join(' ') };
 }
 
-function lessonImageCandidates(mod) {
-    const lines = collectLessonSource(mod).flatMap(part => String(part.text).split('\n'));
+// 그 갈래의 학습·실습 탭에 놓인 그림만 고른다(다른 갈래의 그림을 이 갈래 슬라이드에 넣지 않게)
+function lessonImageCandidates(mod, trackId = 'basic') {
+    const lines = collectLessonSource(mod, trackId).flatMap(part => String(part.text).split('\n'));
     return Object.entries(mod.images || {}).flatMap(([id, url]) => {
         if (!window.KBuilder.isRasterImage(url)) return [];
         const at = lines.findIndex(line => line.includes(`local:${id}`));
@@ -83,14 +84,14 @@ function collectGeneratedRefs(mod) {
     K.refImagesAddUrl = (url, name) => { K.refImages = [...K.refImages, { name, url }]; };
 }
 
-// texts = { docMd, deckMd } → 이미지가 들어간 { docMd, deckMd, images, note }. 실패해도 글은 살린다
-window.attachGyosuanImages = async function (mod, texts) {
+// texts = { docMd, deckMd } → 이미지가 들어간 { docMd, deckMd, images, note }. 실패해도 글은 살린다. trackId: 교수안을 만드는 갈래
+window.attachGyosuanImages = async function (mod, texts, trackId = 'basic') {
     const K = window.KBuilder;
     const A = K.autoImages;
     if (!A?.count() || !texts.deckMd) return texts;
     bindGyosuanImageAi();
     await A.ready;
-    const lessonImages = lessonImageCandidates(mod);
+    const lessonImages = lessonImageCandidates(mod, trackId);
     A.adopt(lessonImages);
     collectGeneratedRefs(mod);
     const skip = showGyosuanImageSkip();

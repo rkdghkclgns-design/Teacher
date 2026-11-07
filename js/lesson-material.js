@@ -1,6 +1,6 @@
 // lesson-material.js - 학습자용 교안을 직무 교육 자료 양식으로 내려받는다
 // 양식은 develocket-slide(assets/course-model.js lessonDocMd·moduleBlockMd)를 따른다.
-// 생성과 저장은 Teacher의 탭 마크다운을 그대로 쓰고 내보낼 때만 바꾼다. 학습이해도 탭은 정답이 있어 넣지 않는다.
+// 생성과 저장은 Teacher의 탭 마크다운을 그대로 쓰고 내보낼 때만 바꾼다. 학습이해도·심화이해도 탭은 정답이 있어 넣지 않는다.
 
 const MATERIAL_GAP = '<br>';
 const MATERIAL_TIME_NOTE = /\s*\(⏱[^)]*\)/g;
@@ -98,7 +98,7 @@ function materialTocLines(subjects, marked) {
 
 // tocSubjects: 목차에 넣을 교과 (비우면 목차를 뺀다) / marked: 일부 차시만 내려받을 때 목차에서 굵게 쓸 차시
 function materialDocMd(subject, lessons, tocSubjects = [], marked = null) {
-    const objectives = [...new Set(lessons.flatMap(qbankObjectives))];
+    const objectives = [...new Set(lessons.flatMap(lesson => qbankObjectives(lesson)))]; // 차시 전체의 목표(두 번째 인자는 갈래라 순번을 넘기지 않는다)
     const tools = [...new Set(lessons.flatMap(lessonTools).map(tool => [tool.name, tool.version].filter(Boolean).join(' : ')))];
     const courseTitle = globalState.courseTitle ? `${globalState.courseTitle} ` : '';
     return [
