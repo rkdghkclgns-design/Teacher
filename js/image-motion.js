@@ -3,6 +3,8 @@
 // 그림 자체는 다시 그리지 않는다. 바꾸면 원래 그림은 새 그림 키(원래 그림 키)로 간직하고, 그 자리(mod.images[그림 키])에 GIF를 넣고
 // mod.imageMotions[그림 키]에 { still: 원래 그림 키, at, sig, patterns, summary }만 적는다(GIF는 적지 않는다). 교안 글은 바꾸지 않는다.
 // '원래 그림으로'는 간직한 그림을 되돌린다. 그사이 그 자리 그림이 바뀌었으면(다시 찾기·삽화 다시 그리기·작업 기록 되돌리기 등) 지금 그림은 두고 기록만 정리한다
+// 같은 창을 '새 그림으로 넣는 창'으로도 연다(openImageMotionInsert, 본문을 끌어 고른 글로 GIF 만들기 selection-media.js): 부른 쪽이 그림을 그리면 바로 관계를 읽고,
+// 넣기(본문에 넣기·그림만 넣기)는 부른 쪽이 한다. 이 창은 차시·탭을 떠났는지만 본다(바꿀 그림 자리가 없다)
 
 const MOTION_FRAMES = 30;
 const MOTION_SPEEDS = [{ delay: 14, label: '느리게' }, { delay: 10, label: '보통' }, { delay: 7, label: '빠르게' }];
@@ -30,7 +32,14 @@ const MOTION_TEXT = {
     notPicture: '이 그림은 GIF로 바꿀 수 없습니다(찾지 못한 그림 자리이거나 그림 값이 없습니다).',
     inlineOnly: '이 그림은 교안 글에 그림 값이 바로 들어 있어 GIF로 바꿔도 화면이 바뀌지 않습니다.',
     hasVideo: '판서 영상으로 바꾼 그림입니다. 원래 그림으로 되돌린 뒤 다시 눌러 주세요.',
-    alreadyMoving: "이미 움직이는 GIF입니다. '원래 그림으로'로 되돌린 뒤 다시 만들어 주세요."
+    alreadyMoving: "이미 움직이는 GIF입니다. '원래 그림으로'로 되돌린 뒤 다시 만들어 주세요.",
+    // 새 그림으로 넣는 창(고른 글로 GIF 만들기)
+    insertLead: '고른 글에 맞는 그림을 AI가 그린 뒤, 그림 속 요소가 어떻게 이어져 있는지 읽어 그 관계가 보이게 움직이는 GIF를 이 브라우저에서 만듭니다. 넣으면 고른 글이 든 단락 바로 아래에 새 그림으로 들어갑니다.',
+    insertCost: '그림 그리기와 첫 관계 읽기는 시작할 때 보인 대로 씁니다. 다시 읽기는 AI 호출 1번을 더 씁니다. 움직임·빠르기를 바꿔 다시 만드는 것은 AI를 부르지 않습니다.',
+    drawing: '고른 글에 맞는 그림을 그리고 있습니다… 한 장에 수십 초가 걸릴 수 있습니다.',
+    pictureFailed: '그림을 그리지 못했습니다. 설정의 이미지 생성 모델과 키를 확인한 뒤 본문에서 다시 골라 눌러 주세요.',
+    insertMoved: '다른 차시나 탭으로 옮겨 본문에 넣지 않았습니다. 그 탭에서 글을 다시 골라 눌러 주세요.',
+    insertFailed: '본문에 넣지 못했습니다.'
 };
 const motionDrawing = (done, total) => `움직이는 GIF를 만들고 있습니다… (${done}/${total})`;
 const motionRedrawing = (width, done, total) => `4MB를 넘어 가로 ${width}px로 다시 만들고 있습니다… (${done}/${total})`;
@@ -381,25 +390,29 @@ const MOTION_SECONDARY = 'px-4 py-2 text-xs font-bold text-textLight bg-white/5 
 
 // 창 칸은 화면 높이의 90%까지 커지고 넘치면 창 안이 스크롤된다. 버튼 줄은 창 칸 아래 끝에 붙여(sticky) 1366x768 노트북처럼 낮은 화면에서도
 // 미리 보기를 만든 뒤 바꾸기·다시 읽기·취소가 바로 보이게 한다(창 칸 여백 p-6만큼 -bottom-6·-mx-6·-mb-6로 끝까지 펴고, 같은 바탕색으로 지나가는 내용을 가린다).
-// scroll-pb-20은 포커스 받은 칸을 굴려 보일 때 그 버튼 줄 높이만큼 띄운다(openMotionDialog)
-function motionDialogHtml() {
+// scroll-pb-20은 포커스 받은 칸을 굴려 보일 때 그 버튼 줄 높이만큼 띄운다(openMotionDialog).
+// 새 그림으로 넣는 창은 그림을 그리기 전까지 미리 보기 칸을 감추고, '그림만 넣기'와 '본문에 넣기'를 둔다
+function motionDialogHtml(session = {}) {
+    const insert = !!session.insert;
+    const still = insert ? `<button type="button" data-motion-still class="hidden ${MOTION_SECONDARY}">그림만 넣기</button>` : '';
     return `
         <div data-app-dialog-panel class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[560px] max-w-[94vw] max-h-[90vh] overflow-y-auto scroll-pb-20 p-6 shadow-2xl flex flex-col gap-3" onclick="event.stopPropagation()">
             <h3 data-app-dialog-title class="font-bold text-white text-sm flex items-center gap-2"><i class="ph-bold ph-gif text-emerald-400" aria-hidden="true"></i> 움직이는 GIF 만들기</h3>
-            <p data-app-dialog-text class="text-xs text-textMuted leading-relaxed">${escapeHtml(MOTION_TEXT.lead)}</p>
-            <div class="rounded-lg bg-black/30 border border-white/10 p-2 flex justify-center"><img data-motion-preview alt="바꿀 그림" class="max-h-[260px] max-w-full w-auto rounded"></div>
+            <p data-app-dialog-text class="text-xs text-textMuted leading-relaxed">${escapeHtml(insert ? MOTION_TEXT.insertLead : MOTION_TEXT.lead)}</p>
+            <div data-motion-frame class="${insert ? 'hidden ' : ''}rounded-lg bg-black/30 border border-white/10 p-2 flex justify-center"><img data-motion-preview alt="${insert ? '고른 글로 그린 그림' : '바꿀 그림'}" class="max-h-[260px] max-w-full w-auto rounded"></div>
             <p data-motion-info class="hidden text-[0.6875rem] text-textMuted"></p>
             <div data-motion-controls class="hidden flex flex-col gap-2"></div>
             <label class="block text-[0.6875rem] text-textMuted">움직임 요청(선택)
                 <textarea data-motion-instruction rows="2" maxlength="${MOTION_LIMITS.instruction}" placeholder="${escapeHtml(MOTION_TEXT.placeholder)}" class="mt-1 w-full p-2 resize-none ${MOTION_FIELD}"></textarea>
             </label>
-            <p class="text-[0.6875rem] text-textMuted"><i class="ph-bold ph-info" aria-hidden="true"></i> ${escapeHtml(MOTION_TEXT.cost)}</p>
+            <p class="text-[0.6875rem] text-textMuted"><i class="ph-bold ph-info" aria-hidden="true"></i> ${escapeHtml(insert ? MOTION_TEXT.insertCost : MOTION_TEXT.cost)}</p>
             <p data-motion-status role="status" aria-live="polite" class="text-xs min-h-[1rem] whitespace-pre-wrap"></p>
             <div class="sticky -bottom-6 -mx-6 -mb-6 -mt-3 px-6 pt-3 pb-6 bg-[#1a1a2e] flex flex-wrap justify-end gap-2">
                 <button type="button" data-motion-cancel class="${MOTION_SECONDARY}">취소</button>
                 <button type="button" data-motion-reread class="hidden ${MOTION_SECONDARY}">다시 읽기</button>
+                ${still}
                 <button type="button" data-motion-start class="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg transition-colors disabled:opacity-40">관계 읽고 GIF 만들기</button>
-                <button type="button" data-motion-apply class="hidden px-4 py-2 text-xs font-bold text-white bg-accent hover:bg-accentHover rounded-lg transition-colors disabled:opacity-40">이 GIF로 바꾸기</button>
+                <button type="button" data-motion-apply class="hidden px-4 py-2 text-xs font-bold text-white bg-accent hover:bg-accentHover rounded-lg transition-colors disabled:opacity-40">${insert ? '본문에 넣기' : '이 GIF로 바꾸기'}</button>
             </div>
         </div>`;
 }
@@ -429,14 +442,16 @@ function motionStatus(session, text, tone = 'info') {
     box.className = `text-xs min-h-[1rem] whitespace-pre-wrap ${tone === 'warn' ? 'text-amber-200' : tone === 'busy' ? 'text-emerald-300' : 'text-textMuted'}`;
 }
 
-// 단계에 맞춰 버튼·고르기 칸을 보이고 막는다
+// 단계에 맞춰 버튼·고르기 칸을 보이고 막는다. 새 그림으로 넣는 창은 그림을 그린 뒤에야 읽기·그림만 넣기를 보인다
 function syncMotionButtons(session) {
     const show = (name, visible) => motionPart(session, name)?.classList.toggle('hidden', !visible);
     const live = !session.gone;
-    show('start', live && !session.plan);
+    const drawn = !!session.source;
+    show('start', live && drawn && !session.plan);
     show('reread', live && !!session.plan);
     show('apply', live && !!session.gif);
-    ['start', 'reread', 'apply'].forEach(name => {
+    show('still', live && drawn);
+    ['start', 'reread', 'apply', 'still'].forEach(name => {
         const button = motionPart(session, name);
         if (button) button.disabled = session.busy;
     });
@@ -445,18 +460,19 @@ function syncMotionButtons(session) {
     session.overlay.querySelectorAll('select').forEach(select => { select.disabled = session.busy || session.gone; });
 }
 
-// 기다리는 동안 다른 차시·탭으로 옮겼거나, 그 그림이 바뀌었거나, 판서 영상·GIF가 됐는지
+// 기다리는 동안 다른 차시·탭으로 옮겼거나, 그 그림이 바뀌었거나, 판서 영상·GIF가 됐는지. 새 그림으로 넣는 창은 바꿀 그림 자리가 없어 차시·탭만 본다
 function motionMoved(session) {
     const { mod, imgId, tabId, source } = session;
     if (getEditingModule() !== mod) return true;
     if (typeof isViewingTab === 'function' && !isViewingTab(mod, tabId)) return true;
+    if (session.insert) return false;
     return mod.images?.[imgId] !== source || motionHas(mod.whiteboardVideos, imgId) || imageMotionState(mod, imgId) === 'valid';
 }
 
 function motionGone(session) {
     session.gone = true;
     session.busy = false;
-    motionStatus(session, MOTION_TEXT.moved, 'warn');
+    motionStatus(session, session.insert ? MOTION_TEXT.insertMoved : MOTION_TEXT.moved, 'warn');
     syncMotionButtons(session);
 }
 
@@ -581,13 +597,14 @@ function onMotionChange(session, event) {
     renderImageMotion(session);
 }
 
-// '이 GIF로 바꾸기': 그 차시·탭·그림이 그대로일 때만 바꾸고 저장한 뒤 다시 그린다
+// '이 GIF로 바꾸기': 그 차시·탭·그림이 그대로일 때만 바꾸고 저장한 뒤 다시 그린다. 새 그림으로 넣는 창의 '본문에 넣기'는 부른 쪽이 넣는다
 async function applyImageMotion(session) {
     if (session.busy || session.closed || session.gone || !session.gif) return;
     if (motionMoved(session)) return motionGone(session);
     const { mod, imgId, tabId, plan } = session;
     const patterns = plan.groups.map((group, index) => motionPatternOf(group, session.patterns[index]));
     const summary = plan.groups.map((group, index) => `${group.name}: ${MOTION_PATTERN_LABELS[patterns[index]]}`).join(' · ');
+    if (session.insert) return insertMotionResult(session, () => session.insert.onApply({ still: session.source, gif: session.gif.dataUrl, meta: { patterns, summary } }));
     try {
         applyImageMotionData(mod, imgId, session.source, session.gif.dataUrl, { patterns, summary });
     } catch (err) {
@@ -599,20 +616,71 @@ async function applyImageMotion(session) {
     if (saved !== false) window.showToast?.(MOTION_TEXT.applied, 'success');
 }
 
+// 새 그림으로 넣는 창의 '본문에 넣기'·'그림만 넣기'. 넣고 저장하고 다시 그리는 일은 run(부른 쪽)이 한다.
+// 넣었으면(true) 창을 닫고, 못 넣었으면 창을 열어 둔 채 다시 누르거나 취소할 수 있게 한다(그린 그림을 잃지 않게)
+async function insertMotionResult(session, run) {
+    if (session.busy || session.closed || session.gone || !session.source) return;
+    if (motionMoved(session)) return motionGone(session);
+    session.busy = true;
+    syncMotionButtons(session);
+    let placed = false;
+    try {
+        placed = (await run()) === true;
+    } catch (err) {
+        console.warn('[움직이는 GIF] 본문에 넣지 못했습니다:', err);
+        motionStatus(session, `${MOTION_TEXT.insertFailed} ${err?.message || ''}`.trim(), 'warn');
+    }
+    session.busy = false;
+    if (placed) return closeMotionDialog(session);
+    if (!session.closed) syncMotionButtons(session);
+}
+
+function showMotionPreview(session) {
+    motionPart(session, 'preview')?.setAttribute('src', session.source);
+    motionPart(session, 'frame')?.classList.remove('hidden');
+}
+
+// 새 그림으로 넣는 창: 부른 쪽(draw)이 그림을 그리면 그 그림으로 바로 관계를 읽는다(그리기와 첫 읽기는 부른 쪽이 비용을 미리 물었다).
+// 그리지 못하면 창을 열어 둔 채 알린다. 취소(창 닫기)하면 그리던 호출도 끊는다
+async function drawInsertPicture(session) {
+    session.busy = true;
+    session.controller = typeof AbortController === 'function' ? new AbortController() : null;
+    syncMotionButtons(session);
+    motionStatus(session, MOTION_TEXT.drawing, 'busy');
+    let source = null;
+    try {
+        source = await session.insert.draw(session.controller?.signal || null);
+    } catch (err) {
+        if (session.closed || err?.name === 'AbortError') return;
+        console.warn('[움직이는 GIF] 그림을 그리지 못했습니다:', err);
+    }
+    if (session.closed) return;
+    session.busy = false;
+    if (motionMoved(session)) return motionGone(session);
+    if (typeof source !== 'string' || !MOTION_PICTURE_RE.test(source)) {
+        motionStatus(session, MOTION_TEXT.pictureFailed, 'warn');
+        return syncMotionButtons(session);
+    }
+    session.source = source;
+    showMotionPreview(session);
+    await readImageMotion(session);
+}
+
 function openMotionDialog(session) {
     const overlay = document.createElement('div');
     overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9100] animate-fade-in';
-    overlay.innerHTML = motionDialogHtml();
+    overlay.innerHTML = motionDialogHtml(session);
     document.body.appendChild(overlay);
     session.overlay = overlay;
-    motionPart(session, 'preview').setAttribute('src', session.source);
-    // 읽거나 만드는 중이거나 만든 GIF가 있으면 바깥을 눌러도 닫지 않는다(Esc·취소로 닫는다)
+    if (session.source) motionPart(session, 'preview').setAttribute('src', session.source);
+    if (session.insert) motionPart(session, 'instruction').value = session.instruction || ''; // 고른 글을 움직임 요청으로 넣어 둔다(고쳐 다시 읽을 수 있다)
+    // 읽거나 만드는 중이거나 만든 GIF가 있으면 바깥을 눌러도 닫지 않는다(Esc·취소로 닫는다). 새 그림으로 넣는 창은 그린 그림을 잃지 않게 늘 그렇다
     session.dialog = openAppDialog(overlay, {
         onDismiss: reason => {
-            if (reason === 'outside' && (session.busy || session.gif)) return;
+            if (reason === 'outside' && (session.busy || session.gif || session.insert)) return;
             closeMotionDialog(session);
         },
-        focus: motionPart(session, 'instruction')
+        focus: session.insert ? null : motionPart(session, 'instruction') // 새 그림으로 넣는 창은 그리는 동안 요청 칸을 막아 창에 포커스를 둔다
     });
     // 창의 Tab 처리는 포커스만 옮기고 굴리지 않는다(ui.js keepAppDialogFocus). 낮은 화면에서 옮겨 간 칸이 아래에 붙은 버튼 줄에 가리지 않게 창 칸을 굴린다
     const buttonRow = motionPart(session, 'apply').parentElement;
@@ -626,6 +694,8 @@ function openMotionDialog(session) {
     motionPart(session, 'start').onclick = guard(() => readImageMotion(session));
     motionPart(session, 'reread').onclick = guard(() => readImageMotion(session));
     motionPart(session, 'apply').onclick = guard(() => applyImageMotion(session));
+    const still = motionPart(session, 'still');
+    if (still) still.onclick = guard(() => insertMotionResult(session, () => session.insert.onStill({ still: session.source })));
     overlay.addEventListener('change', event => onMotionChange(session, event));
     syncMotionButtons(session);
 }
@@ -647,6 +717,25 @@ window.openImageMotion = function (imgId) {
     const session = { mod, imgId, source, tabId: currentLessonTab, plan: null, patterns: [], delay: MOTION_DEFAULT_DELAY, gif: null, busy: false, gone: false, closed: false, seq: 0, controller: null };
     _motionSession = session;
     openMotionDialog(session);
+    return session;
+};
+
+// 본문을 끌어 고른 글로 GIF 만들기(selection-media.js): 그림을 그려(draw) 움직이는 GIF로 만든 뒤 본문에 새 그림으로 넣는 창.
+// opts: { mod, tabId, instruction(움직임 요청 칸에 넣을 고른 글), draw(signal) → 그림 data URL(못 그리면 null),
+//         onApply({ still, gif, meta }) · onStill({ still }) → 넣었으면 true }. 차시는 넣을 때 부른 쪽이 바꾼다. 이미 열린 창이 있으면 null
+window.openImageMotionInsert = function ({ mod, tabId, instruction = '', draw, onApply, onStill } = {}) {
+    if (!mod || !tabId || typeof draw !== 'function' || typeof onApply !== 'function' || typeof onStill !== 'function') return null;
+    if (_motionSession) {
+        if (_motionSession.overlay?.isConnected) return null;
+        closeMotionDialog(_motionSession); // 다른 코드가 창을 치웠다
+    }
+    const session = {
+        mod, imgId: '', source: '', tabId, insert: { draw, onApply, onStill }, instruction: String(instruction || '').slice(0, MOTION_LIMITS.instruction),
+        plan: null, patterns: [], delay: MOTION_DEFAULT_DELAY, gif: null, busy: false, gone: false, closed: false, seq: 0, controller: null
+    };
+    _motionSession = session;
+    openMotionDialog(session);
+    drawInsertPicture(session).catch(err => console.warn('[움직이는 GIF] 그림을 그리다 멈췄습니다:', err));
     return session;
 };
 

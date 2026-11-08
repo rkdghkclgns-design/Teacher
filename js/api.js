@@ -3417,7 +3417,7 @@ ${tabGenerateButtonsHtml(mod, tabless)}
 
                     <div id="lesson-edit-hint" class="${window.lessonEditHintHidden?.() ? 'hidden ' : ''}mb-5 flex items-start gap-2 px-3 py-2 text-xs leading-relaxed text-gray-600 bg-violet-50 border border-violet-100 rounded-lg">
                         <i class="ph-bold ph-cursor-text text-violet-500 text-sm mt-0.5 shrink-0" aria-hidden="true"></i>
-                        <span class="flex-1">단락을 <strong>두 번 누르면</strong> 바로 고칩니다 · 글자를 <strong>끌어 고르면</strong> 서식 막대와 AI로 수정이 나옵니다 · <strong>아래 칸</strong>에 요청을 쓰면 AI가 고른 부분이나 이 탭 전체를 고칩니다</span>
+                        <span class="flex-1">단락을 <strong>두 번 누르면</strong> 바로 고칩니다 · 글자를 <strong>끌어 고르면</strong> 서식 막대·AI로 수정과 GIF·판서 영상 만들기가 나옵니다 · <strong>아래 칸</strong>에 요청을 쓰면 AI가 고른 부분이나 이 탭 전체를 고칩니다</span>
                         <button type="button" onclick="hideLessonEditHint()" aria-label="이 안내 닫기" title="닫으면 다시 보이지 않습니다" class="shrink-0 text-gray-400 hover:text-gray-700"><i class="ph-bold ph-x"></i></button>
                     </div>
 
