@@ -571,6 +571,7 @@ function renderQbank() {
         ${typeof lessonTrackSwitchHtml === 'function' ? lessonTrackSwitchHtml(mod, 'qbank', 'dark') : ''}
         ${qbankEmptyTrackHtml(mod, trackId)}
         ${qbankLegacyNote(mod, trackId) ? `<p class="text-xs text-amber-300">${escapeHtml(qbankLegacyNote(mod, trackId))}</p>` : ''}
+        ${typeof qbankRegenHtml === 'function' ? qbankRegenHtml(mod, trackId) : ''}
         <div class="p-2 rounded-lg bg-black/20">${qbankDistributionHtml(questions, objectives)}
             <p class="text-xs text-textMuted mt-1">권장: L1 10 · L2 5 · L3 3. L4는 프로젝트에서 다룹니다. <button data-qbank-action="help" class="underline text-textLight">밴드란? · ${_qbank.help ? '접기' : '펼치기'}</button></p>
             ${_qbank.help ? qbankBandCardsHtml() : ''}
@@ -765,6 +766,7 @@ async function writeQuestionsIfOpen(mod, moduleId, questions, trackId = 'basic')
     const track = lessonTrack(trackId);
     const md = appendQuestionsMd(qbankMarkdown(mod, track.id), questions);
     mod.tabContents = { ...mod.tabContents, [track.bank]: md };
+    if (typeof noteQbankAppended === 'function') noteQbankAppended(mod, track.id, questions.length); // 재생성이 AI 문항으로 가른다(course-qbank-regen.js)
     await saveState();
     const note = typeof questionCommentNote === 'function' ? questionCommentNote(questions) : '';
     if (_qbank?.moduleId === moduleId) _qbank = { ..._qbank, dirty: true, status: [`${track.label} 문제은행에 ${questions.length}문항을 추가했습니다.`, note].filter(Boolean).join(' ') };
@@ -800,6 +802,7 @@ async function onQbankClick(event) {
     if (action === 'subject-csv') saveSubjectCsv();
     if (action === 'course-csv') saveCourseCsv();
     if (action === 'generate') return runQuestionGenerate(mod);
+    if (action === 'regenerate' && typeof runQbankRegenerate === 'function') return runQbankRegenerate(mod, trackId); // 보고 있는 갈래(course-qbank-regen.js)
     // 묻는 동안 문제은행을 닫았거나 다른 갈래로 바꿨으면 지우지 않는다(번호가 다른 갈래의 문항을 가리킨다)
     if (action === 'delete') return window.showConfirm('이 문항을 삭제할까요? 삭제 전 내용은 작업 기록에 남습니다.', () => (_qbank && qbankTrackId() === trackId ? commitQbankMarkdown(mod, removeQuestionMd(qbankMarkdown(mod, trackId), index)) : undefined));
     if (action === 'save') return saveQuestionDraft(mod, button.dataset.index);

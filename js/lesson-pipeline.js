@@ -49,6 +49,7 @@ async function fillQuestionBank(moduleId, { isStopped = () => false, onStatus = 
             if (!mod) return { ok: false, error: '차시를 찾지 못했습니다.' };
             const questions = await generateQuestions(mod, { objective, band: 'L1', type: '객관식', multi: false, count: QBANK_FILL_COUNT }, track.id);
             setTabMarkdown(mod, track.bank, appendQuestionsMd(qbankMarkdown(mod, track.id), questions));
+            if (typeof noteQbankAppended === 'function') noteQbankAppended(mod, track.id, questions.length); // 재생성이 AI 문항으로 가른다(course-qbank-regen.js)
             Object.assign(mod, withHistoryNote(mod, `${track.label} 문제은행 문항 생성 (학습 목표 ${objective}, ${questions.length}개)`));
             await saveState();
             if (typeof questionCommentGaps === 'function') gaps += questionCommentGaps(questions);
