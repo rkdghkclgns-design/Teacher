@@ -233,7 +233,7 @@ const tabs = extra => ({ basicLearn: '기본 글', basicPrac: '실습 글', advL
         assert.deepStrictEqual([ask.isConnected, ctx.globalState.lessonTrash.length, ctx.courseData.length], [false, 2, 1], 'Esc는 취소와 같다');
     });
 
-    await run('그림 자리 넣기: 앱의 입력 창으로 묻고 보고 있는 탭 끝에 넣는다(최종 평가처럼 탭이 없으면 본문 끝에)', async () => {
+    await run('그림 자리 넣기(자리 고르기 image-slot-place.js를 싣지 못했을 때): 앱의 입력 창으로 묻고 보고 있는 탭 끝에 넣는다(최종 평가처럼 탭이 없으면 본문 끝에)', async () => {
         const mod = { id: 1, title: '차시', tabContents: tabs(), content: '기본 글\n\n---\n\n실습 글', images: {} };
         const ctx = apiContext(mod);
         vm.runInContext("currentLessonTab = 'basicPrac'", ctx);

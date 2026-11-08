@@ -1793,17 +1793,21 @@ function inSkippedImageSection(markdown, fullMatch) {
     return heading >= 0 && IMAGE_SKIP_SECTIONS.test(before.substring(heading, heading + 60));
 }
 
-// 이 글에서 실제로 처리할 그림 자리. 코드 블록 안의 태그(코드 예제)와 글 위주 섹션의 태그, 이미 있는 그림을 가리키는 local: 태그(백업 ZIP 되살리기)는 빼고,
-// 이미지 양 설정으로 고른다. 예고(일괄 이미지 찾기·콘텐츠 정리)와 실제 처리가 같은 수를 쓴다. 검색어의 (⏱ N분)은 뗀다(예전에 넣은 태그)
-// 태그마다 game: 예시 게임 태그면 게임 제목, 아니면 ''. 제목이 빈 게임 태그는 뺀다
+// 그림 자리 표시 하나(IMAGE_TAG_RE에 맞은 것). 검색어의 (⏱ N분)은 뗀다(예전에 넣은 태그). game: 예시 게임 태그면 게임 제목, 아니면 ''
+function imageTagOf(match) {
+    const keyword = match[1].replace(IMAGE_TIME_LABEL, ' ').replace(/\s{2,}/g, ' ').trim();
+    return { fullMatch: match[0], keyword, game: gameImageTitle(keyword) };
+}
+
+// 채울 수 있는 그림 자리인지: 검색어가 있고, 이미 있는 그림을 가리키는 local: 태그(백업 ZIP 되살리기)가 아니며, 제목이 빈 예시 게임 태그가 아니다
+const usableImageTag = tag => !!tag && !!tag.keyword && !/^local:/.test(tag.keyword) && (!!tag.game || !isGameImageKeyword(tag.keyword));
+
+// 이 글에서 실제로 처리할 그림 자리. 코드 블록 안의 태그(코드 예제)와 글 위주 섹션의 태그, 채울 수 없는 태그(usableImageTag)는 빼고,
+// 이미지 양 설정으로 고른다. 예고(일괄 이미지 찾기·콘텐츠 정리)와 실제 처리가 같은 수를 쓴다
 function pendingImageTags(markdown, amount = 'all') {
     const text = stashCodeFences(String(markdown || '')).text;
-    const tags = [...text.matchAll(IMAGE_TAG_RE)].map(match => {
-        const keyword = match[1].replace(IMAGE_TIME_LABEL, ' ').replace(/\s{2,}/g, ' ').trim();
-        return { fullMatch: match[0], keyword, game: gameImageTitle(keyword) };
-    });
-    const usable = tag => tag.keyword && !/^local:/.test(tag.keyword) && (tag.game || !isGameImageKeyword(tag.keyword));
-    return pickImageTags(text, tags.filter(tag => usable(tag) && !inSkippedImageSection(text, tag.fullMatch)), amount);
+    const tags = [...text.matchAll(IMAGE_TAG_RE)].map(imageTagOf);
+    return pickImageTags(text, tags.filter(tag => usableImageTag(tag) && !inSkippedImageSection(text, tag.fullMatch)), amount);
 }
 window.pendingImageTags = pendingImageTags;
 
@@ -1824,13 +1828,14 @@ function imagePlaceholderHtml(text, keyword) {
 // opts.inject: 그림 자리가 빠진 섹션에 태그를 보탤지. 새로 만든 글만 켠다(남은 자리를 채울 때 켜면 이미 그림이 있는 섹션에 또 그린다)
 // opts.quiet: 끝 알림을 띄우지 않는다(부른 쪽이 모아서 알린다) / opts.stats: { made, failed, gameFailed }에 이번 결과를 더한다
 // opts.gamesOnly: 예시 게임 태그만 채운다(예시 게임 그림 넣기. 다른 그림 자리는 AI를 불러야 해서 그대로 둔다)
+// opts.tags: 채울 그림 자리를 부른 쪽이 정한다({ fullMatch, keyword, game }, 그림 자리 하나 채우기 image-slot-place.js). 주면 이미지 양·글 위주 섹션으로 고르지 않는다
 // 예시 게임 태그는 검색어 정하기·판정·AI 그림 없이 위키백과(검색 키가 있으면 Google)에서 찾는다(game-images.js). 그 앞에서는 쉬지 않는다
-async function processImageTags(mod, markdown, { onStatus = null, isStopped = () => !!window.isTabGenerationStopped?.(), signal = window.aiStopSignal?.() || null, amount = LESSON_IMAGE_AMOUNT, latest = null, inject = true, quiet = false, stats = null, gamesOnly = false } = {}) {
+async function processImageTags(mod, markdown, { onStatus = null, isStopped = () => !!window.isTabGenerationStopped?.(), signal = window.aiStopSignal?.() || null, amount = LESSON_IMAGE_AMOUNT, latest = null, inject = true, quiet = false, stats = null, gamesOnly = false, tags = null } = {}) {
 
     // LLM이 태그를 누락했을 경우 자동 주입 (이미지 0장 방지). 남은 자리를 채우는 작업은 보태지 않는다
     if (inject) markdown = autoInjectImageTags(markdown);
     const result = markdown;
-    const pickedTags = pendingImageTags(markdown, amount).filter(tag => !gamesOnly || tag.game);
+    const pickedTags = (Array.isArray(tags) ? tags : pendingImageTags(markdown, amount)).filter(tag => !gamesOnly || tag.game);
     if (pickedTags.length === 0) return result;
     const proseText = stashCodeFences(markdown).text; // 검색 문맥은 코드 블록 밖의 같은 태그 자리에서 읽는다
     const takenIds = new Set(Object.keys(mod?.images && typeof mod.images === 'object' ? mod.images : {}));
@@ -3385,7 +3390,7 @@ ${tabGenerateButtonsHtml(mod, tabless)}
                             <button onclick="downloadImagesAsJPG('${mod.id}')" class="px-3 py-1.5 text-xs font-bold bg-teal-50 text-teal-600 border border-teal-200 rounded hover:bg-teal-100 flex items-center gap-1 transition-colors" title="이미지 JPG 다운로드">
                                 <i class="ph-bold ph-download-simple"></i> 이미지 저장
                             </button>
-                            <button onclick="insertImageSlot()" class="px-2 py-1 text-xs font-bold rounded border border-gray-200 text-gray-600 hover:text-gray-800 transition-all" title="그림 자리 넣기" aria-label="그림 자리 넣기">🖼️</button>
+                            <button onclick="insertImageSlot(); this.closest('details').open = false" id="image-slot-btn" class="px-3 py-1.5 text-xs font-bold bg-violet-50 text-violet-700 border border-violet-200 rounded hover:bg-violet-100 flex items-center gap-1 transition-colors" title="누르면 마우스 포인터에 그림 자리가 따라다니며 넣을 자리(단락·제목·목록·표·코드 블록의 위나 아래)를 보여 줍니다. 넣을 곳을 누르면 그 자리에 넣고, 넣은 그림 자리를 누르면 그 자리 그림을 만듭니다. Esc나 오른쪽 클릭으로 그만둡니다"><i class="ph-bold ph-cursor-click"></i> 그림 자리 넣기</button>
                         <button onclick="openSectionLocks('${mod.id}')" class="px-3 py-1.5 text-[0.6875rem] font-bold bg-slate-50 text-slate-600 border border-slate-200 rounded hover:bg-slate-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="다시 생성해도 유지할 섹션 선택"><i class="ph-bold ph-lock-simple"></i> 섹션 고정</button>
                         <button onclick="openLessonArt('${mod.id}')" class="px-3 py-1.5 text-[0.6875rem] font-bold bg-sky-50 text-sky-600 border border-sky-200 rounded hover:bg-sky-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="SVG 삽화 생성·수정·배치"><i class="ph-bold ph-paint-brush"></i> 삽화</button>
                         <button onclick="copyTabMarkdown('${mod.id}')" class="px-3 py-1.5 text-[0.6875rem] font-bold bg-sky-50 text-sky-600 border border-sky-200 rounded hover:bg-sky-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="현재 탭의 마크다운을 클립보드에 복사"><i class="ph-bold ph-copy"></i> 복사</button>
@@ -3697,6 +3702,7 @@ window.toggleEditorMode = function (mode) {
                 if (!same) renderView.innerHTML = drawLessonScreen(screenInput, renderText, mod.images);
                 addImageDeleteButtons(renderView, mod); // 그림 틀·붙여 넣은 그림에도 삭제 버튼(마크다운 그림은 렌더러가 단다)
                 window.applyWhiteboardVideos?.(mod); // 판서 영상으로 바꾼 그림은 영상으로, 나머지 그림에는 바꾸기 버튼
+                window.showImageSlots?.(renderView, mod); // 아직 그림이 없는 그림 자리는 눌러 그림을 만드는 칸으로(image-slot-place.js)
 
                 // Mermaid 다이어그램: 이 화면을 새 차례로 그린다(앞 차례는 멈춘다). 그린 SVG는 코드로 기억해 다시 쓴다(drawLessonDiagrams)
                 if (window.mermaid) {
@@ -4638,7 +4644,10 @@ function imageSlotKeyword(text) {
     return String(text ?? '').replace(/["\]\r\n]/g, ' ').replace(/-{2,}/g, '-').replace(/^(\s*local:)+/i, '').replace(/\s+/g, ' ').trim();
 }
 
-// 보고 있는 탭에 그림 자리(<!-- [IMG: "검색어"] -->)를 넣는다. 원문 칸을 열어 두었으면 커서 자리에, 아니면 탭 끝에 넣는다(일괄 이미지 찾기가 채운다)
+const IMAGE_SLOT_BANK_TAB = '학습이해도·심화이해도에는 그림 자리를 넣지 않습니다. 기본학습·기본실습·심화학습·심화실습 탭에서 눌러 주세요.';
+
+// 보고 있는 탭에 그림 자리(<!-- [IMG: "검색어"] -->)를 넣는다. 보기 화면이면 마우스로 넣을 자리를 고른다(image-slot-place.js: 검색어는 둘레 단락에서 고르고, 넣은 자리를 누르면 그림을 만든다).
+// 원문 칸을 열어 두었으면 검색어를 묻고 커서 자리에 넣는다. 자리 고르기를 싣지 못했으면 묻고 탭 끝에 넣는다(일괄 이미지 찾기가 채운다)
 async function insertImageSlot() {
     const mod = getEditingModule();
     const tabId = typeof currentLessonTab !== 'undefined' ? currentLessonTab : 'basicLearn';
@@ -4651,6 +4660,8 @@ async function insertImageSlot() {
     const emptyTab = () => !rawOpen() && !String((mod.tabContents ? (showsOtherTabsText(mod, tabId) ? '' : tabSourceFor(mod, tabId)) : mod.content) || '').trim();
     const EMPTY_TAB_SLOT = '이 탭은 아직 비어 있습니다. 먼저 탭을 만든 뒤 그림 자리를 넣어 주세요.';
     if (emptyTab()) return window.showAlert(EMPTY_TAB_SLOT);
+    if (mod.tabContents && isQuestionBankTab(tabId)) return window.showAlert(IMAGE_SLOT_BANK_TAB); // 문제은행 탭에는 그림을 넣지 않는다(컨벤션)
+    if (!rawOpen() && typeof window.startImageSlotPlacing === 'function') return window.startImageSlotPlacing(mod, tabId);
     const answer = await window.promptAsync('찾을 그림의 검색어를 적으세요(영어 권장).', { title: '그림 자리 넣기', okLabel: '넣기', placeholder: '예: game loop diagram' });
     const keyword = imageSlotKeyword(answer);
     if (!keyword) return;
