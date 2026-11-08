@@ -1,8 +1,8 @@
-// gyosuan.js - 교수안·슬라이드 편성안 생성과 슬라이드 스튜디오 연결 (강사뷰는 gyosuan-view.js)
+// gyosuan.js - 교수안·슬라이드 편성안 생성과 슬라이드 스튜디오 연결 (강사뷰는 gyosuan-view.js, 재생성·이전 교수안은 gyosuan-regen.js, 편성안 다듬기는 gyosuan-deck-tidy.js)
 // 문서 양식과 조립은 develocket-slide(assets/generate.js @3a7303f)의 컨벤션을 따르고,
 // 생성 프롬프트는 이 앱의 교안 생성 방식(페르소나·어투·참고 자료·멀티턴 few-shot)을 쓴다.
 // 교수안은 갈래(data.js LESSON_TRACKS)마다 따로 만든다. 기본학습 갈래는 기본학습·기본실습 탭으로 mod.gyosuan에, 심화학습 갈래는 심화학습·심화실습 탭으로 mod.gyosuanAdv에
-// { docMd, deckMd, deckHtml, sessionDecks, deckRev, deckDirty, images, slideStyle, sourceKey, updatedAt } 으로 저장한다.
+// { docMd, deckMd, deckHtml, sessionDecks, deckRev, deckDirty, images, slideStyle, sourceKey, sourceMap, previous, updatedAt } 으로 저장한다(sourceMap·previous는 gyosuan-regen.js).
 // images는 교수안·편성안의 ![설명](local:id)가 가리키는 래스터 data URL이고, sessionDecks는 차시별로 연 덱의 편집본이다.
 // 예전에 네 탭을 함께 담아 만든 mod.gyosuan은 그대로 기본학습 교수안으로 둔다(gyosuan-view.js가 그렇다고 알린다).
 
@@ -20,21 +20,24 @@ const GYOSUAN_BLOCK_FORMAT =
     '**멘트 예시**: "(강사가 학생에게 건네듯 1~2문장)"\n' +
     '**학생 활동**: (학생이 할 일 한 문장)\n';
 
-// 슬라이드 형식: 값과 저장 키는 develocket-slide(main.js·generate.js)와 같다
+// 슬라이드 형식: 값과 저장 키는 develocket-slide(main.js·generate.js)와 같다. deck: 전개 지시의 [슬라이드 규칙](편성안에는 발표자 노트 칸이 없어 긴 설명은 교수안 블록에 둔다)
 const GYOSUAN_SLIDE_STYLE_KEY = 'kb-slide-style';
 const GYOSUAN_SLIDE_STYLES = [['presentation', '프레젠테이션용'], ['detailed', '상세 교재형']];
 const GYOSUAN_SLIDE_SPECS = {
     presentation: {
         rule: '- 슬라이드 문구는 화면에 띄울 짧은 말만 쓰고, 설명 문장은 교수안에 둡니다.',
         ask: '발표 슬라이드 1~2장',
-        lines: ['  - (화면에 띄울 짧은 문구)', "  - (핵심 키워드는 ' / '로 나열하거나 단계는 ' → '로 연결해도 됨)"]
+        lines: ['  - (화면에 띄울 짧은 문구)', "  - (핵심 키워드는 ' / '로 나열하거나 단계는 ' → '로 연결해도 됨)"],
+        deck: '- 슬라이드 문구는 한 줄에 핵심 하나만 25자 안팎의 짧은 말로 씁니다. 설명을 늘어놓는 문장이나 문단은 슬라이드에 쓰지 않습니다(설명은 위 교수안 블록의 설명 내용에 둡니다).'
     },
     detailed: {
-        rule: '- 슬라이드 문구는 수강생이 슬라이드만 읽어도 이해되도록 완결된 설명 문장으로 쓰고, 필요한 정의·예시를 함께 담습니다.',
-        ask: '교재형 슬라이드 2~4장(슬라이드마다 설명 문장 3~5개로 촘촘하게)',
-        lines: ['  - (개념을 설명하는 완결된 문장 1~2문장)', '  - (정의·예시·주의점 등 설명 문장을 3~5개 항목으로)']
+        rule: '- 슬라이드 문구는 수강생이 슬라이드만 읽어도 이해되도록 완결된 문장으로 쓰되, 한 줄에 핵심 하나만 담고 설명을 늘어놓지 않습니다.',
+        ask: '교재형 슬라이드 2~4장(슬라이드마다 핵심 문장 3~5개)',
+        lines: ['  - (개념을 설명하는 완결된 문장 한 문장. 한 줄에 핵심 하나)', '  - (정의·예시·주의점을 한 줄에 한 문장씩, 3~5개 항목으로)'],
+        deck: '- 슬라이드 문구는 한 줄에 핵심 하나를 담은 한 문장으로 씁니다. 여러 문장을 한 줄에 잇거나 설명을 늘어놓지 않습니다(덧붙일 설명은 위 교수안 블록의 설명 내용에 둡니다).'
     }
 };
+const GYOSUAN_DECK_EMPTY_RULE = '- 빈 그림 자리(![](), <img>, [이미지])나 머리줄만 있는 표, 내용이 없는 도식·차트 블록(mermaid 등)은 넣지 않습니다. 표는 칸을 모두 채울 때만 쓰고, 그림은 이미지/시각 줄에 그릴 장면 한 줄로만 제안합니다.'; // 남은 것은 gyosuan-deck-tidy.js가 덜어 낸다
 
 const GYOSUAN_STOP_LABELS = { idle: '교수안 생성 중지', pending: '멈추고 있습니다...' };
 
@@ -347,8 +350,12 @@ function buildSectionPrompt(section, style) {
         '### 슬라이드 - (슬라이드 제목)',
         '- 슬라이드 문구:',
         ...slides.lines,
-        '- 이미지/시각: (어울리는 이미지 한 줄 제안)',
+        '- 이미지/시각: (그릴 장면 한 줄 제안. 어울리는 그림이 없으면 이 줄을 뺀다)',
         '- 핵심 메시지: (이 슬라이드의 한 줄 메시지)',
+        '',
+        '[슬라이드 규칙]',
+        slides.deck,
+        GYOSUAN_DECK_EMPTY_RULE,
         '',
         `[섹션 제목] ${section.title}${section.minutes ? ` (${section.minutes}분 수업)` : ''}`,
         `[원고]\n${section.text.trim().slice(0, GYOSUAN_SECTION_CHARS)}`
@@ -555,7 +562,9 @@ function nextGyosuan(mod, parts, draft, style, keepDoc, trackId = 'basic') {
         sourceKey: keepDoc ? base.sourceKey : hashSource(parts),
         updatedAt: new Date().toISOString()
     };
-    return { ...next, images: usedGyosuanImages(next) };
+    // 바뀐 섹션 안내에 쓰는 원고 지문과 되돌릴 수 있게 바꾸기 전 교수안(gyosuan-regen.js)
+    const extra = typeof gyosuanRegenFields === 'function' ? gyosuanRegenFields(mod, base, parts, keepDoc, trackId) : {};
+    return { ...next, images: usedGyosuanImages(next), ...extra };
 }
 
 // 갈래의 학습·실습 탭 이름(예: 심화학습·심화실습)
@@ -592,7 +601,9 @@ async function runGyosuanGeneration(moduleId, opts = {}) {
         if (!opts.background) window.endGenerationStop?.(); // 이미지 단계는 자체 건너뛰기 버튼을 쓴다
         const keepDoc = !!(opts.keepDoc && mod[track.field]?.docMd);
         const texts = { docMd: keepDoc ? '' : built.docMd, deckMd: built.deckMd };
-        const draft = window.attachGyosuanImages ? await window.attachGyosuanImages(mod, texts, track.id) : texts;
+        const attached = window.attachGyosuanImages ? await window.attachGyosuanImages(mod, texts, track.id) : texts;
+        // 그림을 붙인 뒤 그림 없는 그림 칸·빈 표·빈 도식을 덜고 여러 문장을 이은 문구를 나눈다(gyosuan-deck-tidy.js)
+        const draft = typeof tidyGyosuanDeck === 'function' ? { ...attached, deckMd: tidyGyosuanDeck(attached.deckMd, { ...mod.images, ...(keepDoc ? mod[track.field]?.images : {}), ...attached.images }) } : attached;
         mod[track.field] = nextGyosuan(mod, parts, draft, style, keepDoc, track.id);
         Object.assign(mod, withHistoryNote(mod, `${track.label} ${keepDoc ? '슬라이드 편성안 AI 생성' : '교수안·슬라이드 편성안 AI 생성'}`));
         _gyosuanEditing = null;
@@ -635,15 +646,6 @@ function gyosuanTargetMoved(moduleId, mod) {
     return true;
 }
 
-window.regenerateGyosuan = async function (moduleId, trackId = 'basic') {
-    const mod = getEditingModule(moduleId);
-    if (!mod) return window.showAlert('교안을 먼저 선택해주세요.');
-    const track = lessonTrack(trackId);
-    const ok = await confirmAsync(`${track.label} 교수안을 다시 생성합니다. 직접 수정한 내용과 슬라이드 편집 내용은 사라집니다. 계속할까요?`, { title: `${track.label} 교수안 다시 생성`, okLabel: '다시 생성', tone: 'danger' });
-    if (!ok || gyosuanTargetMoved(moduleId, mod)) return;
-    window.generateGyosuan(moduleId, { track: track.id });
-};
-
 /* ---------- 슬라이드 스튜디오 (slide-studio.html) ---------- */
 function gyosuanHasDeck(mod, trackId = 'basic') {
     const gyosuan = gyosuanOf(mod, trackId);
@@ -676,9 +678,11 @@ window.getSlideStudioPayload = function (moduleKey, session = null) {
     const index = sessions.some(item => item.index === session) ? session : null;
     const whole = index === null;
     const advanced = track !== LESSON_TRACKS[0].id;
+    const deckHtml = (whole ? gyosuan?.deckHtml : gyosuan?.sessionDecks?.[index]) || null;
+    const deckMd = resolveGyosuanImages(whole ? gyosuan?.deckMd : gyosuanSessionDeckMd(mod, index, track), mod, track);
     return {
-        deckMd: resolveGyosuanImages(whole ? gyosuan?.deckMd : gyosuanSessionDeckMd(mod, index, track), mod, track),
-        deckHtml: (whole ? gyosuan?.deckHtml : gyosuan?.sessionDecks?.[index]) || null,
+        deckMd: deckHtml || typeof tidyGyosuanDeck !== 'function' ? deckMd : tidyGyosuanDeck(deckMd), // 화면 편집본이 없을 때만 다듬어 넘긴다(저장한 편성안은 그대로, gyosuan-deck-tidy.js)
+        deckHtml,
         docMd: resolveGyosuanImages(whole ? gyosuan?.docMd : gyosuanSessionPlanMd(mod, index, track), mod, track),
         title: mod ? gyosuanTopic(mod, track) : '',
         subject: subject?.title || '',

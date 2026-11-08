@@ -41,7 +41,7 @@ function makeContext(aiStub) {
     loadLessonTracks(ctx); // 갈래(기본학습·심화학습) 정의
     vm.runInContext(fs.readFileSync(root + 'kbuilder/parser.js', 'utf8'), ctx);
     ctx.stripInstructorCallouts = stripCallouts;
-    ['gyosuan.js', 'filename-convention.js', 'lesson-lint.js', 'course-ncs.js', 'course-design.js', 'course-sessions.js', 'course-meta.js'].forEach(file => vm.runInContext(fs.readFileSync(root + file, 'utf8'), ctx));
+    ['gyosuan.js', 'filename-convention.js', 'lesson-lint.js', 'course-ncs.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'gyosuan-deck-tidy.js'].forEach(file => vm.runInContext(fs.readFileSync(root + file, 'utf8'), ctx));
     return ctx;
 }
 
@@ -219,7 +219,8 @@ async function run(name, fn) {
         assert.strictEqual(deck.slides[2].maps, '전개 1');
         assert.strictEqual(deck.slides[3].title, '예시', '모델이 붙인 번호는 제거');
         assert.strictEqual(deck.slides[3].maps, '전개 1', '모델이 쓴 대응 교수안 대신 실제 전개 번호');
-        assert.ok(deck.slides[2].lines.length > 0 && deck.slides[2].visual && deck.slides[2].key);
+        assert.ok(deck.slides[2].lines.length > 0 && deck.slides[2].key);
+        assert.ok(deck.slides.every(s => !s.visual), '그림을 붙이지 않은 이미지/시각 줄은 빈 그림 칸이 되므로 뺀다(gyosuan-deck-tidy.js)');
     });
 
     await run('Teacher 교안: 머리말은 전개에서 빼고 시간은 프롬프트로 전달', async () => {

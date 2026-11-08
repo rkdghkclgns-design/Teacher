@@ -465,6 +465,25 @@
     font-size: 12px;
     color: var(--ink-soft);
 }
+/* 안내와 그 옆의 재생성 단추(gyosuan-regen.js). 교안이 바뀌었으면 단추를 채워 보인다 */
+.gyosuan-note-row {
+    flex: 1 1 100%;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+}
+.gyosuan-note-row .gyosuan-note {
+    flex: 0 1 auto;
+}
+.gyosuan-tool.is-stale {
+    color: #fff;
+    background: var(--maple-deep);
+    border-color: var(--maple-deep);
+}
+.gyosuan-tool.is-stale:hover {
+    background: var(--maple);
+}
 .gyosuan-tool {
     display: inline-flex;
     align-items: center;
