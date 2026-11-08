@@ -115,8 +115,8 @@ window.openParagraphEditor = function (event) {
     const block = locateLessonBlock(source, {
         index: [...view.children].indexOf(target),
         text: target.textContent || '',
-        media: target.matches('img, video, table, svg') || !!target.querySelector('img, video, table, svg'),
-        mediaKey: target.querySelector('[data-img-id]')?.dataset.imgId || '' // 그림은 그림 id로 찾는다
+        media: target.matches('img, video, table, svg, iframe') || !!target.querySelector('img, video, table, svg, iframe'),
+        mediaKey: target.querySelector('[data-img-id]')?.dataset.imgId || target.querySelector('[data-video-id]')?.dataset.videoId || '' // 그림은 그림 id로, 직접 넣은 동영상은 동영상 키로 찾는다
     });
     if (!block) {
         window.showToast?.('이 단락을 원문에서 찾지 못했습니다. 도구 → 원문 전체 수정에서 고쳐 주세요.', 'warning');

@@ -353,13 +353,17 @@ function tidyStoredHistory(list) {
 function historyEntry(mod, { id, date, reason, subjectId } = {}) {
     const part = isObject(mod.lesson) ? historyPart(mod) : null;
     const lessonId = part ? (subjectId != null ? mod.lesson.id : null) : mod.id;
-    const images = referencedImages(historyText(mod), mod.images);
+    const text = historyText(mod);
+    const images = referencedImages(text, mod.images);
     const motion = historyMotionParts(isObject(mod.imageMotions) ? mod.imageMotions : mod.lesson?.imageMotions, images, mod.images);
+    // 직접 넣은 동영상(lessonVideos)도 그 글이 가리키는 것만 담는다. 탭 하나 기록은 차시(lesson)의 동영상에서 고른다
+    const videos = referencedVideos(text, isObject(mod.lessonVideos) ? mod.lessonVideos : mod.lesson?.lessonVideos);
     return {
         id,
         title: mod.title,
         content: mod.content,
         images: motion ? { ...images, ...motion.stills } : images,
+        ...(Object.keys(videos).length ? { lessonVideos: videos } : {}),
         date,
         ...(lessonId != null ? { lessonId } : {}),
         ...(subjectId != null ? { subjectId } : {}),
@@ -403,6 +407,7 @@ function lessonFromHistory(entry, newId) {
     const tabs = part ? { [part]: content } : isObject(entry.tabContents) ? entry.tabContents : { basicLearn: content };
     const images = historyImages(entry);
     const imageMotions = isObject(entry.imageMotions) ? safeImageMotions(entry.imageMotions, images) : {};
+    const videos = historyVideos(entry);
     return {
         id: newId,
         title: `${stateText(entry.title) || '되살린 교안'} (되살림)`,
@@ -410,6 +415,7 @@ function lessonFromHistory(entry, newId) {
         status: 'done',
         content,
         images,
+        ...(Object.keys(videos).length ? { lessonVideos: videos } : {}),
         tabContents: { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null, advAssessment: null, ...tabs },
         uploadedMdName: null,
         uploadedMdContent: null,
@@ -438,7 +444,17 @@ function historyCurrentItem(lesson, part) {
 function historyMatchesNow(lesson, entry, part) {
     if (historyPartText(lesson, part) !== stateText(entry.content)) return false;
     const current = isObject(lesson.images) ? lesson.images : {};
-    return Object.entries(historyImagesFor(lesson, entry, part)).every(([id, data]) => current[id] === data);
+    if (!Object.entries(historyImagesFor(lesson, entry, part)).every(([id, data]) => current[id] === data)) return false;
+    return Object.keys(historyVideosFor(lesson, entry)).length === 0; // 차시가 잃은 동영상을 기록이 갖고 있으면 되돌려야 돌아온다
+}
+
+// 기록이 담은 동영상(남이 준 파일일 수 있어 차시와 같은 규칙으로 고른다)
+const historyVideos = entry => safeVideoMap(entry.lessonVideos);
+
+// 되돌릴 때 차시에 넣을 기록의 동영상: 차시에 그 키의 진짜 동영상이 없을 때만(동영상 키는 넣을 때마다 새로 만들어 같은 키면 같은 파일이다. 지금 동영상을 덮지 않는다)
+function historyVideosFor(lesson, entry) {
+    const current = isObject(lesson.lessonVideos) ? lesson.lessonVideos : {};
+    return Object.fromEntries(Object.entries(historyVideos(entry)).filter(([key, data]) => !SAFE_VIDEO_DATA.test(String(current[key] ?? '')) && current[key] !== data));
 }
 
 // 기록 한 칸을 그 차시에 돌려놓는다(화면이 같은 차시 객체를 쓰므로 그 자리에서 바꾼다). 탭 하나 기록은 그 탭만 고칠 때와 같은 setTabMarkdown으로,
@@ -448,6 +464,8 @@ function applyHistoryEntry(lesson, entry) {
     const part = historyPart(entry);
     const restored = historyImagesFor(lesson, entry, part);
     lesson.images = { ...(lesson.images || {}), ...restored };
+    const videos = historyVideosFor(lesson, entry);
+    if (Object.keys(videos).length) lesson.lessonVideos = { ...(isObject(lesson.lessonVideos) ? lesson.lessonVideos : {}), ...videos };
     // 기록이 담은 움직이는 GIF 기록은 그 GIF가 실제로 돌아간 그림 자리에만 넣는다(지금 그림을 그대로 둔 자리는 지금 기록을 둔다)
     const motions = isObject(entry.imageMotions) ? safeImageMotions(entry.imageMotions, lesson.images) : {};
     const back = Object.entries(motions).filter(([key]) => Object.prototype.hasOwnProperty.call(restored, key) && lesson.images[key] === restored[key]);
@@ -544,8 +562,9 @@ const BACKUP_IMAGE_LABEL = { inline: '함께', separate: '따로·가볍게', no
 const BACKUP_NO_IMAGES_TAG = '_그림없음'; // 그림을 뺀 백업 파일 이름 끝
 const BACKUP_IMAGE_REF = 'teacher-image:';
 const BACKUP_IMAGE_DIR = '그림';
-const BACKUP_DATA_URL = /^data:(image\/[\w.+-]+);base64,([A-Za-z0-9+/=]+)$/;
-const BACKUP_IMAGE_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/avif': 'avif', 'image/svg+xml': 'svg' };
+// 차시에 직접 넣은 동영상(lessonVideos, lesson-insert-tools.js)도 그림과 같은 길로 담는다: '따로·가볍게'면 '그림' 폴더의 .mp4·.webm 파일. '빼기'는 그림만 뺀다(동영상은 그대로 담는다)
+const BACKUP_DATA_URL = /^data:(image\/[\w.+-]+|video\/(?:mp4|webm));base64,([A-Za-z0-9+/=]+)$/;
+const BACKUP_IMAGE_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/avif': 'avif', 'image/svg+xml': 'svg', 'video/mp4': 'mp4', 'video/webm': 'webm' };
 const BACKUP_IMAGE_MIN = 64; // 이보다 짧은 글은 그림으로 보지 않는다
 // '그림' 파일을 찾지 못한 그림은 이 참조를 그대로 둔다(빈 글로 바꾸지 않는다). 화면과 내보내기에서는 빈 그림으로 보이고
 // (lesson-sanitize.js가 모르는 주소를 지운다), 다음 저장도 참조를 그대로 써서 그림 파일을 채운 뒤 다시 열면 돌아온다
@@ -626,7 +645,7 @@ function switchBackupImagesToSeparate() {
     return true;
 }
 
-// 그림이 많아 글자 수·메모리 한도에 걸린 오류인지(V8: 'Invalid string length', 'Array buffer allocation failed' 등). 너무 깊은 구조(call stack)는 크기 문제가 아니다
+// 그림·동영상이 많아 글자 수·메모리 한도에 걸린 오류인지(V8: 'Invalid string length', 'Array buffer allocation failed' 등). 너무 깊은 구조(call stack)는 크기 문제가 아니다
 function isBackupTooBig(err) {
     const message = String(err?.message || '');
     if (/call stack/i.test(message)) return false;
@@ -649,18 +668,18 @@ const backupFileName = (base, mode) => `${base}${mode === 'none' ? BACKUP_NO_IMA
 
 // 크기 한도 안내. '함께'가 걸리면 저절로 '따로·가볍게'로 다시 만들므로, 여기까지 오면 따로(또는 빼기)로도 담지 못한 것이다(그림 담기는 바꾸지 않았다)
 const BACKUP_TOO_BIG_TEXT = {
-    full: '그림이 많아 과정 전체 백업 파일을 만들지 못했습니다(브라우저가 한 번에 다룰 수 있는 크기를 넘었습니다). 개요 화면 교과 목록에서 교과를 하나씩 체크해 교과 백업 ZIP으로 나눠 받아 주세요.',
-    subjects: '그림이 많아 교과 백업 ZIP을 만들지 못했습니다(브라우저가 한 번에 다룰 수 있는 크기를 넘었습니다). 개요 화면 교과 목록에서 교과를 하나씩 체크해 나눠 받거나, 다른 브라우저 탭을 닫고 다시 해 보세요.',
-    folder: '그림이 많아 PC 폴더에 저장하지 못했습니다(브라우저가 한 번에 다룰 수 있는 크기를 넘었습니다). 브라우저에는 저장됐습니다. 개요 화면 교과 목록에서 교과를 하나씩 체크해 교과 백업 ZIP으로 나눠 받아 두세요.',
+    full: '그림·동영상이 많아 과정 전체 백업 파일을 만들지 못했습니다(브라우저가 한 번에 다룰 수 있는 크기를 넘었습니다). 개요 화면 교과 목록에서 교과를 하나씩 체크해 교과 백업 ZIP으로 나눠 받아 주세요.',
+    subjects: '그림·동영상이 많아 교과 백업 ZIP을 만들지 못했습니다(브라우저가 한 번에 다룰 수 있는 크기를 넘었습니다). 개요 화면 교과 목록에서 교과를 하나씩 체크해 나눠 받거나, 다른 브라우저 탭을 닫고 다시 해 보세요.',
+    folder: '그림·동영상이 많아 PC 폴더에 저장하지 못했습니다(브라우저가 한 번에 다룰 수 있는 크기를 넘었습니다). 브라우저에는 저장됐습니다. 개요 화면 교과 목록에서 교과를 하나씩 체크해 교과 백업 ZIP으로 나눠 받아 두세요.',
     openFile: "이 백업 파일이 너무 커서 이 브라우저에서 열지 못했습니다(브라우저가 한 번에 다룰 수 있는 크기를 넘었습니다). 이 파일을 만든 브라우저에서 내보내기·백업 → 그림 담기를 '따로·가볍게'로 골라 다시 받거나, 개요 화면 교과 목록에서 교과를 하나씩 체크해 교과 백업 ZIP으로 나눠 받아 하나씩 되살려 주세요.",
     openFolder: "이 폴더의 저장본이 너무 커서 열지 못했습니다(브라우저가 한 번에 다룰 수 있는 크기를 넘었습니다). 이 폴더에 저장하던 브라우저에서 내보내기·백업 → 그림 담기를 '따로·가볍게'로 고르면 다음 저장부터 폴더가 가벼워져 열 수 있습니다."
 };
 
 // '함께'로 담지 못해 '따로·가볍게'로 다시 만들었을 때 알리는 말. folderToo는 PC 폴더가 이어져 있을 때 받은 쪽 알림에 덧붙인다
 const BACKUP_FALLBACK_TEXT = {
-    download: "그림이 많아 '함께'로는 한 파일에 담지 못해 '따로·가볍게'로 받았습니다. 그림은 ZIP 안 '그림' 폴더에 들어 있고, 되살리면 그림도 돌아옵니다.\n앞으로도 따로 담도록 내보내기·백업 → 그림 담기를 '따로·가볍게'로 바꿨습니다.",
+    download: "그림·동영상이 많아 '함께'로는 한 파일에 담지 못해 '따로·가볍게'로 받았습니다. 그림(직접 넣은 동영상 포함)은 ZIP 안 '그림' 폴더에 들어 있고, 되살리면 그림과 동영상도 돌아옵니다.\n앞으로도 따로 담도록 내보내기·백업 → 그림 담기를 '따로·가볍게'로 바꿨습니다.",
     folderToo: "\nPC 폴더 자동 저장도 다음 저장부터 따로 담습니다. 폴더를 옮기거나 복사할 때는 안의 '그림' 폴더도 함께 옮기세요.",
-    folder: "그림이 많아 PC 폴더에 '함께'로는 저장하지 못해 '따로·가볍게'로 저장했습니다. 그림은 그 폴더 안 '그림' 폴더에 따로 저장됩니다. 폴더를 옮기거나 복사할 때는 '그림' 폴더도 함께 옮기세요.\n앞으로 받는 백업도 따로 담도록 내보내기·백업 → 그림 담기를 '따로·가볍게'로 바꿨습니다."
+    folder: "그림·동영상이 많아 PC 폴더에 '함께'로는 저장하지 못해 '따로·가볍게'로 저장했습니다. 그림(직접 넣은 동영상 포함)은 그 폴더 안 '그림' 폴더에 따로 저장됩니다. 폴더를 옮기거나 복사할 때는 '그림' 폴더도 함께 옮기세요.\n앞으로 받는 백업도 따로 담도록 내보내기·백업 → 그림 담기를 '따로·가볍게'로 바꿨습니다."
 };
 
 // 같은 그림은 같은 이름이 되게 내용으로 이름을 짓는다(32비트 해시 둘 + 길이)
@@ -676,10 +695,12 @@ function backupImageKey(text) {
     return `${hex(a)}${hex(b)}${text.length.toString(16)}`;
 }
 
-const isBackupImage = text => typeof text === 'string' && text.length >= BACKUP_IMAGE_MIN && BACKUP_DATA_URL.test(text);
+// 떼어 담는 값(그림·동영상)인지. isBackupImage는 그림만(그림 수 세기와 '빼기'가 쓴다)
+const isBackupMedia = text => typeof text === 'string' && text.length >= BACKUP_IMAGE_MIN && BACKUP_DATA_URL.test(text);
+const isBackupImage = text => isBackupMedia(text) && text.startsWith('data:image/');
 
-// '그림/' 안에서 백업이 쓴 그림 파일만 고른다(backupImageKey 이름 + 그림 확장자). '그림'이라는 교과 폴더의 MD 등은 건너뛴다
-const BACKUP_IMAGE_NAME = /^[0-9a-f]{17,24}\.(png|jpg|gif|webp|avif|svg)$/; // BACKUP_IMAGE_EXT의 확장자와 함께 고친다(빠지면 그 형식의 그림 파일을 건너뛰어 빈 그림이 된다)
+// '그림/' 안에서 백업이 쓴 그림·동영상 파일만 고른다(backupImageKey 이름 + 확장자). '그림'이라는 교과 폴더의 MD 등은 건너뛴다
+const BACKUP_IMAGE_NAME = /^[0-9a-f]{17,24}\.(png|jpg|gif|webp|avif|svg|mp4|webm)$/; // BACKUP_IMAGE_EXT의 확장자와 함께 고친다(빠지면 그 형식의 파일을 건너뛰어 빈 그림·동영상이 된다)
 const isBackupImageName = name => BACKUP_IMAGE_NAME.test(String(name));
 
 // base64 글자 수로 그 파일의 바이트 수를 센다(디코딩하지 않고)
@@ -691,7 +712,7 @@ function base64ByteLength(base64) {
 
 // 그림 글 하나의 백업 이름표: 이름(내용 해시)·'그림' 파일 이름·바이트 수. 그림이 아니면 null
 function backupImageInfo(text) {
-    if (!isBackupImage(text)) return null;
+    if (!isBackupMedia(text)) return null;
     const key = backupImageKey(text);
     const file = backupImageFile(key, text);
     return file ? { key, name: file.name, bytes: base64ByteLength(file.base64) } : null;
@@ -708,8 +729,8 @@ function detachBackupImages(value, mode, memo = null) {
         return seen.get(text);
     };
     const walk = node => {
-        if (typeof node === 'string' && node.length >= BACKUP_IMAGE_MIN && node.startsWith('data:image/')) {
-            if (mode === 'none') return isBackupImage(node) ? DROP : node;
+        if (typeof node === 'string' && node.length >= BACKUP_IMAGE_MIN && (node.startsWith('data:image/') || node.startsWith('data:video/'))) {
+            if (mode === 'none') return isBackupImage(node) ? DROP : node; // '빼기'는 그림만 뺀다. 동영상은 저장 정보에 그대로 둔다(말없이 사라지지 않게)
             const info = infoOf(node);
             if (!info) return node;
             files[info.key] = node;
@@ -860,7 +881,7 @@ async function withSeparateFallback(mode, write) {
         return { mode: 'inline', fellBack: false, switched: false };
     } catch (err) {
         if (!isBackupTooBig(err)) throw err;
-        console.warn('[백업] 그림이 많아 따로 담아 다시 만듭니다:', err.message);
+        console.warn('[백업] 그림·동영상이 많아 따로 담아 다시 만듭니다:', err.message);
         await write('separate');
         const switched = switchBackupImagesToSeparate();
         return { mode: 'separate', fellBack: true, switched };
@@ -926,7 +947,7 @@ async function safetyBackupOrAsk(label) {
     } catch (err) {
         console.error('[백업] 지금 상태를 백업 파일로 받지 못했습니다:', err);
         const action = SAFETY_BACKUP_ACTIONS[label] || { title: '백업 실패', go: '계속하면' };
-        const reason = isBackupTooBig(err) ? '그림이 많아 브라우저가 한 번에 다룰 수 있는 크기를 넘었습니다' : (err?.message || '알 수 없는 오류');
+        const reason = isBackupTooBig(err) ? '그림·동영상이 많아 브라우저가 한 번에 다룰 수 있는 크기를 넘었습니다' : (err?.message || '알 수 없는 오류');
         return confirmAsync(
             `지금 상태를 백업 파일로 받지 못했습니다(${reason}).\n이대로 ${action.go} 지금 작업으로 되돌릴 백업 파일이 없습니다.\n\n멈추고, 개요 화면 교과 목록에서 교과를 하나씩 체크해 교과 백업 ZIP을 먼저 받아 두기를 권합니다.`,
             { okLabel: '백업 없이 계속', tone: 'danger', title: action.title }
@@ -1181,6 +1202,27 @@ function safeImageMap(images) {
     return sameFields(kept, images) ? images : kept;
 }
 
+// 차시에 직접 넣은 동영상(lessonVideos: { vid_키: data URL }, lesson-insert-tools.js). 키는 vid_ + 영문 소문자·숫자, 값은 mp4·webm data URL만 받는다
+// (보기 화면·내보내기가 <video>의 src로 쓴다). '그림' 폴더에서 찾지 못한 파일의 참조(teacher-image:…)는 그림처럼 남긴다(다음에 파일을 채우면 돌아온다)
+const SAFE_VIDEO_KEY = /^vid_[a-z0-9]{6,40}$/;
+const SAFE_VIDEO_DATA = /^data:video\/(?:mp4|webm);base64,[A-Za-z0-9+/=]+$/;
+const isSafeVideoValue = value => typeof value === 'string' && (SAFE_VIDEO_DATA.test(value) || isBackupImageRef(value));
+
+// 바른 키와 동영상만 남긴다. 모두 바르면 같은 객체, 객체가 아니면 빈 목록
+function safeVideoMap(videos) {
+    if (!isObject(videos)) return {};
+    const kept = Object.fromEntries(Object.entries(videos).filter(([key, value]) => SAFE_VIDEO_KEY.test(key) && isSafeVideoValue(value)));
+    return sameFields(kept, videos) ? videos : kept;
+}
+
+// 글(local:vid_키)이 가리키는 동영상만 고른다(기록 한 칸이 차시 동영상을 통째로 복사하지 않게). 키는 local: 뒤 id 글자 줄 그대로 견준다(vid_1은 vid_10이 아니다)
+function referencedVideos(text, videos) {
+    const entries = Object.entries(isObject(videos) ? videos : {}).filter(([key, value]) => SAFE_VIDEO_KEY.test(key) && typeof value === 'string');
+    if (!entries.length) return {};
+    const runs = new Set(localImageRuns(typeof text === 'string' ? text : ''));
+    return Object.fromEntries(entries.filter(([key]) => runs.has(key)));
+}
+
 // 탭 글: 이름이 바른 탭만 두고, 글이 아니면 빈 탭(null)으로. 모두 바르면 같은 객체, 객체가 아니면 null
 function safeTabContents(tabs) {
     if (!isObject(tabs)) return null;
@@ -1296,6 +1338,7 @@ function safeGenOptions(gen) {
 // 차시(최종 평가 포함)의 안쪽 값을 그 자리에서 고친다(sanitizeState가 부른다)
 function cleanLessonFields(lesson) {
     lesson.images = safeImageMap(lesson.images);
+    if (lesson.lessonVideos !== undefined) lesson.lessonVideos = safeVideoMap(lesson.lessonVideos);
     if (lesson.imageMotions !== undefined) lesson.imageMotions = safeImageMotions(lesson.imageMotions, lesson.images); // 그림을 고른 뒤에 본다
     LESSON_TEXT_FIELDS.forEach(field => { if (lesson[field] !== undefined) lesson[field] = textOrNull(lesson[field]); });
     LESSON_INFO_TEXT_FIELDS.forEach(field => { if (lesson[field] != null && typeof lesson[field] !== 'string') lesson[field] = stateText(lesson[field]); });
@@ -1336,6 +1379,11 @@ function cleanHistoryItem(item) {
     ['title', 'date', 'reason'].forEach(field => { if (item[field] !== undefined) next[field] = stateText(item[field]); });
     if (item.content !== undefined) next.content = textOrNull(item.content);
     if (item.images !== undefined) next.images = safeImageMap(item.images);
+    if (item.lessonVideos !== undefined) {
+        const videos = safeVideoMap(item.lessonVideos);
+        if (Object.keys(videos).length) next.lessonVideos = videos;
+        else delete next.lessonVideos;
+    }
     if (item.imageMotions !== undefined) {
         const motions = safeImageMotions(item.imageMotions, next.images);
         if (Object.keys(motions).length) next.imageMotions = motions;
