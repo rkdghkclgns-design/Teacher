@@ -179,12 +179,16 @@ window.restorePreviousGyosuan = async function (moduleId, trackId = currentGyosu
 };
 
 /* ---------- 교수안 화면 단추(gyosuan-view.js gyosuanToolbarHtml) ---------- */
-// 안내 바로 옆의 재생성 단추. 교안이 바뀌었으면(예전 방식 교수안 포함) '재생성', 아니면 바뀐 것이 없어도 새로 만든다는 뜻으로 '그래도 재생성'
+// 안내 바로 옆의 재생성 단추. 교안이 바뀌었으면(예전 방식 교수안 포함) 채운 '재생성', 그대로면 바뀐 것이 없어도 새로 만든다는 뜻으로 '그래도 재생성'.
+// 견줄 교안 기록이 없는 불러온 교수안은 바뀌었는지 모르므로 채우지 않은 '재생성'
 function gyosuanRegenButtonHtml(mod, trackId = 'basic') {
     const track = lessonTrack(trackId);
     const changed = isGyosuanStale(mod, track.id) || (track.id === LESSON_TRACKS[0].id && isLegacyGyosuan(mod));
-    const tip = changed ? `바뀐 교안으로 ${track.label} 교수안과 슬라이드 편성안을 다시 만듭니다` : `교안은 그대로지만 ${track.label} 교수안과 슬라이드 편성안을 새로 만듭니다`;
-    return `<button onclick="regenerateGyosuan('${mod.id}', '${track.id}')" class="gyosuan-tool${changed ? ' is-stale' : ''}" title="${escapeHtml(tip)}"><i class="ph-bold ph-arrow-clockwise"></i> ${changed ? '재생성' : '그래도 재생성'}</button>`;
+    const unknown = !changed && !gyosuanOf(mod, track.id)?.sourceKey;
+    const tip = changed ? `바뀐 교안으로 ${track.label} 교수안과 슬라이드 편성안을 다시 만듭니다`
+        : unknown ? `불러온 교수안이라 견줄 교안 기록이 없습니다. 지금 ${trackTabsLabel(track)} 탭으로 ${track.label} 교수안과 슬라이드 편성안을 다시 만듭니다`
+            : `교안은 그대로지만 ${track.label} 교수안과 슬라이드 편성안을 새로 만듭니다`;
+    return `<button onclick="regenerateGyosuan('${mod.id}', '${track.id}')" class="gyosuan-tool${changed ? ' is-stale' : ''}" title="${escapeHtml(tip)}"><i class="ph-bold ph-arrow-clockwise"></i> ${changed || unknown ? '재생성' : '그래도 재생성'}</button>`;
 }
 
 // 바꾸기 전 교수안이 있으면 '이전 교수안으로' 단추

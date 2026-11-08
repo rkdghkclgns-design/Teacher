@@ -12,6 +12,10 @@ const DECK_PLACEHOLDER = /<!--\s*\[IMG:[^\]]*\]\s*-->|\[(?:이미지|그림|사�
 const DECK_IMAGE_TAG = /^\[이미지:[^\]\s]+\]$/; // 자동 그림 표시(kbuilder auto-images.js). 스튜디오가 그 저장소에서 그림을 찾으므로 그림으로 본다
 const DECK_REAL_IMAGE = /!\[[^\]]*\]\(\s*\S|<img\b|\[이미지:[^\]\s]+\]/i; // 죽은 그림을 뗀 뒤에도 남은 그림
 const DECK_SPLIT = { minChars: 40, maxPieces: 4, minPiece: 6 }; // 이보다 짧은 줄·더 많은 문장·더 짧은 조각이면 나누지 않는다
+const DECK_INLINE_CODE = /(``[^`]*``|`[^`]*`)/; // 인라인 코드. 그 안의 <img>·![]()·[이미지] 예제(HTML·마크다운 수업)는 그림 자리가 아니다
+
+// 인라인 코드 밖의 글에만 fn을 쓴다. code를 주면 코드 조각은 code로 바꾼다
+const outsideInlineCode = (line, fn, code = part => part) => line.split(DECK_INLINE_CODE).map((part, i) => (i % 2 ? code(part) : fn(part))).join('');
 
 // parser.js indentDepth와 같다(빈칸 둘이 한 단계, 탭은 빈칸 넷)
 function deckIndent(raw) {
@@ -37,12 +41,12 @@ const htmlImageSrc = tag => {
     return match ? match[1] ?? match[2] ?? match[3] ?? '' : '';
 };
 
-// 그 줄의 죽은 그림(그림 없는 마크다운 그림·img 태그, 그림 자리 표시)을 뗀다
+// 그 줄의 죽은 그림(그림 없는 마크다운 그림·img 태그, 그림 자리 표시)을 뗀다. 인라인 코드 속 예제는 그대로 둔다
 function deckLineWithoutDeadImages(line, images) {
-    return line
+    return outsideInlineCode(line, text => text
         .replace(DECK_MD_IMAGE, (match, url) => (deckImageIsReal(url, images) ? match : ''))
         .replace(DECK_HTML_IMAGE, tag => (deckImageIsReal(htmlImageSrc(tag), images) ? tag : ''))
-        .replace(DECK_PLACEHOLDER, match => (DECK_IMAGE_TAG.test(match) ? match : ''));
+        .replace(DECK_PLACEHOLDER, match => (DECK_IMAGE_TAG.test(match) ? match : '')));
 }
 
 // 떼고 남은 빈칸을 줄인다(들여쓰기는 그대로)
@@ -101,14 +105,15 @@ function deckSentences(text) {
 }
 
 // 슬라이드 문구 한 줄(들여 쓴 목록)에 여러 문장을 이었으면 같은 들여쓰기의 문장 줄로 나눈다. 뜻이 바뀔 수 있는 줄은 그대로 둔다:
-// (제목)·(하단) 같은 표시 줄, 단계 번호 줄, 코드·표·링크·태그·흐름(→)이 든 줄, 문장이 너무 많거나 조각이 너무 짧은 줄
+// (제목)·(하단) 같은 표시 줄, 단계 번호 줄, 코드·표·링크·태그·흐름(→)이 든 줄, 문장이 너무 많거나 조각이 너무 짧은 줄, 굵게(**) 표시가 문장을 넘어 이어지는 줄
+const openBold = piece => (piece.match(/\*\*/g) || []).length % 2 === 1;
 function splitDeckLine(line) {
     const bullet = line.match(/^(\s+)([-*])\s+(.+?)\s*$/);
     if (!bullet || deckIndent(line) < 1) return [line];
     const text = bullet[3];
     if (text.length < DECK_SPLIT.minChars || /^\([^)]{1,8}\)|^(?:\d+[.)]|[①-⑨])\s|[`|<]|\]\(|→|https?:/.test(text)) return [line];
     const pieces = deckSentences(text);
-    if (pieces.length < 2 || pieces.length > DECK_SPLIT.maxPieces || pieces.some(piece => piece.length < DECK_SPLIT.minPiece)) return [line];
+    if (pieces.length < 2 || pieces.length > DECK_SPLIT.maxPieces || pieces.some(piece => piece.length < DECK_SPLIT.minPiece || openBold(piece))) return [line];
     return pieces.map(piece => `${bullet[1]}${bullet[2]} ${piece}`);
 }
 
@@ -152,7 +157,7 @@ function tidyDeckGroup(group, images) {
     });
     const value = group.field ? ((lines[0] || '').trim().match(DECK_FIELD)?.[2] || '').trim() : '';
     const hasContent = !!value || lines.slice(group.field ? 1 : 0).some(line => line.trim());
-    const keep = group.field === 'visual' ? DECK_REAL_IMAGE.test(lines.join('\n'))
+    const keep = group.field === 'visual' ? DECK_REAL_IMAGE.test(lines.map(line => outsideInlineCode(line, text => text, () => '')).join('\n'))
         : !(group.field === 'lines' && removed && !hasContent);
     return { field: group.field, lines, keep, hasContent, removed: removed || !keep };
 }

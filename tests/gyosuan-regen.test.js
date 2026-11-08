@@ -184,6 +184,14 @@ const DECK_OUT = [
         assert.ok(empty.includes("generateGyosuan('m1', { track: 'adv' })") && !empty.includes('regenerateGyosuan('), empty.slice(0, 300));
     });
 
+    await run('재생성 단추: 견줄 교안 기록이 없는 불러온 교수안에는 교안이 그대로라고 하지 않고 재생성으로 보인다', async () => {
+        const { ctx, mod } = await builtLesson();
+        const imported = { ...mod, gyosuan: { ...mod.gyosuan, sourceKey: null } };
+        const html = call(ctx, 'gyosuanRegenButtonHtml')(imported, 'basic');
+        assert.ok(!html.includes('그래도 재생성') && !html.includes('교안은 그대로'), html);
+        assert.ok(/class="gyosuan-tool" title="불러온 교수안이라 견줄 교안 기록이 없습니다\.[^"]*"><i class="ph-bold ph-arrow-clockwise"><\/i> 재생성<\/button>/.test(html), html);
+    });
+
     /* ======================= 2. 바뀐 내용 요약 ======================= */
     await run('바뀐 내용: 탭마다 바뀐·새·빠진 섹션 이름을 짧게, 새로 채운 탭과 비운 탭, 교수안에 쓰지 않는 부분만 바뀐 탭, 기록이 없는 예전 교수안을 알린다', async () => {
         const { ctx, mod } = await builtLesson();
@@ -336,6 +344,20 @@ const DECK_OUT = [
         // 그림이 없는 슬라이드 그림 칸은 스튜디오가 그리지 않는다
         const only = tidy('### 슬라이드 1 - 가\n- 슬라이드 문구:\n  - 가\n- 이미지/시각: 그림 ![](local:gone)\n- 핵심 메시지: 메시지\n', { gone: 'teacher-image:abc' });
         assert.strictEqual(only, '### 슬라이드 1 - 가\n- 슬라이드 문구:\n  - 가\n- 핵심 메시지: 메시지\n', '찾지 못한 그림(참조)은 그림이 아니다');
+    });
+
+    await run('편성안 다듬기: 인라인 코드 속 그림 태그·그림 표시 예제는 그대로 두고(코드 속 태그만 있는 그림 칸은 빈 칸), 굵게 표시 안에서는 문장을 나누지 않는다', () => {
+        const ctx = makeContext();
+        const tidy = call(ctx, 'tidyGyosuanDeck');
+        const coded = ['### 슬라이드 1 - HTML 그림', '- 슬라이드 문구:', '  - `<img src="">` 태그로 그림 자리를 만든다', '  - 마크다운 그림은 `![]()` 모양이다',
+            '  - `[이미지: 설명]` 표시도 코드로 보인다', '- 핵심 메시지: 그림 태그는 `<img>`로 쓴다', ''].join('\n');
+        assert.strictEqual(tidy(coded), coded, '인라인 코드 속 예제는 그림 자리가 아니다');
+        const codeVisual = ['### 슬라이드 1 - 가', '- 슬라이드 문구:', '  - 가', '- 이미지/시각: `<img>` 태그 예시 화면', '- 핵심 메시지: 메시지', ''];
+        assert.strictEqual(tidy(codeVisual.join('\n')), codeVisual.filter(line => !line.includes('이미지/시각')).join('\n'), '코드 속 태그는 그림이 아니다');
+        const bold = ['### 슬라이드 1 - 저장', '- 슬라이드 문구:', '  - **반드시 저장 단추를 눌러 주세요. 누르지 않으면 지금까지 만든 데이터가 모두 사라집니다**', '- 핵심 메시지: 저장한다', ''].join('\n');
+        assert.strictEqual(tidy(bold), bold, '굵게 표시를 끊어 나누지 않는다');
+        const closed = bold.replace('**반드시 저장 단추를 눌러 주세요. 누르지 않으면 지금까지 만든 데이터가 모두 사라집니다**', '**반드시** 저장 단추를 눌러 주세요. 누르지 않으면 지금까지 만든 **데이터**가 모두 사라집니다.');
+        assert.strictEqual(tidy(closed), closed.replace('주세요. 누르지', '주세요.\n  - 누르지'), '굵게 표시가 문장 안에서 닫히면 나눈다');
     });
 
     await run('만들 때 다듬기: 자동 그림을 붙인 뒤 그림이 없는 이미지/시각 줄은 빼고 그림을 붙인 줄과 그 그림은 남긴다', async () => {
