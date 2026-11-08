@@ -536,9 +536,11 @@ const isValueTooLarge = err => /too large/i.test(String(err?.message || ''));
 // 한 번 거절되면 이 창에서는 처음부터 JSON 파일로 쓴다(값으로 바꾸다 거절되는 데 드는 시간을 저장마다 다시 쓰지 않게)
 let browserStateAsFile = false;
 
-// 작업 전체를 브라우저 저장소에 쓴다. 클 수 있으면 JSON 파일로, 아니면 값 그대로(예전과 같다). 값이 너무 크다고 거절되면 JSON 파일로 다시 쓴다.
-// blobMin: JSON 파일로 쓸 어림 크기(테스트가 바꾼다)
-async function writeBrowserState(stateData, { blobMin = STATE_BLOB_MIN_BYTES } = {}) {
+// 작업을 브라우저 저장소에 쓴다. 그림을 따로 두는 저장(state-store.js)을 쓸 수 있으면 그것으로 바뀐 그림과 글만 쓰고, 그 저장이 실패하면 whole로 다시 불러 작업 전체를 쓴다.
+// 작업 전체는 클 수 있으면 JSON 파일로, 아니면 값 그대로(예전과 같다). 값이 너무 크다고 거절되면 JSON 파일로 다시 쓴다.
+// blobMin: JSON 파일로 쓸 어림 크기(테스트가 바꾼다). whole: 그림을 따로 두지 않고 작업 전체를 쓴다
+async function writeBrowserState(stateData, { blobMin = STATE_BLOB_MIN_BYTES, whole = false } = {}) {
+    if (!whole && typeof writeSplitSave === 'function' && splitSaveUsable()) return writeSplitSave(stateData, () => writeBrowserState(stateData, { blobMin, whole: true }));
     if (browserStateAsFile || storedSizeEstimate(stateData) > blobMin) return DBManager.setItem(STORAGE_KEY, stateJsonBlob(stateData));
     try {
         return await DBManager.setItem(STORAGE_KEY, stateData);
@@ -607,9 +609,11 @@ function isStateLoadFailed() {
 
 const isStoredBlob = value => typeof Blob !== 'undefined' && value instanceof Blob;
 
-// 저장본 값 → 작업 객체. JSON 파일(Blob)로 저장한 큰 작업(writeBrowserState)은 그림 글을 떼어 둔 조각 읽기로 푼다(import-stream.js. 파일 전체를 글 하나로 만들지 않는다).
+// 저장본 값 → 작업 객체. 그림을 따로 둔 저장본(state-store.js)은 그림을 읽어 제자리에 넣는다(그림을 하나라도 찾지 못하면 그 저장본을 record에 담아 던진다).
+// JSON 파일(Blob)로 저장한 큰 작업(writeBrowserState)은 그림 글을 떼어 둔 조각 읽기로 푼다(import-stream.js. 파일 전체를 글 하나로 만들지 않는다).
 // 그렇게 풀지 못하면(너무 큰 그림 등) 파일을 글 하나로 읽어 푼다. 그래도 못 풀면 그 파일을 오류의 record에 담아 던진다(막는 창에서 내려받는다). 파일이 아니면 그대로
 async function storedRecordData(record) {
+    if (typeof isSplitSave === 'function' && isSplitSave(record)) return readSplitSave(record);
     if (!isStoredBlob(record)) return record;
     try {
         let read = null;
@@ -906,6 +910,9 @@ function downloadRecordFile(record, baseName) {
     setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
+// 내려받을 저장본 값. 그림을 따로 둔 저장본(state-store.js)은 그림을 제자리에 넣어 예전 저장본과 같은 모양({ state, history })으로 준다(찾지 못한 그림은 자리 글 그대로)
+const downloadableRecord = async record => (typeof isSplitSave === 'function' && isSplitSave(record) ? openSplitSave(record) : record);
+
 // 읽지 못한 저장본을 고치지 않은 그대로 파일로 내려받는다. 저장소에서 다시 읽고(검사하다 바뀐 값이 아니게), 못 읽으면 처음 읽은 것을 쓴다
 async function downloadUnreadRecord() {
     let record;
@@ -917,7 +924,7 @@ async function downloadUnreadRecord() {
     if (record === undefined) record = unreadRecord;
     if (record === undefined) return window.showAlert('내려받을 저장본을 찾지 못했습니다.');
     try {
-        downloadRecordFile(record, `교안_읽지못한저장본_${backupStamp()}`);
+        downloadRecordFile(await downloadableRecord(record), `교안_읽지못한저장본_${backupStamp()}`);
         window.showToast?.('읽지 못한 저장본을 파일로 내려받습니다.', 'success');
     } catch (err) {
         console.error('[저장된 작업] 읽지 못한 저장본을 파일로 만들지 못했습니다:', err);
@@ -951,7 +958,7 @@ async function downloadUnreadCopy(key) {
     }
     if (record == null) return window.showAlert(gone);
     try {
-        downloadRecordFile(record, `교안_읽지못한저장본_사본_${backupStamp(new Date(copy.at))}`);
+        downloadRecordFile(await downloadableRecord(record), `교안_읽지못한저장본_사본_${backupStamp(new Date(copy.at))}`);
         window.showToast?.('따로 옮겨 둔 사본을 파일로 내려받습니다.', 'success');
     } catch (err) {
         console.error('[저장된 작업] 따로 옮겨 둔 사본을 파일로 만들지 못했습니다:', err);
