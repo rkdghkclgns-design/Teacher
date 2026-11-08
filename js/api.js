@@ -4282,18 +4282,29 @@ window.downloadImagesAsJPG = function (moduleId) {
 };
 
 // 고른 그림을 하나씩 내려받는다(동시에 받지 않게 0.3초씩 띄운다). 받기를 시작할 때만 알린다
+// 기본 저장 폴더(save-folder.js)가 있으면 그쪽에 맡긴다: 차례로 저장하고, 다운로드로 받을 때는 그쪽이 0.3초씩 띄운다.
+// 그때 폴더에 저장한 그림은 그쪽이 알리므로, 다운로드로 받은 그림만 세어 '다운로드 시작'을 알린다
 function downloadLessonJpgs(mod, imgIds) {
+    const saves = [];
+    let started = 0; // 맡기지 않고 바로 내려받은 그림(data URL이 아닌 그림)
     imgIds.forEach((imgId, index) => {
         const b64 = mod.images[imgId];
         if (!b64) return;
+        const fileName = `${(mod.title || '교안').replace(/[^\w가-힣]/g, '_')}_img_${index + 1}.jpg`;
+        if (typeof saveFileToFolder === 'function' && /^data:[^,]*;base64,/.test(b64)) return void saves.push(saveFileToFolder(dataUrlBlob(b64), fileName).catch(showSaveFailure));
+        started += 1;
         setTimeout(() => {
             const a = document.createElement('a');
             a.href = b64;
-            a.download = `${(mod.title || '교안').replace(/[^\w가-힣]/g, '_')}_img_${index + 1}.jpg`;
+            a.download = fileName;
             a.click();
         }, index * 300);
     });
-    window.showToast?.(`📸 ${imgIds.length}개 이미지 다운로드 시작`, 'success');
+    if (typeof saveFileToFolder !== 'function') return void window.showToast?.(`📸 ${imgIds.length}개 이미지 다운로드 시작`, 'success');
+    Promise.all(saves).then(results => {
+        const downloaded = started + results.filter(result => result?.saved === 'download').length;
+        if (downloaded) window.showToast?.(`📸 ${downloaded}개 이미지 다운로드 시작`, 'success');
+    });
 }
 
 

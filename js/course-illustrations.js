@@ -419,10 +419,14 @@ function illustrationFileName(illustration, extension) {
     return `${String(illustration.title || '삽화').replace(/[^\w가-힣]/g, '_')}.${extension}`;
 }
 
+// 기본 저장 폴더(save-folder.js)를 골랐으면 그 폴더에, 아니면 브라우저 다운로드로 받는다(받지 못하면 던져 창에 알린다)
 async function saveIllustrationPng(illustration) {
+    const png = await illustrationPng(illustration);
+    const fileName = illustrationFileName(illustration, 'png');
+    if (typeof saveFileToFolder === 'function') return saveFileToFolder(dataUrlBlob(png), fileName);
     const link = document.createElement('a');
-    link.href = await illustrationPng(illustration);
-    link.download = illustrationFileName(illustration, 'png');
+    link.href = png;
+    link.download = fileName;
     link.click();
 }
 

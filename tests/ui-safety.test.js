@@ -570,6 +570,11 @@ test('창 닫기: 넣지 않은 글이나 끝나지 않은 저장이 있을 때�
     onUnload(working);
     assert.deepStrictEqual([working.prevented, working.returnValue], [true, true], 'AI 작업(생성·고치기·일괄 생성·과정 설계 등)이 돌고 있다(닫으면 만들던 결과를 잃는다)');
     ctx.isAiWorkRunning = () => false;
+    ctx.isFolderSavePending = () => true;
+    const folderSaving = ev();
+    onUnload(folderSaving);
+    assert.deepStrictEqual([folderSaving.prevented, folderSaving.returnValue], [true, true], '고른 기본 저장 폴더에 쓰는 중이다(닫으면 그 파일을 잃는다, save-folder.js)');
+    ctx.isFolderSavePending = () => false;
     const idle = ev();
     onUnload(idle);
     assert.strictEqual(!!idle.prevented, false, '돌던 작업이 끝났으면 묻지 않는다');
@@ -584,6 +589,11 @@ test('창 닫기: 넣지 않은 글이나 끝나지 않은 저장이 있을 때�
     const unread = ev();
     onUnload(unread);
     assert.strictEqual(!!unread.prevented, false, '저장본을 읽지 못한 동안은 묻지 않는다');
+    flushed = 0;
+    ctx.isFolderSavePending = () => true;
+    const unreadSaving = ev();
+    onUnload(unreadSaving);
+    assert.deepStrictEqual([unreadSaving.prevented, flushed], [true, 0], '그동안에도 고른 폴더에 쓰는 중인 파일(읽지 못한 저장본 내려받기)은 닫으면 잃으므로 묻는다(넣거나 저장하지는 않는다)');
 });
 
 test('교과 열기: 고치던 원문은 교과를 바꾸기 전에(그 칸을 그린 교과가 열려 있을 때) 넣는다', () => {

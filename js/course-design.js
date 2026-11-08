@@ -500,9 +500,13 @@ function courseDesignMd() {
 }
 
 window.downloadCourseDesignMd = function () {
+    const blob = new Blob([courseDesignMd()], { type: 'text/markdown;charset=utf-8' });
+    const fileName = `${String(globalState.courseTitle).replace(/[^\w가-힣]/g, '_')}_과정설계서.md`;
+    // 기본 저장 폴더(save-folder.js)를 골랐으면 그 폴더에, 아니면 브라우저 다운로드로 받는다
+    if (typeof saveFileToFolder === 'function') return void saveFileToFolder(blob, fileName).catch(showSaveFailure);
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([courseDesignMd()], { type: 'text/markdown;charset=utf-8' }));
-    a.download = `${String(globalState.courseTitle).replace(/[^\w가-힣]/g, '_')}_과정설계서.md`;
+    a.href = URL.createObjectURL(blob);
+    a.download = fileName;
     a.click();
     URL.revokeObjectURL(a.href);
 };

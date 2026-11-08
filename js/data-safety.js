@@ -902,7 +902,10 @@ async function downloadSafetyBackup(label) {
     const extra = { history: contentHistory, trash: { lessonTrash: globalState.lessonTrash || [], subjectTrash: globalState.subjectTrash || [] } };
     writeBackupData(zip, backupMeta('full', currentSnapshot(), new Date(), extra), 'separate');
     const blob = await zip.generateAsync({ type: 'blob' });
-    saveAs(blob, `교안백업_${backupStamp()}_${label}.zip`);
+    // 기본 저장 폴더(save-folder.js)를 골랐으면 그 폴더에 저장하고 끝날 때까지 기다린다(받지 못하면 던져 묻는 길로 간다)
+    const zipName = `교안백업_${backupStamp()}_${label}.zip`;
+    if (typeof saveFileToFolder === 'function') await saveFileToFolder(blob, zipName);
+    else saveAs(blob, zipName);
     recordBackupTime();
 }
 
@@ -914,6 +917,8 @@ const SAFETY_BACKUP_ACTIONS = {
 
 // 불러오기 직전의 안전 백업. 받지 못하면 까닭을 알리고 백업 없이 계속할지 묻는다. 계속하면 true, 멈추면 false
 async function safetyBackupOrAsk(label) {
+    // 백업을 다 만든 뒤에는 권한 창을 띄우지 못하므로 먼저 기본 저장 폴더(save-folder.js)의 쓰기 권한을 받아 둔다
+    if (typeof prepareSaveFolder === 'function') await prepareSaveFolder();
     window.showToast?.('바꾸기 전에 지금 상태를 백업 파일로 만드는 중입니다.', 'info');
     try {
         await downloadSafetyBackup(label);
