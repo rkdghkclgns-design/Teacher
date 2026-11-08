@@ -75,7 +75,7 @@ function genContext() {
     vm.createContext(ctx);
     loadLessonTracks(ctx, { tabs: true });
     vm.runInContext(source('kbuilder/parser.js'), ctx);
-    ['gyosuan.js', 'filename-convention.js', 'lesson-lint.js', 'course-ncs.js', 'course-design.js', 'course-sessions.js', 'course-meta.js'].forEach(file => vm.runInContext(source(file), ctx));
+    ['gyosuan.js', 'filename-convention.js', 'lesson-lint.js', 'course-ncs.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'gyosuan-deck-tidy.js', 'gyosuan-regen.js'].forEach(file => vm.runInContext(source(file), ctx));
     return ctx;
 }
 
@@ -94,7 +94,7 @@ const STUDIO_FILES = [
     'filename-convention.js',
     'kbuilder/parser.js', 'kbuilder/render-doc.js', 'kbuilder/render-deck.js', 'kbuilder/ref-images.js', 'kbuilder/import-html.js', 'kbuilder/auto-images.js',
     'kbuilder/export.js', 'kbuilder/sample-data.js', 'course-ncs.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'gyosuan.js', 'gyosuan-view.js', 'gyosuan-images.js',
-    'import-stream.js', 'gyosuan-io.js'
+    'import-stream.js', 'gyosuan-io.js', 'gyosuan-deck-tidy.js', 'gyosuan-regen.js'
 ];
 function studioContext() {
     const elements = {};
@@ -250,6 +250,10 @@ const bankLesson = () => ({
         assert.strictEqual(mod.gyosuanAdv, undefined);
         const made = [];
         ctx.generateGyosuan = async (id, opts) => { made.push(opts.track); return true; };
+        await ctx.regenerateGyosuan('m1', 'adv');
+        assert.deepStrictEqual([made, ctx.asked.length], [[], 0], '다시 만들기도 탭이 비면 묻지 않고 알린다');
+        assert.ok(ctx.alerts.at(-1).includes('심화학습·심화실습 탭에 교안 내용이 없습니다'), ctx.alerts.at(-1));
+        mod.tabContents = fourTabs();
         await ctx.regenerateGyosuan('m1', 'adv');
         assert.deepStrictEqual([made, ctx.asked.at(-1).opts.title], [['adv'], '심화학습 교수안 다시 생성']);
         assert.ok(ctx.asked.at(-1).message.startsWith('심화학습 교수안을 다시 생성합니다.'));

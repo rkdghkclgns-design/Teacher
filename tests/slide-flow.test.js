@@ -11,7 +11,7 @@ const FILES = [
     'filename-convention.js',
     'kbuilder/parser.js', 'kbuilder/render-doc.js', 'kbuilder/render-deck.js', 'kbuilder/ref-images.js', 'kbuilder/import-html.js', 'kbuilder/auto-images.js',
     'kbuilder/export.js', 'kbuilder/sample-data.js', 'course-ncs.js', 'course-design.js', 'course-sessions.js', 'course-meta.js', 'gyosuan.js', 'gyosuan-view.js', 'gyosuan-images.js',
-    'import-stream.js', 'gyosuan-io.js'
+    'import-stream.js', 'gyosuan-io.js', 'gyosuan-deck-tidy.js', 'gyosuan-regen.js'
 ];
 const PNG = 'data:image/png;base64,iVBORw0KGgo=';
 const SVG = 'data:image/svg+xml;base64,PHN2Zz4=';

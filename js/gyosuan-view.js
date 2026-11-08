@@ -157,9 +157,10 @@ function gyosuanToolbarHtml(mod, trackId = 'basic') {
     const button = (action, icon, label) => `<button onclick="${action}" class="gyosuan-tool"><i class="ph-bold ${icon}"></i> ${label}</button>`;
     const editButton = (field, icon) => button(`toggleGyosuanEdit('${field}')`, icon, editing === field ? '보기' : GYOSUAN_EDIT_LABELS[field]);
     const id = `'${mod.id}', '${track}'`;
+    // 안내 바로 옆에 그 갈래의 재생성 단추, 끝에 바꾸기 전 교수안으로 되돌리는 단추(gyosuan-regen.js)
     return `
         <div class="gyosuan-toolbar">
-            <span class="gyosuan-note">${escapeHtml(gyosuanNoteText(mod, track))}</span>
+            <div class="gyosuan-note-row"><span class="gyosuan-note">${escapeHtml(gyosuanNoteText(mod, track))}</span>${gyosuanRegenButtonHtml(mod, track)}</div>
             ${editButton('docMd', 'ph-pencil-simple')}
             ${editButton('deckMd', 'ph-slideshow')}
             ${gyosuan.deckMd && !editing ? button('toggleGyosuanDeckView()', 'ph-eye', _gyosuanDeckViewFor === gyosuanViewKey(mod, track) ? '교수안 보기' : '편성안 보기') : ''}
@@ -171,7 +172,7 @@ function gyosuanToolbarHtml(mod, trackId = 'basic') {
             ${hasDoc ? gyosuanSessionPickHtml(mod, track) : ''}
             ${hasDoc ? button(`downloadGyosuanHtml(${id})`, 'ph-file-html', 'HTML') : ''}
             ${hasDoc ? button(`printGyosuan(${id})`, 'ph-file-pdf', 'PDF') : ''}
-            ${button(`regenerateGyosuan(${id})`, 'ph-arrow-clockwise', '재생성')}
+            ${gyosuanRestoreButtonHtml(mod, track)}
         </div>
         <div class="gyosuan-toolbar sub">${gyosuanOptionsHtml()}${gyosuanSourceToolsHtml(mod, track)}</div>
         ${gyosuanRefTrayHtml(mod)}`;
