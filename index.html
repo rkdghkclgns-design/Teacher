@@ -661,6 +661,47 @@
             background: rgba(124, 91, 245, 0.08);
             outline: 2px solid rgba(124, 91, 245, 0.6);
         }
+        /* 동영상 넣기(lesson-insert-tools.js): 삽입 플레이어는 16:9, 내 PC 동영상은 폭에 맞춘다. 자리 고르기 중에는 플레이어가 포인터를 가로채지 않게 한다 */
+        body.image-slot-placing #render-view iframe,
+        body.image-slot-placing #render-view video {
+            pointer-events: none;
+        }
+        .markdown-body .lesson-video {
+            max-width: 860px;
+            margin: 1.5rem auto;
+        }
+        .markdown-body .lesson-video iframe {
+            display: block;
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            height: auto;
+            border: 0;
+            border-radius: 8px;
+            background: #000;
+        }
+        .markdown-body .lesson-video video {
+            display: block;
+            width: 100%;
+            max-height: 70vh;
+            margin: 0 auto;
+            border-radius: 8px;
+            background: #000;
+        }
+        .markdown-body .lesson-video-caption {
+            margin: 6px 0 0;
+            text-align: center;
+            font-size: 0.8rem;
+            color: #6b7280;
+        }
+        .markdown-body .lesson-video-missing {
+            padding: 12px 16px;
+            border: 2px dashed #f59e0b;
+            border-radius: 8px;
+            background: #fffbeb;
+            color: #92400e;
+            font-size: 0.85rem;
+            text-align: center;
+        }
         /* 출처를 단 그림 설명(예시 게임 그림)은 가로 틀 안에서도 그림 옆이 아니라 그림 아래 한 줄로 둔다 */
         .markdown-body .image-wrapper {
             flex-wrap: wrap;
@@ -2018,6 +2059,7 @@
     <script src="./js/paragraph-edit.js?v=125"></script>
     <script src="./js/selection-media.js?v=125"></script>
     <script src="./js/image-slot-place.js?v=125"></script>
+    <script src="./js/lesson-insert-tools.js?v=125"></script>
     <script src="./js/course-refs.js?v=125"></script>
     <script>
         // 사용 가이드 자동 시작

@@ -157,7 +157,9 @@ function paintMdPreview() {
     const pane = box?.querySelector('[data-md-preview]');
     if (!pane || box.dataset.view !== 'split' || box.classList.contains('hidden')) return;
     try {
-        pane.replaceChildren(safePreviewNodes(mdPreviewHtml(getEditingModule(ta.dataset.moduleId), ta.value)));
+        const mod = getEditingModule(ta.dataset.moduleId);
+        pane.replaceChildren(safePreviewNodes(mdPreviewHtml(mod, ta.value)));
+        window.applyLessonVideos?.(pane, mod, { keepUrls: true }); // 직접 넣은 동영상(local:vid_키)도 미리 보기에서 재생한다(보기 화면이 쓰는 재생 주소는 놓지 않는다)
     } catch (err) {
         console.warn('[서식 도구] 미리 보기 실패:', err.message);
         pane.textContent = `미리 보기를 그리지 못했습니다: ${err.message}`;

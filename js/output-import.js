@@ -552,8 +552,20 @@ function outputLessonLine(lesson) {
 const outputNoteSum = (lessons, key) => lessons.reduce((sum, lesson) => sum + (lesson.importNotes?.[key] || 0), 0);
 const outputMb = bytes => outputCount(Math.round(Number(bytes) / (1024 * 1024)));
 
-// 예전 형식 HTML(숨은 원본 없음)·판서 영상·다이어그램·너무 큰 그림처럼 무엇이 돌아오고 무엇이 돌아오지 않는지
+// 탭 글이 가리키는 직접 넣은 동영상(local:vid_키, lesson-insert-tools.js) 가운데 그 차시에 파일이 없는 것의 수. 내보낸 HTML·MD의 원본에는 동영상 파일을 담지 않는다
+function outputMissingVideoCount(lesson) {
+    const has = lesson?.lessonVideos && typeof lesson.lessonVideos === 'object' ? lesson.lessonVideos : {};
+    const keys = new Set();
+    Object.values(lesson?.tabContents || {}).forEach(md => {
+        if (typeof md !== 'string' || typeof LESSON_VIDEO_REF_RE === 'undefined') return;
+        for (const match of md.matchAll(LESSON_VIDEO_REF_RE)) if (!Object.prototype.hasOwnProperty.call(has, match[1])) keys.add(match[1]);
+    });
+    return keys.size;
+}
+
+// 예전 형식 HTML(숨은 원본 없음)·판서 영상·다이어그램·너무 큰 그림·직접 넣은 동영상처럼 무엇이 돌아오고 무엇이 돌아오지 않는지
 function outputRestoreNotes(lessons) {
+    const localVideos = lessons.reduce((sum, lesson) => sum + outputMissingVideoCount(lesson), 0);
     const oldCount = lessons.filter(lesson => lesson.importNotes?.old).length;
     const videos = lessons.reduce((sum, lesson) => sum + (lesson.videos || []).length, 0);
     const lost = outputNoteSum(lessons, 'videosLost');
@@ -568,7 +580,8 @@ function outputRestoreNotes(lessons) {
         diagrams && `· 다이어그램 ${diagrams}개는 파일에 원본 코드가 없어 그림으로 넣습니다. 고치려면 다이어그램을 다시 만들어야 합니다.`,
         videos && `· 판서 영상 ${videos}개는 그 그림 자리에 되살립니다.`,
         lost && `· 판서 영상 ${lost}개는 영상이나 표지 그림이 파일에 없어 되살리지 못합니다(표지 그림이 있으면 그림으로 남습니다).`,
-        oversized && `· 너무 큰 그림·영상 ${oversized}개(하나에 ${outputMb(STREAM_DATA_MAX)}MB 넘음)는 넣지 않습니다.`
+        oversized && `· 너무 큰 그림·영상 ${oversized}개(하나에 ${outputMb(STREAM_DATA_MAX)}MB 넘음)는 넣지 않습니다.`,
+        localVideos && `· 도구 → 동영상 넣기로 직접 넣은 동영상 파일 ${localVideos}개는 이 파일로 되살리지 않습니다. 그 자리에는 '동영상 파일을 찾지 못했습니다'가 보입니다. 동영상 파일까지 옮기려면 백업 ZIP을 쓰세요(YouTube·Vimeo 주소로 넣은 동영상은 그대로 돌아옵니다).`
     ].filter(Boolean);
 }
 

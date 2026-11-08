@@ -4,6 +4,7 @@
 //  코드 블록·표·목록 항목 안에는 들어가지 않는다. 넣은 줄이 따로 선 그림 자리가 되지 않거나(닫히지 않은 코드 블록 뒤 등) 화면이 그림을 숨기는 곳(학습 목표·개요·첫 제목 바로 아래)이면 넣지 않는다.
 //  검색어는 둘레 단락과 그 위 제목에서 짧게 고른다(영어 낱말 먼저). 바꾸기 전 글은 작업 기록에 남기고(lesson-review.js commitTabChange) Ctrl+Z로도 되돌린다(format-toolbar.js).
 //  Esc·오른쪽 클릭·교안 밖 클릭은 넣지 않고 그만둔다.
+//  같은 자리 고르기를 도구의 '동영상 넣기'·'텍스트 블록 넣기'(lesson-insert-tools.js)도 쓴다(startLessonBlockPlacing에 무엇을 넣는지 kind를 준다. 넣을 글은 lessonBlockInsertPlan이 검사한다).
 // 눌러 그림 만들기: 보기 화면의 그림 자리(그림 자리 표시 줄, 그림을 못 만든 자리)를 누르면 그림 1장의 비용·시간을 보이고 묻는다(cost-estimate.js confirmWithEstimate).
 //  확인하면 일괄 이미지 찾기와 같은 길(api.js processImageTags: 검색어 정하기 → 그림 검색 → AI 그림)로 그 자리 하나만 채운다. 다른 그림 자리 표시는 잠시 다른 표시로 바꿔 두어 건드리지 않는다.
 //  그림을 만든 때만 글을 바꾸고 바꾸기 전 글은 작업 기록에 남긴다. 테스트: tests/image-slot.test.js
@@ -39,7 +40,12 @@ const SLOT_TEXT = {
     lessonGone: '그림을 만드는 동안 이 차시를 지우거나 옮겼거나, 백업·PC 폴더를 불러와 내용이 바뀌어 그림을 넣지 않았습니다.',
     failed: '그림을 만들지 못했습니다. 그림 자리는 그대로 두었습니다. 설정의 이미지 생성 모델과 키를 확인한 뒤 다시 눌러 보세요.',
     gameFailed: title => `인터넷에서 '${title}' 게임 그림을 찾지 못했습니다. 그림 자리는 그대로 두었습니다.`,
-    blocked: '그림 모델을 쓸 수 없어 그림을 만들지 못했습니다. 그림 자리는 그대로 두었습니다.'
+    blocked: '그림 모델을 쓸 수 없어 그림을 만들지 못했습니다. 그림 자리는 그대로 두었습니다.',
+    // 동영상·텍스트 블록 넣기(lesson-insert-tools.js)가 함께 쓰는 자리 검사(lessonBlockInsertPlan)
+    blockEmpty: '넣을 글이 비어 있습니다.',
+    blockFence: '코드 블록(```)이 닫히지 않았습니다. 닫는 ``` 줄을 더한 뒤 넣어 주세요.',
+    blockInside: '여기에 넣으면 앞뒤의 목록·코드 블록과 섞여 따로 선 블록이 되지 않습니다. 다른 자리를 누르거나 글을 고쳐 주세요.',
+    blockHidden: '학습 목표·개요와 첫 제목 바로 아래는 화면이 글을 정리해 보이는 곳이라 넣어도 보이지 않습니다. 다른 자리를 눌러 주세요.'
 };
 
 /* ---------- 검색어 ---------- */
@@ -167,6 +173,51 @@ function imageSlotPlan(source, part, side, { fallback = '' } = {}) {
     if (!after || slotTagBlocks(after, tag) !== slotTagBlocks(blocks, tag) + 1) return { ok: false, reason: SLOT_TEXT.inside };
     if (!shownImageSlotTags(placed.text).some(item => item.start === placed.at)) return { ok: false, reason: SLOT_TEXT.hidden };
     return { ok: true, text: placed.text, tag, keyword };
+}
+
+/* ---------- 블록 넣기(동영상·텍스트 블록, lesson-insert-tools.js) ---------- */
+// 보이는 블록 원문(빈 줄 토큰은 뺀다). 넣은 뒤 블록이 '앞 블록들 + 넣은 블록들 + 뒤 블록들' 그대로인지 견줄 때 쓴다
+const slotShownRaws = blocks => blocks.filter(block => block.token.type !== 'space').map(block => block.raw.trim());
+const slotSameList = (a, b) => a.length === b.length && a.every((item, i) => item === b[i]);
+const slotSquash = text => String(text).replace(/\s+/g, ' ').trim();
+// 화면에 보이는 글(첫머리 정리와 강사 안내 칸을 뺀 글, shownImageSlotTags와 같은 정리)
+function slotShownText(text) {
+    const opened = typeof cleanLessonOpening === 'function' ? cleanLessonOpening(text) : text;
+    return typeof stripInstructorCallouts === 'function' ? stripInstructorCallouts(opened) : opened;
+}
+const slotCount = (text, part) => {
+    let found = 0;
+    for (let at = text.indexOf(part); at !== -1; at = text.indexOf(part, at + part.length)) found += 1;
+    return found;
+};
+
+// 화면 블록(part)의 앞(side 'before')이나 뒤('after') 경계에 글(block: 마크다운 한 블록이나 여러 블록)을 빈 줄로 띄워 넣은 원문. { ok: true, text } 또는 { ok: false, reason }.
+// 넣은 글이 앞뒤 블록과 섞이면(목록에 이어 붙음, 닫지 않은 코드 블록이 뒤를 삼킴 등) 넣지 않는다. 화면이 정리해 넣은 글 일부가 보이지 않는 곳(학습 목표·개요의 첫머리)도 넣지 않는다.
+// 원문의 줄바꿈(\r\n·\n)을 따른다(넣는 글의 줄바꿈도 맞춘다)
+function lessonBlockInsertPlan(source, part, side, block) {
+    const text = String(source ?? '');
+    const body = String(block ?? '').replace(/\r\n?/g, '\n').replace(/^(?:[ \t]*\n)+/, '').trimEnd();
+    if (!body.trim()) return { ok: false, reason: SLOT_TEXT.blockEmpty };
+    // 닫지 않은 코드 블록은 넣은 뒤의 글을 모두 코드로 삼킨다(글 끝에 넣어도 다음에 넣는 글을 삼킨다)
+    if (typeof fenceStateAfter === 'function' && body.split('\n').reduce(fenceStateAfter, 0) > 0) return { ok: false, reason: SLOT_TEXT.blockFence };
+    const blocks = lessonBlocks(text);
+    const own = lessonBlocks(body);
+    if (!blocks || !own) return { ok: false, reason: SLOT_TEXT.odd };
+    const located = locateLessonBlock(text, part);
+    const index = located ? blocks.findIndex(item => item.start === located.start) : -1;
+    if (index < 0) return { ok: false, reason: SLOT_TEXT.notFound };
+    const where = side === 'before' ? 'before' : 'after';
+    const target = blocks[index];
+    const at = where === 'before' ? target.start : target.start + target.raw.trimEnd().length;
+    const eol = text.includes('\r\n') ? '\r\n' : '\n';
+    const placed = withImageSlotLine(text, slotSourceOffset(text, at), body.replace(/\n/g, eol));
+    const after = lessonBlocks(placed.text);
+    const split = where === 'before' ? index : index + 1;
+    const expected = [...slotShownRaws(blocks.slice(0, split)), ...slotShownRaws(own), ...slotShownRaws(blocks.slice(split))];
+    if (!after || !slotSameList(slotShownRaws(after), expected)) return { ok: false, reason: SLOT_TEXT.blockInside };
+    const visible = slotSquash(body);
+    if (slotCount(slotSquash(slotShownText(placed.text)), visible) !== slotCount(slotSquash(slotShownText(text)), visible) + 1) return { ok: false, reason: SLOT_TEXT.blockHidden };
+    return { ok: true, text: placed.text };
 }
 
 /* ---------- 화면에 보이는 그림 자리 ---------- */
@@ -305,17 +356,18 @@ function slotPart(view, el) {
     return {
         index: [...view.children].filter(child => !child.matches('[data-image-slot]')).indexOf(el),
         text: el.textContent || '',
-        media: el.matches('img, video, table, svg') || !!el.querySelector('img, video, table, svg'),
-        mediaKey: el.querySelector('[data-img-id]')?.getAttribute('data-img-id') || ''
+        media: el.matches('img, video, table, svg, iframe') || !!el.querySelector('img, video, table, svg, iframe'),
+        mediaKey: el.querySelector('[data-img-id]')?.getAttribute('data-img-id') || el.querySelector('[data-video-id]')?.getAttribute('data-video-id') || ''
     };
 }
 
-function slotMarker() {
+// kind: 무엇을 넣는지(아래 IMAGE_SLOT_KIND, lesson-insert-tools.js의 동영상·텍스트 블록). 표시 글과 아이콘을 그 이름으로 쓴다
+function slotMarker(kind) {
     const marker = document.createElement('div');
     marker.id = 'image-slot-marker';
     marker.className = 'image-slot-marker';
     marker.setAttribute('aria-hidden', 'true');
-    marker.innerHTML = '<div class="image-slot-marker-line"></div><div class="image-slot-marker-label"><i class="ph-bold ph-image-square" aria-hidden="true"></i> 그림 자리 <span class="image-slot-marker-where"></span></div>';
+    marker.innerHTML = `<div class="image-slot-marker-line"></div><div class="image-slot-marker-label"><i class="ph-bold ${escapeHtml(kind.icon)}" aria-hidden="true"></i> ${escapeHtml(kind.label)} <span class="image-slot-marker-where"></span></div>`;
     marker.style.display = 'none';
     document.body.appendChild(marker);
     return marker;
@@ -371,14 +423,17 @@ function onSlotClick(event) {
     event.stopPropagation();
     const spot = slotSpotAt(view, event.clientY);
     if (!spot) return;
-    placeImageSlot(state, view, spot).catch(err => {
-        console.error('[그림 자리] 넣지 못했습니다:', err);
-        window.showToast?.(SLOT_TEXT.placeFailed, 'error');
+    const kind = state.kind || IMAGE_SLOT_KIND;
+    const run = async () => kind.place(state, view, spot); // 첫 await까지는 이 클릭 안에서 돈다(그림 자리 넣기와 같다)
+    run().catch(err => {
+        console.error(`[${kind.label}] 넣지 못했습니다:`, err);
+        window.showToast?.(kind.failed || SLOT_TEXT.placeFailed, 'error');
     });
 }
 
 function cancelImageSlotPlacing() {
-    if (window.stopImageSlotPlacing()) window.showToast?.(SLOT_TEXT.cancelled, 'info');
+    const kind = _slotPlacing?.kind || IMAGE_SLOT_KIND;
+    if (window.stopImageSlotPlacing()) window.showToast?.(kind.cancelled, 'info');
 }
 
 function onSlotMenu(event) {
@@ -402,25 +457,39 @@ async function placeImageSlot(state, view, spot) {
     const before = storedTabMarkdown(mod, tabId);
     const plan = imageSlotPlan(before, slotPart(view, spot.el), spot.side, { fallback: mod.title || '' });
     if (!plan.ok) return window.showToast?.(plan.reason, 'warning');
-    window.stopImageSlotPlacing();
-    _slotDblClickUntil = Date.now() + SLOT_DBLCLICK_GUARD_MS;
+    leaveSlotPlacing();
     const label = mod.tabContents ? reviewTabLabel(tabId) : '본문';
     if (!(await commitTabChange(mod, tabId, before, plan.text, `그림 자리 넣기 (${label})`, '그림 자리 넣기 전'))) return;
     window.recordLessonEdit?.(mod, tabId, before, plan.text);
     window.showToast?.(SLOT_TEXT.placed(plan.keyword), 'success');
 }
 
-// 자리 고르기를 시작한다(api.js insertImageSlot이 보기 화면에서 부른다). 이미 고르는 중이면 처음부터
-window.startImageSlotPlacing = function (mod, tabId) {
+// 고른 자리를 받았으니 자리 고르기를 끝낸다. 바로 뒤의 두 번 누르기는 단락 편집을 열지 않는다
+function leaveSlotPlacing() {
+    window.stopImageSlotPlacing();
+    _slotDblClickUntil = Date.now() + SLOT_DBLCLICK_GUARD_MS;
+}
+
+// 그림 자리 넣기. place(state, view, spot): 고른 자리(spot: 가리킨 화면 블록 el과 그 위·아래 side)로 할 일. 넣을 수 없는 자리면 까닭을 알리고 자리 고르기를 이어 간다
+const IMAGE_SLOT_KIND = { label: '그림 자리', icon: 'ph-image-square', start: SLOT_TEXT.start, noView: SLOT_TEXT.noView, cancelled: SLOT_TEXT.cancelled, failed: SLOT_TEXT.placeFailed, place: placeImageSlot };
+
+// 자리 고르기를 시작한다. kind: 무엇을 넣는지({ label, icon, start, startType, noView, cancelled, failed, place }). 이미 고르는 중이면 처음부터
+window.startLessonBlockPlacing = function (mod, tabId, kind = IMAGE_SLOT_KIND) {
     const view = document.getElementById('render-view');
-    if (!view || view.classList.contains('hidden')) return window.showAlert(SLOT_TEXT.noView);
+    if (!view || view.classList.contains('hidden')) return window.showAlert(kind.noView);
     window.stopImageSlotPlacing();
     window.getSelection?.()?.removeAllRanges?.();
-    _slotPlacing = { mod, tabId, marker: slotMarker(), x: 0, y: 0 };
+    _slotPlacing = { mod, tabId, kind, marker: slotMarker(kind), x: 0, y: 0 };
     SLOT_EVENTS.forEach(([type, handler]) => document.addEventListener(type, handler, true));
     document.body.classList.add('image-slot-placing');
-    window.showToast?.(SLOT_TEXT.start, 'info');
+    window.showToast?.(kind.start, kind.startType || 'info');
 };
+
+// 그림 자리 넣기의 자리 고르기(api.js insertImageSlot이 보기 화면에서 부른다)
+window.startImageSlotPlacing = function (mod, tabId) {
+    return window.startLessonBlockPlacing(mod, tabId, IMAGE_SLOT_KIND);
+};
+window.leaveLessonBlockPlacing = leaveSlotPlacing;
 
 // 자리 고르기를 끝낸다. 고르는 중이었으면 true
 window.stopImageSlotPlacing = function () {
@@ -574,4 +643,4 @@ window.fillImageSlot = async function (button) {
 
 if (typeof LESSON_ACTIONS !== 'undefined') LESSON_ACTIONS['fill-image-slot'] = button => window.fillImageSlot(button);
 
-if (typeof window !== 'undefined') Object.assign(window, { imageSlotPlan, imageSlotKeywordFor, shownImageSlotTags });
+if (typeof window !== 'undefined') Object.assign(window, { imageSlotPlan, imageSlotKeywordFor, shownImageSlotTags, lessonBlockInsertPlan });

@@ -241,6 +241,12 @@ function lessonScreenInput(md, images) {
         typeof cleanLessonElement === 'function' ? cleanLessonElement : null,
         typeof legacyRegenerateArgs === 'function' ? legacyRegenerateArgs : null,
         typeof isSafeLessonUrl === 'function' ? isSafeLessonUrl : null,
+        // 정리가 남기는 동영상 삽입 플레이어(lesson-sanitize.js keepLessonEmbed)와 그 주소 읽기
+        typeof keepLessonEmbed === 'function' ? keepLessonEmbed : null,
+        typeof lessonEmbedFrameSrc === 'function' ? lessonEmbedFrameSrc : null,
+        typeof lessonVideoUrl === 'function' ? lessonVideoUrl : null,
+        typeof lessonVimeoParts === 'function' ? lessonVimeoParts : null,
+        typeof lessonVideoStart === 'function' ? lessonVideoStart : null,
         typeof DOMParser !== 'undefined' ? DOMParser : null
     ];
     return { text, refs: [...refs], loose, pipeline };
@@ -3391,6 +3397,8 @@ ${tabGenerateButtonsHtml(mod, tabless)}
                                 <i class="ph-bold ph-download-simple"></i> 이미지 저장
                             </button>
                             <button onclick="insertImageSlot(); this.closest('details').open = false" id="image-slot-btn" class="px-3 py-1.5 text-xs font-bold bg-violet-50 text-violet-700 border border-violet-200 rounded hover:bg-violet-100 flex items-center gap-1 transition-colors" title="누르면 마우스 포인터에 그림 자리가 따라다니며 넣을 자리(단락·제목·목록·표·코드 블록의 위나 아래)를 보여 줍니다. 넣을 곳을 누르면 그 자리에 넣고, 넣은 그림 자리를 누르면 그 자리 그림을 만듭니다. Esc나 오른쪽 클릭으로 그만둡니다"><i class="ph-bold ph-cursor-click"></i> 그림 자리 넣기</button>
+                            <button onclick="insertLessonVideo(); this.closest('details').open = false" id="video-insert-btn" class="px-3 py-1.5 text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200 rounded hover:bg-rose-100 flex items-center gap-1 transition-colors" title="그림 자리 넣기처럼 넣을 자리를 누른 뒤 YouTube·Vimeo 주소나 .mp4·.webm 주소, 또는 내 PC의 mp4·webm 파일(100MB까지)을 골라 그 자리에 동영상을 넣습니다. 학습이해도·심화이해도에는 넣지 않습니다"><i class="ph-bold ph-video"></i> 동영상 넣기</button>
+                            <button onclick="insertTextBlock(); this.closest('details').open = false" id="text-block-btn" class="px-3 py-1.5 text-xs font-bold bg-lime-50 text-lime-700 border border-lime-200 rounded hover:bg-lime-100 flex items-center gap-1 transition-colors" title="넣을 자리를 누른 뒤 글 칸에 쓴 글(마크다운)을 그 자리에 따로 선 블록으로 넣습니다. Ctrl+Z로 되돌립니다"><i class="ph-bold ph-text-aa"></i> 텍스트 블록 넣기</button>
                         <button onclick="openSectionLocks('${mod.id}')" class="px-3 py-1.5 text-[0.6875rem] font-bold bg-slate-50 text-slate-600 border border-slate-200 rounded hover:bg-slate-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="다시 생성해도 유지할 섹션 선택"><i class="ph-bold ph-lock-simple"></i> 섹션 고정</button>
                         <button onclick="openLessonArt('${mod.id}')" class="px-3 py-1.5 text-[0.6875rem] font-bold bg-sky-50 text-sky-600 border border-sky-200 rounded hover:bg-sky-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="SVG 삽화 생성·수정·배치"><i class="ph-bold ph-paint-brush"></i> 삽화</button>
                         <button onclick="copyTabMarkdown('${mod.id}')" class="px-3 py-1.5 text-[0.6875rem] font-bold bg-sky-50 text-sky-600 border border-sky-200 rounded hover:bg-sky-100 flex items-center gap-1 transition-colors shrink-0 whitespace-nowrap" title="현재 탭의 마크다운을 클립보드에 복사"><i class="ph-bold ph-copy"></i> 복사</button>
@@ -3703,6 +3711,7 @@ window.toggleEditorMode = function (mode) {
                 addImageDeleteButtons(renderView, mod); // 그림 틀·붙여 넣은 그림에도 삭제 버튼(마크다운 그림은 렌더러가 단다)
                 window.applyWhiteboardVideos?.(mod); // 판서 영상으로 바꾼 그림은 영상으로, 나머지 그림에는 바꾸기 버튼
                 window.showImageSlots?.(renderView, mod); // 아직 그림이 없는 그림 자리는 눌러 그림을 만드는 칸으로(image-slot-place.js)
+                window.applyLessonVideos?.(renderView, mod); // 직접 넣은 동영상(local:vid_키)에 그 파일을 붙인다(lesson-insert-tools.js)
 
                 // Mermaid 다이어그램: 이 화면을 새 차례로 그린다(앞 차례는 멈춘다). 그린 SVG는 코드로 기억해 다시 쓴다(drawLessonDiagrams)
                 if (window.mermaid) {

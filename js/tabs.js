@@ -325,8 +325,29 @@ function unusedLessonImageIds(mod, extraTexts = []) {
     return unused.filter(id => !stills.has(id));
 }
 
-// 쓰지 않는 그림만 지운다(용량 확보). 다른 곳이 가리키는 그림은 남긴다. 지운 GIF 그림이나 원래 그림의 움직이는 GIF 기록도 뺀다
+// 글(local:동영상 키)이 그 키를 가리키는지. 키 뒤에 키 글자가 더 이어지면(local:vid_ab 뒤 c) 다른 동영상이다
+function textUsesVideoKey(text, key) {
+    const ref = `local:${key}`;
+    for (let at = text.indexOf(ref); at !== -1; at = text.indexOf(ref, at + 1)) {
+        if (!/[\w-]/.test(text.charAt(at + ref.length))) return true;
+    }
+    return false;
+}
+
+// 차시 어디에서도(그림과 같은 글: 탭·합친 본문·교수안·슬라이드 편집본·부른 쪽이 더 주는 글) 가리키지 않는 직접 넣은 동영상 키(lesson-insert-tools.js lessonVideos)
+function unusedLessonVideoIds(mod, extraTexts = []) {
+    const videos = mod?.lessonVideos && typeof mod.lessonVideos === 'object' && !Array.isArray(mod.lessonVideos) ? mod.lessonVideos : {};
+    const keys = Object.keys(videos);
+    if (!keys.length) return [];
+    const texts = lessonImageRefTexts(mod, extraTexts);
+    return keys.filter(key => !texts.some(text => textUsesVideoKey(text, key)));
+}
+
+// 쓰지 않는 그림만 지운다(용량 확보). 다른 곳이 가리키는 그림은 남긴다. 지운 GIF 그림이나 원래 그림의 움직이는 GIF 기록도 뺀다.
+// 직접 넣은 동영상도 같은 규칙으로 덜어 낸다(지우기 전 글은 작업 기록이 동영상과 함께 갖고 있다, data-safety.js historyEntry)
 function dropUnusedLessonImages(mod, extraTexts = []) {
+    const unusedVideos = typeof unusedLessonVideoIds === 'function' ? unusedLessonVideoIds(mod, extraTexts) : []; // 이 함수만 잘라 싣는 테스트도 멈추지 않게 typeof로 읽는다
+    if (unusedVideos.length) mod.lessonVideos = Object.fromEntries(Object.entries(mod.lessonVideos).filter(([key]) => !unusedVideos.includes(key)));
     const unused = unusedLessonImageIds(mod, extraTexts);
     // 지운 그림을 쓴 차시 화면 기억도 그 그림을 놓는다(api.js forgetLessonScreens)
     if (unused.length && typeof forgetLessonScreens === 'function') forgetLessonScreens(unused.map(id => mod.images[id]));

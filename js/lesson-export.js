@@ -44,6 +44,11 @@ th, td { border: 1px solid #d9d9e3; padding: 8px 12px; text-align: left; vertica
 th { background: #f3f2f8; font-weight: 700; }
 img, video, svg { max-width: 100%; height: auto; }
 img, video { display: block; margin: 1.5rem auto; border-radius: 8px; }
+.lesson-video { margin: 1.5rem auto; }
+.lesson-video video { width: 100%; margin: 0 auto; background: #000; }
+.lesson-video iframe { display: block; width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0; border-radius: 8px; }
+.lesson-video-caption { margin: 6px 0 0; text-align: center; font-size: .8rem; color: #6b7280; }
+.lesson-video-note { padding: .75rem 1rem; border: 1px dashed #c9c3e6; border-radius: 8px; background: #f8f6ff; color: #4a4a7a; font-size: .85rem; text-align: center; }
 .image-wrapper, .mermaid { display: flex; flex-direction: column; align-items: center; margin: 1.5rem auto; }
 .image-source { margin-top: 2px; font-size: .75rem; color: #6b7280; text-align: center; word-break: break-all; }
 hr { border: 0; border-top: 1px solid #e5e5ee; margin: 2rem 0; }
@@ -75,13 +80,57 @@ function lessonTabSources(mod, tabIds) {
 // local:그림 키를 저장된 그림으로 바꾸고, 없는 그림 자리는 비운다(화면 보기와 같은 규칙. 차시 화면도 이 함수로 그린다, api.js)
 // 그림 키는 [\w-]만 쓰므로(data-safety.js SAFE_IMAGE_KEY) 정해 둔 모양 하나로 찾아 키를 목록에서 꺼낸다(그림 키로 정규식을 만들지 않는다).
 // 키 끝까지 읽으므로 img_1이 img_10을 건드리지 않는다. 진짜 그림만 넣고, 찾지 못한 그림 자리(teacher-image:…)·빈 값·목록에 없는 키는 없는 그림 자리로 둔다.
-// 코드 블록 안은 바꾸지 않는다(코드 예제의 local: 글자와 ToString(local: true) 같은 코드는 그대로). 빈 자리로 둘 괄호는 그림 키 모양((local:img_1))만 본다
+// 코드 블록 안은 바꾸지 않는다(코드 예제의 local: 글자와 ToString(local: true) 같은 코드는 그대로). 빈 자리로 둘 괄호는 그림 키 모양((local:img_1))만 본다.
+// 차시 동영상(src="local:vid_…", lesson-insert-tools.js)은 그림이 아니라 비우지 않는다. 화면은 그린 뒤 그 파일을 붙이고(applyLessonVideos) 내보내기는 파일을 넣는다(exportLessonVideos)
 function inlineLessonImages(md, images) {
     const pictures = new Map(Object.entries(images || {}).filter(([, data]) => typeof data === 'string' && EXPORT_PICTURE_RE.test(data)));
     const code = typeof stashCodeFences === 'function' ? stashCodeFences(String(md || ''), { keepSpaces: true }) : { text: String(md || ''), restore: text => text };
     const filled = code.text.replace(/local:([\w-]{1,80})(?![\w-])/g, (whole, id) => (pictures.has(id) ? pictures.get(id) : whole));
-    return code.restore(filled.replace(/src="local:[^"]+"/g, 'src="" alt="[이미지 생성 누락]"').replace(/\(local:[\w-]{1,80}\)/g, '()'));
+    return code.restore(filled.replace(/src="local:(?!vid_[a-z0-9]{6,40}")[^"]+"/g, 'src="" alt="[이미지 생성 누락]"').replace(/\(local:[\w-]{1,80}\)/g, '()'));
 }
+
+// 동영상을 대신하는 안내 칸(글자로만 넣는다)
+function exportVideoNote(box, text) {
+    const note = box.ownerDocument.createElement('div');
+    note.className = 'lesson-video-note';
+    note.textContent = text;
+    return note;
+}
+
+const EXPORT_VIDEO_TEXT = {
+    print: '▶ 동영상은 인쇄본에서 재생되지 않습니다. 화면이나 HTML 파일에서 보세요.',
+    zip: '▶ 직접 넣은 동영상 파일은 이 읽기용 파일에 넣지 않았습니다(백업이 두 배로 커지지 않게). 백업의 되살리기용 정보에 담겨 있어 앱에서 되살리면 재생됩니다.',
+    missing: '동영상 파일을 찾지 못해 넣지 못했습니다. 앱에서 도구 → 동영상 넣기로 다시 넣어 주세요.'
+};
+
+// 내보낼 칸의 차시 동영상. mode 'play'(HTML 파일)는 내 PC 동영상(local:키 · data-video-id)의 src를 차시에 둔 data URL로 바꿔 파일 하나로 열리게 하고(찾지 못한 파일은 안내 글로),
+// 'zip'(백업 ZIP의 읽기용 교안.html)은 내 PC 동영상만 안내 글로 바꾼다(파일은 save_data.yaml에 담긴다). 'print'(PDF)는 재생할 수 없어 동영상·삽입 플레이어를 안내 칸으로 바꾼다
+// (아래 설명의 주소 링크는 남는다). 판서 영상(data-wb-video)은 whiteboard-video.js가 다룬다. 파일 안에 넣은 동영상 수를 돌려준다
+function exportLessonVideos(box, mod, mode) {
+    const videos = mod?.lessonVideos && typeof mod.lessonVideos === 'object' ? mod.lessonVideos : {};
+    const keyOf = typeof lessonVideoKeyOf === 'function' ? lessonVideoKeyOf : () => '';
+    const isData = typeof isLessonVideoData === 'function' ? isLessonVideoData : () => false;
+    const swap = (el, text) => el.parentNode?.replaceChild(exportVideoNote(box, text), el);
+    let count = 0;
+    Array.from(box.querySelectorAll('video')).forEach(player => {
+        if (player.hasAttribute('data-wb-video')) return;
+        const key = keyOf(player);
+        if (mode === 'print') return swap(player, EXPORT_VIDEO_TEXT.print);
+        if (!key) return;
+        const data = Object.prototype.hasOwnProperty.call(videos, key) ? videos[key] : '';
+        if (!isData(data)) return swap(player, EXPORT_VIDEO_TEXT.missing);
+        if (mode === 'zip') return swap(player, EXPORT_VIDEO_TEXT.zip);
+        player.setAttribute('src', data);
+        player.removeAttribute('hidden');
+        count += 1;
+    });
+    Array.from(box.querySelectorAll('.lesson-video-missing')).forEach(el => el.remove()); // 화면에 단 안내(applyLessonVideos)는 위 안내 글로 대신한다
+    if (mode === 'print') Array.from(box.querySelectorAll('iframe')).forEach(frame => swap(frame, EXPORT_VIDEO_TEXT.print));
+    return count;
+}
+
+// 내보내기 종류 → 동영상 다루는 방식. 다시 불러오기 표시를 다는 내보내기(HTML 파일·ZIP의 교안.html)만 재생할 수 있다
+const exportVideoMode = opts => (!opts.mark ? 'print' : opts.videoFiles === false ? 'zip' : 'play');
 
 // 다시 불러오기 표시: 화면에 보인 그림 <img>에 그림 키와 차시 번호를 단다. 원본(JSON)에는 그 그림을 다시 넣지 않는다(output-import.js)
 // images: 이 화면을 그릴 때 쓴 그림(키 → data URL). 같은 그림이 여러 키에 있으면 앞 키 하나만 단다(나머지 키는 원본에 그림을 담는다)
@@ -174,11 +223,14 @@ async function lessonTabHtml(mod, tab, opts) {
     if (onScreen) {
         const drawnView = window.lessonViewForExport ? await window.lessonViewForExport(view) : view;
         const exported = opts.videos && window.whiteboardHtmlForExport ? await window.whiteboardHtmlForExport(drawnView) : { html: drawnView.innerHTML, videos: 0 };
-        return { html: mark(exportStrip(exported.html)).innerHTML, videos: exported.videos };
+        const shownBox = exportStrip(exported.html);
+        const localVideos = exportLessonVideos(shownBox, mod, exportVideoMode(opts));
+        return { html: mark(shownBox).innerHTML, videos: exported.videos, localVideos };
     }
     const box = exportStrip(renderLessonHTML(preprocessMarkdown(inlineLessonImages(tab.md, mod.images))));
     await renderExportMermaid(box);
-    return { html: mark(box).innerHTML, videos: 0 };
+    const localVideos = exportLessonVideos(box, mod, exportVideoMode(opts));
+    return { html: mark(box).innerHTML, videos: 0, localVideos };
 }
 
 // 차시 하나의 문서 본문. 탭이 여럿이면 탭 이름 띠를 붙이고, PDF에서는 탭마다 새 쪽으로 넘긴다
@@ -186,13 +238,15 @@ async function lessonExportBody(mod, tabIds, opts = {}) {
     const tabs = lessonTabSources(mod, tabIds);
     const sections = [];
     let videos = 0;
+    let localVideos = 0;
     for (const tab of tabs) {
         const out = await lessonTabHtml(mod, tab, opts);
         videos += out.videos;
+        localVideos += out.localVideos || 0;
         const label = tabs.length > 1 ? `<div class="lesson-tab-label">${exportEscape(tab.label)}</div>` : '';
         sections.push(`<section class="lesson-tab">${label}${out.html}</section>`);
     }
-    return { html: sections.join('\n'), tabs: tabs.length, videos };
+    return { html: sections.join('\n'), tabs: tabs.length, videos, localVideos };
 }
 
 /* ---------- 내려받기·인쇄 ---------- */
@@ -255,6 +309,7 @@ window.exportLessonDocument = async function (mod, format, tabIds) {
         // 큰 파일도 '내보낸 교안 다시 불러오기'가 조각으로 읽어 되살리므로 크기 안내는 하지 않는다(import-stream.js)
         downloadTextFile(lessonHtmlDocument(mod.title || '교안', body.html, '', source), lessonFileName(mod, 'html'), 'text/html;charset=utf-8');
         if (body.videos) window.showToast?.(`판서 영상 ${body.videos}개를 HTML 파일 안에 넣었습니다(파일이 커질 수 있습니다).`, 'info');
+        if (body.localVideos) window.showToast?.(`직접 넣은 동영상 ${body.localVideos}개를 HTML 파일 안에 넣었습니다(파일이 커질 수 있습니다).`, 'info');
     } catch (err) {
         console.error('[내보내기] 차시 문서 실패:', err);
         window.showAlert(`내보내기 중 오류가 났습니다: ${err.message}`);
@@ -291,7 +346,7 @@ window.exportSubjectDocument = async function (subj, format) {
 // 원본은 그린 바로 그 차시(mod)로 만든다(그림 담기 '빼기'는 백업 정보에만 쓰고 읽기용 교안.html의 그림은 그대로 둔다)
 window.lessonHtmlForZip = async function (mod) {
     const shown = new Map();
-    const body = await lessonExportBody(mod, null, { mark: { index: 0, shown } });
+    const body = await lessonExportBody(mod, null, { mark: { index: 0, shown }, videoFiles: false }); // 직접 넣은 동영상 파일은 save_data.yaml에만 담는다
     if (!body.tabs) return null;
     return lessonHtmlDocument(mod.title || '교안', body.html, '', lessonSourceScript(lessonSourcePayload([mod], { shown: [shown] })));
 };
