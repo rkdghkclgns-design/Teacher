@@ -63,9 +63,13 @@ test('화면 그림 넣기: 이상한 그림 id로 멈추거나 깨지지 않는
     assert.ok(Date.now() - started < 200, '멈추지 않는다');
     // 그림 키 규칙([\w-] 80자까지, data-safety.js SAFE_IMAGE_KEY) 밖의 키는 앱이 만들지 않고 불러올 때 sanitizeState가 버린다. 그런 키는 쓰지 않고 그 자리는 없는 그림으로 둔다
     assert.ok(view.includes('src="" alt="[이미지 생성 누락]"') && !view.includes(png), '괄호가 든 id는 그림 키로 보지 않는다');
-    // 차시 화면(렌더·보기 전환)도 그림 id로 정규식을 만들지 않고 이 함수로 그린다(묶음 6)
-    const api = fs.readFileSync(path.join(__dirname, '..', 'js', 'api.js'), 'utf8');
-    assert.strictEqual((api.match(/inlineLessonImages\(renderText, mod\.images\)/g) || []).length, 2, 'renderEditor·toggleEditorMode');
+    // 차시 화면(렌더·보기 전환)도 그림 id로 정규식을 만들지 않고 이 함수로 그린다(묶음 6).
+    // 두 곳 모두 drawLessonScreen으로 그리고, drawLessonScreen은 이 함수로 그림을 넣는다(큰 그림은 표시로 넣고 맨 끝에 되돌린다, tests/lesson-screen.test.js)
+    const api = fs.readFileSync(path.join(__dirname, '..', 'js', 'api.js'), 'utf8').replace(/\r\n/g, '\n');
+    assert.strictEqual((api.match(/drawLessonScreen\(screenInput, renderText, mod\.images\)/g) || []).length, 2, 'renderEditor·toggleEditorMode');
+    const screen = api.slice(api.indexOf('function lessonScreenInput('), api.indexOf('function renderLessonScreen('));
+    assert.ok(screen.includes('inlineLessonImages(md, marks.images)') && screen.includes('inlineLessonImages(md, images)'), '그림 넣기는 이 함수로');
+    assert.ok(!/new RegExp\(/.test(screen), '화면 그리기는 그림 키 같은 데이터로 정규식을 만들지 않는다');
     assert.ok(!/new RegExp\(`local:\$\{imgId\}`/.test(api));
 });
 

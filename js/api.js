@@ -171,6 +171,181 @@ function renderLessonHTML(md, opts) {
 }
 if (typeof window !== 'undefined') window.renderLessonHTML = renderLessonHTML;
 
+// ── 차시 화면 그리기: 그림 데이터는 글 처리에서 뺀다 ─────────────────────────
+// 차시 화면(renderEditor·toggleEditorMode)의 HTML은 renderLessonHTML(preprocessMarkdown(inlineLessonImages(md, images)))와 한 글자도 다르지 않다.
+// 큰 그림(base64 data URL)을 글에 그대로 넣으면 전처리·marked·마침표 줄바꿈·후처리·정리가 그림 수십 MB를 몇 번씩 훑어 탭 하나에 몇 초가 걸린다.
+// 그래서 큰 그림은 그림 머리(data:image/jpeg;base64,) 뒤를 이번 그리기에만 쓰는 무작위 표시(영문·숫자)로 바꿔 그리고, 맨 끝에 표시를 그림 데이터로 되돌린다.
+//  - 표시도 그림 데이터처럼 머리 뒤가 영문·숫자뿐이라 모든 처리 규칙이 그림 데이터와 똑같이 다룬다. 길이를 세는 규칙({1,40} 등)에도 둘 다 걸리지 않게 표시를 256자로 둔다
+//  - 앞뒤가 ( ) 또는 " " 인 자리(마크다운 그림 주소, src="…", <!-- [IMG: "…"] -->)에만 쓰인 그림 키의 큰 base64 그림만 바꾼다. 다른 그림은 예전처럼 데이터를 넣는다
+//  - 표시는 그대로(src 등) 또는 encodeURIComponent 모양(마크다운 그림의 data-imgid·삭제 버튼)으로만 나와야 한다.
+//    다른 모양으로 남은 표시가 하나라도 있으면 그 결과를 버리고 예전 방법으로 다시 그린다(표시가 화면에 남지 않는다)
+//  - 표시의 무작위 글자가 교안 글에 이미 있으면 바꾸지 않는다(교안 글로 표시를 흉내 낼 수 없다)
+// 그린 결과(표시가 든 HTML)는 넣은 글·그림이 꼭 같을 때만 다시 쓴다(lessonScreenCache). 글을 고치거나 그림이 바뀌면 키가 달라져 새로 그린다
+const LESSON_SCREEN_PICTURE_MIN = 4096; // 이보다 짧은 그림은 글에 그대로 넣는다(바꿔도 빨라지지 않는다)
+const LESSON_SCREEN_MARK_LENGTH = 256; // 표시 길이(그림 머리 포함)
+const LESSON_SCREEN_REF = /local:([\w-]{1,80})(?![\w-])/g; // inlineLessonImages(lesson-export.js)와 같은 그림 키 모양
+const LESSON_SCREEN_HEAD = /^data:image\/[A-Za-z0-9.+-]+(?:;[\w.+-]+=[\w.+-]+)*;base64,$/; // 바꿀 그림의 머리
+const LESSON_SCREEN_BASE64 = /^[A-Za-z0-9+/=]*$/; // 머리 뒤가 이 글자뿐인 그림만 바꾼다
+const LESSON_SCREEN_CACHE_SIZE = 8; // 기억해 둘 그린 결과 수(탭 몇 개를 오가도 다시 그리지 않게)
+const LESSON_SCREEN_CACHE_CHARS = 4000000; // 이보다 긴 결과는 기억하지 않는다(그림 데이터가 그대로 든 결과)
+let lessonScreenCache = []; // 최근에 쓴 것이 앞. { input, html, marks }
+
+// 이번 그리기에만 쓰는 무작위 글자(영문 소문자·숫자 24자)
+function lessonScreenNonce() {
+    const bytes = new Uint8Array(24);
+    if (typeof crypto !== 'undefined' && crypto && typeof crypto.getRandomValues === 'function') crypto.getRandomValues(bytes);
+    else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+    return Array.from(bytes, byte => 'abcdefghijklmnopqrstuvwxyz0123456789'[byte % 36]).join('');
+}
+
+// 그린 결과를 가르는 것: 넣은 글, 글에 쓰인 그림 키와 그 그림 값, 그리는 함수들(테스트가 바꿔 끼운 함수도 가른다)
+function lessonScreenInput(md, images) {
+    const text = String(md || '');
+    const picture = typeof EXPORT_PICTURE_RE !== 'undefined' ? EXPORT_PICTURE_RE : /^data:image\//;
+    const pictures = new Map(Object.entries(images || {}).filter(([, data]) => typeof data === 'string' && picture.test(data)));
+    const refs = new Map();
+    const loose = new Set(); // ( ) · " " 밖에서도 쓰인 그림 키
+    for (const match of text.matchAll(LESSON_SCREEN_REF)) {
+        const key = match[1];
+        if (!refs.has(key)) refs.set(key, pictures.get(key));
+        const before = text[match.index - 1];
+        const after = text[match.index + match[0].length];
+        if (!((before === '(' || before === '"') && (after === ')' || after === '"'))) loose.add(key);
+    }
+    const pipeline = [
+        typeof inlineLessonImages === 'function' ? inlineLessonImages : null,
+        typeof preprocessMarkdown === 'function' ? preprocessMarkdown : null,
+        renderLessonHTML,
+        typeof stripInstructorCallouts === 'function' ? stripInstructorCallouts : null,
+        typeof marked !== 'undefined' ? marked.parse : null,
+        typeof applyPeriodLineBreakHTML === 'function' ? applyPeriodLineBreakHTML : null,
+        typeof markTermParagraphs === 'function' ? markTermParagraphs : null,
+        typeof postprocessHtml === 'function' ? postprocessHtml : null,
+        typeof keepChosenNumbering === 'function' ? keepChosenNumbering : null,
+        typeof sanitizeLessonHtml === 'function' ? sanitizeLessonHtml : null,
+        typeof DOMParser !== 'undefined' ? DOMParser : null
+    ];
+    return { text, refs: [...refs], loose, pipeline };
+}
+
+// 같은 글·그림·함수로 그린 결과인가(그림 값은 같은 글자열이어야 한다)
+function sameLessonScreenInput(a, b) {
+    return !!a && !!b && a.text === b.text
+        && a.pipeline.length === b.pipeline.length && a.pipeline.every((fn, i) => fn === b.pipeline[i])
+        && a.refs.length === b.refs.length && a.refs.every(([key, value], i) => b.refs[i][0] === key && b.refs[i][1] === value);
+}
+
+// 바꿀 그림과 표시. 바꿀 그림이 없거나 무작위 글자(조각 하나라도)가 글에 있으면 null
+function lessonScreenMarks(input, images) {
+    const nonce = lessonScreenNonce();
+    const parts = [nonce.slice(0, 8), nonce.slice(8, 16), nonce.slice(16)]; // 표시가 쪼개져 남았는지 볼 조각
+    if (parts.some(part => input.text.includes(part))) return null;
+    // 기억해 둔 결과에서 이미 살펴본 그림(같은 글자열)은 base64인지 다시 훑지 않는다(그림 하나에 1ms쯤 걸린다)
+    const checked = new Set(lessonScreenCache.flatMap(entry => (entry.marks ? entry.marks.list.map(mark => mark.data) : [])));
+    const list = [];
+    const tokens = new Map(); // 그림 키 → 그림 머리 + 표시
+    input.refs.forEach(([key, data]) => {
+        if (input.loose.has(key) || typeof data !== 'string' || data.length < LESSON_SCREEN_PICTURE_MIN) return;
+        const comma = data.indexOf(',');
+        const head = data.slice(0, comma + 1);
+        const body = data.slice(comma + 1);
+        if (comma < 0 || !LESSON_SCREEN_HEAD.test(head) || !(checked.has(data) || LESSON_SCREEN_BASE64.test(body))) return;
+        const core = `Lv${nonce}k${list.length}z`;
+        const marker = core + 'A'.repeat(Math.max(0, LESSON_SCREEN_MARK_LENGTH - head.length - core.length - 1)) + 'Q';
+        list.push({ marker, head, encodedHead: encodeURIComponent(head), body, data });
+        tokens.set(key, head + marker);
+    });
+    if (!list.length) return null;
+    // 그림 목록은 그대로 두고 바꾼 그림만 표시로 바꾼 새 목록(inlineLessonImages가 같은 규칙으로 넣는다)
+    const swapped = Object.fromEntries(Object.entries(images || {}).map(([key, data]) => [key, tokens.has(key) ? tokens.get(key) : data]));
+    return { nonce, parts, list, images: swapped };
+}
+
+// html 안에 part가 몇 번 있는가
+function countLessonScreenPart(html, part) {
+    let count = 0;
+    for (let at = html.indexOf(part); at !== -1; at = html.indexOf(part, at + part.length)) count += 1;
+    return count;
+}
+
+// 표시를 그림 데이터로 되돌린다. 표시가 그대로(그림 머리 뒤) 또는 encodeURIComponent 모양(바꾼 머리 뒤)이 아닌 자리에 있거나,
+// 무작위 글자의 조각이 표시 밖에도 있으면(처리 규칙이 표시를 쪼갰다) null
+function restoreLessonScreenMarks(html, marks) {
+    const pieces = [];
+    const encoded = new Map();
+    let found = 0;
+    let from = 0;
+    let at = html.indexOf(marks.nonce);
+    while (at !== -1) {
+        const start = at - 2;
+        const index = /^k(\d+)z/.exec(html.slice(at + marks.nonce.length, at + marks.nonce.length + 12));
+        const mark = index && marks.list[Number(index[1])];
+        if (!mark || start < from || !html.startsWith(mark.marker, start)) return null;
+        let body;
+        if (start - mark.head.length >= from && html.startsWith(mark.head, start - mark.head.length)) body = mark.body;
+        else if (start - mark.encodedHead.length >= from && html.startsWith(mark.encodedHead, start - mark.encodedHead.length)) {
+            if (!encoded.has(mark)) encoded.set(mark, encodeURIComponent(mark.body));
+            body = encoded.get(mark);
+        } else return null;
+        found += 1;
+        pieces.push(html.slice(from, start), body);
+        from = start + mark.marker.length;
+        at = html.indexOf(marks.nonce, from);
+    }
+    if (marks.parts.some(part => countLessonScreenPart(html, part) !== found)) return null;
+    if (!found) return html;
+    pieces.push(html.slice(from));
+    return pieces.join('');
+}
+
+// 그린 결과를 기억한다(최근 것을 앞에, 정한 수까지). 표시로 바꾼 그림 목록(marks.images)은 두지 않는다(글에 쓰지 않은 그림까지 붙잡지 않게)
+function rememberLessonScreen(input, html, marks) {
+    if (html.length > LESSON_SCREEN_CACHE_CHARS) return;
+    const kept = marks && { nonce: marks.nonce, parts: marks.parts, list: marks.list };
+    lessonScreenCache = [{ input, html, marks: kept }, ...lessonScreenCache.filter(entry => !sameLessonScreenInput(entry.input, input))].slice(0, LESSON_SCREEN_CACHE_SIZE);
+}
+
+function forgetLessonScreens() {
+    lessonScreenCache = [];
+}
+
+// 기억해 둔 결과나 표시로 그린 화면 HTML. 표시를 쓸 수 없으면(바꿀 그림이 없거나 표시가 다른 모양으로 남았다) null
+function drawMarkedLessonScreen(input, md, images) {
+    const cached = lessonScreenCache.find(entry => sameLessonScreenInput(entry.input, input));
+    const restored = cached && (cached.marks ? restoreLessonScreenMarks(cached.html, cached.marks) : cached.html);
+    if (typeof restored === 'string') {
+        lessonScreenCache = [cached, ...lessonScreenCache.filter(entry => entry !== cached)];
+        return restored;
+    }
+    const marks = lessonScreenMarks(input, images);
+    if (!marks) return null;
+    const html = renderLessonHTML(preprocessMarkdown(inlineLessonImages(md, marks.images)));
+    const done = restoreLessonScreenMarks(html, marks);
+    if (done === null) {
+        console.warn('[차시 화면] 그림 표시가 다른 모양으로 남아 그림을 넣은 글로 다시 그립니다.');
+        return null;
+    }
+    rememberLessonScreen(input, html, marks);
+    return done;
+}
+
+// input(lessonScreenInput)으로 그린 차시 화면 HTML. renderLessonHTML(preprocessMarkdown(inlineLessonImages(md, images)))와 같은 글을 돌려주고, 그 식이 던질 때 같은 오류를 던진다
+function drawLessonScreen(input, md, images) {
+    try {
+        const html = drawMarkedLessonScreen(input, md, images);
+        if (html !== null) return html;
+    } catch (err) {
+        console.warn('[차시 화면] 그림을 뺀 글로 그리지 못해 그림을 넣은 글로 다시 그립니다:', err?.message || err);
+    }
+    const html = renderLessonHTML(preprocessMarkdown(inlineLessonImages(md, images)));
+    rememberLessonScreen(input, html, null);
+    return html;
+}
+
+function renderLessonScreen(md, images) {
+    return drawLessonScreen(lessonScreenInput(md, images), md, images);
+}
+
 // v5.9 포팅: 한국어 마침표 뒤 줄바꿈 HTML 후처리
 function applyPeriodLineBreakHTML(html) {
     if (!html) return html;
@@ -3086,16 +3261,10 @@ function renderEditor(mod) {
     // [이슈#2] 현재 탭에 생성된 내용이 없는지 판별 (심화학습 등 미생성 탭의 빈 화면 방지)
     const _tabEmpty = !renderText || !String(renderText).trim();
 
-    // 렌더 시 local:그림 id를 저장된 그림으로 바꾸고, 없는 그림 자리(AI가 규칙을 무시하고 낸 local: 링크 포함)는 비운다(내보내기와 같은 규칙, lesson-export.js inlineLessonImages).
-    // 그림 키 모양 하나로 찾아 그림 목록에서 꺼내므로(그림 id로 정규식을 만들지 않는다) 이상한 id로 차시가 열리지 않거나 멈추지 않고, img_1이 img_10을 건드리지 않는다
-    renderText = inlineLessonImages(renderText, mod.images);
-
-    // v7.6: 공통 마크다운 전처리 적용
-    renderText = preprocessMarkdown(renderText);
-
     // 안정화: marked.js 로드 실패 시 방어
 
     let htmlContent = '';
+    let drawn = null; // 이 화면에 그린 교안의 글·그림(lessonScreenInput). 보기 모드 전환(toggleEditorMode)이 같은 글·그림이면 다시 그리지 않는다
 
     // 이 탭을 만들고 있거나 전체 생성이 차례로 채우는 중이면 기다림 안내를 보인다. 다른 탭을 만드는 작업이면 평소 화면을 둔다
     const buildingHere = window.isPipelineStep(currentLessonTab, mod.id);
@@ -3115,14 +3284,22 @@ function renderEditor(mod) {
 
     } else {
 
+        // 렌더 시 local:그림 id를 저장된 그림으로 바꾸고, 없는 그림 자리(AI가 규칙을 무시하고 낸 local: 링크 포함)는 비운다(내보내기와 같은 규칙, lesson-export.js inlineLessonImages).
+        // 그림 키 모양 하나로 찾아 그림 목록에서 꺼내므로(그림 id로 정규식을 만들지 않는다) 이상한 id로 차시가 열리지 않거나 멈추지 않고, img_1이 img_10을 건드리지 않는다.
+        // 그림 넣기 → v7.6 공통 마크다운 전처리 → renderLessonHTML과 같은 HTML을 그리되, 큰 그림 데이터는 글 처리 밖에 두고 맨 끝에 넣는다(drawLessonScreen)
+        const screenInput = lessonScreenInput(renderText, mod.images);
+
         try {
 
             // 교안 렌더 단일 파이프라인 (collapse→marked→reParse→마침표줄바꿈→postprocess)
-            htmlContent = renderLessonHTML(renderText);
+            htmlContent = drawLessonScreen(screenInput, renderText, mod.images);
+            drawn = screenInput;
 
         } catch (e) {
 
-            htmlContent = `<div class="p-4 bg-red-500/20 border border-red-500 text-red-400 rounded">마크다운 파싱 오류: ${escapeHtml(String(e.message || e))}</div><pre class="text-gray-200 mt-4">${renderText.replace(/</g, '&lt;')}</pre>`;
+            // 오류 화면에는 예전처럼 그림을 넣고 전처리한 글을 보인다
+            const shownText = preprocessMarkdown(inlineLessonImages(renderText, mod.images));
+            htmlContent = `<div class="p-4 bg-red-500/20 border border-red-500 text-red-400 rounded">마크다운 파싱 오류: ${escapeHtml(String(e.message || e))}</div><pre class="text-gray-200 mt-4">${shownText.replace(/</g, '&lt;')}</pre>`;
 
         }
 
@@ -3244,7 +3421,10 @@ ${tabGenerateButtonsHtml(mod, tabless)}
     cmdBar.classList.remove('hidden');
     window.enhanceRawView?.();
     window.syncReviewBadge?.(mod);
+    // 위에서 #render-view에 넣은 교안을 보기 모드 전환이 같은 글·그림으로 다시 그리지 않게 알린다(바로 다음 호출에서만 쓴다)
+    drawnLessonScreen = drawn && { input: drawn, view: document.getElementById('render-view') };
     toggleEditorMode('view');
+    drawnLessonScreen = null;
     applyLessonPanel(mod);
     syncSlidePanel(mod);
 
@@ -3267,7 +3447,13 @@ function handleInlineEditDblClick(e) {
 }
 
 
+// renderEditor가 방금 #render-view에 넣은 교안 { input: lessonScreenInput, view: #render-view }. renderEditor 안의 toggleEditorMode('view') 한 번만 읽고 비운다
+let drawnLessonScreen = null;
+
 window.toggleEditorMode = function (mode) {
+
+    const drawn = drawnLessonScreen;
+    drawnLessonScreen = null;
 
     const renderView = document.getElementById('render-view');
 
@@ -3326,18 +3512,17 @@ window.toggleEditorMode = function (mode) {
         if (mod && (rawView.value.trim() || getActiveTabContent(mod))) { // 빈 탭은 renderEditor가 그린 안내를 둔다
 
             // 칸에는 저장된 원문이 있다. 화면에는 첫머리를 정리해 그린다(renderEditor와 같은 모양)
-            let renderText = typeof cleanLessonOpening === 'function' ? cleanLessonOpening(rawView.value) : rawView.value;
+            const renderText = typeof cleanLessonOpening === 'function' ? cleanLessonOpening(rawView.value) : rawView.value;
 
-            // 보기 모드로 돌아올 때도 같은 규칙으로 그림을 넣고 없는 그림 자리는 비운다(lesson-export.js inlineLessonImages)
-            renderText = inlineLessonImages(renderText, mod.images);
-
-            // v7.6: 마크다운 전처리 (두 번째 렌더 경로에도 동일 적용)
-            renderText = preprocessMarkdown(renderText);
+            // 보기 모드로 돌아올 때도 같은 규칙으로 그림을 넣고 없는 그림 자리는 비우고(lesson-export.js inlineLessonImages), v7.6 마크다운 전처리도 같다(drawLessonScreen)
+            const screenInput = lessonScreenInput(renderText, mod.images);
 
             try {
 
-                // 교안 렌더 단일 파이프라인 (collapse→marked→reParse→마침표줄바꿈→postprocess)
-                renderView.innerHTML = renderLessonHTML(renderText);
+                // 교안 렌더 단일 파이프라인 (collapse→marked→reParse→마침표줄바꿈→postprocess).
+                // renderEditor가 방금 같은 글·그림으로 그려 넣은 화면이면 그대로 둔다(같은 HTML을 다시 그리고 다시 넣지 않는다)
+                const same = !!drawn && drawn.view === renderView && sameLessonScreenInput(drawn.input, screenInput);
+                if (!same) renderView.innerHTML = drawLessonScreen(screenInput, renderText, mod.images);
                 addImageDeleteButtons(renderView, mod); // 그림 틀·붙여 넣은 그림에도 삭제 버튼(마크다운 그림은 렌더러가 단다)
                 window.applyWhiteboardVideos?.(mod); // 판서 영상으로 바꾼 그림은 영상으로, 나머지 그림에는 바꾸기 버튼
 
