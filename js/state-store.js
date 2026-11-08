@@ -312,7 +312,8 @@ async function discardSplitCheck(fresh) {
 }
 
 // 저장본(STORAGE_KEY)의 그림을 읽어 { state, history }로 푼다. 그림을 하나라도 찾지 못하거나 읽지 못하면 던진다(record와 그 그림 수 missingImages를 담아. 막는 창에서 알리고 내려받는다).
-// 저장본을 읽은 뒤 그림을 읽기 전에 다른 탭이 저장하며 그 그림을 정리했을 수 있어, 그림이 없으면 저장본을 다시 읽어 바뀌었으면 새 저장본으로 한 번 더 푼다
+// 저장본을 읽은 뒤 그림을 읽기 전에 다른 탭이 저장하며 그 그림을 정리했을 수 있어, 그림이 없으면 저장본을 다시 읽어 바뀌었으면 새 저장본으로 한 번 더 푼다.
+// 다시 읽은 저장본이 예전 모양({ state, history })이면(다른 탭이 작아진 작업을 작업 전체로 쓰며 그림을 지웠다. writeSplitSaveWhole) 그 저장본을 예전 저장본처럼 그대로 돌려준다
 async function readSplitSave(record) {
     let current = record;
     try {
@@ -322,6 +323,9 @@ async function readSplitSave(record) {
             if (isSplitSave(now) && !sameSplitSaveValue(now, current)) {
                 current = now;
                 opened = await openStoredSplitSave(current);
+            } else if (splitSavePlain(now) && splitSavePlain(now.state) && Array.isArray(now.history)) {
+                splitSaveStored = false; // 지금 저장본은 이 방식이 아니다(다음에 이 방식으로 쓸 때 확인용 이름에 먼저 쓴다)
+                return now;
             }
         }
         if (opened.missing.length) throw Object.assign(new Error(`저장본이 가리키는 그림 ${opened.missing.length}개를 찾지 못하거나 읽지 못했습니다`), { missingImages: opened.missing.length });

@@ -429,6 +429,34 @@ test('여는 사이 다른 탭이 저장하며 그림을 정리했으면 새 저
     assert.deepStrictEqual(opening.work(), tabA.work());
 });
 
+test('여는 사이 다른 탭이 작아진 작업을 저장했으면(작업 전체를 값 그대로 쓰며 그림을 지웠다) 다시 읽은 예전 모양 저장본을 그대로 연다(읽지 못한 창도, 그림 수 글도 없다)', async () => {
+    const { shared } = await migrated();
+    const tabA = await reopen(shared);
+    tabA.run("globalState.courseTitle = 'A가 줄인 작업'; splitSaveMinBytes = storedSizeEstimate({ state: globalState, history: contentHistory }) + 1000"); // A의 작업이 작아졌다
+    const opening = makeApp(shared);
+    let first = true;
+    opening.ctx.__afterRead = async key => {
+        if (key !== KEY || !first) return;
+        first = false;
+        assert.strictEqual(await tabA.ctx.saveState(), true); // 저장본을 읽은 바로 뒤에 다른 탭이 작아진 작업을 저장한다
+        const raw = shared.data.get(KEY);
+        assert.ok(!raw.teacherSplit && raw.state && Array.isArray(raw.history), '저장본은 예전 모양({ state, history })');
+        assert.deepStrictEqual(imageKeys(shared), [], '그림은 지웠다');
+    };
+    opening.run('(() => { const get = DBManager.getItem; DBManager.getItem = async key => { const value = await get.call(DBManager, key); await __afterRead(key); return value; }; })()');
+    assert.strictEqual(await opening.ctx.restoreState(), 'ok', opening.log.errors.join('|'));
+    assert.deepStrictEqual(opening.work(), tabA.work());
+    assert.strictEqual(opening.work().globalState.courseTitle, 'A가 줄인 작업');
+    assert.deepStrictEqual([opening.ctx.__flags().stateLoadFailed, opening.run('unreadMissingImages'), opening.log.dialogs], [false, 0, 0], '읽지 못한 창을 띄우지 않는다');
+    assert.ok(!opening.run("stateLoadFailedText({ download: true, missingImages: unreadMissingImages })").includes('찾지 못하거나'), '그림을 찾지 못했다는 글이 없다');
+    // 연 탭의 다음 큰 저장은 예전 모양 저장본을 처음 바꾸는 것이라 확인용 이름에 먼저 쓴다
+    const mark = shared.log.length;
+    assert.strictEqual(await opening.ctx.saveState(), true);
+    assert.ok(shared.log.slice(mark).some(write => write.key === CHECK), '확인하고 옮긴다');
+    assertSplitRecord(shared);
+    assert.deepStrictEqual((await reopen(shared)).work(), opening.work());
+});
+
 test('저장본 풀기는 쓴 값을 글자 하나 다르지 않게 돌려준다(\\u0000으로 시작하는 글, 그림 자리처럼 생긴 글, teacher-image 참조, 짧은 그림, 휴지통·참고 그림·교수안 그림)', async () => {
     const { shared, app } = await migrated();
     assertSplitRecord(shared);
