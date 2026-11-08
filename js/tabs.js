@@ -668,6 +668,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         if (archivePartial) await archiveContent({ title: `${mod.title} · ${tabMeta.label}`, content: previous, images: mod.images, tabId, lesson: mod }, '다시 생성 전');
         mod.tabContents[tabId] = resultText;
         if (isQuestionBankTab(tabId)) warnUncoveredObjectives(mod, resultText, tabId);
+        if (isQuestionBankTab(tabId) && typeof noteQbankTabQuestions === 'function') noteQbankTabQuestions(mod, tabId, previous); // 새로 만든 문항을 AI 문항으로 기록(course-qbank-regen.js)
         mod.status = 'done';
         Object.assign(mod, withHistoryNote(mod, `${tabMeta.label} ${previous ? 'AI 재생성' : 'AI 생성'}`));
 
