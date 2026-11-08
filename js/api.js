@@ -3499,6 +3499,7 @@ function handleInlineEditDblClick(e) {
 //  - SVG 안의 스타일·화살표는 그 SVG의 id를 가리킨다. 기억한 SVG의 id가 이미 화면에 있으면(한 화면에 같은 코드가 둘) 새 id로 다시 그린다. id 번호는 이 창에서 겹치지 않는다
 //  - #render-view에 교안을 넣을 때마다(toggleEditorMode) 새 차례로 그리고 앞 차례는 멈춘다. 떨어져 나간 화면(탭을 바꿨다)이나 가린 화면(원문 수정·슬라이드·문제은행·교수안)에는 그리지 않는다.
 //    가린 화면을 다시 보일 때는 renderEditor·toggleEditorMode('view')가 교안을 다시 넣고 새 차례로 그린다
+//  - 화면을 내보낼 때(lesson-export.js lessonTabHtml) 화면이 아직 그리지 않은 다이어그램은 화면을 복사해 복사본에 같은 방법으로 그린다(lessonViewForExport). 화면에는 넣지 않는다
 //  - mermaid로 새로 그리기 전마다 한 번 쉰다(setTimeout). 그사이 누른 탭 바꾸기를 먼저 처리해 앞 차례를 멈출 수 있게
 const LESSON_DIAGRAM_DELAY = 200; // 교안을 넣은 뒤 그리기 시작까지(ms)
 const LESSON_DIAGRAM_CACHE_SIZE = 300; // 기억할 SVG 수(오래 쓰지 않은 것부터 잊는다)
@@ -3507,6 +3508,7 @@ const LESSON_DIAGRAM_SVG_MAX = 800000; // 이보다 큰 SVG는 기억하지 않�
 let lessonDiagramSvgs = []; // { code, id, svg }. 최근에 쓴 것이 앞
 let lessonDiagramPass = 0; // 다이어그램 그리기 차례
 let lessonDiagramSeq = 0; // 그린 SVG의 id 번호
+const lessonDiagramsDone = new WeakSet(); // 그리기가 손댄 다이어그램 칸(그렸거나, 기억한 SVG를 넣었거나, 그리지 못해 안내를 넣었거나, 빈 코드라 숨겼다)
 
 // 원문 수정·슬라이드·문제은행(hidden)이나 교수안(gyosuan-covered)이 화면을 가렸는가
 const lessonViewCovered = view => view.classList.contains('hidden') || view.classList.contains('gyosuan-covered');
@@ -3565,35 +3567,57 @@ async function renderLessonDiagram(el, code, i) {
     }
 }
 
-// renderView에서 아직 SVG로 바뀌지 않은 다이어그램을 하나씩 그린다(하나 실패해도 나머지 계속).
-// pass: 이 그리기의 차례. 새 차례가 시작됐거나 화면이 떨어져 나가거나 가려지면 다음 다이어그램 앞에서 멈춘다
-async function drawLessonDiagrams(renderView, pass) {
-    const live = () => pass === lessonDiagramPass && renderView.isConnected !== false && !lessonViewCovered(renderView);
-    if (!live()) return;
-    const unrendered = Array.from(renderView.querySelectorAll('.mermaid')).filter(el => !el.querySelector('svg') && el.textContent.trim());
+// 다이어그램 칸(els)을 하나씩 그린다(하나 실패해도 나머지 계속). 같은 코드로 그린 SVG를 기억하고 있으면 그것을 넣는다.
+// live(): 거짓이 되면 다음 다이어그램 앞에서 멈춘다. taken(id): 그 id를 단 요소가 이미 있는가(기억한 SVG를 넣으면 id가 겹친다)
+async function drawDiagramList(els, live, taken) {
     const placed = new Set(); // 이번 차례에 넣은 SVG id
-    for (let i = 0; i < unrendered.length; i++) {
+    for (let i = 0; i < els.length; i++) {
         if (!live()) return;
-        const el = unrendered[i];
+        const el = els[i];
         const code = lessonDiagramCode(el);
         // 빈 코드면 렌더 스킵 (의미없는 에러 방지)
         if (!code || code.length < 8) {
             el.style.display = 'none';
+            lessonDiagramsDone.add(el);
             continue;
         }
         const kept = lessonDiagramSvgs.find(item => item.code === code);
-        if (kept && !placed.has(kept.id) && !document.getElementById(kept.id)) {
+        if (kept && !placed.has(kept.id) && !taken(kept.id)) {
             lessonDiagramSvgs = [kept, ...lessonDiagramSvgs.filter(item => item !== kept)];
             placed.add(kept.id);
             el.innerHTML = kept.svg;
+            lessonDiagramsDone.add(el);
             continue;
         }
         await new Promise(resolve => setTimeout(resolve, 0));
         if (!live()) return;
         const id = await renderLessonDiagram(el, code, i);
+        lessonDiagramsDone.add(el);
         if (id) placed.add(id);
     }
 }
+
+// renderView에서 아직 SVG로 바뀌지 않은 다이어그램을 그린다.
+// pass: 이 그리기의 차례. 새 차례가 시작됐거나 화면이 떨어져 나가거나 가려지면 다음 다이어그램 앞에서 멈춘다
+async function drawLessonDiagrams(renderView, pass) {
+    const live = () => pass === lessonDiagramPass && renderView.isConnected !== false && !lessonViewCovered(renderView);
+    if (!live()) return;
+    const unrendered = Array.from(renderView.querySelectorAll('.mermaid')).filter(el => !el.querySelector('svg') && el.textContent.trim());
+    await drawDiagramList(unrendered, live, id => !!document.getElementById(id));
+}
+
+// 내보낼 차시 화면(lesson-export.js lessonTabHtml). 화면이 아직 그리지 않은 다이어그램이 있으면(가린 화면에는 그리지 않는다, 아직 그리는 중이다)
+// 화면을 복사해 그 복사본에 화면과 같은 방법(기억한 SVG, 다시 그려 보기, 그리지 못하면 안내)으로 그려 돌려준다. 화면에는 넣지 않는다. 그릴 것이 없으면 화면을 그대로 돌려준다
+window.lessonViewForExport = async function (view) {
+    const waiting = el => !lessonDiagramsDone.has(el) && !el.querySelector('svg') && !!el.textContent.trim();
+    const shown = Array.from(view.querySelectorAll('.mermaid'));
+    if (!window.mermaid || !shown.some(waiting)) return view;
+    const copy = view.cloneNode(true);
+    const copies = Array.from(copy.querySelectorAll('.mermaid'));
+    const ids = new Set(Array.from(copy.querySelectorAll('[id]'), el => el.id)); // 복사본에 이미 있는 id(화면에 그린 SVG)
+    await drawDiagramList(copies.filter((el, i) => waiting(shown[i])), () => true, id => ids.has(id));
+    return copy;
+};
 
 // renderEditor가 방금 #render-view에 넣은 교안 { input: lessonScreenInput, view: #render-view }. renderEditor 안의 toggleEditorMode('view') 한 번만 읽고 비운다
 let drawnLessonScreen = null;

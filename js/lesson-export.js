@@ -164,6 +164,7 @@ async function renderExportMermaid(box) {
 }
 
 // 지금 화면에 보이는 탭이면 화면을 그대로 쓴다(그린 다이어그램, 판서 영상). 아니면 같은 순서로 새로 그린다
+// 화면이 아직 그리지 않은 다이어그램(슬라이드·문제은행·교수안이 가린 화면에는 그리지 않는다)은 화면을 복사해 복사본에 그린다(api.js lessonViewForExport)
 // opts.mark = { index, shown }: HTML 파일과 ZIP의 교안.html은 보이는 그림에 다시 불러오기 표시를 단다(PDF에는 달지 않는다)
 async function lessonTabHtml(mod, tab, opts) {
     const view = document.getElementById('render-view');
@@ -171,7 +172,8 @@ async function lessonTabHtml(mod, tab, opts) {
         && tab.id === currentLessonTab && String(getEditingModule?.()?.id) === String(mod.id);
     const mark = box => (opts.mark ? markShownImages(box, mod.images, opts.mark.index, opts.mark.shown) : box);
     if (onScreen) {
-        const exported = opts.videos && window.whiteboardHtmlForExport ? await window.whiteboardHtmlForExport(view) : { html: view.innerHTML, videos: 0 };
+        const drawnView = window.lessonViewForExport ? await window.lessonViewForExport(view) : view;
+        const exported = opts.videos && window.whiteboardHtmlForExport ? await window.whiteboardHtmlForExport(drawnView) : { html: drawnView.innerHTML, videos: 0 };
         return { html: mark(exportStrip(exported.html)).innerHTML, videos: exported.videos };
     }
     const box = exportStrip(renderLessonHTML(preprocessMarkdown(inlineLessonImages(tab.md, mod.images))));

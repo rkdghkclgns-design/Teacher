@@ -706,6 +706,31 @@ test("S26 내보내기 메뉴에서 '빼기'를 고르고 ZIP을 누른 뒤 권�
     assert.deepStrictEqual(files.map(file => [file.via, file.name]), [['folder', '파이썬_전체교안_그림없음.zip']]);
 });
 
+test('S27 교과 MD 내보내기: 차시는 있는데 내용이 든 차시가 없으면 파일을 만들지 않고 내보낼 내용이 없다고 알린다. 빈 차시가 섞이면 내용이 든 차시만 받고, 폴더·다운로드 알림은 받은 파일대로 낸다', async () => {
+    const base = SITES.find(site => site.id === 'ui.js exportSubjectToMD');
+    const empty = { ...base, setup: (ctx, ...rest) => { base.setup(ctx, ...rest); ctx.lessonTabSources = () => []; } };
+    const mixed = {
+        ...base,
+        setup: (ctx, ...rest) => {
+            base.setup(ctx, ...rest);
+            const tabs = ctx.lessonTabSources;
+            ctx.globalState.subjects[0].lessons.push({ id: 2, title: '빈 차시', content: '', tabContents: {}, images: {} });
+            ctx.lessonTabSources = mod => (mod.id === 2 ? [] : tabs(mod));
+        }
+    };
+    for (const mode of ['folder', 'download', 'old']) {
+        const none = await runSite(empty, mode);
+        assert.deepStrictEqual(none.files, [], `${mode}: 파일을 만들지 않는다`);
+        assert.deepStrictEqual([none.ctx.seen.alerts, none.ctx.seen.toasts], [['내보낼 교안 내용이 없습니다. 교안을 먼저 생성해주세요.'], []], `${mode}: 아무 말 없이 끝나지 않는다`);
+        if (none.folder) assert.strictEqual(none.folder.requests, 0, '저장할 파일이 없으면 폴더 권한을 묻지 않는다');
+        const some = await runSite(mixed, mode);
+        assert.deepStrictEqual(some.files.map(file => [file.via, file.name]), [[mode === 'folder' ? 'folder' : 'download', base.name]], mode);
+        assert.deepStrictEqual(some.ctx.seen.alerts, [], mode);
+        const toasts = some.ctx.seen.toasts.map(([message]) => message);
+        assert.deepStrictEqual(toasts, mode === 'folder' ? [`수업자료 폴더에 ${base.name} 파일을 저장했습니다.`] : ['📁 1개 차시 MD 파일 다운로드'], `${mode}: ${toasts.join(' | ')}`);
+    }
+});
+
 (async () => {
     let failed = 0;
     for (const { name, fn } of cases) {

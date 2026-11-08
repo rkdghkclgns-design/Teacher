@@ -110,14 +110,14 @@ function editorArea(elements, writes) {
                 if (tag === 'textarea') el.value = el.defaultValue = unescapeHtml(html.slice(start, html.indexOf('</textarea>', start))).replace(/\r\n?/g, '\n').replace(/^\n/, '');
                 if (id === 'render-view') {
                     let inner = html.slice(start, html.indexOf('<textarea id="raw-view"', start)).replace(/<\/div>\s*$/, '');
-                    let doc = null; // 다이어그램을 찾을 때 그린 글을 domino로 읽은 문서(다이어그램 그리기가 그 안의 요소에 SVG를 넣는다)
-                    Object.defineProperty(el, 'innerHTML', { get: () => inner, set(value) { writes.push(String(value)); inner = String(value); doc = null; } });
+                    let doc = null; // 다이어그램을 찾거나 내보낼 때 그린 글을 domino로 읽은 문서(다이어그램 그리기가 그 안의 요소에 SVG를 넣는다)
+                    const parsed = () => { doc = doc || domino.createDocument(`<div id="view">${inner}</div>`, true); return doc.getElementById('view'); };
+                    // 읽은 문서가 있으면 그 문서의 글을 돌려준다(그린 SVG가 든 화면을 내보낸다)
+                    Object.defineProperty(el, 'innerHTML', { get: () => (doc ? parsed().innerHTML : inner), set(value) { writes.push(String(value)); inner = String(value); doc = null; } });
                     Object.defineProperty(el, 'isConnected', { get: () => elements['render-view'] === el }); // 편집 영역을 다시 그리면 떨어져 나간다
-                    el.querySelectorAll = selector => {
-                        if (selector !== '.mermaid') return [];
-                        doc = doc || domino.createDocument(`<div id="view">${inner}</div>`, true);
-                        return Array.from(doc.getElementById('view').querySelectorAll(selector));
-                    };
+                    Object.defineProperty(el, 'children', { get: () => parsed().children });
+                    el.cloneNode = deep => parsed().cloneNode(deep);
+                    el.querySelectorAll = selector => (selector === '.mermaid' ? Array.from(parsed().querySelectorAll(selector)) : []);
                     el.findById = svgId => (doc ? doc.getElementById(svgId) : null);
                 }
                 elements[id] = el;
@@ -740,6 +740,153 @@ testAsync('다이어그램: 탭을 빠르게 바꾸면 떨어져 나간 화면�
     await runTimers(E);
     assert.deepStrictEqual(drawnNames(E), ['A', 'P'], '떨어져 나간 기본학습의 남은 다이어그램은 그리지 않는다');
     assert.deepStrictEqual(E.timers, [], '걸린 일이 남지 않는다');
+});
+
+/* ---------- 다이어그램 내보내기 ---------- */
+// domino의 목록(querySelectorAll·children)에는 forEach와 반복자가 없어 item(i)로 채운다(image-motion.test.js iterableList와 같다)
+function iterableLists(page) {
+    [page.querySelectorAll('x'), page.createElement('div').querySelectorAll('.x'), page.createElement('div').children].forEach(list => {
+        const proto = Object.getPrototypeOf(list);
+        if (!proto.forEach) Object.defineProperty(proto, 'forEach', { configurable: true, value(fn, self) { for (let i = 0; i < this.length; i++) fn.call(self, this.item(i), i, this); } });
+        if (!proto[Symbol.iterator]) Object.defineProperty(proto, Symbol.iterator, { configurable: true, * value() { for (let i = 0; i < this.length; i++) yield this.item(i); } });
+    });
+}
+
+// 차시 내보내기(lesson-export.js exportLessonDocument)가 만든 문서. PDF는 인쇄 창 대신, HTML은 내려받기 대신 받는다.
+// 내보내기는 화면 글을 새 div에 담아 다듬으므로 그동안만 document.createElement를 domino 문서의 것으로 바꾼다. 경고가 뜨면 실패로 본다
+async function exportedLesson(ctx, mod, format, tabIds) {
+    const page = domino.createDocument('', true);
+    iterableLists(page);
+    const createElement = ctx.document.createElement;
+    const alerts = [];
+    let doc = null;
+    Object.assign(ctx, {
+        printHtmlDocument: async html => { doc = html; },
+        downloadTextFile: text => { doc = text; return text.length; },
+        lessonSourcePayload: () => ({}), lessonSourceScript: () => '', lessonFileName: () => '교안.html',
+        showAlert: message => alerts.push(message)
+    });
+    ctx.document.createElement = tag => page.createElement(tag);
+    try {
+        const running = ctx.exportLessonDocument(mod, format, tabIds);
+        await runTimers(ctx);
+        await running;
+    } finally {
+        ctx.document.createElement = createElement;
+    }
+    assert.deepStrictEqual(alerts, [], `${format}: 경고 없이 내보낸다`);
+    return doc;
+}
+// 내보낸 문서의 다이어그램 칸: 그린 SVG의 id, 그리지 못했다는 안내, 빈 코드라 숨긴 칸, 아니면 남은 코드의 첫 줄
+const exportedDiagrams = doc => Array.from(domino.createDocument(doc, true).querySelectorAll('.mermaid')).map(el => {
+    if (el.querySelector('svg')) return `svg:${el.querySelector('svg').getAttribute('id')}`;
+    if (el.textContent.includes('다이어그램을 그리지 못했습니다')) return '안내';
+    if (/display:\s*none/.test(el.getAttribute('style') || '')) return '숨김';
+    return `코드:${el.textContent.trim().split('\n')[0]}`;
+});
+// HTML 내보내기는 판서 영상을 넣으려고 화면을 복사한다(whiteboard-video.js의 실제 함수. 이 차시에는 판서 영상이 없다)
+const WHITEBOARD_EXPORT = (() => {
+    const text = read('whiteboard-video.js').replace(/\r\n/g, '\n');
+    const at = text.indexOf('window.whiteboardHtmlForExport = async function (view) {');
+    return text.slice(at, text.indexOf('\n};\n', at) + 3);
+})();
+function exportDiagramLesson() {
+    const tabContents = {
+        basicLearn: ['# 내보내기', '', DIAGRAM('A', '입력'), '', '문장입니다. 다음 문장입니다.', '', DIAGRAM('F', '실패'), '', '```mermaid', 'A-B', '```', '', DIAGRAM('B', '읽기')].join('\n'),
+        basicPrac: ['## 실습', '', DIAGRAM('P', '실습')].join('\n'),
+        advLearn: null, advPrac: null, assessment: null
+    };
+    const mod = { id: 1, title: '내보내기', images: {}, tabContents };
+    mod.content = Object.values(tabContents).filter(Boolean).join('\n\n---\n\n');
+    return mod;
+}
+
+// 내보내기 테스트의 편집 영역: 실제 판서 영상 내보내기를 싣고, 교수안이 화면을 가리는 규칙을 넣고, '실패' 다이어그램은 mermaid가 그리지 못한다(화면은 안내를 넣는다)
+function exportDiagramContext() {
+    const E = diagramContext();
+    assert.ok(WHITEBOARD_EXPORT.startsWith('window.whiteboardHtmlForExport') && WHITEBOARD_EXPORT.endsWith('};'));
+    vm.runInContext(WHITEBOARD_EXPORT, E);
+    // 교수안(강사뷰)은 보기 모드의 화면에 gyosuan-covered를 단다(gyosuan-view.js syncGyosuanView와 같은 규칙)
+    E.syncGyosuanView = () => {
+        const raw = E.elements['raw-view'];
+        E.elements['render-view']?.classList.toggle('gyosuan-covered', E.viewMode === 'instructor' && (!raw || raw.classList.contains('hidden')));
+    };
+    E.openQuestionBank = () => {}; // 문제은행 패널의 내용은 이 테스트에서 보지 않는다
+    const render = E.mermaid.render;
+    E.mermaid.render = async (id, code) => {
+        if (!code.includes('실패')) return render(id, code);
+        E.drawnDiagrams.push({ id, code });
+        throw new Error('그릴 수 없는 코드');
+    };
+    return E;
+}
+
+testAsync('다이어그램 내보내기: 슬라이드·문제은행·교수안이 가려 화면에 그리지 않은 다이어그램도 내보낸 PDF·HTML에는 보이는 화면을 내보낼 때와 같이 그려 넣고, 화면에는 그리지 않는다', async () => {
+    const E = exportDiagramContext();
+    const covered = () => ['hidden', 'gyosuan-covered'].some(name => E.elements['render-view'].classList.contains(name));
+    const mod = exportDiagramLesson();
+    openLesson(E, mod);
+    E.viewModule(1);
+    await runTimers(E);
+    assert.ok(!covered());
+    E.drawnDiagrams.length = 0;
+    const visible = { pdf: await exportedLesson(E, mod, 'pdf', ['basicLearn']), html: await exportedLesson(E, mod, 'html', ['basicLearn']) };
+    assert.deepStrictEqual(drawnNames(E), [], '보이는 화면은 그린 그대로 내보낸다(그리지 못한 칸도 다시 그리지 않는다)');
+    const shape = exportedDiagrams(visible.pdf);
+    assert.deepStrictEqual(shape.map(item => item.replace(/^svg:.+/, 'svg')), ['svg', '안내', '숨김', 'svg']);
+    assert.deepStrictEqual(exportedDiagrams(visible.html), shape);
+
+    for (const panel of ['slides', 'qbank', 'gyosuan']) {
+        E.showLessonPanel(panel); // 화면을 다시 그리고 가린다
+        await runTimers(E);
+        assert.ok(covered(), `${panel}: 화면을 가린다`);
+        assert.ok(shownDiagrams(E).every(item => item === null), `${panel}: 가린 화면에는 그리지 않는다`);
+        for (const format of ['pdf', 'html']) {
+            E.drawnDiagrams.length = 0;
+            const doc = await exportedLesson(E, mod, format, ['basicLearn']);
+            assert.deepStrictEqual(exportedDiagrams(doc), shape, `${panel}·${format}: 코드가 아닌 그림(보이는 화면과 같은 SVG)`);
+            assert.strictEqual(doc, visible[format], `${panel}·${format}: 보이는 화면을 내보낸 문서와 같다`);
+            assert.deepStrictEqual(drawnNames(E), ['F', 'F'], `${panel}·${format}: 기억한 SVG를 넣고, 그리지 못한 다이어그램만 화면처럼 두 번 그려 본다`);
+        }
+        assert.ok(shownDiagrams(E).every(item => item === null), `${panel}: 내보낸 뒤에도 화면에는 그리지 않는다`);
+        E.switchLessonTab('basicLearn'); // 패널을 닫는다
+        await runTimers(E);
+        assert.ok(!covered(), `${panel}: 패널을 닫았다`);
+    }
+
+    // 처음 보는 탭을 가린 채 내보내면 내보낼 문서에만 mermaid로 그리고, 그 SVG는 기억해 두었다가 패널을 닫으면 화면에 넣는다
+    vm.runInContext("currentLessonTab = 'basicPrac'", E);
+    E.showLessonPanel('slides');
+    await runTimers(E);
+    E.drawnDiagrams.length = 0;
+    const prac = exportedDiagrams(await exportedLesson(E, mod, 'pdf', ['basicPrac']));
+    assert.deepStrictEqual(drawnNames(E), ['P'], '내보낼 문서에 그린다');
+    assert.ok(prac.length === 1 && prac[0].startsWith('svg:'), `코드가 아닌 그림으로 내보낸다: ${prac}`);
+    assert.ok(shownDiagrams(E).every(item => item === null), '가린 화면에는 그리지 않는다');
+    E.switchLessonTab('basicPrac');
+    await runTimers(E);
+    assert.deepStrictEqual(drawnNames(E), ['P'], '패널을 닫으면 mermaid로 다시 그리지 않는다');
+    assert.deepStrictEqual(shownDiagrams(E).map(item => item && `svg:${item.id}`), prac, '내보낼 때 그린 SVG를 넣는다');
+    assert.deepStrictEqual(E.timers, [], '걸린 일이 남지 않는다');
+});
+
+testAsync('다이어그램 내보내기: 그리던 화면을 교수안이 가리면(다시 그리지 않고) 화면에 그린 다이어그램은 그대로 내보내고, 남은 다이어그램만 복사본에 그린다', async () => {
+    const E = exportDiagramContext();
+    const mod = exportDiagramLesson();
+    openLesson(E, mod);
+    E.viewModule(1);
+    await runTimers(E, () => E.drawnDiagrams.length >= 1); // 첫 다이어그램(A)을 그렸다
+    E.applyViewMode('instructor'); // 강사뷰로 바꿔 화면을 가린다
+    await runTimers(E);
+    assert.ok(E.elements['render-view'].classList.contains('gyosuan-covered'));
+    const partial = shownDiagrams(E);
+    assert.ok(partial[0] && partial.slice(1).every(item => item === null), '가린 뒤로는 화면에 그리지 않는다');
+    E.drawnDiagrams.length = 0;
+    const out = exportedDiagrams(await exportedLesson(E, mod, 'html', ['basicLearn']));
+    assert.deepStrictEqual(drawnNames(E), ['F', 'F', 'B'], '화면에 그린 다이어그램은 다시 그리지 않는다');
+    assert.strictEqual(out[0], `svg:${partial[0].id}`, '화면에 그린 SVG');
+    assert.deepStrictEqual(out.slice(1).map(item => item.replace(/^svg:.+/, 'svg')), ['안내', '숨김', 'svg']);
+    assert.deepStrictEqual(shownDiagrams(E), partial, '화면은 그대로');
 });
 
 (async () => {

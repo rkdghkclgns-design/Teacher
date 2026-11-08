@@ -1072,10 +1072,11 @@ function exportSubjectToMD() {
     if (!subj) return window.showAlert('교과를 먼저 선택해주세요.');
     const lessonList = subj.lessons || [];
     if (!lessonList.length) return window.showAlert('내보낼 차시가 없습니다.');
+    // 내용이 든 차시만 파일로 만든다. 하나도 없으면 아무 말 없이 끝내지 않고 알린다(아래 알림은 받은 파일만 센다)
+    const ready = lessonList.map(mod => ({ mod, tabs: lessonTabSources(mod) })).filter(item => item.tabs.length);
+    if (!ready.length) return window.showAlert('내보낼 교안 내용이 없습니다. 교안을 먼저 생성해주세요.');
     const saves = [];
-    lessonList.forEach(mod => {
-        const tabs = lessonTabSources(mod);
-        if (!tabs.length) return;
+    ready.forEach(({ mod, tabs }) => {
         const blob = new Blob([lessonMarkdownExport(mod, tabs)], { type: 'text/markdown;charset=utf-8' });
         // 기본 저장 폴더(save-folder.js)가 있으면 차례로 맡긴다(폴더에 저장한 것은 그쪽이 알림 하나로 묶는다)
         if (typeof saveFileToFolder === 'function') return void saves.push(saveFileToFolder(blob, lessonFileName(mod, 'md')).catch(showSaveFailure));
@@ -1086,7 +1087,7 @@ function exportSubjectToMD() {
         a.click();
         URL.revokeObjectURL(url);
     });
-    if (typeof saveFileToFolder !== 'function') return window.showToast(`📁 ${lessonList.length}개 차시 MD 파일 다운로드`, 'success');
+    if (typeof saveFileToFolder !== 'function') return window.showToast(`📁 ${ready.length}개 차시 MD 파일 다운로드`, 'success');
     // 다운로드로 받은 파일만 다운로드했다고 알린다
     Promise.all(saves).then(results => {
         const downloaded = results.filter(result => result?.saved === 'download').length;
