@@ -132,8 +132,11 @@ function mdPreviewImages(md, images) {
         .replace(/src="local:[^"]+"/g, 'src="" alt="[이미지 생성 누락]"').replace(/\(local:[^)]+\)/g, '()');
 }
 
+// 보기 화면과 같은 HTML을 큰 그림 데이터는 글 처리 밖에 두고 그린다(api.js renderLessonScreen). 고치기 전 글이면 화면에 그린 결과를 쓰고,
+// 입력할 때마다 글이 바뀌므로 마지막 결과 하나만 따로 기억한다(탭 화면 기억을 밀어내지 않게). 그 함수나 그림 넣기(lesson-export.js)를 싣지 않았으면 그림을 넣은 글로 그린다
 function mdPreviewHtml(mod, text) {
     const shown = typeof cleanLessonOpening === 'function' ? cleanLessonOpening(text) : text; // 보기 화면과 같게 첫머리를 정리해 그린다
+    if (typeof renderLessonScreen === 'function' && typeof inlineLessonImages === 'function') return renderLessonScreen(shown, mod?.images, { preview: true });
     return renderLessonHTML(preprocessMarkdown(mdPreviewImages(shown, mod?.images)));
 }
 

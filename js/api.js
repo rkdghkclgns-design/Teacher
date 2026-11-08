@@ -171,6 +171,226 @@ function renderLessonHTML(md, opts) {
 }
 if (typeof window !== 'undefined') window.renderLessonHTML = renderLessonHTML;
 
+// ── 차시 화면 그리기: 그림 데이터는 글 처리에서 뺀다 ─────────────────────────
+// 차시 화면(renderEditor·toggleEditorMode)의 HTML은 renderLessonHTML(preprocessMarkdown(inlineLessonImages(md, images)))와 한 글자도 다르지 않다.
+// 큰 그림(base64 data URL)을 글에 그대로 넣으면 전처리·marked·마침표 줄바꿈·후처리·정리가 그림 수십 MB를 몇 번씩 훑어 탭 하나에 몇 초가 걸린다.
+// 그래서 큰 그림은 그림 머리(data:image/jpeg;base64,) 뒤를 이번 그리기에만 쓰는 무작위 표시(영문·숫자)로 바꿔 그리고, 맨 끝에 표시를 그림 데이터로 되돌린다.
+//  - 표시도 그림 데이터처럼 머리 뒤가 영문·숫자뿐이라 모든 처리 규칙이 그림 데이터와 똑같이 다룬다. 길이를 세는 규칙({1,40} 등)에도 둘 다 걸리지 않게 표시를 256자로 둔다
+//  - 앞뒤가 ( ) 또는 " " 인 자리(마크다운 그림 주소, src="…", <!-- [IMG: "…"] -->)에만 쓰인 그림 키의 큰 base64 그림만 바꾼다. 다른 그림은 예전처럼 데이터를 넣는다
+//  - 표시는 그대로(src 등) 또는 encodeURIComponent 모양(마크다운 그림의 data-imgid·삭제 버튼)으로만 나와야 한다.
+//    다른 모양으로 남은 표시가 하나라도 있으면 그 결과를 버리고 예전 방법으로 다시 그린다(표시가 화면에 남지 않는다)
+//  - 표시의 무작위 글자가 교안 글에 이미 있으면 바꾸지 않는다(교안 글로 표시를 흉내 낼 수 없다)
+// 그린 결과(표시가 든 HTML)는 넣은 글·그림·그리는 함수가 꼭 같을 때만 다시 쓴다(lessonScreenCache). 글을 고치거나 그림이 바뀌면 키가 달라져 새로 그린다
+//  - 그리는 함수: 그리기가 부르는 함수 선언을 모두 키에 넣는다(lessonScreenInput). 테스트나 기능이 바꿔 끼우면 새로 그린다. const 값은 바뀌지 않는다.
+//    marked 렌더러·설정은 이 파일을 불러올 때 한 번 정한다(아래 marked.use). 렌더러나 설정을 바꾸는 코드는 그 자리에서 forgetLessonScreens()를 부른다
+//  - 지운 그림을 붙잡지 않는다: 같은 글을 다른 그림으로 그리면 예전 결과를 빼고, 그림을 지우면(deleteImage·dropUnusedLessonImages) 그 그림을 쓴 결과를,
+//    상태를 바꾸거나(closeLessonEditor: 저장 파일·폴더 불러오기, 되살리기, 초기화, 지금 교과 지우기) 휴지통에서 영구 삭제하면 모두 잊는다
+//  - 원문 칸 미리 보기(md-toolbar.js)는 입력할 때마다 글이 바뀌므로 마지막 결과 하나만 따로 둔다(lessonPreviewScreen). 탭 화면 기억을 밀어내지 않는다
+const LESSON_SCREEN_PICTURE_MIN = 4096; // 이보다 짧은 그림은 글에 그대로 넣는다(바꿔도 빨라지지 않는다)
+const LESSON_SCREEN_MARK_LENGTH = 256; // 표시 길이(그림 머리 포함)
+const LESSON_SCREEN_REF = /local:([\w-]{1,80})(?![\w-])/g; // inlineLessonImages(lesson-export.js)와 같은 그림 키 모양
+const LESSON_SCREEN_HEAD = /^data:image\/[A-Za-z0-9.+-]+(?:;[\w.+-]+=[\w.+-]+)*;base64,$/; // 바꿀 그림의 머리
+const LESSON_SCREEN_BASE64 = /^[A-Za-z0-9+/=]*$/; // 머리 뒤가 이 글자뿐인 그림만 바꾼다
+const LESSON_SCREEN_CACHE_SIZE = 8; // 기억해 둘 그린 결과 수(탭 몇 개를 오가도 다시 그리지 않게)
+const LESSON_SCREEN_CACHE_CHARS = 4000000; // 이보다 긴 결과는 기억하지 않는다(그림 데이터가 그대로 든 결과)
+let lessonScreenCache = []; // 최근에 쓴 것이 앞. { input, html, marks }
+let lessonPreviewScreen = null; // 원문 칸 미리 보기가 마지막으로 그린 결과(같은 모양)
+
+// 이번 그리기에만 쓰는 무작위 글자(영문 소문자·숫자 24자)
+function lessonScreenNonce() {
+    const bytes = new Uint8Array(24);
+    if (typeof crypto !== 'undefined' && crypto && typeof crypto.getRandomValues === 'function') crypto.getRandomValues(bytes);
+    else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+    return Array.from(bytes, byte => 'abcdefghijklmnopqrstuvwxyz0123456789'[byte % 36]).join('');
+}
+
+// 그린 결과를 가르는 것: 넣은 글, 글에 쓰인 그림 키와 그 그림 값, 그리는 함수들(바꿔 끼운 함수도 가른다)
+function lessonScreenInput(md, images) {
+    const text = String(md || '');
+    const picture = typeof EXPORT_PICTURE_RE !== 'undefined' ? EXPORT_PICTURE_RE : /^data:image\//;
+    const pictures = new Map(Object.entries(images || {}).filter(([, data]) => typeof data === 'string' && picture.test(data)));
+    const refs = new Map();
+    const loose = new Set(); // ( ) · " " 밖에서도 쓰인 그림 키
+    for (const match of text.matchAll(LESSON_SCREEN_REF)) {
+        const key = match[1];
+        if (!refs.has(key)) refs.set(key, pictures.get(key));
+        const before = text[match.index - 1];
+        const after = text[match.index + match[0].length];
+        if (!((before === '(' || before === '"') && (after === ')' || after === '"'))) loose.add(key);
+    }
+    // 그리기가 부르는 함수 선언: 그림 넣기·코드 블록 떼어 두기(data.js)·전처리·렌더, marked와 그 렌더러가 부르는 함수(코드 블록·이름표·mermaid 정리·그림 삭제 버튼·escapeHtml),
+    // 마침표 줄바꿈·용어 문단·후처리·번호 목록, 정리(lesson-sanitize.js)와 그 안의 주소 검사
+    const pipeline = [
+        typeof inlineLessonImages === 'function' ? inlineLessonImages : null,
+        typeof stashCodeFences === 'function' ? stashCodeFences : null,
+        typeof fenceStateAfter === 'function' ? fenceStateAfter : null,
+        typeof preprocessMarkdown === 'function' ? preprocessMarkdown : null,
+        renderLessonHTML,
+        typeof stripInstructorCallouts === 'function' ? stripInstructorCallouts : null,
+        typeof marked !== 'undefined' ? marked.parse : null,
+        sanitizeMermaidCode,
+        lessonCodeBlockHtml,
+        codeBlockLabel,
+        mdImageDeleteButton,
+        typeof escapeHtml === 'function' ? escapeHtml : null,
+        typeof applyPeriodLineBreakHTML === 'function' ? applyPeriodLineBreakHTML : null,
+        typeof markTermParagraphs === 'function' ? markTermParagraphs : null,
+        typeof postprocessHtml === 'function' ? postprocessHtml : null,
+        typeof keepChosenNumbering === 'function' ? keepChosenNumbering : null,
+        typeof sanitizeLessonHtml === 'function' ? sanitizeLessonHtml : null,
+        typeof cleanLessonElement === 'function' ? cleanLessonElement : null,
+        typeof legacyRegenerateArgs === 'function' ? legacyRegenerateArgs : null,
+        typeof isSafeLessonUrl === 'function' ? isSafeLessonUrl : null,
+        typeof DOMParser !== 'undefined' ? DOMParser : null
+    ];
+    return { text, refs: [...refs], loose, pipeline };
+}
+
+// 같은 글·그림·함수로 그린 결과인가(그림 값은 같은 글자열이어야 한다)
+function sameLessonScreenInput(a, b) {
+    return !!a && !!b && a.text === b.text
+        && a.pipeline.length === b.pipeline.length && a.pipeline.every((fn, i) => fn === b.pipeline[i])
+        && a.refs.length === b.refs.length && a.refs.every(([key, value], i) => b.refs[i][0] === key && b.refs[i][1] === value);
+}
+
+// 바꿀 그림과 표시. 바꿀 그림이 없거나 무작위 글자(조각 하나라도)가 글에 있으면 null
+function lessonScreenMarks(input, images) {
+    const nonce = lessonScreenNonce();
+    const parts = [nonce.slice(0, 8), nonce.slice(8, 16), nonce.slice(16)]; // 표시가 쪼개져 남았는지 볼 조각
+    if (parts.some(part => input.text.includes(part))) return null;
+    // 기억해 둔 결과에서 이미 살펴본 그림(같은 글자열)은 base64인지 다시 훑지 않는다(그림 하나에 1ms쯤 걸린다)
+    const checked = new Set([...lessonScreenCache, lessonPreviewScreen].filter(Boolean).flatMap(entry => (entry.marks ? entry.marks.list.map(mark => mark.data) : [])));
+    const list = [];
+    const tokens = new Map(); // 그림 키 → 그림 머리 + 표시
+    input.refs.forEach(([key, data]) => {
+        if (input.loose.has(key) || typeof data !== 'string' || data.length < LESSON_SCREEN_PICTURE_MIN) return;
+        const comma = data.indexOf(',');
+        const head = data.slice(0, comma + 1);
+        const body = data.slice(comma + 1);
+        if (comma < 0 || !LESSON_SCREEN_HEAD.test(head) || !(checked.has(data) || LESSON_SCREEN_BASE64.test(body))) return;
+        const core = `Lv${nonce}k${list.length}z`;
+        const marker = core + 'A'.repeat(Math.max(0, LESSON_SCREEN_MARK_LENGTH - head.length - core.length - 1)) + 'Q';
+        list.push({ marker, head, encodedHead: encodeURIComponent(head), body, data });
+        tokens.set(key, head + marker);
+    });
+    if (!list.length) return null;
+    // 그림 목록은 그대로 두고 바꾼 그림만 표시로 바꾼 새 목록(inlineLessonImages가 같은 규칙으로 넣는다)
+    const swapped = Object.fromEntries(Object.entries(images || {}).map(([key, data]) => [key, tokens.has(key) ? tokens.get(key) : data]));
+    return { nonce, parts, list, images: swapped };
+}
+
+// html 안에 part가 몇 번 있는가
+function countLessonScreenPart(html, part) {
+    let count = 0;
+    for (let at = html.indexOf(part); at !== -1; at = html.indexOf(part, at + part.length)) count += 1;
+    return count;
+}
+
+// 표시를 그림 데이터로 되돌린다. 표시가 그대로(그림 머리 뒤) 또는 encodeURIComponent 모양(바꾼 머리 뒤)이 아닌 자리에 있거나,
+// 무작위 글자의 조각이 표시 밖에도 있으면(처리 규칙이 표시를 쪼갰다) null
+function restoreLessonScreenMarks(html, marks) {
+    const pieces = [];
+    const encoded = new Map();
+    let found = 0;
+    let from = 0;
+    let at = html.indexOf(marks.nonce);
+    while (at !== -1) {
+        const start = at - 2;
+        const index = /^k(\d+)z/.exec(html.slice(at + marks.nonce.length, at + marks.nonce.length + 12));
+        const mark = index && marks.list[Number(index[1])];
+        if (!mark || start < from || !html.startsWith(mark.marker, start)) return null;
+        let body;
+        if (start - mark.head.length >= from && html.startsWith(mark.head, start - mark.head.length)) body = mark.body;
+        else if (start - mark.encodedHead.length >= from && html.startsWith(mark.encodedHead, start - mark.encodedHead.length)) {
+            if (!encoded.has(mark)) encoded.set(mark, encodeURIComponent(mark.body));
+            body = encoded.get(mark);
+        } else return null;
+        found += 1;
+        pieces.push(html.slice(from, start), body);
+        from = start + mark.marker.length;
+        at = html.indexOf(marks.nonce, from);
+    }
+    if (marks.parts.some(part => countLessonScreenPart(html, part) !== found)) return null;
+    if (!found) return html;
+    pieces.push(html.slice(from));
+    return pieces.join('');
+}
+
+// 기억에 둔다. preview면 미리 보기 자리에(하나만), 아니면 탭 화면 기억의 맨 앞에 둔다(정한 수까지).
+// 같은 글로 그린 예전 결과는 뺀다(그 글의 그림을 바꿨으면 예전 그림을 붙잡지 않게)
+function keepLessonScreen(entry, preview) {
+    if (preview) {
+        lessonPreviewScreen = entry;
+        return;
+    }
+    lessonScreenCache = [entry, ...lessonScreenCache.filter(item => item !== entry && item.input.text !== entry.input.text)].slice(0, LESSON_SCREEN_CACHE_SIZE);
+}
+
+// 그린 결과를 기억한다. 표시로 바꾼 그림 목록(marks.images)은 두지 않는다(글에 쓰지 않은 그림까지 붙잡지 않게).
+// 너무 긴 결과는 기억하지 않고, 같은 글로 그린 예전 결과만 뺀다
+function rememberLessonScreen(input, html, marks, preview = false) {
+    if (html.length <= LESSON_SCREEN_CACHE_CHARS) {
+        keepLessonScreen({ input, html, marks: marks && { nonce: marks.nonce, parts: marks.parts, list: marks.list } }, preview);
+    } else if (preview) {
+        lessonPreviewScreen = null;
+    } else {
+        lessonScreenCache = lessonScreenCache.filter(item => item.input.text !== input.text);
+    }
+}
+
+// 기억한 결과를 잊는다. pictures(그림 값 목록)를 주면 그 그림을 쓴 결과만 잊는다(지운 그림을 기억이 붙잡지 않게)
+function forgetLessonScreens(pictures) {
+    if (pictures === undefined) {
+        lessonScreenCache = [];
+        lessonPreviewScreen = null;
+        return;
+    }
+    const gone = [...pictures].filter(value => typeof value === 'string');
+    const keeps = entry => !entry.input.refs.some(([, value]) => gone.includes(value));
+    lessonScreenCache = lessonScreenCache.filter(keeps);
+    if (lessonPreviewScreen && !keeps(lessonPreviewScreen)) lessonPreviewScreen = null;
+}
+
+// 기억해 둔 결과나 표시로 그린 화면 HTML. 표시를 쓸 수 없으면(바꿀 그림이 없거나 표시가 다른 모양으로 남았다) null.
+// 미리 보기도 탭 화면 기억에서 찾고, 탭 화면도 미리 보기 자리에서 찾는다(고친 글로 보기에 돌아오면 미리 보기가 그린 결과를 쓴다)
+function drawMarkedLessonScreen(input, md, images, preview) {
+    const cached = lessonScreenCache.find(entry => sameLessonScreenInput(entry.input, input))
+        || (lessonPreviewScreen && sameLessonScreenInput(lessonPreviewScreen.input, input) ? lessonPreviewScreen : null);
+    const restored = cached && (cached.marks ? restoreLessonScreenMarks(cached.html, cached.marks) : cached.html);
+    if (typeof restored === 'string') {
+        if (!preview) keepLessonScreen(cached, false); // 탭 화면이 쓴 결과는 맨 앞으로(미리 보기 자리에서 찾았으면 탭 화면 기억에도 둔다)
+        return restored;
+    }
+    const marks = lessonScreenMarks(input, images);
+    if (!marks) return null;
+    const html = renderLessonHTML(preprocessMarkdown(inlineLessonImages(md, marks.images)));
+    const done = restoreLessonScreenMarks(html, marks);
+    if (done === null) {
+        console.warn('[차시 화면] 그림 표시가 다른 모양으로 남아 그림을 넣은 글로 다시 그립니다.');
+        return null;
+    }
+    rememberLessonScreen(input, html, marks, preview);
+    return done;
+}
+
+// input(lessonScreenInput)으로 그린 차시 화면 HTML. renderLessonHTML(preprocessMarkdown(inlineLessonImages(md, images)))와 같은 글을 돌려주고, 그 식이 던질 때 같은 오류를 던진다.
+// preview: 원문 칸 미리 보기(결과를 미리 보기 자리에 둔다)
+function drawLessonScreen(input, md, images, preview = false) {
+    try {
+        const html = drawMarkedLessonScreen(input, md, images, preview);
+        if (html !== null) return html;
+    } catch (err) {
+        console.warn('[차시 화면] 그림을 뺀 글로 그리지 못해 그림을 넣은 글로 다시 그립니다:', err?.message || err);
+    }
+    const html = renderLessonHTML(preprocessMarkdown(inlineLessonImages(md, images)));
+    rememberLessonScreen(input, html, null, preview);
+    return html;
+}
+
+function renderLessonScreen(md, images, { preview = false } = {}) {
+    return drawLessonScreen(lessonScreenInput(md, images), md, images, preview);
+}
+
 // v5.9 포팅: 한국어 마침표 뒤 줄바꿈 HTML 후처리
 function applyPeriodLineBreakHTML(html) {
     if (!html) return html;
@@ -509,6 +729,7 @@ if (typeof marked !== 'undefined') {
             `;
         }
     };
+    // 렌더러·설정은 여기서 한 번만 정한다. 나중에 바꾸는 코드는 그 자리에서 forgetLessonScreens()를 불러 차시 화면 기억을 비운다(그린 결과가 바뀐다)
     marked.use({ renderer });
 }
 
@@ -3086,16 +3307,10 @@ function renderEditor(mod) {
     // [이슈#2] 현재 탭에 생성된 내용이 없는지 판별 (심화학습 등 미생성 탭의 빈 화면 방지)
     const _tabEmpty = !renderText || !String(renderText).trim();
 
-    // 렌더 시 local:그림 id를 저장된 그림으로 바꾸고, 없는 그림 자리(AI가 규칙을 무시하고 낸 local: 링크 포함)는 비운다(내보내기와 같은 규칙, lesson-export.js inlineLessonImages).
-    // 그림 키 모양 하나로 찾아 그림 목록에서 꺼내므로(그림 id로 정규식을 만들지 않는다) 이상한 id로 차시가 열리지 않거나 멈추지 않고, img_1이 img_10을 건드리지 않는다
-    renderText = inlineLessonImages(renderText, mod.images);
-
-    // v7.6: 공통 마크다운 전처리 적용
-    renderText = preprocessMarkdown(renderText);
-
     // 안정화: marked.js 로드 실패 시 방어
 
     let htmlContent = '';
+    let drawn = null; // 이 화면에 그린 교안의 글·그림(lessonScreenInput). 보기 모드 전환(toggleEditorMode)이 같은 글·그림이면 다시 그리지 않는다
 
     // 이 탭을 만들고 있거나 전체 생성이 차례로 채우는 중이면 기다림 안내를 보인다. 다른 탭을 만드는 작업이면 평소 화면을 둔다
     const buildingHere = window.isPipelineStep(currentLessonTab, mod.id);
@@ -3115,14 +3330,22 @@ function renderEditor(mod) {
 
     } else {
 
+        // 렌더 시 local:그림 id를 저장된 그림으로 바꾸고, 없는 그림 자리(AI가 규칙을 무시하고 낸 local: 링크 포함)는 비운다(내보내기와 같은 규칙, lesson-export.js inlineLessonImages).
+        // 그림 키 모양 하나로 찾아 그림 목록에서 꺼내므로(그림 id로 정규식을 만들지 않는다) 이상한 id로 차시가 열리지 않거나 멈추지 않고, img_1이 img_10을 건드리지 않는다.
+        // 그림 넣기 → v7.6 공통 마크다운 전처리 → renderLessonHTML과 같은 HTML을 그리되, 큰 그림 데이터는 글 처리 밖에 두고 맨 끝에 넣는다(drawLessonScreen)
+        const screenInput = lessonScreenInput(renderText, mod.images);
+
         try {
 
             // 교안 렌더 단일 파이프라인 (collapse→marked→reParse→마침표줄바꿈→postprocess)
-            htmlContent = renderLessonHTML(renderText);
+            htmlContent = drawLessonScreen(screenInput, renderText, mod.images);
+            drawn = screenInput;
 
         } catch (e) {
 
-            htmlContent = `<div class="p-4 bg-red-500/20 border border-red-500 text-red-400 rounded">마크다운 파싱 오류: ${escapeHtml(String(e.message || e))}</div><pre class="text-gray-200 mt-4">${renderText.replace(/</g, '&lt;')}</pre>`;
+            // 오류 화면에는 예전처럼 그림을 넣고 전처리한 글을 보인다
+            const shownText = preprocessMarkdown(inlineLessonImages(renderText, mod.images));
+            htmlContent = `<div class="p-4 bg-red-500/20 border border-red-500 text-red-400 rounded">마크다운 파싱 오류: ${escapeHtml(String(e.message || e))}</div><pre class="text-gray-200 mt-4">${shownText.replace(/</g, '&lt;')}</pre>`;
 
         }
 
@@ -3244,7 +3467,10 @@ ${tabGenerateButtonsHtml(mod, tabless)}
     cmdBar.classList.remove('hidden');
     window.enhanceRawView?.();
     window.syncReviewBadge?.(mod);
+    // 위에서 #render-view에 넣은 교안을 보기 모드 전환이 같은 글·그림으로 다시 그리지 않게 알린다(바로 다음 호출에서만 쓴다)
+    drawnLessonScreen = drawn && { input: drawn, view: document.getElementById('render-view') };
     toggleEditorMode('view');
+    drawnLessonScreen = null;
     applyLessonPanel(mod);
     syncSlidePanel(mod);
 
@@ -3267,7 +3493,115 @@ function handleInlineEditDblClick(e) {
 }
 
 
+// ── 교안 다이어그램(mermaid) 그리기 ─────────────────────────
+// 그린 SVG는 다이어그램 코드(정리한 뒤)로 기억한다. 같은 코드는 mermaid로 다시 그리지 않고 기억한 SVG를 넣는다(탭을 오가거나 패널을 여닫거나 단락을 고쳐 화면을 다시 그려도).
+// mermaid 설정은 index.html에서 한 번 정한다. 설정을 바꾸는 코드는 lessonDiagramSvgs도 비운다
+//  - SVG 안의 스타일·화살표는 그 SVG의 id를 가리킨다. 기억한 SVG의 id가 이미 화면에 있으면(한 화면에 같은 코드가 둘) 새 id로 다시 그린다. id 번호는 이 창에서 겹치지 않는다
+//  - #render-view에 교안을 넣을 때마다(toggleEditorMode) 새 차례로 그리고 앞 차례는 멈춘다. 떨어져 나간 화면(탭을 바꿨다)이나 가린 화면(원문 수정·슬라이드·문제은행·교수안)에는 그리지 않는다.
+//    가린 화면을 다시 보일 때는 renderEditor·toggleEditorMode('view')가 교안을 다시 넣고 새 차례로 그린다
+//  - mermaid로 새로 그리기 전마다 한 번 쉰다(setTimeout). 그사이 누른 탭 바꾸기를 먼저 처리해 앞 차례를 멈출 수 있게
+const LESSON_DIAGRAM_DELAY = 200; // 교안을 넣은 뒤 그리기 시작까지(ms)
+const LESSON_DIAGRAM_CACHE_SIZE = 300; // 기억할 SVG 수(오래 쓰지 않은 것부터 잊는다)
+const LESSON_DIAGRAM_CACHE_CHARS = 8000000; // 기억한 SVG 글자 수 합의 상한
+const LESSON_DIAGRAM_SVG_MAX = 800000; // 이보다 큰 SVG는 기억하지 않는다(다른 기억을 밀어내지 않게)
+let lessonDiagramSvgs = []; // { code, id, svg }. 최근에 쓴 것이 앞
+let lessonDiagramPass = 0; // 다이어그램 그리기 차례
+let lessonDiagramSeq = 0; // 그린 SVG의 id 번호
+
+// 원문 수정·슬라이드·문제은행(hidden)이나 교수안(gyosuan-covered)이 화면을 가렸는가
+const lessonViewCovered = view => view.classList.contains('hidden') || view.classList.contains('gyosuan-covered');
+
+// 그린 SVG를 기억한다(최근 것을 앞에, 정한 수와 글자 수 합까지)
+function rememberLessonDiagram(code, id, svg) {
+    if (svg.length > LESSON_DIAGRAM_SVG_MAX) return;
+    const list = [{ code, id, svg }, ...lessonDiagramSvgs.filter(item => item.code !== code)].slice(0, LESSON_DIAGRAM_CACHE_SIZE);
+    let chars = 0;
+    const over = list.findIndex(item => (chars += item.svg.length) > LESSON_DIAGRAM_CACHE_CHARS);
+    lessonDiagramSvgs = over === -1 ? list : list.slice(0, over);
+}
+
+// 다이어그램 코드. textContent에 HTML 태그가 흘러들어와 있을 수 있어 텍스트만 다시 고르고(innerText는 가시성 영향, textContent 사용)
+// 안전망 1: HTML 태그·엔티티 완전 제거(렌더 직전 최후 방어선), 안전망 2: sanitizeMermaidCode(괄호·노드 라벨 등 전체 정리)
+function lessonDiagramCode(el) {
+    const code = (el.textContent || '').trim()
+        .replace(/<\/?[a-zA-Z][^>]*>/g, '')
+        .replace(/&lt;|&gt;|&amp;|&quot;|&#39;|&apos;/g, (m) => ({
+            '&lt;': '', '&gt;': '', '&amp;': '&', '&quot;': "'", '&#39;': "'", '&apos;': "'"
+        }[m] || ''))
+        .trim();
+    return typeof sanitizeMermaidCode === 'function' ? sanitizeMermaidCode(code) : code;
+}
+
+// mermaid로 그려 넣고 그린 SVG를 기억한다. 넣은 SVG의 id를 돌려준다(그리지 못했으면 null). i: 화면에서 몇 번째 다이어그램인지(알림에 쓴다)
+async function renderLessonDiagram(el, code, i) {
+    lessonDiagramSeq += 1;
+    const id = `mermaid-svg-${Date.now()}-${lessonDiagramSeq}`;
+    try {
+        const { svg } = await window.mermaid.render(id, code);
+        if (typeof svg === 'string') rememberLessonDiagram(code, id, svg);
+        el.innerHTML = svg;
+        return id;
+    } catch (err) {
+        // 1차 실패 → 더 aggressive sanitize 후 재시도 (괄호/특수문자 일괄 제거)
+        console.warn(`[Mermaid] 다이어그램 ${i + 1} 1차 실패:`, err.message);
+        try {
+            const stripped = code
+                .replace(/\[([^\[\]\n]{1,200})\]/g, (m, inner) => '[' + inner.replace(/[()"\[\]{}]/g, '').trim() + ']')
+                .replace(/\{([^{}\n]{1,200})\}/g, (m, inner) => '{' + inner.replace(/[()"\[\]{}]/g, '').trim() + '}')
+                .replace(/\|([^|\n]{1,200})\|/g, (m, inner) => '|' + inner.replace(/[()"]/g, '').trim() + '|');
+            const { svg } = await window.mermaid.render(id + '_retry', stripped);
+            if (typeof svg === 'string') rememberLessonDiagram(code, id + '_retry', svg);
+            el.innerHTML = svg;
+            return id + '_retry';
+        } catch (err2) {
+            console.warn(`[Mermaid] 다이어그램 ${i + 1} 최종 실패:`, err2.message);
+            el.innerHTML = `<div style="padding:12px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:8px;color:#f87171;font-size:13px;">
+                                        <strong>⚠️ 다이어그램을 그리지 못했습니다</strong><br>
+                                        <code style="font-size:11px;opacity:0.7;">${escapeHtml(err2.message)}</code><br>
+                                        <pre style="margin-top:8px;font-size:11px;opacity:0.5;white-space:pre-wrap;">${escapeHtml(code.substring(0, 200))}</pre>
+                                    </div>`;
+            return null;
+        }
+    }
+}
+
+// renderView에서 아직 SVG로 바뀌지 않은 다이어그램을 하나씩 그린다(하나 실패해도 나머지 계속).
+// pass: 이 그리기의 차례. 새 차례가 시작됐거나 화면이 떨어져 나가거나 가려지면 다음 다이어그램 앞에서 멈춘다
+async function drawLessonDiagrams(renderView, pass) {
+    const live = () => pass === lessonDiagramPass && renderView.isConnected !== false && !lessonViewCovered(renderView);
+    if (!live()) return;
+    const unrendered = Array.from(renderView.querySelectorAll('.mermaid')).filter(el => !el.querySelector('svg') && el.textContent.trim());
+    const placed = new Set(); // 이번 차례에 넣은 SVG id
+    for (let i = 0; i < unrendered.length; i++) {
+        if (!live()) return;
+        const el = unrendered[i];
+        const code = lessonDiagramCode(el);
+        // 빈 코드면 렌더 스킵 (의미없는 에러 방지)
+        if (!code || code.length < 8) {
+            el.style.display = 'none';
+            continue;
+        }
+        const kept = lessonDiagramSvgs.find(item => item.code === code);
+        if (kept && !placed.has(kept.id) && !document.getElementById(kept.id)) {
+            lessonDiagramSvgs = [kept, ...lessonDiagramSvgs.filter(item => item !== kept)];
+            placed.add(kept.id);
+            el.innerHTML = kept.svg;
+            continue;
+        }
+        await new Promise(resolve => setTimeout(resolve, 0));
+        if (!live()) return;
+        const id = await renderLessonDiagram(el, code, i);
+        if (id) placed.add(id);
+    }
+}
+
+// renderEditor가 방금 #render-view에 넣은 교안 { input: lessonScreenInput, view: #render-view }. renderEditor 안의 toggleEditorMode('view') 한 번만 읽고 비운다
+let drawnLessonScreen = null;
+
 window.toggleEditorMode = function (mode) {
+
+    const drawn = drawnLessonScreen;
+    drawnLessonScreen = null;
 
     const renderView = document.getElementById('render-view');
 
@@ -3326,82 +3660,27 @@ window.toggleEditorMode = function (mode) {
         if (mod && (rawView.value.trim() || getActiveTabContent(mod))) { // 빈 탭은 renderEditor가 그린 안내를 둔다
 
             // 칸에는 저장된 원문이 있다. 화면에는 첫머리를 정리해 그린다(renderEditor와 같은 모양)
-            let renderText = typeof cleanLessonOpening === 'function' ? cleanLessonOpening(rawView.value) : rawView.value;
+            const renderText = typeof cleanLessonOpening === 'function' ? cleanLessonOpening(rawView.value) : rawView.value;
 
-            // 보기 모드로 돌아올 때도 같은 규칙으로 그림을 넣고 없는 그림 자리는 비운다(lesson-export.js inlineLessonImages)
-            renderText = inlineLessonImages(renderText, mod.images);
-
-            // v7.6: 마크다운 전처리 (두 번째 렌더 경로에도 동일 적용)
-            renderText = preprocessMarkdown(renderText);
+            // 보기 모드로 돌아올 때도 같은 규칙으로 그림을 넣고 없는 그림 자리는 비우고(lesson-export.js inlineLessonImages), v7.6 마크다운 전처리도 같다(drawLessonScreen)
+            const screenInput = lessonScreenInput(renderText, mod.images);
 
             try {
 
-                // 교안 렌더 단일 파이프라인 (collapse→marked→reParse→마침표줄바꿈→postprocess)
-                renderView.innerHTML = renderLessonHTML(renderText);
+                // 교안 렌더 단일 파이프라인 (collapse→marked→reParse→마침표줄바꿈→postprocess).
+                // renderEditor가 방금 같은 글·그림으로 그려 넣은 화면이면 그대로 둔다(같은 HTML을 다시 그리고 다시 넣지 않는다)
+                const same = !!drawn && drawn.view === renderView && sameLessonScreenInput(drawn.input, screenInput);
+                if (!same) renderView.innerHTML = drawLessonScreen(screenInput, renderText, mod.images);
                 addImageDeleteButtons(renderView, mod); // 그림 틀·붙여 넣은 그림에도 삭제 버튼(마크다운 그림은 렌더러가 단다)
                 window.applyWhiteboardVideos?.(mod); // 판서 영상으로 바꾼 그림은 영상으로, 나머지 그림에는 바꾸기 버튼
 
-                // Mermaid 다이어그램 렌더링 (근본적 수정)
+                // Mermaid 다이어그램: 이 화면을 새 차례로 그린다(앞 차례는 멈춘다). 그린 SVG는 코드로 기억해 다시 쓴다(drawLessonDiagrams)
                 if (window.mermaid) {
-                    setTimeout(async () => {
-                        // 아직 SVG로 변환되지 않은 .mermaid div 찾기
-                        const mermaidDivs = renderView.querySelectorAll('.mermaid');
-                        if (mermaidDivs.length === 0) return;
-
-                        // 이미 렌더링된 노드(SVG 포함) 건너뛰기
-                        const unrendered = Array.from(mermaidDivs).filter(
-                            el => !el.querySelector('svg') && el.textContent.trim()
-                        );
-                        if (unrendered.length === 0) return;
-
-
-                        // 각 다이어그램을 개별적으로 렌더링 (하나 실패해도 나머지 계속)
-                        for (let i = 0; i < unrendered.length; i++) {
-                            const el = unrendered[i];
-                            // textContent 추출 시 HTML 태그가 흘러들어와 있을 수 있으므로
-                            // 강제로 한 번 더 텍스트만 추출 (innerText는 가시성 영향, textContent 사용)
-                            let code = (el.textContent || '').trim();
-                            // 안전망 1: HTML 태그·엔티티 완전 제거 (렌더 직전 최후 방어선)
-                            code = code
-                                .replace(/<\/?[a-zA-Z][^>]*>/g, '')
-                                .replace(/&lt;|&gt;|&amp;|&quot;|&#39;|&apos;/g, (m) => ({
-                                    '&lt;':'', '&gt;':'', '&amp;':'&', '&quot;':"'", '&#39;':"'", '&apos;':"'"
-                                }[m] || ''))
-                                .trim();
-                            // 안전망 2: sanitizeMermaidCode (괄호·노드 라벨 등 전체 정리)
-                            if (typeof sanitizeMermaidCode === 'function') {
-                                code = sanitizeMermaidCode(code);
-                            }
-                            // 빈 코드면 렌더 스킵 (의미없는 에러 방지)
-                            if (!code || code.length < 8) {
-                                el.style.display = 'none';
-                                continue;
-                            }
-                            const id = 'mermaid-svg-' + Date.now() + '-' + i;
-                            try {
-                                const { svg } = await window.mermaid.render(id, code);
-                                el.innerHTML = svg;
-                            } catch (err) {
-                                // 1차 실패 → 더 aggressive sanitize 후 재시도 (괄호/특수문자 일괄 제거)
-                                console.warn(`[Mermaid] 다이어그램 ${i + 1} 1차 실패:`, err.message);
-                                try {
-                                    const stripped = code
-                                        .replace(/\[([^\[\]\n]{1,200})\]/g, (m, inner) => '[' + inner.replace(/[()"\[\]{}]/g, '').trim() + ']')
-                                        .replace(/\{([^{}\n]{1,200})\}/g, (m, inner) => '{' + inner.replace(/[()"\[\]{}]/g, '').trim() + '}')
-                                        .replace(/\|([^|\n]{1,200})\|/g, (m, inner) => '|' + inner.replace(/[()"]/g, '').trim() + '|');
-                                    const { svg } = await window.mermaid.render(id + '_retry', stripped);
-                                    el.innerHTML = svg;
-                                } catch (err2) {
-                                    console.warn(`[Mermaid] 다이어그램 ${i + 1} 최종 실패:`, err2.message);
-                                    el.innerHTML = `<div style="padding:12px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:8px;color:#f87171;font-size:13px;">
-                                        <strong>⚠️ 다이어그램을 그리지 못했습니다</strong><br>
-                                        <code style="font-size:11px;opacity:0.7;">${escapeHtml(err2.message)}</code><br>
-                                        <pre style="margin-top:8px;font-size:11px;opacity:0.5;white-space:pre-wrap;">${escapeHtml(code.substring(0, 200))}</pre>
-                                    </div>`;
-                                }
-                            }
-                        }
-                    }, 200);
+                    lessonDiagramPass += 1;
+                    const pass = lessonDiagramPass;
+                    setTimeout(() => {
+                        drawLessonDiagrams(renderView, pass).catch(err => console.warn('[Mermaid] 다이어그램을 그리다 멈췄습니다:', err?.message || err));
+                    }, LESSON_DIAGRAM_DELAY);
                 }
 
             } catch (e) {
@@ -4202,7 +4481,10 @@ window.deleteImage = async function (imgId) {
         // 지우는 GIF 그림의 기록을 뺀 뒤, 그 원래 그림도 아무 데서도 쓰지 않으면 함께 지운다
         const stills = typeof dropImageMotion === 'function' ? drop.map(key => dropImageMotion(mod, key)?.still).filter(key => typeof key === 'string' && !drop.includes(key)) : [];
         const gone = [...drop, ...stills.filter(key => !lessonStillUsesImage(mod, key))];
-        if (gone.length) mod.images = Object.fromEntries(Object.entries(mod.images).filter(([key]) => !gone.includes(key)));
+        if (gone.length) {
+            forgetLessonScreens(gone.map(key => mod.images[key])); // 지운 그림을 쓴 차시 화면 기억도 그 그림을 놓는다(용량 확보)
+            mod.images = Object.fromEntries(Object.entries(mod.images).filter(([key]) => !gone.includes(key)));
+        }
     }
     rawViewAfterImageDelete(mod, tabId);
     // 저장하지 못했으면(saveState가 이미 알렸다) 지웠다고 알리지 않는다

@@ -328,6 +328,8 @@ function unusedLessonImageIds(mod, extraTexts = []) {
 // 쓰지 않는 그림만 지운다(용량 확보). 다른 곳이 가리키는 그림은 남긴다. 지운 GIF 그림이나 원래 그림의 움직이는 GIF 기록도 뺀다
 function dropUnusedLessonImages(mod, extraTexts = []) {
     const unused = unusedLessonImageIds(mod, extraTexts);
+    // 지운 그림을 쓴 차시 화면 기억도 그 그림을 놓는다(api.js forgetLessonScreens)
+    if (unused.length && typeof forgetLessonScreens === 'function') forgetLessonScreens(unused.map(id => mod.images[id]));
     unused.forEach(id => { delete mod.images[id]; });
     if (!unused.length || !mod.imageMotions || typeof mod.imageMotions !== 'object' || Array.isArray(mod.imageMotions)) return;
     mod.imageMotions = Object.fromEntries(Object.entries(mod.imageMotions).filter(([id, item]) => !unused.includes(id) && !unused.includes(item?.still)));
