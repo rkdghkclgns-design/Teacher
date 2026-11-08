@@ -1112,6 +1112,8 @@ async function importSubjectsBackup(meta) {
 // 지금 연 차시 편집기를 닫는다. 내용이 바뀐 뒤 남은 편집기(원문 칸 등)가 옛 글을 새 내용 위에 저장하지 않게
 function closeLessonEditor() {
     currentEditingModuleId = null;
+    // 상태를 바꾼 뒤(저장 파일·폴더 불러오기, 되살리기, 초기화, 지금 교과 지우기) 부른다. 차시 화면 기억이 예전 차시의 글·그림을 붙잡지 않게 잊는다(api.js)
+    if (typeof forgetLessonScreens === 'function') forgetLessonScreens();
     document.getElementById('raw-view')?.remove();
     const area = document.getElementById('editor-content-area');
     if (area) area.innerHTML = '<div class="h-full flex items-center justify-center text-textMuted text-sm">왼쪽 목록에서 차시를 고르세요.</div>';

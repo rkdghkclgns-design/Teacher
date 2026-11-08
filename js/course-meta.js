@@ -352,6 +352,11 @@ function restoreTrashBatch(group) {
     }, { okLabel: '모두 복원', title: '사본 모두 복원', tone: 'primary' });
 }
 
+// 영구 삭제한 교과·차시의 글·그림을 차시 화면 기억이 붙잡지 않게 잊는다(api.js forgetLessonScreens)
+function forgetPurgedLessonScreens() {
+    if (typeof forgetLessonScreens === 'function') forgetLessonScreens();
+}
+
 async function onTrashClick(event) {
     const action = event.target.dataset?.trashAction;
     if (!action) return;
@@ -360,6 +365,7 @@ async function onTrashClick(event) {
         return window.showConfirm('휴지통의 교과와 차시를 모두 영구 삭제할까요? 되돌릴 수 없습니다.', () => {
             globalState.lessonTrash = [];
             globalState.subjectTrash = [];
+            forgetPurgedLessonScreens();
             return refreshTrash();
         }, { okLabel: '영구 삭제', title: '휴지통 비우기' });
     }
@@ -379,6 +385,7 @@ async function onTrashClick(event) {
         if (!entry || !liveSubjectTrash().includes(entry)) return;
         return window.showConfirm(`'${entry.subject.title}' 교과와 차시 ${trashSubjectLessonCount(entry)}개를 영구 삭제합니다. 되돌릴 수 없습니다.`, () => {
             globalState.subjectTrash = liveSubjectTrash().filter(item => item !== entry);
+            forgetPurgedLessonScreens();
             return refreshTrash();
         }, { okLabel: '영구 삭제', title: '교과 영구 삭제' });
     }
@@ -393,6 +400,7 @@ async function onTrashClick(event) {
     if (action === 'purge') {
         return window.showConfirm(`'${entry.lesson.title}' 차시를 영구 삭제합니다. 되돌릴 수 없습니다.`, () => {
             globalState.lessonTrash = globalState.lessonTrash.filter(item => item !== entry);
+            forgetPurgedLessonScreens();
             return refreshTrash();
         }, { okLabel: '영구 삭제', title: '차시 영구 삭제' });
     }

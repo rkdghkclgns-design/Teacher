@@ -1,6 +1,7 @@
 // 차시 화면 그리기 테스트: 큰 그림 데이터는 글 처리 밖에 두고 맨 끝에 넣는다(api.js drawLessonScreen) (실행: node tests/lesson-screen.test.js)
 // 화면과 같은 marked와 HTML 파서(domino)로 실제 파이프라인을 돌려, 예전 식 renderLessonHTML(preprocessMarkdown(inlineLessonImages(md, images)))과 글자 하나까지 같은지 본다.
 // 탭 바꾸기는 tabs.js·api.js의 실제 switchLessonTab·renderEditor·toggleEditorMode를 돌린다(편집 영역은 id가 있는 요소만 흉내 낸다).
+// 기억한 결과가 지우거나 바꾼 그림을 놓는지, 원문 칸 미리 보기, 다이어그램(mermaid) 그리기(기억한 SVG, 가리거나 떨어져 나간 화면에서 멈추기)도 본다.
 // 처음 한 번: npm install --no-save marked@15.0.12 turndown@7.2.4 (domino는 turndown과 함께 들어온다)
 const fs = require('fs');
 const vm = require('vm');
@@ -8,10 +9,11 @@ const path = require('path');
 const assert = require('assert');
 
 let marked;
+let Marked;
 let domino;
 let NodeFilter;
 try {
-    ({ marked } = require('marked'));
+    ({ marked, Marked } = require('marked'));
     domino = require('@mixmark-io/domino');
     NodeFilter = require('@mixmark-io/domino/lib/NodeFilter');
 } catch (err) {
@@ -50,14 +52,20 @@ function baseContext(extra = {}) {
     return ctx;
 }
 
-// 그리기 파이프라인만 싣는다
-function pipelineContext() {
-    const ctx = baseContext();
+// 그리기 파이프라인만 싣는다. extra.marked: 이 컨텍스트만 쓰는 marked(api.js의 marked.use가 다른 컨텍스트의 렌더러를 덮지 않게, ownMarked)
+function pipelineContext(extra = {}) {
+    const ctx = baseContext(extra);
     vm.createContext(ctx);
     vm.runInContext(sliceFunction(read('ui.js'), 'function escapeHtml('), ctx);
     PIPELINE.forEach(file => vm.runInContext(read(file), ctx, { filename: file }));
     vm.runInContext(read('api.js'), ctx, { filename: 'api.js' });
     return ctx;
+}
+
+// 컨텍스트 하나만 쓰는 marked. 모든 컨텍스트가 같은 marked를 쓰면 마지막에 실은 api.js의 렌더러(그 컨텍스트의 함수를 부른다)가 모두에 쓰인다
+function ownMarked() {
+    const instance = new Marked();
+    return { parse: (...args) => instance.parse(...args), use: (...args) => instance.use(...args) };
 }
 
 /* ---------- 편집 영역 흉내(tests/raw-edit.test.js와 같은 방식) ---------- */
@@ -102,7 +110,15 @@ function editorArea(elements, writes) {
                 if (tag === 'textarea') el.value = el.defaultValue = unescapeHtml(html.slice(start, html.indexOf('</textarea>', start))).replace(/\r\n?/g, '\n').replace(/^\n/, '');
                 if (id === 'render-view') {
                     let inner = html.slice(start, html.indexOf('<textarea id="raw-view"', start)).replace(/<\/div>\s*$/, '');
-                    Object.defineProperty(el, 'innerHTML', { get: () => inner, set(value) { writes.push(String(value)); inner = String(value); } });
+                    let doc = null; // 다이어그램을 찾을 때 그린 글을 domino로 읽은 문서(다이어그램 그리기가 그 안의 요소에 SVG를 넣는다)
+                    Object.defineProperty(el, 'innerHTML', { get: () => inner, set(value) { writes.push(String(value)); inner = String(value); doc = null; } });
+                    Object.defineProperty(el, 'isConnected', { get: () => elements['render-view'] === el }); // 편집 영역을 다시 그리면 떨어져 나간다
+                    el.querySelectorAll = selector => {
+                        if (selector !== '.mermaid') return [];
+                        doc = doc || domino.createDocument(`<div id="view">${inner}</div>`, true);
+                        return Array.from(doc.getElementById('view').querySelectorAll(selector));
+                    };
+                    el.findById = svgId => (doc ? doc.getElementById(svgId) : null);
                 }
                 elements[id] = el;
             }
@@ -118,7 +134,7 @@ function editorContext() {
         saveState: async () => true, archiveContent: async () => {}, renderSidebar() {}, showLessonView() {}, syncGyosuanView() {}, syncSlidePanel() {},
         lessonDesignBrief: () => '', lessonGenBrief: () => '', showAlert() {}, showToast() {}, callGemini: async () => ({}), elements, writes
     });
-    ctx.document.getElementById = id => elements[id] || null;
+    ctx.document.getElementById = id => elements[id] || elements['render-view']?.findById?.(id) || null; // 화면에 넣은 SVG도 id로 찾는다
     elements['editor-content-area'] = editorArea(elements, writes);
     elements['ai-command-bar'] = fakeElement('ai-command-bar', ['hidden']);
     vm.createContext(ctx);
@@ -226,6 +242,8 @@ const test = (name, fn) => {
     count++;
     try { fn(); console.log(`ok - ${name}`); } catch (e) { failed++; console.log(`FAIL - ${name}\n  ${e.stack || e.message}`); }
 };
+const waiting = []; // 기다리는 테스트(그림 지우기·다이어그램 그리기). 맨 끝에 차례로 돌린다
+const testAsync = (name, fn) => waiting.push([name, fn]);
 
 const P = pipelineContext();
 const oldScreen = (ctx, md, images) => ctx.renderLessonHTML(ctx.preprocessMarkdown(ctx.inlineLessonImages(md, images)));
@@ -433,6 +451,85 @@ test('기억한 결과: 같은 글·그림이면 다시 그리지 않고, 글을
     check(MIXED, other, true, '오래되어 잊은 결과');
 });
 
+test('기억한 결과: marked 렌더러 안에서 부르는 함수(코드 블록·이름표·mermaid 정리·그림 삭제 버튼·escapeHtml)나 코드 블록 떼어 두기·주소 검사를 바꿔 끼우면 새로 그린다', () => {
+    const F = pipelineContext({ marked: ownMarked() });
+    const images = { img_1: picture(111, 6000) };
+    const md = '![a](local:img_1)\n\n```js\nconst a = 1;\n```\n\n```mermaid\nflowchart TD\n  A[가 (나)] --> B\n```\n';
+    vm.runInContext('forgetLessonScreens()', F);
+    const first = F.renderLessonScreen(md, images);
+    assert.ok(first === oldScreen(F, md, images), '처음 그린 결과가 예전 식과 같다');
+    const swaps = {
+        lessonCodeBlockHtml: original => (code, info) => original(code, info).replace('class="lesson-code"', 'class="lesson-code CHANGED"'),
+        codeBlockLabel: original => lang => `${original(lang)} CHANGED`,
+        sanitizeMermaidCode: original => code => `${original(code)}\n%% CHANGED`,
+        mdImageDeleteButton: original => (href, imgId) => `${original(href, imgId)}<i>CHANGED</i>`,
+        escapeHtml: original => text => `${original(text)}CHANGED`,
+        stashCodeFences: original => (text, opts) => {
+            const out = original(text, opts);
+            return { text: out.text, restore: value => out.restore(value).replace('const a = 1;', 'const a = CHANGED;') };
+        },
+        isSafeLessonUrl: original => value => !String(value).startsWith('data:') && original(value)
+    };
+    Object.entries(swaps).forEach(([name, make]) => {
+        const original = F[name];
+        F[name] = make(original);
+        try {
+            const expected = oldScreen(F, md, images);
+            assert.ok(expected !== first, `${name}: 바꾼 함수가 화면을 바꾼다`);
+            assert.ok(F.renderLessonScreen(md, images) === expected, `${name}: 바꾼 함수로 다시 그린다(기억한 결과를 쓰지 않는다)`);
+        } finally { F[name] = original; }
+        assert.ok(F.renderLessonScreen(md, images) === first, `${name}: 되돌리면 처음 결과와 같다`);
+    });
+});
+
+// 기억(탭 화면·미리 보기)이 붙잡은 그림 값
+const heldPictures = ctx => vm.runInContext(`[...lessonScreenCache, typeof lessonPreviewScreen === 'undefined' ? null : lessonPreviewScreen]
+    .filter(Boolean).flatMap(entry => entry.input.refs.map(([, value]) => value)).filter(value => typeof value === 'string')`, ctx);
+
+testAsync('기억한 결과는 지우거나 바꾼 그림을 붙잡지 않는다: 그림 지우기(deleteImage)·쓰지 않는 그림 정리(dropUnusedLessonImages)·같은 탭의 그림 바꾸기·상태 바꾸기(closeLessonEditor)·휴지통 비우기', async () => {
+    const E = editorContext();
+    vm.runInContext(sliceFunction(read('data-safety.js'), 'function closeLessonEditor('), E); // 상태를 바꾼 뒤 편집기를 닫는 함수
+    E.writeLessonTab = async () => true; // 저장한 뒤 다시 그리기(format-toolbar.js)는 싣지 않는다
+    E.showConfirm = (message, onOk) => onOk();
+    E.applyLessonFilter = () => {}; // 휴지통을 비운 뒤 차시 목록 다시 그리기(목록 화면은 흉내 내지 않는다)
+    const mod = editorLesson();
+    openLesson(E, mod);
+    const viewTabs = () => ['basicLearn', 'basicPrac', 'advLearn', 'basicLearn'].forEach(tab => E.switchLessonTab(tab));
+    viewTabs();
+
+    const deleted = mod.images.img_12;
+    assert.ok(heldPictures(E).includes(deleted), '지우기 전에는 기억에 있다');
+    await E.deleteImage('img_12');
+    assert.ok(!mod.tabContents.basicLearn.includes('local:img_12') && !('img_12' in mod.images), '그림을 지웠다');
+    assert.ok(!heldPictures(E).includes(deleted), '지운 그림을 기억이 놓는다');
+    assert.ok(heldPictures(E).includes(mod.images.t), '그 그림을 쓰지 않는 다른 탭의 기억은 남는다');
+
+    viewTabs();
+    const unused = mod.images.img_14;
+    assert.ok(heldPictures(E).includes(unused));
+    vm.runInContext('setTabMarkdown', E)(mod, 'basicLearn', mod.tabContents.basicLearn.replace('![b](local:img_14)', '')); // 원문 칸에서 그림 자리를 지웠다
+    E.dropUnusedLessonImages(mod);
+    assert.ok(!('img_14' in mod.images), '쓰지 않는 그림을 지웠다');
+    assert.ok(!heldPictures(E).includes(unused), '정리한 그림을 기억이 놓는다');
+
+    E.switchLessonTab('basicLearn');
+    const replaced = mod.images.img_1;
+    mod.images.img_1 = picture(121, 6100); // 같은 목록의 그림 값만 바꾼다(그림 다시 찾기)
+    E.switchLessonTab('basicLearn');
+    assert.ok(heldPictures(E).includes(mod.images.img_1) && !heldPictures(E).includes(replaced), '같은 글을 바뀐 그림으로 그리면 예전 결과를 뺀다');
+
+    viewTabs();
+    assert.ok(heldPictures(E).length > 0);
+    E.closeLessonEditor(); // 저장 파일·폴더 불러오기, 되살리기, 초기화, 지금 교과 지우기가 상태를 바꾼 뒤 부른다
+    assert.strictEqual(heldPictures(E).length, 0, '상태를 바꾸면 모두 잊는다');
+
+    openLesson(E, mod);
+    viewTabs();
+    assert.ok(heldPictures(E).length > 0);
+    await E.onTrashClick({ target: { dataset: { trashAction: 'empty' } } });
+    assert.strictEqual(heldPictures(E).length, 0, '휴지통을 비우면(영구 삭제) 모두 잊는다');
+});
+
 /* ---------- 탭 바꾸기·차시 열기 ---------- */
 function editorLesson() {
     const images = { ...mixedImages(), ...LOOSE_IMAGES };
@@ -514,5 +611,142 @@ test('그리기 오류: 화면에는 예전처럼 오류와 그림을 넣고 전
     assert.ok(E.elements['editor-content-area'].innerHTML.includes(`마크다운 파싱 오류: 파싱 실패</div><pre class="text-gray-200 mt-4">${shown.replace(/</g, '&lt;')}</pre>`));
 });
 
-console.log(`\n${count - failed}/${count} passed`);
-if (failed) process.exit(1);
+test('원문 칸 나란히 미리 보기(mdPreviewHtml): 그림 데이터를 글 처리에 넣지 않고 화면과 같은 HTML을 그린다. 입력마다 그려도 탭 화면 기억을 밀어내지 않고, 같은 글은 다시 그리지 않는다', () => {
+    const E = editorContext();
+    const mod = editorLesson();
+    openLesson(E, mod);
+    let renders = 0;
+    let longest = 0;
+    const render = E.renderLessonHTML;
+    E.renderLessonHTML = (...args) => { renders += 1; longest = Math.max(longest, String(args[0]).length); return render(...args); };
+    const tabs = ['basicPrac', 'advLearn', 'basicLearn'];
+    tabs.forEach(tab => E.switchLessonTab(tab));
+    const expectedOf = text => render(E.preprocessMarkdown(E.inlineLessonImages(E.cleanLessonOpening(text), mod.images)));
+    const pictureChars = Object.values(mod.images).reduce((sum, data) => sum + data.length, 0);
+    const raw = E.elements['raw-view'].value;
+    renders = 0;
+    assert.ok(E.mdPreviewHtml(mod, raw) === expectedOf(raw), '고치기 전 글: 화면과 같은 HTML');
+    assert.strictEqual(renders, 0, '칸을 열 때(고치기 전 글)는 화면에 그린 결과를 쓴다');
+    const typed = `${raw}\n\n고친 문장입니다. 다음 문장입니다.`;
+    longest = 0;
+    assert.ok(E.mdPreviewHtml(mod, typed) === expectedOf(typed), '고친 글: 예전 식과 같은 HTML');
+    assert.strictEqual(renders, 1);
+    assert.ok(longest < pictureChars / 4, `글 처리가 그림 데이터를 받지 않는다(${longest}자 / 그림 ${pictureChars}자)`);
+    renders = 0;
+    assert.ok(E.mdPreviewHtml(mod, typed) === expectedOf(typed));
+    assert.strictEqual(renders, 0, '같은 글(저장 뒤 미리 보기 새로 고침)은 마지막 결과를 쓴다');
+    for (let i = 0; i < 10; i++) assert.ok(E.mdPreviewHtml(mod, `${typed} ${i}`) === expectedOf(`${typed} ${i}`), `${i}번째 입력`);
+    renders = 0;
+    tabs.forEach(tab => E.switchLessonTab(tab));
+    assert.strictEqual(renders, 0, '입력마다 그린 미리 보기가 탭 화면 기억을 밀어내지 않는다');
+});
+
+/* ---------- 다이어그램(mermaid) 그리기 ---------- */
+// mermaid는 받은 id·코드를 모으고 그 id를 단 SVG를 돌려준다. setTimeout으로 건 일은 모아 두었다가 runTimers가 하나씩 돌린다
+function diagramContext() {
+    const E = editorContext();
+    E.timers = [];
+    E.setTimeout = fn => E.timers.push(fn);
+    E.drawnDiagrams = [];
+    E.mermaid = { render: async (id, code) => { E.drawnDiagrams.push({ id, code }); return { svg: `<svg id="${id}" class="drawn"><text>${code.length}</text></svg>` }; } };
+    return E;
+}
+
+// 걸린 일을 하나씩 돌린다(돌린 일이 기다리는 동안 새로 건 일도). until()이 참이 되면 멈춘다
+async function runTimers(ctx, until = () => false) {
+    for (let i = 0; i < 10000 && ctx.timers.length && !until(); i++) {
+        ctx.timers.shift()();
+        await new Promise(resolve => setImmediate(resolve));
+    }
+}
+
+const DIAGRAM = (name, label) => ['```mermaid', 'flowchart TD', `    ${name}1[${label}] --> ${name}2{갱신 (물리)}`, `    ${name}2 --> ${name}3[그리기]`, '```'].join('\n');
+function diagramLesson() {
+    const tabContents = {
+        basicLearn: ['# 다이어그램', '', DIAGRAM('A', '입력'), '', '문장입니다. 다음 문장입니다.', '', DIAGRAM('B', '읽기'), '', DIAGRAM('C', '쓰기'), '', DIAGRAM('S', '같은 그림')].join('\n'),
+        basicPrac: ['## 실습', '', DIAGRAM('P', '실습')].join('\n'),
+        advLearn: ['## 심화', '', DIAGRAM('D', '심화'), '', DIAGRAM('S', '같은 그림'), '', DIAGRAM('E', '끝')].join('\n'),
+        advPrac: ['## 같은 코드 둘', '', DIAGRAM('T', '둘'), '', DIAGRAM('T', '둘')].join('\n'),
+        assessment: null
+    };
+    const mod = { id: 1, title: '다이어그램', images: {}, tabContents };
+    mod.content = Object.values(tabContents).filter(Boolean).join('\n\n---\n\n');
+    return mod;
+}
+const drawnNames = ctx => ctx.drawnDiagrams.map(item => (item.code.match(/(\w)1\[/) || [])[1]);
+// 지금 화면의 다이어그램: 넣은 SVG의 id와 글(그리지 않았으면 null)
+const shownDiagrams = ctx => ctx.elements['render-view'].querySelectorAll('.mermaid').map(el => (el.querySelector('svg') ? { id: el.querySelector('svg').getAttribute('id'), svg: el.innerHTML } : null));
+
+testAsync('다이어그램: 다시 연 탭은 기억한 SVG를 넣고 mermaid로 다시 그리지 않는다. 숨은 화면(슬라이드)에는 그리지 않고, 한 화면에 같은 코드가 둘이면 id가 겹치지 않게 새로 그린다', async () => {
+    const E = diagramContext();
+    openLesson(E, diagramLesson());
+    E.viewModule(1);
+    await runTimers(E);
+    assert.deepStrictEqual(drawnNames(E), ['A', 'B', 'C', 'S'], '처음 연 탭');
+    const first = shownDiagrams(E);
+    assert.ok(first.every(Boolean), '모두 그렸다');
+    E.switchLessonTab('advLearn');
+    await runTimers(E);
+    assert.deepStrictEqual(drawnNames(E).slice(4), ['D', 'E'], '다른 탭에서 본 같은 코드(S)는 기억한 SVG를 넣는다');
+    assert.strictEqual(shownDiagrams(E)[1].id, first[3].id);
+    E.drawnDiagrams.length = 0;
+    E.switchLessonTab('basicLearn');
+    await runTimers(E);
+    assert.deepStrictEqual(drawnNames(E), [], '다시 연 탭은 mermaid로 다시 그리지 않는다');
+    assert.deepStrictEqual(shownDiagrams(E), first, '처음과 같은 SVG');
+    E.renderEditor(E.getEditingModule()); // 단락 고치기·서식 막대가 화면을 다시 그린다
+    await runTimers(E);
+    assert.deepStrictEqual(drawnNames(E), []);
+    assert.deepStrictEqual(shownDiagrams(E), first);
+
+    vm.runInContext("currentLessonTab = 'basicPrac'", E);
+    E.showLessonPanel('slides'); // 교안을 숨기고 슬라이드를 보인다(처음 보는 실습 탭)
+    await runTimers(E);
+    assert.ok(E.elements['render-view'].classList.contains('hidden'));
+    assert.deepStrictEqual(drawnNames(E), [], '숨은 화면에는 그리지 않는다');
+    E.switchLessonTab('basicPrac'); // 패널을 닫으면 그린다
+    await runTimers(E);
+    assert.deepStrictEqual(drawnNames(E), ['P']);
+    assert.ok(shownDiagrams(E).every(Boolean));
+
+    E.drawnDiagrams.length = 0;
+    E.switchLessonTab('advPrac');
+    await runTimers(E);
+    const twins = shownDiagrams(E);
+    assert.strictEqual(E.drawnDiagrams.length, 2, '처음: 둘 다 그린다');
+    assert.ok(twins.every(Boolean) && twins[0].id !== twins[1].id, '같은 id가 한 화면에 둘 생기지 않는다');
+    E.switchLessonTab('basicLearn');
+    await runTimers(E);
+    E.drawnDiagrams.length = 0;
+    E.switchLessonTab('advPrac');
+    await runTimers(E);
+    const again = shownDiagrams(E);
+    assert.strictEqual(E.drawnDiagrams.length, 1, '다시 열면 하나는 기억한 SVG, 하나는 새 id로 그린다');
+    assert.ok(again.every(Boolean) && again[0].id !== again[1].id);
+});
+
+testAsync('다이어그램: 탭을 빠르게 바꾸면 떨어져 나간 화면에는 그리지 않고, 그리던 차례는 다음 다이어그램 앞에서 멈춘다', async () => {
+    const E = diagramContext();
+    openLesson(E, diagramLesson());
+    E.viewModule(1);
+    ['advLearn', 'basicPrac', 'advLearn'].forEach(tab => E.switchLessonTab(tab));
+    await runTimers(E);
+    assert.deepStrictEqual(drawnNames(E), ['D', 'S', 'E'], '마지막 화면(심화학습)만 그린다');
+    assert.ok(shownDiagrams(E).every(Boolean));
+    E.drawnDiagrams.length = 0;
+    E.switchLessonTab('basicLearn');
+    await runTimers(E, () => E.drawnDiagrams.length >= 1); // 하나를 그린 뒤 탭을 바꾼다
+    E.switchLessonTab('basicPrac');
+    await runTimers(E);
+    assert.deepStrictEqual(drawnNames(E), ['A', 'P'], '떨어져 나간 기본학습의 남은 다이어그램은 그리지 않는다');
+    assert.deepStrictEqual(E.timers, [], '걸린 일이 남지 않는다');
+});
+
+(async () => {
+    for (const [name, fn] of waiting) {
+        count++;
+        try { await fn(); console.log(`ok - ${name}`); } catch (e) { failed++; console.log(`FAIL - ${name}\n  ${e.stack || e.message}`); }
+    }
+    console.log(`\n${count - failed}/${count} passed`);
+    if (failed) process.exit(1);
+})();
