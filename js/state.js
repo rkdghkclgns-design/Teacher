@@ -893,10 +893,13 @@ function onStateLoadDialogClick(event) {
 function downloadRecordFile(record, baseName) {
     const isText = typeof record === 'string';
     const blob = isStoredBlob(record) ? record : new Blob(isText ? [record] : jsonTextParts(record), { type: isText ? 'text/plain;charset=utf-8' : 'application/json' });
+    const fileName = `${baseName}.${isText ? 'txt' : 'json'}`;
+    // 기본 저장 폴더(save-folder.js)를 골랐으면 그 폴더에, 아니면 브라우저 다운로드로 받는다
+    if (typeof saveFileToFolder === 'function') return void saveFileToFolder(blob, fileName).catch(showSaveFailure);
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${baseName}.${isText ? 'txt' : 'json'}`;
+    link.download = fileName;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
@@ -1583,6 +1586,9 @@ function downloadFile(content, fileName, mimeType) {
 
     const blob = new Blob([content], { type: mimeType });
 
+    // 기본 저장 폴더(save-folder.js)를 골랐으면 그 폴더에, 아니면 브라우저 다운로드로 받는다
+    if (typeof saveFileToFolder === 'function') return void saveFileToFolder(blob, fileName).catch(showSaveFailure);
+
     const url = URL.createObjectURL(blob);
 
     const a = document.createElement('a');
@@ -1638,7 +1644,10 @@ window.exportCurrentModule = async function () {
         lessonGyosuanFiles(mod).forEach(file => subjFolder.file(`${fileName.replace('.md', '')}_${file.name}`, file.content));
 
         const content = await zip.generateAsync({ type: "blob" });
-        saveAs(content, `${safeCourseName}_${fileName.replace('.md', '')}.zip`);
+        // 기본 저장 폴더(save-folder.js)를 골랐으면 그 폴더에 저장하고 끝날 때까지 기다린다
+        const zipName = `${safeCourseName}_${fileName.replace('.md', '')}.zip`;
+        if (typeof saveFileToFolder === 'function') await saveFileToFolder(content, zipName);
+        else saveAs(content, zipName);
 
     } catch (e) {
         console.error("ZIP 생성 오류:", e);
@@ -1704,7 +1713,10 @@ window.exportAllModules = async function () {
 
         // 5. 되살리기용 save_data.yaml(편의상 JSON을 yaml 확장자로)을 넣고 묶는다. '함께'가 크기 한도에 걸리면 '따로·가볍게'로 다시 만든다(data-safety.js)
         const result = await buildBackupZip(zip, rootFolder, metaObj, imageMode);
-        saveAs(result.blob, backupFileName(`${safeCourseName}_과정전체백업_${backupStamp()}`, result.mode));
+        // 기본 저장 폴더(save-folder.js)를 골랐으면 그 폴더에 저장하고 끝날 때까지 기다린다
+        const zipName = backupFileName(`${safeCourseName}_과정전체백업_${backupStamp()}`, result.mode);
+        if (typeof saveFileToFolder === 'function') await saveFileToFolder(result.blob, zipName);
+        else saveAs(result.blob, zipName);
         finishBackupDownload(result);
 
     } catch (e) {

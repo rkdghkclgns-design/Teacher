@@ -708,10 +708,14 @@ async function saveQuestionDraft(mod, index) {
     return commitQbankMarkdown(mod, appendQuestionsMd(qbankMarkdown(mod, trackId), [question]));
 }
 
+// 기본 저장 폴더(save-folder.js)를 골랐으면 그 폴더에, 아니면 브라우저 다운로드로 받는다
 function downloadCsv(csv, name) {
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const fileName = `${safeFileName(name)}_문제은행.csv`;
+    if (typeof saveFileToFolder === 'function') return void saveFileToFolder(blob, fileName).catch(showSaveFailure);
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    a.download = `${safeFileName(name)}_문제은행.csv`;
+    a.href = URL.createObjectURL(blob);
+    a.download = fileName;
     a.click();
     URL.revokeObjectURL(a.href);
 }

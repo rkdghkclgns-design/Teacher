@@ -194,9 +194,13 @@ async function lessonExportBody(mod, tabIds, opts = {}) {
 }
 
 /* ---------- 내려받기·인쇄 ---------- */
-// 내려받은 파일 크기(바이트)를 돌려준다
+// 내려받은 파일 크기(바이트)를 돌려준다. 기본 저장 폴더(save-folder.js)를 골랐으면 그 폴더에 저장한다
 function downloadTextFile(text, fileName, type) {
     const blob = new Blob([text], { type });
+    if (typeof saveFileToFolder === 'function') {
+        saveFileToFolder(blob, fileName).catch(showSaveFailure);
+        return blob.size;
+    }
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;

@@ -563,10 +563,14 @@ function gyosuanSessionDecksMd(mod, trackId = 'basic') {
     ].join('\n');
 }
 
+// 기본 저장 폴더(save-folder.js)를 골랐으면 그 폴더에, 아니면 브라우저 다운로드로 받는다
 function downloadMd(md, name) {
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+    const fileName = `${safeFileName(name)}.md`;
+    if (typeof saveFileToFolder === 'function') return void saveFileToFolder(blob, fileName).catch(showSaveFailure);
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([md], { type: 'text/markdown;charset=utf-8' }));
-    a.download = `${safeFileName(name)}.md`;
+    a.href = URL.createObjectURL(blob);
+    a.download = fileName;
     a.click();
     URL.revokeObjectURL(a.href);
 }

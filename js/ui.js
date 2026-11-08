@@ -1049,6 +1049,8 @@ function exportCurrentToMD() {
     if (!tabs.length) return window.showAlert(_exportTabs === 'current' ? '현재 탭에 내용이 없습니다.' : '내보낼 교안 내용이 없습니다.');
     // 차시·탭 표시를 넣어 '내보낸 교안 다시 불러오기'로 탭별로 되살린다(output-import.js)
     const blob = new Blob([lessonMarkdownExport(mod, tabs)], { type: 'text/markdown;charset=utf-8' });
+    // 기본 저장 폴더(save-folder.js)를 골랐으면 그 폴더에, 아니면 브라우저 다운로드로 받는다
+    if (typeof saveFileToFolder === 'function') return void saveFileToFolder(blob, lessonFileName(mod, 'md')).catch(showSaveFailure);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -1066,6 +1068,8 @@ function exportSubjectToMD() {
         const tabs = lessonTabSources(mod);
         if (!tabs.length) return;
         const blob = new Blob([lessonMarkdownExport(mod, tabs)], { type: 'text/markdown;charset=utf-8' });
+        // 기본 저장 폴더(save-folder.js)가 있으면 차례로 맡긴다(폴더에 저장한 것은 알림 하나로 묶는다)
+        if (typeof saveFileToFolder === 'function') return void saveFileToFolder(blob, lessonFileName(mod, 'md')).catch(showSaveFailure);
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -1184,7 +1188,10 @@ window.exportSelectedToZip = async function () {
         const baseName = checkedIds.length === 1
             ? `${(globalState.subjects.find(s => String(s.id) === String(checkedIds[0]))?.title || '교과').replace(/[^\w가-힣\s]/g, '')}_교안`
             : `교안_${checkedIds.length}개교과`;
-        saveAs(result.blob, backupFileName(baseName, result.mode));
+        // 기본 저장 폴더(save-folder.js)를 골랐으면 그 폴더에 저장하고 끝날 때까지 기다린다
+        const zipName = backupFileName(baseName, result.mode);
+        if (typeof saveFileToFolder === 'function') await saveFileToFolder(result.blob, zipName);
+        else saveAs(result.blob, zipName);
         finishBackupDownload(result, { successText: `📦 ${totalFiles}개 파일이 ZIP으로 다운로드되었습니다.`, countsAsBackup: false }); // 교과 백업은 마지막 전체 백업 시각에 세지 않는다
     } catch (e) {
         console.error('[ZIP]', e);
@@ -1309,7 +1316,10 @@ window.exportAllToZip = async function () {
     try {
         // 내보내기·백업 → 백업 ZIP으로 되살리기로 이 교과를 되살린다. '함께'가 크기 한도에 걸리면 '따로·가볍게'로 다시 만든다(data-safety.js)
         const result = await buildBackupZip(zip, zip, subjectsBackupMeta([subj.id]), imageMode);
-        saveAs(result.blob, backupFileName(`${subjectName}_전체교안`, result.mode));
+        // 기본 저장 폴더(save-folder.js)를 골랐으면 그 폴더에 저장하고 끝날 때까지 기다린다
+        const zipName = backupFileName(`${subjectName}_전체교안`, result.mode);
+        if (typeof saveFileToFolder === 'function') await saveFileToFolder(result.blob, zipName);
+        else saveAs(result.blob, zipName);
         finishBackupDownload(result, { successText: `📦 ${totalFiles}개 파일이 ZIP으로 다운로드되었습니다.`, countsAsBackup: false }); // 교과 백업은 마지막 전체 백업 시각에 세지 않는다
     } catch (e) {
         console.error('[ZIP Export]', e);

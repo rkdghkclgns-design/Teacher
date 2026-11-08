@@ -902,7 +902,10 @@ async function downloadSafetyBackup(label) {
     const extra = { history: contentHistory, trash: { lessonTrash: globalState.lessonTrash || [], subjectTrash: globalState.subjectTrash || [] } };
     writeBackupData(zip, backupMeta('full', currentSnapshot(), new Date(), extra), 'separate');
     const blob = await zip.generateAsync({ type: 'blob' });
-    saveAs(blob, `교안백업_${backupStamp()}_${label}.zip`);
+    // 기본 저장 폴더(save-folder.js)를 골랐으면 그 폴더에 저장하고 끝날 때까지 기다린다(받지 못하면 던져 묻는 길로 간다)
+    const zipName = `교안백업_${backupStamp()}_${label}.zip`;
+    if (typeof saveFileToFolder === 'function') await saveFileToFolder(blob, zipName);
+    else saveAs(blob, zipName);
     recordBackupTime();
 }
 
