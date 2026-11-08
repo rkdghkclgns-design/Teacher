@@ -239,6 +239,8 @@ async function printHtmlDocument(doc) {
 // format: 'html' | 'pdf'. tabIds: null이면 차시 전체(모든 탭), 아니면 그 탭만
 window.exportLessonDocument = async function (mod, format, tabIds) {
     if (!mod) return window.showAlert('차시를 먼저 선택해주세요. (좌측 목록에서 차시 클릭)');
+    // HTML을 다 그린 뒤에는 권한 창을 띄우지 못하므로 누른 직후 기본 저장 폴더(save-folder.js)의 쓰기 권한을 받아 둔다
+    if (format === 'html' && typeof prepareSaveFolder === 'function') await prepareSaveFolder();
     try {
         window.showToast?.(format === 'pdf' ? '인쇄 창을 준비하는 중입니다. "PDF로 저장"을 고르세요.' : 'HTML 파일을 만드는 중입니다.', 'info');
         const asHtml = format === 'html';
@@ -262,6 +264,7 @@ window.exportSubjectDocument = async function (subj, format) {
     if (!subj) return window.showAlert('교과를 먼저 선택해주세요.');
     const lessons = (subj.lessons || []).filter(mod => mod.id !== 'mainQuest' && lessonTabSources(mod).length);
     if (!lessons.length) return window.showAlert('내보낼 교안이 없습니다. 교안을 먼저 생성해주세요.');
+    if (format === 'html' && typeof prepareSaveFolder === 'function') await prepareSaveFolder(); // 차시가 많으면 다 그리는 데 오래 걸린다(exportLessonDocument와 같다)
     try {
         window.showToast?.(`${lessons.length}개 차시를 문서로 만드는 중입니다.`, 'info');
         const asHtml = format === 'html';

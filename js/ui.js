@@ -383,20 +383,28 @@ async function saveNow() {
 }
 
 // 창을 닫기 전에 물을 일: 열어 둔 원문 칸(교안·교수안)에 넣지 않은 글, 끝나지 않은 브라우저 저장, 아래 AI 명령줄에서 기다리거나 아직 넣지 않은 결과(api.js),
-// 아직 저장하지 않은 기본 학습 분량 채우기(lesson-volume.js), 돌고 있는 AI 작업(생성·고치기·일괄 생성·과정 설계 등과 그 뒤의 자동 수정·그림·저장, course-flow.js).
-// 닫으면 만들던 결과와 그 비용을 잃는다
+// 아직 저장하지 않은 기본 학습 분량 채우기(lesson-volume.js), 돌고 있는 AI 작업(생성·고치기·일괄 생성·과정 설계 등과 그 뒤의 자동 수정·그림·저장, course-flow.js),
+// 고른 기본 저장 폴더에 쓰는 중인 파일(save-folder.js). 닫으면 만들던 결과와 그 비용, 저장하던 파일을 잃는다
 function hasUnsavedWork() {
-    return !!(window.hasPendingRawEdit?.() || window.hasPendingGyosuanRaw?.() || window.isSavePending?.() || window.isAiResultPending?.() || window.isVolumeFilling?.() || window.isAiWorkRunning?.());
+    return !!(window.hasPendingRawEdit?.() || window.hasPendingGyosuanRaw?.() || window.isSavePending?.() || window.isAiResultPending?.() || window.isVolumeFilling?.() || window.isAiWorkRunning?.() || window.isFolderSavePending?.());
 }
 
 // 고치던 원문은 먼저 넣고, 넣지 못한 글, 끝나지 않은 저장, 아직 넣지 않은 AI 명령줄 결과, 돌고 있는 AI 작업이 있으면 브라우저의 '사이트에서 나가시겠습니까?' 창을 띄운다(문구는 브라우저가 정한다)
 function warnBeforeUnload(event) {
-    if (window.isStateLoadFailed?.()) return; // 읽지 못한 동안은 아무것도 저장하지 않으므로 묻지 않는다
+    // 읽지 못한 동안은 아무것도 저장하지 않으므로 묻지 않는다. 다만 고른 폴더에 쓰는 중인 파일(읽지 못한 저장본 내려받기 등)은 닫으면 잃으므로 묻는다
+    if (window.isStateLoadFailed?.()) {
+        if (window.isFolderSavePending?.()) askBeforeUnload(event);
+        return;
+    }
     const waiting = !!window.isSavePending?.(); // 미뤄 둔 저장(참고자료 칸)은 아래에서 바로 시작하므로 먼저 본다
     window.flushVisibleRawView?.();
     window.flushSaveStateSoon?.(); // 입력이 멈추기를 기다리던 저장을 바로 한다
     Promise.resolve(window.saveGyosuanRaw?.()).catch(err => console.warn('[저장] 교수안 원문을 넣지 못했습니다:', err));
     if (!waiting && !hasUnsavedWork()) return;
+    askBeforeUnload(event);
+}
+
+function askBeforeUnload(event) {
     event.preventDefault();
     event.returnValue = true; // 옛 Chrome·Edge(119 미만)도 묻게 한다
 }
@@ -1064,12 +1072,13 @@ function exportSubjectToMD() {
     if (!subj) return window.showAlert('교과를 먼저 선택해주세요.');
     const lessonList = subj.lessons || [];
     if (!lessonList.length) return window.showAlert('내보낼 차시가 없습니다.');
+    const saves = [];
     lessonList.forEach(mod => {
         const tabs = lessonTabSources(mod);
         if (!tabs.length) return;
         const blob = new Blob([lessonMarkdownExport(mod, tabs)], { type: 'text/markdown;charset=utf-8' });
-        // 기본 저장 폴더(save-folder.js)가 있으면 차례로 맡긴다(폴더에 저장한 것은 알림 하나로 묶는다)
-        if (typeof saveFileToFolder === 'function') return void saveFileToFolder(blob, lessonFileName(mod, 'md')).catch(showSaveFailure);
+        // 기본 저장 폴더(save-folder.js)가 있으면 차례로 맡긴다(폴더에 저장한 것은 그쪽이 알림 하나로 묶는다)
+        if (typeof saveFileToFolder === 'function') return void saves.push(saveFileToFolder(blob, lessonFileName(mod, 'md')).catch(showSaveFailure));
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -1077,7 +1086,12 @@ function exportSubjectToMD() {
         a.click();
         URL.revokeObjectURL(url);
     });
-    window.showToast(`📁 ${lessonList.length}개 차시 MD 파일 다운로드`, 'success');
+    if (typeof saveFileToFolder !== 'function') return window.showToast(`📁 ${lessonList.length}개 차시 MD 파일 다운로드`, 'success');
+    // 다운로드로 받은 파일만 다운로드했다고 알린다
+    Promise.all(saves).then(results => {
+        const downloaded = results.filter(result => result?.saved === 'download').length;
+        if (downloaded) window.showToast(`📁 ${downloaded}개 차시 MD 파일 다운로드`, 'success');
+    });
 }
 
 // 외부 클릭 시 드롭다운 닫기
@@ -1125,7 +1139,9 @@ window.exportSelectedToZip = async function () {
     if (typeof JSZip === 'undefined') return window.showAlert('JSZip을 불러오는 중입니다.');
     const checkedIds = [...document.querySelectorAll('.subj-zip-cb:checked')].map(cb => cb.dataset.subjId);
     if (checkedIds.length === 0) return window.showAlert('내보낼 교과를 선택해주세요.');
-    const imageMode = takeBackupImageMode(); // 이 파일에 쓸 그림 담기. 골라 둔 '빼기'는 이 파일에만 쓴다(data-safety.js)
+    const imageMode = takeBackupImageMode(); // 이 파일에 쓸 그림 담기. 골라 둔 '빼기'는 이 파일에만 쓴다(data-safety.js. 권한을 묻는 동안 메뉴 밖을 눌러도 그대로)
+    // 교안 HTML과 ZIP을 다 만든 뒤에는 권한 창을 띄우지 못하므로 누른 직후 기본 저장 폴더(save-folder.js)의 쓰기 권한을 받아 둔다
+    if (typeof prepareSaveFolder === 'function') await prepareSaveFolder();
 
     const zip = new JSZip();
     let totalFiles = 0;
@@ -1185,14 +1201,16 @@ window.exportSelectedToZip = async function () {
     try {
         // 내보내기·백업 → 백업 ZIP으로 되살리기로 이 교과들을 되살린다. '함께'가 크기 한도에 걸리면 '따로·가볍게'로 다시 만든다(data-safety.js)
         const result = await buildBackupZip(zip, zip, subjectsBackupMeta(checkedIds), imageMode);
+        // 교과 이름은 안의 교과 폴더처럼 앞뒤 빈칸을 뗀다('🐍 파이썬'이 ' 파이썬_교안.zip'이 되지 않게)
         const baseName = checkedIds.length === 1
-            ? `${(globalState.subjects.find(s => String(s.id) === String(checkedIds[0]))?.title || '교과').replace(/[^\w가-힣\s]/g, '')}_교안`
+            ? `${(globalState.subjects.find(s => String(s.id) === String(checkedIds[0]))?.title || '교과').replace(/[^\w가-힣\s]/g, '').trim()}_교안`
             : `교안_${checkedIds.length}개교과`;
-        // 기본 저장 폴더(save-folder.js)를 골랐으면 그 폴더에 저장하고 끝날 때까지 기다린다
+        // 기본 저장 폴더(save-folder.js)를 골랐으면 그 폴더에 저장하고 끝날 때까지 기다린다(폴더에 저장했으면 그쪽이 알리므로 다운로드 알림은 띄우지 않는다)
         const zipName = backupFileName(baseName, result.mode);
-        if (typeof saveFileToFolder === 'function') await saveFileToFolder(result.blob, zipName);
-        else saveAs(result.blob, zipName);
-        finishBackupDownload(result, { successText: `📦 ${totalFiles}개 파일이 ZIP으로 다운로드되었습니다.`, countsAsBackup: false }); // 교과 백업은 마지막 전체 백업 시각에 세지 않는다
+        const saved = typeof saveFileToFolder === 'function' ? await saveFileToFolder(result.blob, zipName) : null;
+        if (!saved) saveAs(result.blob, zipName);
+        const successText = saved?.saved === 'folder' ? '' : `📦 ${totalFiles}개 파일이 ZIP으로 다운로드되었습니다.`;
+        finishBackupDownload(result, { successText, countsAsBackup: false }); // 교과 백업은 마지막 전체 백업 시각에 세지 않는다
     } catch (e) {
         console.error('[ZIP]', e);
         window.showAlert(isBackupTooBig(e) ? BACKUP_TOO_BIG_TEXT.subjects : 'ZIP 생성 오류: ' + e.message);
@@ -1244,7 +1262,9 @@ window.exportAllToZip = async function () {
     if (!subj) return window.showAlert('교과를 먼저 선택해주세요.');
     const lessonList = subj.lessons || subj.modules || [];
     if (!lessonList.length) return window.showAlert('내보낼 차시가 없습니다.');
-    const imageMode = takeBackupImageMode(); // 이 파일에 쓸 그림 담기. 골라 둔 '빼기'는 이 파일에만 쓴다(data-safety.js)
+    const imageMode = takeBackupImageMode(); // 이 파일에 쓸 그림 담기. 골라 둔 '빼기'는 이 파일에만 쓴다(data-safety.js. 권한을 묻는 동안 메뉴 밖을 눌러도 그대로)
+    // 교안 HTML과 ZIP을 다 만든 뒤에는 권한 창을 띄우지 못하므로 누른 직후 기본 저장 폴더(save-folder.js)의 쓰기 권한을 받아 둔다
+    if (typeof prepareSaveFolder === 'function') await prepareSaveFolder();
 
     const zip = new JSZip();
     const subjectName = (subj.title || subj.name || '교과').replace(/[^\w가-힣\s]/g, '').trim();
@@ -1316,11 +1336,12 @@ window.exportAllToZip = async function () {
     try {
         // 내보내기·백업 → 백업 ZIP으로 되살리기로 이 교과를 되살린다. '함께'가 크기 한도에 걸리면 '따로·가볍게'로 다시 만든다(data-safety.js)
         const result = await buildBackupZip(zip, zip, subjectsBackupMeta([subj.id]), imageMode);
-        // 기본 저장 폴더(save-folder.js)를 골랐으면 그 폴더에 저장하고 끝날 때까지 기다린다
+        // 기본 저장 폴더(save-folder.js)를 골랐으면 그 폴더에 저장하고 끝날 때까지 기다린다(폴더에 저장했으면 그쪽이 알리므로 다운로드 알림은 띄우지 않는다)
         const zipName = backupFileName(`${subjectName}_전체교안`, result.mode);
-        if (typeof saveFileToFolder === 'function') await saveFileToFolder(result.blob, zipName);
-        else saveAs(result.blob, zipName);
-        finishBackupDownload(result, { successText: `📦 ${totalFiles}개 파일이 ZIP으로 다운로드되었습니다.`, countsAsBackup: false }); // 교과 백업은 마지막 전체 백업 시각에 세지 않는다
+        const saved = typeof saveFileToFolder === 'function' ? await saveFileToFolder(result.blob, zipName) : null;
+        if (!saved) saveAs(result.blob, zipName);
+        const successText = saved?.saved === 'folder' ? '' : `📦 ${totalFiles}개 파일이 ZIP으로 다운로드되었습니다.`;
+        finishBackupDownload(result, { successText, countsAsBackup: false }); // 교과 백업은 마지막 전체 백업 시각에 세지 않는다
     } catch (e) {
         console.error('[ZIP Export]', e);
         window.showAlert(isBackupTooBig(e) ? BACKUP_TOO_BIG_TEXT.subjects : 'ZIP 생성 중 오류: ' + e.message);

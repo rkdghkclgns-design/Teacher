@@ -125,6 +125,8 @@ let currentSidebarTab = 'topic';
 
 // --- 로컬 폴더 연결 상태 (File System Access API) ---
 let projectFolderHandle = null; // FileSystemDirectoryHandle | null
+// 자동 저장을 멈춘 연결 { handle, message }(머리줄·띠의 '다시 연결'을 기다린다, lockLinkedFolder). 설정의 저장 위치 칸도 이것으로 머리줄과 같게 보인다
+let lockedFolder = null;
 // 저장된 작업을 읽지 못했으면 true. 그동안은 브라우저 저장소와 PC 폴더에 쓰지 않는다(restoreState가 정하고, 새로 시작·되살리기가 푼다)
 let stateLoadFailed = false;
 // 읽지 못한 저장본을 읽어 오기는 했으면 그 값(막는 창의 '읽지 못한 저장본 내려받기'). 읽지도 못했으면 undefined
@@ -1610,6 +1612,8 @@ window.exportCurrentModule = async function () {
     // v7.5: 5탭 시스템 — tabContents도 확인
     const hasContent = mod && (mod.content || (mod.tabContents && Object.values(mod.tabContents).some(v => v)));
     if (!hasContent) return window.showAlert('내보낼 내용이 없습니다.');
+    // ZIP을 다 만든 뒤에는 권한 창을 띄우지 못하므로 누른 직후 기본 저장 폴더(save-folder.js)의 쓰기 권한을 받아 둔다
+    if (typeof prepareSaveFolder === 'function') await prepareSaveFolder();
     const subj = globalState.subjects.find(s => s.id === currentSubjectId);
 
     // 과정명(Project Name) 및 교과명 안전화
@@ -1660,9 +1664,11 @@ window.exportCurrentModule = async function () {
 window.exportAllModules = async function () {
     // 과정 전체를 담으므로 지금 연 교과가 없어도(개요 화면) 받을 수 있다
     if (!globalState.subjects.length) return window.showAlert('백업할 교과가 없습니다.');
+    const imageMode = takeBackupImageMode(); // 이 파일에 쓸 그림 담기. 골라 둔 '빼기'는 이 파일에만 쓴다(data-safety.js. 권한을 묻는 동안 메뉴 밖을 눌러도 그대로)
+    // 백업 ZIP을 다 만든 뒤에는 권한 창을 띄우지 못하므로 누른 직후 기본 저장 폴더(save-folder.js)의 쓰기 권한을 받아 둔다
+    if (typeof prepareSaveFolder === 'function') await prepareSaveFolder();
     if (!Array.isArray(courseData)) courseData = [];
     const subj = globalState.subjects.find(s => s.id === currentSubjectId);
-    const imageMode = takeBackupImageMode(); // 이 파일에 쓸 그림 담기. 골라 둔 '빼기'는 이 파일에만 쓴다(data-safety.js)
 
     // 과정명(Project Name) 안전화
     const rawCourseTitle = globalState.courseTitle || '새_교안프로젝트';
@@ -2187,6 +2193,8 @@ window.connectProjectFolder = async function () {
 window.disconnectProjectFolder = async function () {
     projectFolderHandle = null;
     folderWriteCache = null; // 다음에 다시 이으면 폴더의 파일을 처음부터 다시 확인한다
+    if (lockedFolder) window.hideFolderSyncBanner?.(); // 멈춘 연결을 끊으면 띠의 '다시 연결'이 잊은 폴더를 다시 잇지 않게 거둔다
+    lockedFolder = null;
 
     // [추가] DB에서 핸들 삭제
     if (typeof DBManager !== 'undefined') {
@@ -2235,6 +2243,7 @@ const FOLDER_BEHIND_MESSAGE = "지난번에 브라우저에 저장하지 못한 
 // 이 폴더에 자동 저장을 켠다(머리줄·드롭다운·실패 알림 정리). 저장은 부른 쪽이 한다. 표시를 먼저 바꾸므로 첫 저장이 실패하면 그 알림이 남는다
 function useLinkedFolder(handle) {
     projectFolderHandle = handle;
+    lockedFolder = null;
     folderWriteCache = null;
     folderSyncFailed = false;
     setFolderIndicator('on', handle.name);
@@ -2264,6 +2273,7 @@ async function forgetFolderHandle() {
 // 자동 저장을 멈추고 머리줄과 띠의 '다시 연결'로만 다시 잇는다(권한 창은 사용자가 누를 때만 뜬다). 손잡이는 IndexedDB에 두어 새로고침해도 다시 연결할 수 있다
 function lockLinkedFolder(handle, message) {
     projectFolderHandle = null;
+    lockedFolder = { handle, message };
     folderSyncFailed = false;
     setFolderIndicator('locked', handle.name);
     const indicator = document.getElementById('folder-connection-indicator');
@@ -2285,6 +2295,19 @@ async function regrantLinkedFolder(handle, message = FOLDER_LOCKED_MESSAGE) {
         lockLinkedFolder(handle, message);
         window.showAlert(`PC 폴더에 다시 연결하지 못했습니다(${err?.message || '알 수 없는 오류'}). 다시 눌러 보거나 다른 폴더를 고르세요.`);
     }
+}
+
+// 지금 PC 폴더 자동 저장 상태(머리줄과 같다). 설정의 저장 위치 칸이 쓴다(save-folder.js)
+// kind: 'on' 이어 씀 | 'failed' 이어 두었지만 저장이 실패함 | 'locked' 멈춤('다시 연결'을 기다린다) | 'off' 꺼짐. name: 그 폴더 이름
+function folderConnectionState() {
+    if (projectFolderHandle) return { kind: folderSyncFailed ? 'failed' : 'on', name: projectFolderHandle.name };
+    if (lockedFolder) return { kind: 'locked', name: lockedFolder.handle.name };
+    return { kind: 'off', name: '' };
+}
+
+// 멈춘 연결을 머리줄·띠의 '다시 연결'과 같은 길로 다시 잇는다(설정의 '다시 연결'). 멈춘 연결이 없으면 아무것도 하지 않는다
+async function reconnectLockedFolder() {
+    if (lockedFolder) await regrantLinkedFolder(lockedFolder.handle, lockedFolder.message);
 }
 
 /* ---------- 이 브라우저가 마지막으로 쓴 저장본의 이름표 (그 뒤에 다른 PC·브라우저가 썼는지 알아본다) ---------- */
