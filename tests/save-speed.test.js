@@ -1,6 +1,7 @@
 // 큰 교안 저장을 바뀐 것만 쓰게 하기(js/state-store.js) 테스트 (실행: node tests/save-speed.test.js)
 // 실제 filename-convention.js·data-safety.js·state-store.js·state.js를 vm에서 돌린다. DBManager는 그대로 두고 IndexedDB만 메모리 속 가짜로 둔다.
 // 가짜는 기록 단계(transaction)를 흉내 낸다: 단계는 하나씩 돌고, 끝까지 가야 한꺼번에 들어가며, 요청이 실패하거나 abort하면 아무것도 바뀌지 않는다.
+// 실패한 요청의 onerror가 preventDefault를 부르면 단계는 끊기지 않고 다음 요청으로 이어 간다(IndexedDB와 같다).
 // 같은 가짜 저장소로 새 창을 열어 새로고침·다른 탭을 흉내 낸다. failWhen으로 요청 하나를 실패시키고, dead로 그 뒤 모든 단계를 막아 창이 꺼진 것처럼 한다
 const fs = require('fs');
 const vm = require('vm');
@@ -89,8 +90,10 @@ function fakeTransaction(shared, mode) {
         const failure = shared.failWhen?.({ op: next.op, key: next.key, mode });
         if (failure) {
             next.request.error = failure instanceof Error ? failure : new Error('넣어 둔 실패');
-            next.request.onerror?.({ target: next.request });
-            return end(false, next.request.error);
+            let prevented = false;
+            next.request.onerror?.({ target: next.request, preventDefault: () => { prevented = true; } });
+            if (!prevented) return end(false, next.request.error);
+            return step();
         }
         try {
             next.request.result = perform(next);
@@ -129,7 +132,8 @@ function fakeTransaction(shared, mode) {
 }
 
 /* ---------- 앱 ---------- */
-function makeApp(shared) {
+// splitFrom: 새 방식으로 쓸 어림 크기(state.js splitSaveMinBytes. 새 방식은 큰 작업에만 쓴다). 시험 자료는 작아서 0으로 낮춰 새 방식을 시험한다. null이면 실제 기준
+function makeApp(shared, { splitFrom = 0 } = {}) {
     const log = { alerts: [], toasts: [], dialogs: 0, warns: [], errors: [], files: [] };
     const ctx = {
         console: { log() {}, info() {}, warn: (...args) => log.warns.push(args.join(' ')), error: (...args) => log.errors.push(args.join(' ')) },
@@ -148,6 +152,7 @@ function makeApp(shared) {
     ctx.window = ctx;
     vm.createContext(ctx);
     ['filename-convention.js', 'data-safety.js', 'state-store.js', 'state.js'].forEach(file => vm.runInContext(fs.readFileSync(path.join(root, file), 'utf8'), ctx, { filename: file }));
+    if (splitFrom !== null) vm.runInContext(`splitSaveMinBytes = ${splitFrom}`, ctx);
     ctx.__log = log;
     vm.runInContext(`
         window.showAlert = text => __log.alerts.push(text);
@@ -233,7 +238,7 @@ test('예전 저장본(값 하나)을 처음 저장할 때 새 방식으로 옮�
     assert.strictEqual(await app.ctx.saveState(), true);
     const raw = shared.data.get(KEY);
     assert.strictEqual(raw.teacherSplit, 1, '새 방식 저장본');
-    assert.strictEqual(raw.state, undefined, '예전 코드는 state가 없어 읽지 못한 저장본으로 멈춘다(그림 없이 열어 덮어쓰지 않는다)');
+    assert.strictEqual(raw.state, undefined, '새 방식 저장본에는 state가 없다(이 방식을 모르는 빌드는 읽지 못해 큰 작업에만 쓴다)');
     assert.ok(!JSON.stringify(raw).includes(BIG.slice(30, 80)), '저장본에는 긴 그림 글이 없다');
     assert.strictEqual(imageKeys(shared).length, 4, '같은 그림은 하나만 둔다(BIG·OTHER·REF·TRASHED). 짧은 그림은 저장본에 그대로');
     assert.ok(!shared.data.has(CHECK), '확인용 이름은 다 옮긴 뒤 지운다');
@@ -330,6 +335,83 @@ test('옮기기: 확인용으로 다시 읽은 값이 달라 새 방식을 끌 �
     assert.deepStrictEqual([shared.data.has(CHECK), imageKeys(shared).length], [false, 0]);
 });
 
+test('옮기기: 확인용으로 쓴 그림을 다시 읽지 못하면 값이 다른 것과 같게 보아 작업 전체를 예전 방식으로 쓰고, 확인용으로 넣은 것을 치우며, 그 창에서는 새 방식을 끈다', async () => {
+    const shared = makeStore();
+    shared.data.set(KEY, legacyRecord());
+    const app = makeApp(shared);
+    assert.strictEqual(await app.ctx.restoreState(), 'ok');
+    shared.failWhen = ({ op, key }) => (op === 'get' && key.startsWith(IMG) ? new Error('Failed to read large IndexedDB value') : null);
+    assert.strictEqual(await app.ctx.saveState(), true, '예전 방식으로는 저장했다');
+    shared.failWhen = null;
+    const raw = shared.data.get(KEY);
+    assert.ok(!raw.teacherSplit && raw.state && raw.state.courseTitle === '큰 과정', '저장본은 예전 방식(작업 전체)');
+    assert.deepStrictEqual([shared.data.has(CHECK), imageKeys(shared).length], [false, 0], '확인용으로 넣은 것은 치웠다');
+    const mark = shared.log.length;
+    app.run("globalState.courseTitle = '다음 제목'");
+    assert.strictEqual(await app.ctx.saveState(), true);
+    assert.deepStrictEqual(writesSince(shared, mark), [`put ${KEY}`], '그 창에서는 예전 방식으로만 쓴다');
+});
+
+/* ---------- 큰 작업에만 ---------- */
+test('작은 작업(예전 방식이면 작업 전체를 JSON 파일로 쓸 만큼 크지 않다)은 예전처럼 { state, history }를 값 그대로 쓴다. 그림을 따로 두지 않아 이 방식을 모르는 앞선 빌드도 그대로 읽는다', async () => {
+    const shared = makeStore();
+    shared.data.set(KEY, legacyRecord());
+    const app = makeApp(shared, { splitFrom: null });
+    assert.strictEqual(app.run('splitSaveMinBytes'), app.run('STATE_BLOB_MIN_BYTES'), '예전 방식이면 JSON 파일로 쓸 크기부터 새 방식으로 쓴다');
+    assert.strictEqual(await app.ctx.restoreState(), 'ok');
+    app.run("globalState.courseTitle = '작은 작업'");
+    assert.strictEqual(await app.ctx.saveState(), true);
+    const raw = shared.data.get(KEY);
+    // 앞선 빌드는 저장본의 state만 읽는다(c8b9987보다 앞선 빌드는 state가 없으면 예시 과정으로 덮고, 그 뒤 빌드는 읽지 못한 창으로 막는다)
+    assert.ok(!raw.teacherSplit && raw.state && raw.state.courseTitle === '작은 작업' && Array.isArray(raw.history), '예전 모양 그대로');
+    assert.ok(JSON.stringify(raw).includes(BIG.slice(30, 80)), '그림도 저장본 안에');
+    assert.deepStrictEqual([imageKeys(shared).length, shared.data.has(CHECK)], [0, false], '그림을 따로 두지 않고 확인용 이름도 쓰지 않는다');
+    // 처음 쓰는 브라우저의 예시 과정도 같다
+    const fresh = makeStore();
+    const first = makeApp(fresh, { splitFrom: null });
+    assert.strictEqual(await first.ctx.restoreState(), 'empty');
+    assert.ok(fresh.data.get(KEY).state && !fresh.data.get(KEY).teacherSplit && !imageKeys(fresh).length, '예시 과정도 예전 모양');
+});
+
+test('새 방식으로 쓴 작업이 작아지면 작업 전체를 값 그대로 쓰며 같은 기록 단계에서 이제 쓰지 않는 그림을 지운다(사본이 쓰는 그림은 남긴다). 다시 커지면 확인하고 새 방식으로 쓴다', async () => {
+    const { shared, app } = await migrated();
+    const trashedKey = imageKeys(shared).find(key => shared.data.get(key) === TRASHED);
+    const copyKey = `${KEY}:읽지못함:${Date.now()}`;
+    shared.data.set(copyKey, { teacherSplit: 1, body: { state: { lessonTrash: [{ lesson: { images: { t1: '\u0000img:' + trashedKey.slice(IMG.length) } } }] }, history: [] } });
+    const mark = shared.log.length;
+    app.run('splitSaveMinBytes = storedSizeEstimate({ state: globalState, history: contentHistory }) + 1000'); // 이제 기준보다 작다
+    assert.strictEqual(await app.ctx.saveState(), true);
+    const raw = shared.data.get(KEY);
+    assert.ok(!raw.teacherSplit && raw.state && raw.state.courseTitle === '큰 과정', '작업 전체를 값 그대로');
+    assert.deepStrictEqual(imageKeys(shared), [trashedKey], '사본이 쓰는 그림만 남긴다');
+    assert.strictEqual(new Set(shared.log.slice(mark).map(write => write.tx)).size, 1, '저장본 쓰기와 그림 지우기는 한 번의 기록 단계');
+    assert.deepStrictEqual((await reopen(shared)).work(), app.work());
+    // 그 뒤 작은 저장은 예전처럼 저장본 하나만 쓴다
+    const next = shared.log.length;
+    app.run("globalState.courseTitle = '작은 저장'");
+    assert.strictEqual(await app.ctx.saveState(), true);
+    assert.deepStrictEqual(writesSince(shared, next), [`put ${KEY}`]);
+    // 다시 커지면 확인용 이름에 먼저 쓰고 새 방식으로 바꾼다
+    app.run('splitSaveMinBytes = 0');
+    assert.strictEqual(await app.ctx.saveState(), true);
+    assertSplitRecord(shared);
+    assert.ok(shared.log.slice(next).some(write => write.key === CHECK), '확인하고 옮긴다');
+    assert.deepStrictEqual((await reopen(shared)).work(), app.work());
+});
+
+test('작아진 작업을 쓰며 쓰지 않는 그림을 지우다 실패하면 그림은 지우지 않고 작업 전체를 예전처럼 쓴다', async () => {
+    const { shared, app } = await migrated();
+    app.run('splitSaveMinBytes = storedSizeEstimate({ state: globalState, history: contentHistory }) + 1000');
+    let failed = false;
+    shared.failWhen = ({ op, key }) => op === 'delete' && key.startsWith(IMG) && !failed && (failed = true);
+    assert.strictEqual(await app.ctx.saveState(), true);
+    shared.failWhen = null;
+    const raw = shared.data.get(KEY);
+    assert.ok(!raw.teacherSplit && raw.state && raw.state.courseTitle === '큰 과정', '작업 전체를 값 그대로');
+    assert.strictEqual(imageKeys(shared).length, 4, '그림은 그대로(다음에 새 방식으로 쓸 때 정리한다)');
+    assert.deepStrictEqual((await reopen(shared)).work(), app.work());
+});
+
 /* ---------- 다시 열기 ---------- */
 test('여는 사이 다른 탭이 저장하며 그림을 정리했으면 새 저장본으로 다시 풀어 연다(읽지 못한 창을 띄우지 않는다)', async () => {
     const { shared } = await migrated();
@@ -375,6 +457,33 @@ test('저장본이 가리키는 그림이 없으면 덮어쓰지 않고 막으�
     const lesson = file.state.subjects[0].lessons[0];
     assert.deepStrictEqual([lesson.images.img_1, lesson.gyosuan.images.g1, file.history[0].images.img_1], [BIG, OTHER, BIG], '있는 그림은 제자리에');
     assert.strictEqual(file.state.lessonTrash[0].lesson.images.t1, '\u0000img:' + lostKey.slice(IMG.length), '찾지 못한 그림은 자리 글 그대로');
+});
+
+test('그림 하나를 읽지 못해도(크롬의 큰 값 읽기 실패) 나머지 그림은 끝까지 읽는다. 덮어쓰지 않고 막으며, 막는 창 글과 두 내려받기는 담지 못한 그림 수를 알리고 파일에는 읽은 그림을 제자리에 넣는다', async () => {
+    const { shared } = await migrated();
+    const broken = imageKeys(shared).find(key => shared.data.get(key) === TRASHED);
+    shared.failWhen = ({ op, key }) => (op === 'get' && key === broken ? new Error('Failed to read large IndexedDB value') : null);
+    const app = makeApp(shared);
+    assert.strictEqual(await app.ctx.restoreState(), 'failed', '그림 없이 열어 덮어쓰지 않는다');
+    const text = app.run('stateLoadFailedText({ folder: false, download: true, missingImages: unreadMissingImages })');
+    assert.ok(text.includes('그림 1장'), text);
+    await app.ctx.downloadUnreadRecord();
+    assert.strictEqual(app.log.files.length, 1, app.log.alerts.join('|'));
+    const file = JSON.parse(await app.log.files[0].blob.text());
+    const lesson = file.state.subjects[0].lessons[0];
+    assert.deepStrictEqual([lesson.images.img_1, lesson.refImages[0].url, lesson.gyosuan.images.g1, file.history[0].images.img_1], [BIG, REF, OTHER, BIG], '읽은 그림은 제자리에');
+    assert.strictEqual(file.state.lessonTrash[0].lesson.images.t1, '\u0000img:' + broken.slice(IMG.length), '읽지 못한 그림만 자리 글');
+    assert.deepStrictEqual(app.log.toasts, [], '다 담았다고 하지 않는다');
+    assert.strictEqual(app.log.alerts.filter(alert => alert.includes('그림 1장')).length, 1, app.log.alerts.join('|'));
+    // 따로 옮겨 둔 사본을 받을 때도 같다
+    const copyKey = `${KEY}:읽지못함:${Date.now()}`;
+    shared.data.set(copyKey, structuredClone(shared.data.get(KEY)));
+    await app.ctx.downloadUnreadCopy(copyKey);
+    assert.strictEqual(app.log.files.length, 2, app.log.alerts.join('|'));
+    const copy = JSON.parse(await app.log.files[1].blob.text());
+    assert.deepStrictEqual([copy.state.subjects[0].lessons[0].refImages[0].url, copy.state.lessonTrash[0].lesson.images.t1], [REF, '\u0000img:' + broken.slice(IMG.length)]);
+    assert.deepStrictEqual(app.log.toasts, []);
+    assert.strictEqual(app.log.alerts.filter(alert => alert.includes('그림 1장')).length, 2, app.log.alerts.join('|'));
 });
 
 /* ---------- 바뀐 것만 쓰기 ---------- */

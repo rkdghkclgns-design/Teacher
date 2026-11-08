@@ -131,6 +131,8 @@ let lockedFolder = null;
 let stateLoadFailed = false;
 // 읽지 못한 저장본을 읽어 오기는 했으면 그 값(막는 창의 '읽지 못한 저장본 내려받기'). 읽지도 못했으면 undefined
 let unreadRecord;
+// 읽지 못한 저장본(그림을 따로 둔 저장본, state-store.js)이 가리키는 그림 가운데 찾지 못하거나 읽지 못한 수. 막는 창이 내려받는 파일에도 빠진다고 알린다
+let unreadMissingImages = 0;
 
 
 
@@ -505,6 +507,9 @@ let lastBrowserSaveFailed = false;
 // 크롬은 IndexedDB 값 하나를 127MiB까지만 받는다. 작업 전체를 값 하나로 저장하므로 그림이 아주 많으면(큰 교안 HTML을 불러온 교과 등) 저장하지 못한다.
 // 그만큼 클 수 있는 작업은 JSON 파일(Blob)로 저장한다. Blob은 그 한도에 세지 않고 따로 저장된다. 읽는 쪽은 둘 다 읽는다(readStoredState)
 const STATE_BLOB_MIN_BYTES = 100 * 1024 * 1024;
+// 그림을 따로 두는 저장(state-store.js)은 어림 크기(storedSizeEstimate)가 이만큼을 넘는 큰 작업에만 쓴다. 예전 방식이면 작업 전체를 JSON 파일로 쓸 크기와 같다.
+// 그보다 작은 작업은 예전처럼 값 그대로 써서 그 방식을 모르는 앞선 빌드도 읽게 한다(이만큼 큰 작업은 예전에도 JSON 파일로 써서 JSON 파일을 모르는 빌드는 원래 읽지 못했다). 테스트가 바꾼다
+let splitSaveMinBytes = STATE_BLOB_MIN_BYTES;
 
 // 값 하나로 저장할 때의 크기 어림(바이트). 그림 글(data:)은 한 글자 1바이트, 다른 글은 2바이트로 넉넉히 센다. 같은 객체는 한 번만 센다(값 저장도 한 번만 쓴다)
 function storedSizeEstimate(value) {
@@ -536,11 +541,15 @@ const isValueTooLarge = err => /too large/i.test(String(err?.message || ''));
 // 한 번 거절되면 이 창에서는 처음부터 JSON 파일로 쓴다(값으로 바꾸다 거절되는 데 드는 시간을 저장마다 다시 쓰지 않게)
 let browserStateAsFile = false;
 
-// 작업을 브라우저 저장소에 쓴다. 그림을 따로 두는 저장(state-store.js)을 쓸 수 있으면 그것으로 바뀐 그림과 글만 쓰고, 그 저장이 실패하면 whole로 다시 불러 작업 전체를 쓴다.
+// 작업을 브라우저 저장소에 쓴다. 그림을 따로 두는 저장(state-store.js)을 쓸 수 있으면 큰 작업(splitSaveMinBytes)은 그것으로 바뀐 그림과 글만 쓰고, 그 저장이 실패하면 whole로 다시 불러 작업 전체를 쓴다.
+// 작은 작업도 그 저장의 차례를 지켜 작업 전체를 쓴다(늦게 부른 저장이 마지막에 남게. 큰지는 쓸 차례가 왔을 때 본다).
 // 작업 전체는 클 수 있으면 JSON 파일로, 아니면 값 그대로(예전과 같다). 값이 너무 크다고 거절되면 JSON 파일로 다시 쓴다.
 // blobMin: JSON 파일로 쓸 어림 크기(테스트가 바꾼다). whole: 그림을 따로 두지 않고 작업 전체를 쓴다
 async function writeBrowserState(stateData, { blobMin = STATE_BLOB_MIN_BYTES, whole = false } = {}) {
-    if (!whole && typeof writeSplitSave === 'function' && splitSaveUsable()) return writeSplitSave(stateData, () => writeBrowserState(stateData, { blobMin, whole: true }));
+    if (!whole && typeof writeSplitSave === 'function' && splitSaveUsable()) {
+        const big = () => browserStateAsFile || storedSizeEstimate(stateData) > splitSaveMinBytes;
+        return writeSplitSave(stateData, () => writeBrowserState(stateData, { blobMin, whole: true }), big);
+    }
     if (browserStateAsFile || storedSizeEstimate(stateData) > blobMin) return DBManager.setItem(STORAGE_KEY, stateJsonBlob(stateData));
     try {
         return await DBManager.setItem(STORAGE_KEY, stateData);
@@ -699,6 +708,7 @@ function markStateUnread(err, record) {
     console.error('[저장된 작업] 읽지 못해 저장을 멈춥니다. 저장본은 그대로 둡니다:', err);
     stateLoadFailed = true;
     unreadRecord = record;
+    unreadMissingImages = Number(err?.missingImages) || 0;
     globalState = sanitizeState({ subjects: [] });
     contentHistory = [];
     return 'failed';
@@ -815,8 +825,9 @@ function redrawAfterRestore() {
     }
 }
 
-// 막는 창의 글. folder: 이 브라우저가 폴더 열기를 지원하는지, download: 읽어 온 저장본이 있어 내려받을 수 있는지
-function stateLoadFailedText({ folder = true, download = false } = {}) {
+// 막는 창의 글. folder: 이 브라우저가 폴더 열기를 지원하는지, download: 읽어 온 저장본이 있어 내려받을 수 있는지,
+// missingImages: 그 저장본이 가리키는 그림 가운데 찾지 못하거나 읽지 못해 내려받는 파일에도 빠지는 수
+function stateLoadFailedText({ folder = true, download = false, missingImages = 0 } = {}) {
     return [
         '이 브라우저에 저장해 둔 작업을 읽지 못했습니다. 저장본은 지우지 않고 그대로 두었습니다.',
         '덮어쓰지 않도록 지금은 아무것도 저장하지 않습니다.',
@@ -825,6 +836,7 @@ function stateLoadFailedText({ folder = true, download = false } = {}) {
         '  브라우저 설정에서 이 사이트의 쿠키·사이트 데이터를 막았다면 먼저 허용해 주세요.',
         folder ? '· 과정 전체 백업 ZIP이나 저장해 둔 PC 폴더가 있으면 그것으로 되살릴 수 있습니다.' : '· 과정 전체 백업 ZIP이 있으면 그것으로 되살릴 수 있습니다.',
         download ? '· 읽지 못한 저장본 내려받기: 읽지 못한 저장본을 고치지 않은 그대로 파일로 받아 둡니다. 이 앱의 백업 ZIP처럼 바로 되살리지는 못합니다.' : null,
+        download && missingImages ? `  저장본이 가리키는 그림 ${missingImages}장은 찾지 못하거나 읽지 못해 그 파일에도 담지 못합니다(그 자리에는 그림 자리 글만 남습니다).` : null,
         '· 새로 시작: 읽지 못한 저장본 대신 예시 과정으로 처음부터 시작합니다.',
         "  되살리거나 새로 시작하기 직전에 읽지 못한 저장본을 이 브라우저에 사본으로 옮겨 두어(저장 공간이 모자라면 옮기지 못할 수 있습니다), 나중에 '내보내기·백업' 메뉴에서 파일로 받을 수 있습니다."
     ].filter(line => line !== null).join('\n');
@@ -867,7 +879,7 @@ function showStateLoadFailedDialog() {
                 <i class="ph-fill ph-warning-circle text-2xl text-amber-400" aria-hidden="true"></i>
                 <h3 id="state-load-title" class="font-bold text-white text-sm">${escapeHtml('저장된 작업을 읽지 못했습니다')}</h3>
             </div>
-            <p id="state-load-text" class="text-sm text-textMuted leading-relaxed whitespace-pre-wrap break-keep">${escapeHtml(stateLoadFailedText({ folder, download }))}</p>
+            <p id="state-load-text" class="text-sm text-textMuted leading-relaxed whitespace-pre-wrap break-keep">${escapeHtml(stateLoadFailedText({ folder, download, missingImages: unreadMissingImages }))}</p>
             <div class="flex flex-col gap-2">
                 ${button('reload', '다시 읽기', 'text-white bg-accent hover:bg-accentHover')}
                 ${button('zip', '백업 ZIP으로 되살리기', plain)}
@@ -910,8 +922,16 @@ function downloadRecordFile(record, baseName) {
     setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
-// 내려받을 저장본 값. 그림을 따로 둔 저장본(state-store.js)은 그림을 제자리에 넣어 예전 저장본과 같은 모양({ state, history })으로 준다(찾지 못한 그림은 자리 글 그대로)
-const downloadableRecord = async record => (typeof isSplitSave === 'function' && isSplitSave(record) ? openSplitSave(record) : record);
+// 내려받을 저장본 값 → { record, missing }. 그림을 따로 둔 저장본(state-store.js)은 그림을 제자리에 넣어 예전 저장본과 같은 모양({ state, history })으로 준다.
+// missing: 찾지 못하거나 읽지 못해 자리 글 그대로 둔 그림 수(내려받을 때 알린다)
+async function downloadableRecord(record) {
+    if (typeof isSplitSave !== 'function' || !isSplitSave(record)) return { record, missing: 0 };
+    const opened = await openSplitSave(record);
+    return { record: opened.data, missing: opened.missing.length };
+}
+
+// 내려받은 파일에 담지 못한 그림을 알리는 말
+const missingImagesNote = count => `다만 그림 ${count}장은 찾지 못하거나 읽지 못해 담지 못했습니다(그 자리에는 그림 자리 글만 남습니다).`;
 
 // 읽지 못한 저장본을 고치지 않은 그대로 파일로 내려받는다. 저장소에서 다시 읽고(검사하다 바뀐 값이 아니게), 못 읽으면 처음 읽은 것을 쓴다
 async function downloadUnreadRecord() {
@@ -924,8 +944,10 @@ async function downloadUnreadRecord() {
     if (record === undefined) record = unreadRecord;
     if (record === undefined) return window.showAlert('내려받을 저장본을 찾지 못했습니다.');
     try {
-        downloadRecordFile(await downloadableRecord(record), `교안_읽지못한저장본_${backupStamp()}`);
-        window.showToast?.('읽지 못한 저장본을 파일로 내려받습니다.', 'success');
+        const file = await downloadableRecord(record);
+        downloadRecordFile(file.record, `교안_읽지못한저장본_${backupStamp()}`);
+        if (file.missing) window.showAlert(`읽지 못한 저장본을 파일로 내려받습니다. ${missingImagesNote(file.missing)}`);
+        else window.showToast?.('읽지 못한 저장본을 파일로 내려받습니다.', 'success');
     } catch (err) {
         console.error('[저장된 작업] 읽지 못한 저장본을 파일로 만들지 못했습니다:', err);
         window.showAlert(`읽지 못한 저장본을 파일로 만들지 못했습니다(${err?.message || '알 수 없는 오류'}).`);
@@ -958,8 +980,10 @@ async function downloadUnreadCopy(key) {
     }
     if (record == null) return window.showAlert(gone);
     try {
-        downloadRecordFile(await downloadableRecord(record), `교안_읽지못한저장본_사본_${backupStamp(new Date(copy.at))}`);
-        window.showToast?.('따로 옮겨 둔 사본을 파일로 내려받습니다.', 'success');
+        const file = await downloadableRecord(record);
+        downloadRecordFile(file.record, `교안_읽지못한저장본_사본_${backupStamp(new Date(copy.at))}`);
+        if (file.missing) window.showAlert(`따로 옮겨 둔 사본을 파일로 내려받습니다. ${missingImagesNote(file.missing)}`);
+        else window.showToast?.('따로 옮겨 둔 사본을 파일로 내려받습니다.', 'success');
     } catch (err) {
         console.error('[저장된 작업] 따로 옮겨 둔 사본을 파일로 만들지 못했습니다:', err);
         window.showAlert(`그 사본을 파일로 만들지 못했습니다(${err?.message || '알 수 없는 오류'}).`);

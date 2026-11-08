@@ -5,7 +5,9 @@
 // - 그림(<STORAGE_KEY>#img:<그림 id>): data: 글 그대로. id는 처음 본 그림에 정하는 무작위 32자이고, 한 번 쓴 이름의 값은 바꾸지 않는다
 // - 없는 그림 넣기·저장본 쓰기·어디에서도 쓰지 않는 그림 지우기를 한 번의 기록 단계(transaction)에서 한다. 끊기면 아무것도 바뀌지 않아 앞 저장본이 그대로 열린다
 // - 예전 저장본(작업 전체를 값 하나나 JSON 파일로 쓴 것)을 처음 바꿀 때는 확인용 이름(<STORAGE_KEY>#check)에 먼저 쓰고 다시 읽어 같은지 본 뒤에야 바꾼다
-// - 예전 코드는 이 저장본에 state가 없어 '읽지 못한 저장본' 창으로 멈춘다(그림 없이 열어 덮어쓰지 않는다)
+// - 이 방식은 큰 작업에만 쓴다(예전 방식이면 작업 전체를 JSON 파일로 쓸 만큼 클 때. state.js writeBrowserState·splitSaveMinBytes가 고른다). 작은 작업은 예전처럼 { state, history }를 값 그대로 쓴다.
+//   이 방식을 모르는 빌드는 이 저장본에 state가 없어 열지 못한다. 읽지 못한 창이 생긴 뒤(c8b9987, 2026-11-06)의 빌드는 '읽지 못한 저장본' 창으로 멈추지만(그 창의 내려받기에는 그림이 빠진다),
+//   그보다 앞선 빌드는 예시 과정으로 덮어쓴다(JSON 파일 저장본도 그 빌드는 덮어쓴다). 그래서 앞선 빌드로 되돌리기 전에는 과정 전체 백업 ZIP을 받아 두게 한다(README)
 // 기대는 것: state.js(DBManager), data.js(STORAGE_KEY). 테스트: tests/save-speed.test.js
 
 const SPLIT_SAVE_MARK = 'teacherSplit';
@@ -138,7 +140,8 @@ function sameSplitSaveValue(a, b) {
     return keys.every(key => Object.prototype.hasOwnProperty.call(b, key) && sameSplitSaveValue(a[key], b[key]));
 }
 
-// 그림들(과 extraKey 값 하나)을 한 번의 읽기 단계로 읽는다 → { images: id → 글, extra }. 없는 그림은 빠진다
+// 그림들(과 extraKey 값 하나)을 한 번의 읽기 단계로 읽는다 → { images: id → 글, extra, failed: 읽지 못한 그림 id }. 없거나 읽지 못한 그림은 images에서 빠진다.
+// 그림 하나를 읽지 못해도(크롬의 'Failed to read large IndexedDB value'처럼 그 값만 깨졌을 때) 단계를 끊지 않고 나머지를 끝까지 읽는다
 async function readSplitSaveParts(ids, extraKey = null) {
     const db = await DBManager.init();
     const prefix = splitSaveImagePrefix();
@@ -146,12 +149,17 @@ async function readSplitSaveParts(ids, extraKey = null) {
         const tx = db.transaction(DBManager.storeName, 'readonly');
         const store = tx.objectStore(DBManager.storeName);
         const images = new Map();
+        const failed = [];
         let extra;
-        tx.oncomplete = () => resolve({ images, extra });
+        tx.oncomplete = () => resolve({ images, extra, failed });
         tx.onabort = () => reject(tx.error || new Error('IndexedDB 읽기가 취소되었습니다'));
         for (const id of ids) {
             const request = store.get(prefix + id);
             request.onsuccess = () => { if (typeof request.result === 'string') images.set(id, request.result); };
+            request.onerror = event => {
+                event.preventDefault(); // 막지 않으면 실패한 요청 하나가 읽기 단계 전체를 취소한다
+                failed.push(id);
+            };
         }
         if (extraKey) {
             const request = store.get(extraKey);
@@ -231,11 +239,12 @@ function sweepSplitSave(store, { prefix, existing, images, done, stop }) {
     };
 }
 
-// 작업을 이 방식으로 쓴다. whole: 이 방식이 실패했을 때 작업 전체를 예전 방식으로 쓰는 함수(그 약속을 돌려준다).
+// 작업을 이 방식으로 쓴다. whole: 작업 전체를 예전 방식으로 쓰는 함수(그 약속을 돌려준다). 이 방식이 실패했을 때와 작은 작업일 때 부른다.
+// big: 이 방식으로 쓸 만큼 큰 작업인지(쓸 차례가 왔을 때 본다. state.js writeBrowserState). 아니면 writeSplitSaveWhole로 작업 전체를 쓴다.
 // 한 번에 하나씩 쓴다(앞 쓰기와 그 다시 쓰기가 끝난 뒤 시작해 늦게 부른 저장이 마지막에 남는다). 부른 즉시 저장 중으로 센다(창을 닫기 전에 묻게, state.js isSavePending)
-function writeSplitSave(data, whole) {
+function writeSplitSave(data, whole, big = () => true) {
     DBManager.writing += 1;
-    const run = splitSaveQueue.then(() => writeSplitSaveNow(data, whole));
+    const run = splitSaveQueue.then(() => (big() ? writeSplitSaveNow(data, whole) : writeSplitSaveWhole(data, whole)));
     splitSaveQueue = run.then(() => undefined, () => undefined);
     return run.finally(() => { DBManager.writing -= 1; });
 }
@@ -255,18 +264,33 @@ async function writeSplitSaveNow(data, whole) {
     }
 }
 
+// 작은 작업은 예전처럼 작업 전체({ state, history })를 값 그대로 쓴다(이 방식을 모르는 앞선 빌드도 그대로 읽게). 다음에 이 방식으로 쓸 때는 확인용 이름에 먼저 쓴다.
+// 지금 저장본이 이 방식이면(이 창에서 읽었거나 썼다) 저장본 쓰기와 이제 쓰지 않는 그림 지우기(사본이 쓰는 그림은 남긴다)를 한 번의 기록 단계로 한다.
+// 그렇게 쓰지 못하면 그림은 지우지 않고 whole로 쓴다(남은 그림은 다음에 이 방식으로 쓸 때 정리한다. whole도 실패하면 저장본은 그대로 이 방식이다)
+async function writeSplitSaveWhole(data, whole) {
+    if (!splitSaveStored) return whole();
+    try {
+        await commitSplitSave({ key: STORAGE_KEY, record: data, images: new Map(), sweep: true, drop: [splitSaveCheckKey()] });
+    } catch (err) {
+        console.warn('[저장] 작업 전체를 쓰며 쓰지 않는 그림을 지우지 못해, 그림은 그대로 두고 작업 전체를 씁니다:', err?.message || err);
+        await whole();
+    }
+    splitSaveStored = false;
+}
+
 // 처음 이 방식으로 쓸 때: 확인용 이름에 먼저 쓰고 다시 읽어, 쓴 값과 같아야 지금 저장본을 바꾼다(그때까지 예전 저장본은 그대로). 넣은 그림은 다음 저장이 다시 쓰지 않게 기억한다.
-// 같지 않으면 확인용으로 넣은 것(이번에 처음 정한 그림·확인용 이름)을 치우고 던진다(예전 방식으로 다시 쓴다). 값이 달랐으면 이 창에서는 이 방식을 끈다.
+// 같지 않으면 확인용으로 넣은 것(이번에 처음 정한 그림·확인용 이름)을 치우고 던진다(예전 방식으로 다시 쓴다). 값이 달랐거나 그림을 다시 읽지 못했으면 이 창에서는 이 방식을 끈다.
 // 확인용으로 쓴 것이 없어졌으면(같은 때 옮기던 다른 탭이 정리했다) 끄지 않는다(다음 저장이 다시 옮긴다)
 async function checkSplitSave(encoded) {
     await commitSplitSave({ key: splitSaveCheckKey(), record: encoded.record, images: encoded.images, fresh: encoded.fresh });
     splitSaveMemo = encoded.memo;
     const back = await readSplitSaveParts(encoded.images.keys(), splitSaveCheckKey());
-    const gone = back.extra === undefined || [...encoded.images.keys()].some(id => !back.images.has(id));
-    if (!gone && sameSplitSaveValue(back.extra, encoded.record) && [...encoded.images].every(([id, text]) => back.images.get(id) === text)) return;
+    const unreadable = back.failed.length; // 브라우저가 쓴 그림을 돌려주지 못했다(없어진 것이 아니다)
+    const gone = !unreadable && (back.extra === undefined || [...encoded.images.keys()].some(id => !back.images.has(id)));
+    if (!gone && !unreadable && sameSplitSaveValue(back.extra, encoded.record) && [...encoded.images].every(([id, text]) => back.images.get(id) === text)) return;
     if (!gone) splitSaveOff = true;
     await discardSplitCheck(encoded.fresh);
-    throw new Error(gone ? '확인용으로 쓴 것이 그사이 없어졌습니다' : '확인용으로 다시 읽은 저장본이 쓴 것과 다릅니다');
+    throw new Error(gone ? '확인용으로 쓴 것이 그사이 없어졌습니다' : unreadable ? `확인용으로 쓴 그림 ${unreadable}개를 다시 읽지 못했습니다` : '확인용으로 다시 읽은 저장본이 쓴 것과 다릅니다');
 }
 
 // 확인하지 못한 확인용 쓰기를 치운다(확인용 이름과 이번에 처음 정한 그림. 그 그림은 이 창만 안다). 치우지 못해도 멈추지 않는다(다음에 옮길 때 정리한다)
@@ -287,7 +311,7 @@ async function discardSplitCheck(fresh) {
     }
 }
 
-// 저장본(STORAGE_KEY)의 그림을 읽어 { state, history }로 푼다. 그림을 하나라도 찾지 못하거나 읽지 못하면 던진다(record를 담아. 막는 창에서 내려받는다).
+// 저장본(STORAGE_KEY)의 그림을 읽어 { state, history }로 푼다. 그림을 하나라도 찾지 못하거나 읽지 못하면 던진다(record와 그 그림 수 missingImages를 담아. 막는 창에서 알리고 내려받는다).
 // 저장본을 읽은 뒤 그림을 읽기 전에 다른 탭이 저장하며 그 그림을 정리했을 수 있어, 그림이 없으면 저장본을 다시 읽어 바뀌었으면 새 저장본으로 한 번 더 푼다
 async function readSplitSave(record) {
     let current = record;
@@ -300,12 +324,12 @@ async function readSplitSave(record) {
                 opened = await openStoredSplitSave(current);
             }
         }
-        if (opened.missing.length) throw new Error(`저장본이 가리키는 그림 ${opened.missing.length}개를 찾지 못했습니다`);
+        if (opened.missing.length) throw Object.assign(new Error(`저장본이 가리키는 그림 ${opened.missing.length}개를 찾지 못하거나 읽지 못했습니다`), { missingImages: opened.missing.length });
         opened.images.forEach((text, id) => { if (!splitSaveMemo.has(text)) splitSaveMemo.set(text, id); });
         splitSaveStored = true;
         return opened.data;
     } catch (err) {
-        throw Object.assign(new Error(`그림을 따로 둔 저장본을 풀지 못했습니다: ${err.message}`), { record: current });
+        throw Object.assign(new Error(`그림을 따로 둔 저장본을 풀지 못했습니다: ${err.message}`), { record: current, missingImages: err.missingImages || 0 });
     }
 }
 
@@ -315,7 +339,7 @@ async function openStoredSplitSave(record) {
     return { ...decodeSplitSave(record, images), images };
 }
 
-// 내려받기용: 그림을 제자리에 넣은 { state, history }(예전 저장본과 같은 모양). 찾지 못하거나 읽지 못한 그림은 자리 글 그대로 둔다
+// 내려받기용 → { data: 그림을 제자리에 넣은 { state, history }(예전 저장본과 같은 모양), missing: 찾지 못하거나 읽지 못해 자리 글 그대로 둔 그림 id }(부르는 쪽이 알린다)
 async function openSplitSave(record) {
     let images = new Map();
     try {
@@ -323,5 +347,5 @@ async function openSplitSave(record) {
     } catch (err) {
         console.warn('[저장된 작업] 그림을 읽지 못해 그림 자리만 담습니다:', err?.message || err);
     }
-    return decodeSplitSave(record, images).data;
+    return decodeSplitSave(record, images);
 }
