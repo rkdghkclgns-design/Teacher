@@ -37,21 +37,40 @@ function subjectOverviewChips(subject) {
 }
 
 /* ---------- 과정 시간 막대 ---------- */
+const TIME_BAR_ROW_MAX = 8; // 한 줄에 놓는 교과 수. 사이드바가 가장 좁을 때(280px)도 두 자리 번호가 잘리지 않는다
+
+// 교과가 많으면 줄을 나눈다. 줄마다 개수를 고르게 맞춰 마지막 줄만 넓어지지 않게 한다
+function timeBarLines(rows) {
+    const lines = Math.ceil(rows.length / TIME_BAR_ROW_MAX);
+    const base = Math.floor(rows.length / lines);
+    const extra = rows.length % lines;
+    return Array.from({ length: lines }, (_, line) => {
+        const start = line * base + Math.min(line, extra);
+        return rows.slice(start, start + base + (line < extra ? 1 : 0));
+    });
+}
+
+// 칸 너비는 시간에 비례하되 번호가 다 보이는 너비 아래로는 줄지 않는다
+function timeBarSegment({ subject, index, minutes }) {
+    const label = String(index + 1);
+    return `
+        <button onclick="location.hash='#editor/${escapeHtml(String(subject.id))}'" style="flex:${minutes};min-width:${label.length * 0.5 + 0.25}rem" title="${escapeHtml(`${label}. ${subject.title} — ${fmtMinutes(minutes)}`)}" class="h-4 rounded-sm bg-accent/40 hover:bg-accent text-[0.6875rem] font-bold text-white whitespace-nowrap">${label}</button>`;
+}
+
 function renderCourseTimeBar() {
     const rows = globalState.subjects.map((subject, index) => ({ subject, index, minutes: courseLessonMinutes(subject) })).filter(row => row.minutes);
     const total = rows.reduce((sum, row) => sum + row.minutes, 0);
     if (!total) return '';
     const target = courseTargetMinutes();
     const matched = !target || target === total;
-    const segments = rows.map(({ subject, index, minutes }) => `
-        <button onclick="location.hash='#editor/${escapeHtml(String(subject.id))}'" style="flex:${minutes}" title="${escapeHtml(`${index + 1}. ${subject.title} — ${fmtMinutes(minutes)}`)}" class="min-w-0 h-4 rounded-sm bg-accent/40 hover:bg-accent text-[0.6875rem] font-bold text-white truncate">${index + 1}</button>`).join('');
+    const lines = timeBarLines(rows).map(line => `<div data-time-row class="flex flex-wrap gap-0.5">${line.map(timeBarSegment).join('')}</div>`).join('');
     return `
-        <div class="mb-3 rounded-xl border border-white/10 bg-white/5 p-2.5">
+        <div class="shrink-0 mb-3 rounded-xl border border-white/10 bg-white/5 p-2.5">
             <div class="flex items-center justify-between gap-2 text-[0.6875rem]">
                 <span class="font-bold text-textLight">과정 시간</span>
                 <span class="${matched ? 'text-emerald-400' : 'text-amber-400'}">합계 ${fmtMinutes(total)}${target ? ` / 목표 ${fmtMinutes(target)}` : ''}</span>
             </div>
-            <div class="flex gap-0.5 mt-1.5">${segments}</div>
+            <div class="flex flex-col gap-0.5 mt-1.5">${lines}</div>
             ${matched ? '' : '<button onclick="fitSubjectHours()" class="mt-1.5 text-[0.6875rem] font-bold px-2 py-0.5 rounded bg-white/10 text-textLight hover:bg-accent">비율대로 맞추기</button>'}
         </div>`;
 }

@@ -526,9 +526,10 @@ function renderOverviewLNB() {
 
 
 
+    // 목록은 세로 flex라서 overflow-hidden인 카드는 shrink-0이 없으면 교과가 많을 때 높이가 0까지 눌린다
     list.innerHTML = renderCourseTimeBar() + globalState.subjects.map((subj, idx) => `
 
-                <div class="bg-white/5 border border-white/10 rounded-xl overflow-hidden group hover:border-accent/50 transition-colors shadow-sm"
+                <div class="shrink-0 bg-white/5 border border-white/10 rounded-xl overflow-hidden group hover:border-accent/50 transition-colors shadow-sm"
                      draggable="true" data-subj-idx="${idx}"
                      ondragstart="handleSubjDragStart(event, ${idx})"
                      ondragover="handleSubjDragOver(event)"
@@ -545,7 +546,7 @@ function renderOverviewLNB() {
 
                             <span class="flex items-center justify-center w-7 h-7 rounded-lg bg-accent/20 text-accent font-bold text-xs cursor-grab active:cursor-grabbing" title="드래그하여 순서 변경">${idx + 1}</span>
 
-                            <h3 class="font-bold text-sm text-white truncate max-w-[140px]">${escapeHtml(subj.title)}</h3>
+                            <h3 class="font-bold text-sm text-white truncate max-w-[140px]" title="${escapeHtml(subj.title)}">${escapeHtml(subj.title)}</h3>
 
                         </div>
 

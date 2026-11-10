@@ -222,7 +222,7 @@ function renderTrashFooter() {
     const subjects = typeof liveSubjectTrash === 'function' ? liveSubjectTrash().length : 0;
     const lessons = liveLessonTrash(globalState.lessonTrash).length;
     if (!subjects && !lessons) return '';
-    return `<button onclick="openLessonTrash()" class="w-full mt-1 h-8 flex items-center justify-center gap-1 rounded border border-dashed border-white/15 text-[0.6875rem] font-bold text-textMuted hover:bg-white/5 hover:text-textLight" title="지운 교과와 차시를 되살립니다"><i class="ph-bold ph-trash"></i> 휴지통 · 교과 ${subjects} · 차시 ${lessons}</button>`;
+    return `<button onclick="openLessonTrash()" class="shrink-0 w-full mt-1 h-8 flex items-center justify-center gap-1 rounded border border-dashed border-white/15 text-[0.6875rem] font-bold text-textMuted hover:bg-white/5 hover:text-textLight" title="지운 교과와 차시를 되살립니다"><i class="ph-bold ph-trash"></i> 휴지통 · 교과 ${subjects} · 차시 ${lessons}</button>`;
 }
 
 // 휴지통 교과 항목의 차시 수. 차시 목록이 배열일 때만 센다(남이 준 백업의 { length: '<img …>' } 같은 값을 화면에 넣지 않게)
