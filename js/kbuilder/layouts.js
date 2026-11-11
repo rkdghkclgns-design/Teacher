@@ -89,7 +89,8 @@
     var ctrl = window.KBuilder.lastDeck && window.KBuilder.lastDeck.ctrl; if (!ctrl) return null;
     var cur = ctrl.slidesNow()[ctrl.index]; if (!cur) return null;
     var clone = cur.cloneNode(true);
-    Array.prototype.slice.call(clone.querySelectorAll(".rs-handle,.marquee,.ph-spacer")).forEach(function (x) { x.remove(); });
+    Array.prototype.slice.call(clone.querySelectorAll(".rs-handle,.marquee,.ph-spacer,[data-video-live]")).forEach(function (x) { x.remove(); });
+    if (window.KBuilder.deckRuntime) window.KBuilder.deckRuntime.strip(clone); // 영상 재생기 상태·글 칸 배율은 레이아웃에 담지 않는다
     Array.prototype.slice.call(clone.querySelectorAll(".sel-elem")).forEach(function (x) { x.classList.remove("sel-elem"); });
     Array.prototype.slice.call(clone.querySelectorAll("[contenteditable]")).forEach(function (x) { x.removeAttribute("contenteditable"); });
     clone.removeAttribute("data-deck-active"); clone.style.display = "";
@@ -236,6 +237,19 @@
       if (fr) { var kb = document.createElement("div"); kb.className = "keybar anim3"; kb.innerHTML = '<span class="klab">핵심</span><span>' + esc(b.key) + '</span>'; fr.appendChild(kb); }
     }
     Array.prototype.slice.call(node.querySelectorAll("image-slot")).forEach(function (s, idx) { if (b.images[idx]) s.setAttribute("src", b.images[idx]); });
+    // 영상 칸도 옮긴다: 새 레이아웃의 빈 옆 그림 칸이 있으면 그 자리에, 없으면 슬라이드 위에 따로 얹는다 (끌어 옮길 수 있다)
+    Array.prototype.slice.call(oldSlide.querySelectorAll(".slide-video")).forEach(function (box, idx) {
+      var copy = box.cloneNode(true);
+      if (window.KBuilder.deckRuntime) window.KBuilder.deckRuntime.strip(copy);
+      copy.classList.remove("sel-elem");
+      copy.removeAttribute("style"); copy.removeAttribute("data-abs");
+      var empty = node.querySelector(".col-side image-slot:not([src])");
+      if (empty) { empty.parentNode.replaceChild(copy, empty); return; }
+      var fr = node.querySelector(".frame"); if (!fr) return;
+      copy.setAttribute("data-abs", "1");
+      copy.setAttribute("style", "position:absolute;left:" + (1090 - idx * 40) + "px;top:" + (300 + idx * 40) + "px;width:720px;margin:0;z-index:4");
+      fr.appendChild(copy);
+    });
   }
 
   function applyLayout(id, mode) {

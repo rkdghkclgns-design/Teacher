@@ -15,12 +15,23 @@
 
   // 내부 객체(.step, .chip, .toc-card, .ct-card 등)도 개별 선택·이동·크기조절 가능.
   // closest()가 가장 안쪽 selectable을 잡으므로 step/chip을 먼저 두면 그룹이 아닌 개별 칩이 선택된다.
-  var SELECTABLE = ".step,.chip,.flow .arrow,.cmp-col,.step-row,.toc-card,.ct-card,.duo-col,.eyebrow,.slidetitle,.cover-title,.cover-sub,.cover-course,.closing-title,.closing-lead,.lead,.items,.flow,.chips,.cmp-grid,.steps-list,.keybar,.toc-grid,.col-side,.col-main,.mushcard,.cover-left,.cover-right,.closing-left,.closing-right,.blob,image-slot,.pasted-img,.panel,.st-big,.st-lead,.st-kicker,.duo-title,.cmp-head,.cmp-foot,.tbl";
+  var SELECTABLE = ".step,.chip,.flow .arrow,.cmp-col,.step-row,.toc-card,.ct-card,.duo-col,.eyebrow,.slidetitle,.cover-title,.cover-sub,.cover-course,.closing-title,.closing-lead,.lead,.items,.flow,.chips,.cmp-grid,.steps-list,.keybar,.toc-grid,.col-side,.col-main,.mushcard,.cover-left,.cover-right,.closing-left,.closing-right,.blob,image-slot,.pasted-img,.panel,.st-big,.st-lead,.st-kicker,.duo-title,.cmp-head,.cmp-foot,.tbl,.slide-video,.video-body";
   var TEXTBLOCK = ".step,.chip,.cmp-col,.cmp-head,.cmp-foot,.step-row,.toc-card,.ct-card,.eyebrow,.slidetitle,.cover-title,.cover-sub,.cover-course,.closing-title,.closing-lead,.lead,.items,.flow,.chips,.keybar,.col-main,.st-big,.st-lead,.st-kicker,.duo-title,.tbl,.panel";
 
   function scale() {
-    var s = stage.querySelector(".slide");
+    var s = stage.querySelector(".slide[data-deck-active]") || stage.querySelector(".slide"); // 감춘 슬라이드는 너비가 0이라 보이는 슬라이드로 잰다
     return s ? (s.getBoundingClientRect().width / 1920) || 1 : 1;
+  }
+  /* 요소에 걸린 배율: 글이 넘쳐 줄인 칸(data-fit · --fit, deck-runtime.js) 안에서는 px 값이 그만큼 작게 그려진다. 자신과 조상의 배율을 곱한다.
+     손으로 옮겨 둔 요소는 옮길 때의 배율(--abs-zoom)을 지킨다 (css 가 조상의 배율을 상쇄한다) */
+  function zoomOf(el) {
+    var z = 1;
+    for (var n = el; n && n !== stage; n = n.parentElement) {
+      var kept = n.style ? parseFloat(n.style.getPropertyValue("--abs-zoom")) : 0;
+      if (kept > 0) return z * kept;
+      if (n.hasAttribute && n.hasAttribute("data-fit")) z *= parseFloat(n.style.getPropertyValue("--fit")) || 1;
+    }
+    return z;
   }
   function slotSrc(id) {
     var sl = document.getElementById(id);
@@ -80,19 +91,39 @@
     if (selected.length === 1) addHandles(selected[0]);  // 핸들은 단일 선택일 때만
   }
 
+  /* absolute 로 바꾼 요소가 기준으로 삼는 상자: 가장 가까운 positioned 조상 (없으면 슬라이드) */
+  function positionedParent(el) {
+    for (var n = el.parentElement; n && n !== stage; n = n.parentElement) {
+      if (getComputedStyle(n).position !== "static") return n;
+    }
+    return el.closest(".slide") || stage;
+  }
+
   /* 실제 이동/크기조절 시점에만 absolute 전환.
      투명 플레이스홀더를 남겨 다른 요소가 재배치되지 않도록 한다. */
   function absolutize(el) {
     if (el.dataset.abs) return;
     var L = el.offsetLeft, T = el.offsetTop, W = el.offsetWidth, H = el.offsetHeight;
+    // 줄인 칸(zoom) 안의 요소는 화면에 보이는 자리·크기를 재서 그 배율로 나눈 px 로 적는다 (그대로 적으면 배율만큼 어긋나 튄다)
+    var z = zoomOf(el), zp = el.parentElement ? zoomOf(el.parentElement) : 1;
+    var box = z !== 1 || zp !== 1 ? positionedParent(el) : null; // 배율이 걸리면 offsetParent 가 기준 상자가 아니다 (배율이 달라지는 조상에서 멈춘다)
+    if (box) {
+      var sc = scale(), r = el.getBoundingClientRect(), c = box.getBoundingClientRect();
+      L = (r.left - c.left) / sc / z; T = (r.top - c.top) / sc / z; W = r.width / sc / z; H = r.height / sc / z;
+    }
     var cs = getComputedStyle(el);
     var ph = document.createElement("div");
     ph.className = "ph-spacer";
-    ph.style.width = W + "px"; ph.style.height = H + "px";
+    ph.style.width = (W * z / zp) + "px"; ph.style.height = (H * z / zp) + "px";
     ph.style.margin = cs.margin; ph.style.flexShrink = "0";
     el.parentNode.insertBefore(ph, el);
     el._ph = ph;
     el.style.position = "absolute";
+    if (z !== 1) {
+      // 지금 배율을 요소에 적어 둔다 (저장본에 남는다). 칸의 배율(data-fit)은 열 때마다 다시 재므로, 옮긴 요소는 제 배율로 자리·크기를 지킨다
+      el.style.setProperty("--abs-zoom", String(z));
+      if (el.hasAttribute("data-fit")) { el.removeAttribute("data-fit"); el.style.removeProperty("--fit"); }
+    }
     el.style.left = L + "px"; el.style.top = T + "px"; el.style.width = W + "px";
     el.style.margin = "0"; el.style.zIndex = "4";
     el.dataset.abs = "1";
@@ -139,7 +170,10 @@
     if (textEl) {
       try { textEl.blur(); } catch (e) {}
       textEl.removeAttribute("contenteditable");
+      var edited = textEl.closest ? textEl.closest(".slide") : null;
       textEl = null;
+      // 글을 고쳐 길어졌으면 글 칸 배율을 다시 잰다 (핵심 띠와 겹치지 않게, deck-runtime.js)
+      if (edited && window.KBuilder.deckFit) window.KBuilder.deckFit.slide(edited);
     }
     var ae = document.activeElement;
     if (ae && ae.isContentEditable) { try { ae.blur(); } catch (e) {} }
@@ -214,7 +248,12 @@
         if (Math.abs(dx) + Math.abs(dy) < 4) return;   // 클릭만으로는 위치 변경 없음
         started = true;
         snapshot();                                    // 이동도 Ctrl+Z 대상
-        bases.forEach(function (b) { absolutize(b.el); });
+        bases.forEach(function (b) {
+          var was = !!b.el.dataset.abs;
+          absolutize(b.el);
+          b.z = zoomOf(b.el);                          // 줄인 칸 안에서는 그 배율로 나눠 움직여야 마우스를 따라간다
+          if (!was && b.z !== 1) { b.l = parseFloat(b.el.style.left) || 0; b.t = parseFloat(b.el.style.top) || 0; }
+        });
         targets = collectSnapTargets(slideEl, slideRect, sc);
       }
       if (ev.shiftKey) { if (Math.abs(dx) >= Math.abs(dy)) dy = 0; else dx = 0; }  // Shift: 직선 이동(스냅 해제)
@@ -224,7 +263,7 @@
       if (snapY) dy += snapY.delta;
       guides.show("v", snapX ? snapX.at : null);
       guides.show("h", snapY ? snapY.at : null);
-      bases.forEach(function (b) { b.el.style.left = (b.l + dx) + "px"; b.el.style.top = (b.t + dy) + "px"; });
+      bases.forEach(function (b) { b.el.style.left = (b.l + dx / (b.z || 1)) + "px"; b.el.style.top = (b.t + dy / (b.z || 1)) + "px"; });
     }
     function up() {
       document.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", up);
@@ -283,11 +322,14 @@
     snapshot();       // 크기조절도 Ctrl+Z 대상 (absolute 전환 이전 상태 보존)
     absolutize(el);   // 크기조절 시작 시점에 전환(플레이스홀더 유지)
     var sc = scale(), sx = e.clientX, sy = e.clientY;
-    var W = el.offsetWidth, H = el.offsetHeight, L = parseFloat(el.style.left) || 0, T = parseFloat(el.style.top) || 0;
+    var z = zoomOf(el); // 줄인 칸 안의 요소는 px 값이 z 배로 그려진다 — 보이는 크기를 z 로 나눠 적는다
+    var seen = el.getBoundingClientRect();
+    var W = z === 1 ? el.offsetWidth : seen.width / sc / z, H = z === 1 ? el.offsetHeight : seen.height / sc / z;
+    var L = parseFloat(el.style.left) || 0, T = parseFloat(el.style.top) || 0;
     var ratio = W / (H || 1);
     if (!el.style.height) el.style.height = H + "px";
     function mv(ev) {
-      var dx = (ev.clientX - sx) / sc, dy = (ev.clientY - sy) / sc;
+      var dx = (ev.clientX - sx) / sc / z, dy = (ev.clientY - sy) / sc / z;
       var w = W, h = H, l = L, t = T;
       if (c.indexOf("e") >= 0) w = Math.max(40, W + dx);
       if (c.indexOf("w") >= 0) { w = Math.max(40, W - dx); l = L + (W - w); }
@@ -368,8 +410,14 @@
     try { viewport.focus({ preventScroll: true }); } catch (e) {}
   }
 
+  /* 사본에는 영상 재생기를 넣지 않는다 (이 창이 만든 재생 주소를 사본이 붙잡지 않게) — 붙인 뒤 다시 붙인다 */
+  function dropLiveVideo(node) {
+    Array.prototype.slice.call(node.querySelectorAll("[data-video-live]")).forEach(function (x) { x.remove(); });
+    Array.prototype.slice.call(node.querySelectorAll("[data-video-state]")).forEach(function (x) { x.removeAttribute("data-video-state"); });
+    return node;
+  }
   function copySel() {
-    clip = selected.map(function (el) { var c = el.cloneNode(true); c.classList.remove("sel-elem"); removeHandles(c); return c; });
+    clip = selected.map(function (el) { var c = el.cloneNode(true); c.classList.remove("sel-elem"); removeHandles(c); return dropLiveVideo(c); });
   }
   function removeSel() {
     if (!selected.length) return;
@@ -391,6 +439,7 @@
       frame.appendChild(n); added.push(n);
     });
     if (window.KBuilder.animOrder) { window.KBuilder.animOrder.ensure(slide); window.KBuilder.animOrder.apply(slide); }
+    if (window.KBuilder.deckVideo) window.KBuilder.deckVideo.hydrate(slide); // 붙인 영상 칸에 재생기를 붙인다
     setSel(added);
   }
   function reassignSlots(node) {
@@ -504,6 +553,9 @@
     });
     Array.prototype.slice.call(clone.querySelectorAll(".rs-handle,.marquee,.align-guide")).forEach(function (x) { x.remove(); });
     Array.prototype.slice.call(clone.querySelectorAll(".sel-elem")).forEach(function (x) { x.classList.remove("sel-elem"); });
+    // 영상 재생기([data-video-live])는 담지 않는다 — 되돌린 뒤 보이는 슬라이드에 다시 붙인다 (deck-runtime.js)
+    Array.prototype.slice.call(clone.querySelectorAll("[data-video-live]")).forEach(function (x) { x.remove(); });
+    Array.prototype.slice.call(clone.querySelectorAll("[data-video-state]")).forEach(function (x) { x.removeAttribute("data-video-state"); });
     undoStack.push({ html: clone.innerHTML, index: ctrl.index });
     // 개수·총 용량 제한 — 데이터URL 이미지가 많은 덱에서 스냅샷이 메모리를 폭주시키지 않게
     var total = 0;
@@ -531,6 +583,7 @@
     var clone = s.cloneNode(true);
     clone.querySelectorAll(".sel-elem").forEach(function (x) { x.classList.remove("sel-elem"); });
     clone.querySelectorAll(".rs-handle").forEach(function (x) { x.remove(); });
+    dropLiveVideo(clone);
     reassignSlots(clone);
     s.parentNode.insertBefore(clone, s.nextSibling);
     buildRail(); ctrl.goTo(i + 1);
@@ -567,6 +620,8 @@
       clone.querySelectorAll(".rs-handle").forEach(function (x) { x.remove(); });
       clone.querySelectorAll(".sel-elem").forEach(function (x) { x.classList.remove("sel-elem"); });
       clone.querySelectorAll(".marquee, .align-guide").forEach(function (x) { x.remove(); });
+      // 썸네일에는 영상 재생기를 넣지 않는다 (삽입 플레이어·영상 파일을 썸네일마다 다시 싣지 않게). 대표 그림·GIF 만 남긴다
+      clone.querySelectorAll("iframe[data-video-live], video[data-video-live]").forEach(function (x) { x.remove(); });
       Array.prototype.slice.call(clone.querySelectorAll("image-slot")).forEach(function (s) {
         var src = slotSrc(s.id) || s.getAttribute("src") || "";
         var d = document.createElement("div"); d.setAttribute("style", "width:100%;height:100%;overflow:hidden;background:#f3eee0"); d.className = s.className;
