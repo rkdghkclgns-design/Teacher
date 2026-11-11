@@ -7,16 +7,19 @@
  * 테스트: tests/diagram-map.test.js */
 const DIAGRAM_FOLD_KEY = 'teacher:diagram-folds';
 const DIAGRAM_FOLD_LIMIT = 500; // 기억할 접은 교과 수
-let diagramFolds = null; // { root: 과정을 접었는지, subjects: 접은 교과 id(글자) }
+let diagramFolds = { root: false, subjects: [] }; // 저장소를 못 쓸 때 쓰는 이 창의 기억 { root: 과정을 접었는지, subjects: 접은 교과 id(글자) }
 
+// 그릴 때마다 저장소에서 읽는다(다른 창에서 접은 상태도 따른다). 저장소를 못 쓰면 이 창의 기억, 값이 깨졌으면 모두 펼친다
 function readDiagramFolds() {
-    if (diagramFolds) return diagramFolds;
     try {
-        const saved = JSON.parse(localStorage.getItem(DIAGRAM_FOLD_KEY) || 'null');
+        const raw = localStorage.getItem(DIAGRAM_FOLD_KEY);
+        if (raw === null) return diagramFolds;
+        const saved = JSON.parse(raw);
         const subjects = Array.isArray(saved?.subjects) ? saved.subjects.filter(id => typeof id === 'string').slice(-DIAGRAM_FOLD_LIMIT) : [];
         diagramFolds = { root: saved?.root === true, subjects };
     } catch (err) {
-        diagramFolds = { root: false, subjects: [] }; // 저장소를 못 쓰거나 값이 깨졌으면 모두 펼친다
+        if (!(err instanceof SyntaxError)) return diagramFolds;
+        diagramFolds = { root: false, subjects: [] };
     }
     return diagramFolds;
 }
@@ -31,6 +34,9 @@ function writeDiagramFolds(next) {
 }
 
 const diagramSubjectFolded = (folds, subj) => folds.subjects.includes(String(subj.id));
+
+// 지도에 그릴 교과의 차시 목록. 지금 연 교과는 열린 목록(courseData)이 최신이다(filename-convention.js subjectLessonList). 지울 때도 같은 목록에서 찾는다
+const diagramLessons = subj => (typeof subjectLessonList === 'function' ? subjectLessonList(subj) : subj?.lessons) || [];
 
 // 지도 단추의 data 속성(교과·차시 id는 글자로만 담는다. 누르면 onDiagramToolClick이 읽는다)
 const diagramIdAttr = (name, id) => `data-${name}="${escapeHtml(String(id))}"`;
@@ -67,17 +73,24 @@ window.toggleDiagramRoot = function () {
 window.toggleDiagramSubject = function (id) {
     const folds = readDiagramFolds();
     const key = String(id);
-    const live = new Set(globalState.subjects.map(subj => String(subj.id)));
-    const kept = folds.subjects.filter(item => item !== key && live.has(item)); // 지운 교과의 기억은 버린다
+    const kept = folds.subjects.filter(item => item !== key); // 휴지통의 교과는 되살리면 다시 접혀 있게 기억을 남긴다(개수 상한으로 오래된 것부터 잊는다)
     writeDiagramFolds({ ...folds, subjects: folds.subjects.includes(key) ? kept : [...kept, key] });
     renderDiagram();
 };
+
+// 열어 둔 차시를 지웠으면 편집 화면을 비운다(api.js deleteModule과 같다). 원문 칸도 함께 사라져 휴지통의 차시에 글을 쓰지 않는다
+function closeDeletedLessonEditor() {
+    currentEditingModuleId = null;
+    const area = document.getElementById('editor-content-area');
+    if (area) area.innerHTML = '<div class="h-full flex items-center justify-center text-textMuted text-sm">차시를 휴지통으로 옮겼습니다.</div>';
+    document.getElementById('ai-command-bar')?.classList.add('hidden');
+}
 
 // 메인 지도의 차시 X: 그 차시를 휴지통으로 옮긴다. 생성이 도는 동안에는 옮기지 않는다(course-meta.js trashRestoreBlocked)
 window.deleteLessonFromMap = function (subjectId, lessonId) {
     const subject = globalState.subjects.find(item => String(item.id) === String(subjectId));
     const busy = () => typeof trashRestoreBlocked === 'function' && trashRestoreBlocked();
-    const lessonsOf = () => (typeof subjectLessonList === 'function' ? subjectLessonList(subject) : subject.lessons) || [];
+    const lessonsOf = () => diagramLessons(subject);
     const findLesson = () => lessonsOf().find(item => String(item.id) === String(lessonId));
     if (!subject || String(lessonId) === 'mainQuest' || !findLesson()) return;
     if (busy()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
@@ -92,13 +105,15 @@ window.deleteLessonFromMap = function (subjectId, lessonId) {
         subject.lessons = lessonsOf().filter(item => item !== lesson);
         if (current) {
             courseData = subject.lessons;
-            if (String(currentEditingModuleId) === String(lessonId)) currentEditingModuleId = null;
+            if (String(currentEditingModuleId) === String(lessonId)) closeDeletedLessonEditor();
         }
-        Promise.resolve(saveState()).then(() => {
+        Promise.resolve(saveState()).then(saved => {
             if (typeof renderOverviewLNB === 'function') renderOverviewLNB();
             renderDiagram();
             if (current && typeof renderSidebar === 'function') renderSidebar();
-            window.showToast?.(`'${lesson.title}' 차시를 휴지통으로 옮겼습니다.`, 'success');
+            // 저장하지 못했으면(불러오기 실패 상태·다른 창 덮어쓰기 거절) saveState가 false를 돌려준다. 다시 열면 차시가 돌아올 수 있다
+            if (saved === false) window.showToast?.('차시를 휴지통으로 옮겼지만 저장하지 못했습니다. 다시 열면 그대로일 수 있습니다.', 'warning');
+            else window.showToast?.(`'${lesson.title}' 차시를 휴지통으로 옮겼습니다.`, 'success');
         }).catch(err => {
             console.error('[메인 지도] 차시 삭제 저장 실패:', err);
             renderDiagram();
@@ -219,13 +234,13 @@ window.deleteLessonFromMap = function (subjectId, lessonId) {
 
 
 
-                            ${diagramFoldButtonHtml({ folded: diagramSubjectFolded(folds, subj), count: (subj.lessons || []).length, unit: '차시', left: 268, attrs: `data-diagram-action="fold-subject" ${diagramIdAttr('subject-id', subj.id)}` })}
+                            ${diagramFoldButtonHtml({ folded: diagramSubjectFolded(folds, subj), count: diagramLessons(subj).length, unit: '차시', left: 268, attrs: `data-diagram-action="fold-subject" ${diagramIdAttr('subject-id', subj.id)}` })}
 
                             <!-- Lessons Column -->
 
                             ${diagramSubjectFolded(folds, subj) ? '' : `<div class="flex flex-col gap-3 ml-20">
 
-                                ${subj.lessons && subj.lessons.length > 0 ? subj.lessons.map((lesson, lIdx) => `
+                                ${diagramLessons(subj).length > 0 ? diagramLessons(subj).map((lesson, lIdx) => `
 
                                     <div id="node-less-${escapeHtml(String(subj.id))}-${escapeHtml(String(lesson.id))}" onclick="event.stopPropagation(); location.hash='#editor/${escapeHtml(String(subj.id))}/${escapeHtml(String(lesson.id))}'" class="bg-black/30 border ${lesson.status === 'done' ? 'border-accent/30 bg-accent/5' : 'border-white/5'} px-4 py-3 rounded-lg z-10 w-[240px] shrink-0 hover:border-white/20 hover:-translate-y-0.5 shadow-sm hover:shadow-lg transition-all group cursor-pointer pointer-events-auto" title="${escapeHtml(lesson.description || '')} (클릭하여 편집)">
 
@@ -359,9 +374,9 @@ window.deleteLessonFromMap = function (subjectId, lessonId) {
 
                     const subjStartP = getCenter(subjNode, true);
 
-                    if (subj.lessons && subj.lessons.length > 0) {
+                    if (diagramLessons(subj).length > 0) {
 
-                        subj.lessons.forEach(lesson => {
+                        diagramLessons(subj).forEach(lesson => {
 
                             const lessonNode = nodeById(`node-less-${subj.id}-${lesson.id}`);
 

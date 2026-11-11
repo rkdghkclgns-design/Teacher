@@ -37,8 +37,8 @@ const subjects = () => [
     { id: 's2', title: '교과 둘', description: '설명', lessons: [{ id: 3, title: '반복문', content: '옛 본문' }] }
 ];
 
-function mapContext({ current = 's1', storage = {}, busy = false } = {}) {
-    const doc = domino.createDocument('<html><body><div id="diagram-dynamic-content"></div><svg id="diagram-lines"></svg><div id="minimap-content"></div></body></html>', true);
+function mapContext({ current = 's1', storage = {}, busy = false, saved = true } = {}) {
+    const doc = domino.createDocument('<html><body><div id="diagram-dynamic-content"></div><svg id="diagram-lines"></svg><div id="minimap-content"></div><div id="editor-content-area"><textarea id="raw-view"></textarea></div><div id="ai-command-bar"></div></body></html>', true);
     patchDomino(doc);
     const state = { courseTitle: '과정', subjects: subjects() };
     const ctx = {
@@ -54,7 +54,7 @@ function mapContext({ current = 's1', storage = {}, busy = false } = {}) {
     ctx.showConfirm = (message, ok) => { ctx.confirms.push(message); ok(); };
     ctx.showAlert = message => ctx.alerts.push(message);
     ctx.showToast = (message, type) => ctx.toasts.push([message, type]);
-    ctx.saveState = async () => { ctx.saves += 1; return true; };
+    ctx.saveState = async () => { ctx.saves += 1; return saved; };
     ctx.moveLessonsToTrash = (lessons, subjectId) => ctx.trashed.push({ ids: lessons.map(lesson => lesson.id), subjectId });
     ctx.archiveContent = mod => ctx.archived.push(mod.id);
     ctx.trashRestoreBlocked = () => ctx.busy;
@@ -176,6 +176,34 @@ test('지우기: id에 따옴표가 있어도 단추는 그 글자 그대로 넘
     assert.ok(!trash.hasAttribute('onclick'));
     click(ctx, trash);
     assert.deepStrictEqual(plain(ctx.deletedSubjects), [`x"');alert(1);//`]);
+});
+
+test('지우기: 저장하지 못했으면(saveState가 false) 옮겼다고 하지 않고 알린다', async () => {
+    const { ctx } = mapContext({ saved: false });
+    click(ctx, button(ctx, '[data-diagram-action="delete-lesson"][data-lesson-id="3"]'));
+    await settle();
+    assert.ok(ctx.toasts.some(([message, type]) => type === 'warning' && message.includes('저장하지 못했습니다')), JSON.stringify(ctx.toasts));
+    assert.ok(!ctx.toasts.some(([, type]) => type === 'success'));
+});
+
+test('지우기: 열어 둔 차시를 지우면 편집 화면과 원문 칸을 비운다(휴지통의 차시에 글을 쓰지 않게)', async () => {
+    const { ctx } = mapContext();
+    click(ctx, button(ctx, '[data-diagram-action="delete-lesson"][data-lesson-id="2"]'));
+    await settle();
+    assert.ok(!ctx.document.getElementById('raw-view'), '원문 칸이 사라졌다');
+    assert.ok(ctx.document.getElementById('editor-content-area').textContent.includes('휴지통'));
+    assert.ok(ctx.document.getElementById('ai-command-bar').classList.contains('hidden'));
+});
+
+test('그리기: 지금 연 교과는 열린 차시 목록(courseData)으로 그리고, 그 목록에서 지운다', async () => {
+    const { ctx, state } = mapContext();
+    ctx.courseData = [...ctx.courseData, { id: 9, title: '새 차시' }];
+    vm.runInContext('renderDiagram()', ctx);
+    assert.ok(node(ctx, 'node-less-s1-9'), '교과 목록에 아직 없는 새 차시도 그린다');
+    click(ctx, button(ctx, '[data-diagram-action="delete-lesson"][data-lesson-id="9"]'));
+    await settle();
+    assert.deepStrictEqual(plain(ctx.trashed), [{ ids: [9], subjectId: 's1' }]);
+    assert.deepStrictEqual(plain(state.subjects[0].lessons.map(lesson => lesson.id)), [1, 2, 'mainQuest']);
 });
 
 (async () => {
