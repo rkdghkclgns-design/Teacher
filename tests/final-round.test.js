@@ -365,6 +365,23 @@ const LESSON_MD = [
         assert.strictEqual(clean(code), code, '코드 블록은 그대로');
     });
 
+    await run('교안 첫머리: 차시 제목 앞 머리말과 구분선 세트(<br><br> + --- + <br>)를 뺀다', async () => {
+        const clean = call('cleanLessonOpening');
+        const title = '# 📝 새 차시: 생성형 AI와 UGC 플랫폼 생태계 이해';
+        const body = [title, '', '<br>', '', '## 학습 목표', '', '- 동작 원리를 설명할 수 있습니다.', '', '## 개요', '', '- 문제 상황입니다.'].join('\n');
+        const lists = ['- AI 도구 생태계를 개관할 수 있습니다.', '- UGC 성공 사례를 분석할 수 있습니다.', '', '<br>', '', '- 창작의 주체가 이동하고 있습니다.', '- 새로운 생산 도구가 필요합니다.'];
+        const divider = ['', '<br><br>', '', '---', '', '<br>', ''];
+        assert.strictEqual(clean([...lists, ...divider, body].join('\n')), body, '목록 머리말');
+        assert.strictEqual(clean(['이 차시는 생성형 AI를 다룹니다.', '', '***', '', body].join('\n')), body, '차시 제목(📝) 앞이면 문장도 머리말');
+        const noGoal = [...lists, ...divider, title, '', '## 구조', '', '- 내용입니다.'].join('\n');
+        assert.ok(clean(noGoal).startsWith(title), '차시에 학습 목표가 없어도 머리말 목록은 남기지 않는다');
+        const notLesson = ['문장으로 시작한 글입니다.', '', '---', '', '# ⚔️ 일일 퀘스트', '', '- 과제입니다.'].join('\n');
+        assert.strictEqual(clean(notLesson), notLesson, '차시 제목이 아닌 큰 제목 앞 문장은 남긴다');
+        const coded = ['```js', 'run();', '```', '', '---', '', body].join('\n');
+        assert.strictEqual(clean(coded), coded, '코드 블록이 든 첫머리는 남긴다');
+        assert.strictEqual(clean(body), body, '이미 정리된 글은 그대로');
+    });
+
     await run('전체 생성: 빈 항목을 순서대로 만들고 문제은행까지 채운다', async () => {
         const goal = '- 비교할 수 있습니다.';
         const lesson = { id: 1, title: '재미', tabContents: { basicLearn: `## 학습 목표\n\n${goal}\n\n## 개요\n\n- 문제입니다.` } };

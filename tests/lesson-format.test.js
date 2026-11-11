@@ -18,6 +18,7 @@ const ctx = { console, marked };
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'lesson-format.js'), 'utf8'), ctx);
 const { lessonBlocks, findInlineRange, inlineFormatState, applyInlineFormat, applyBlockFormat, normalizeLinkUrl, keepChosenNumbering, locateLessonBlock, replaceLessonBlock } = ctx;
+const { blocksToRemove, locateBlockToRemove, removeLessonBlock } = ctx;
 
 let failed = 0;
 let count = 0;
@@ -261,6 +262,37 @@ test('짧은 이웃 문단이 고른 문단 글자 안에 있어도 길이가 �
     const md = '네.\n\n네. 그렇게 설계하면 됩니다.\n';
     const out = inline(md, pick(0, '네. 그렇게 설계하면 됩니다.', '설계'), 'bold');
     assert.strictEqual(out, '네.\n\n네. 그렇게 **설계**하면 됩니다.\n');
+});
+
+/* ---------- 단락 X 단추로 지우기 ---------- */
+test('지울 블록은 화면 글자와 원문 글자가 같아야 찾는다(빈칸·콜론·&nbsp;는 빼고 견준다)', () => {
+    const md = '## 구조\n\n**핵심 개념:** 루프는 되풀이합니다\n\n#### &nbsp;&nbsp; ▣ 메쉬\n\n- 하나\n- 둘\n';
+    assert.ok(locateBlockToRemove(md, { index: 1, text: '핵심 개념 루프는 되풀이합니다' }).raw.startsWith('**핵심'), '콜론을 지운 화면 글');
+    assert.ok(locateBlockToRemove(md, { index: 2, text: '   ▣ 메쉬' }).raw.startsWith('####'), '&nbsp; 제목');
+    assert.ok(locateBlockToRemove(md, { index: 3, text: '하나\n둘' }).raw.startsWith('- 하나'));
+    assert.strictEqual(locateBlockToRemove(md, { index: 1, text: '핵심 개념' }), null, '글 일부만 같으면 지우지 않는다(고칠 때와 달리)');
+    assert.strictEqual(locateBlockToRemove(md, { index: 0, text: '' }), null, '글자 없는 블록은 찾지 않는다');
+});
+
+test('HTML 표는 태그를 뺀 글자로 찾고, 같은 글이 여럿이면 화면 순서와 상관없이 원문 순서로 모두 돌려준다', () => {
+    const table = '<table style="width: 100%;"><tr><th>구분</th><th>설명</th></tr><tr><td>가</td><td>나</td></tr></table>';
+    const md = `- 같은 글\n\n${table}\n\n문단\n\n- 같은 글\n`;
+    assert.strictEqual(locateBlockToRemove(md, { index: 1, text: '구분 설명 가 나' }).raw.trim(), table);
+    const both = blocksToRemove(md, { index: 3, text: '같은 글' });
+    assert.strictEqual(both.length, 2);
+    assert.ok(both[0].start < both[1].start, '원문 순서(화면 순서는 숨긴 첫머리 때문에 어긋날 수 있다)');
+    assert.strictEqual(ctx.blockTextKey(' 같은 : 글 &amp; 끝'), '같은글&끝');
+});
+
+test('블록을 지우면 앞뒤를 빈 줄 하나로 띄우고, 앞뒤가 모두 <br> 간격이면 하나만 남긴다', () => {
+    const md = '첫 문단\n- 목록\n\n둘째 문단\n';
+    const list = locateBlockToRemove(md, { index: 1, text: '목록' });
+    assert.strictEqual(removeLessonBlock(md, list), '첫 문단\n\n둘째 문단\n', '앞 문단과 뒤 문단이 한 문단으로 붙지 않는다');
+    const gaps = '## 제목\n\n<br>\n\n지울 문단\n\n<br>\n\n남는 문단\n';
+    assert.strictEqual(removeLessonBlock(gaps, locateBlockToRemove(gaps, { index: 2, text: '지울 문단' })), '## 제목\n\n<br>\n\n남는 문단\n');
+    const last = '## 제목\n\n끝 문단\n';
+    assert.strictEqual(removeLessonBlock(last, locateBlockToRemove(last, { index: 1, text: '끝 문단' })), '## 제목');
+    assert.strictEqual(removeLessonBlock(md.replace('목록', '바뀐 목록'), list), null, '그사이 원문이 바뀌었으면 지우지 않는다');
 });
 
 /* ---------- 번호 목록 표시 ---------- */

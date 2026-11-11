@@ -57,13 +57,14 @@ AI 기반 게임 기획 교안 자동 생성 도구
 │   ├── gyosuan-regen.js       교수안 재생성 단추(바뀐 탭·섹션 요약, 비용 확인), 이전 교수안으로 되돌리기
 │   ├── lesson-lint.js         컨벤션 검수 규칙
 │   ├── lesson-objectives.js   학습 목표 세트 추가·삭제
-│   ├── lesson-opening.js      교안 첫머리 정리(본문 앞 이미지, 개요의 시간표·특징 목록)
+│   ├── lesson-opening.js      교안 첫머리 정리(차시 제목 앞 머리말·구분선, 본문 앞 이미지, 개요의 시간표·특징 목록)
 │   ├── lesson-pipeline.js     차시 전체 생성(교안 탭 → 삽화 → NCS 요소 → 기본학습·심화학습 교수안·슬라이드 → 두 문제은행)
 │   ├── lesson-material.js     직무 교육 자료 양식 내보내기
 │   ├── lesson-sanitize.js     교안 HTML에서 스크립트 제거, 교안 안 버튼(그림 다시 찾기·지우기, 코드 복사)
 │   ├── lesson-format.js       드래그한 글자·단락에 서식을 입히는 마크다운 계산(화면 글자 → 원문 위치)
 │   ├── format-toolbar.js      본문 드래그 서식 막대(슬랙 순서), Ctrl+B/I/U, Ctrl+Z 되돌리기
 │   ├── paragraph-edit.js      본문을 두 번 누르면 그 단락만 원문 편집 상자로 열기
+│   ├── block-tools.js         본문 단락 옆 단추: 고른 블록 접기·펴기(차시에 기억), 단락 지우기(X, Ctrl+Z로 되돌림)
 │   ├── ai-errors.js           AI 호출 오류를 한국어 한 줄과 다음에 할 일로(원문은 콘솔·err.detail)
 │   ├── setup-helpers.js       빠른 설정(빠르고 저렴하게/품질 우선), 키 연결 확인·발급 링크, 키에 맞춘 모델 자동 선택, 과정 정보(과정명·분야)·예시 표시
 │   ├── data-safety.js         작업을 잃지 않게: 확인 창, 복원되는 ZIP 백업, 불러오기 전 자동 백업, 교과 휴지통, 작업 기록 되돌리기, 마지막 전체 백업 시각

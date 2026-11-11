@@ -372,6 +372,85 @@
             color: #fff;
         }
 
+        /* 블록 옆 접기·지우기 단추와 접은 블록 (block-tools.js) */
+        .block-tools {
+            position: fixed;
+            z-index: 35;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .block-tools[hidden],
+        .block-tools button[hidden] {
+            display: none;
+        }
+        .block-tools button {
+            width: 22px;
+            height: 22px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #e5e7eb;
+            border-radius: 9999px;
+            background: #fff;
+            color: #9ca3af;
+            font-size: 12px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+        }
+        .block-tools [data-block-tool="fold"]:hover,
+        .block-tools [data-block-tool="fold"]:focus-visible {
+            border-color: #7c5bf5;
+            background: #7c5bf5;
+            color: #fff;
+        }
+        .block-tools [data-block-tool="delete"]:hover,
+        .block-tools [data-block-tool="delete"]:focus-visible {
+            border-color: #ef4444;
+            background: #ef4444;
+            color: #fff;
+        }
+        #render-view > .block-tool-target {
+            outline: 2px solid rgba(124, 91, 245, 0.55);
+            outline-offset: 4px;
+            border-radius: 4px;
+        }
+        #render-view > .block-tool-target-delete {
+            outline: 2px solid rgba(239, 68, 68, 0.6);
+            outline-offset: 4px;
+            border-radius: 4px;
+            background: rgba(254, 226, 226, 0.35);
+        }
+        #render-view > .block-folded {
+            position: relative;
+            max-height: 3.6em;
+            overflow: hidden;
+            cursor: pointer;
+        }
+        #render-view > .lesson-code.block-folded {
+            max-height: 5.4em;
+        }
+        #render-view > .block-folded::after {
+            content: '접힘 · 누르면 펼칩니다';
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            height: 2.2em;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            padding-bottom: 2px;
+            background: linear-gradient(to bottom, rgba(250, 249, 246, 0), #faf9f6 70%);
+            font-size: 0.7rem;
+            font-weight: 700;
+            color: #7c5bf5;
+            pointer-events: none;
+        }
+        #render-view > .lesson-code.block-folded::after {
+            background: linear-gradient(to bottom, rgba(30, 30, 46, 0), #1e1e2e 70%);
+            color: #c9bfff;
+        }
+
         /* 본문 드래그 서식 막대 (format-toolbar.js) */
         .format-bar {
             position: relative;
@@ -2059,6 +2138,7 @@
     <script src="./js/md-toolbar.js?v=125"></script>
     <script src="./js/format-toolbar.js?v=125"></script>
     <script src="./js/paragraph-edit.js?v=125"></script>
+    <script src="./js/block-tools.js?v=125"></script>
     <script src="./js/selection-media.js?v=125"></script>
     <script src="./js/image-slot-place.js?v=125"></script>
     <script src="./js/image-batch.js?v=125"></script>
