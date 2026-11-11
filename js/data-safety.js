@@ -1335,11 +1335,33 @@ function safeGenOptions(gen) {
     return sameFields(next, gen) ? gen : next;
 }
 
+// 차시의 접은 블록 기억(block-tools.js foldedBlocks: { 탭 id: [열쇠, ...] }). 탭 id는 영문자, 열쇠는 64자까지의 글자만, 탭마다 최근 300개만 남긴다.
+// 남길 것이 없으면 null(칸을 지운다). 고칠 것이 없으면 같은 객체
+const FOLDED_BLOCK_LIMIT = 300;
+const FOLDED_KEY_CHARS = 64;
+const FOLDED_TAB_ID = /^[A-Za-z]{1,32}$/;
+function safeFoldedBlocks(value) {
+    if (!isObject(value)) return null;
+    const goodKey = key => typeof key === 'string' && key.length > 0 && key.length <= FOLDED_KEY_CHARS;
+    const entries = Object.entries(value)
+        .filter(([tabId, list]) => FOLDED_TAB_ID.test(tabId) && Array.isArray(list))
+        .map(([tabId, list]) => [tabId, list.filter(goodKey).slice(-FOLDED_BLOCK_LIMIT)])
+        .filter(([, list]) => list.length);
+    if (!entries.length) return null;
+    const unchanged = entries.length === Object.keys(value).length && entries.every(([tabId, list]) => list.length === value[tabId].length);
+    return unchanged ? value : Object.fromEntries(entries);
+}
+
 // 차시(최종 평가 포함)의 안쪽 값을 그 자리에서 고친다(sanitizeState가 부른다)
 function cleanLessonFields(lesson) {
     lesson.images = safeImageMap(lesson.images);
     if (lesson.lessonVideos !== undefined) lesson.lessonVideos = safeVideoMap(lesson.lessonVideos);
     if (lesson.imageMotions !== undefined) lesson.imageMotions = safeImageMotions(lesson.imageMotions, lesson.images); // 그림을 고른 뒤에 본다
+    if (lesson.foldedBlocks !== undefined) {
+        const folded = safeFoldedBlocks(lesson.foldedBlocks);
+        if (folded) lesson.foldedBlocks = folded;
+        else delete lesson.foldedBlocks;
+    }
     LESSON_TEXT_FIELDS.forEach(field => { if (lesson[field] !== undefined) lesson[field] = textOrNull(lesson[field]); });
     LESSON_INFO_TEXT_FIELDS.forEach(field => { if (lesson[field] != null && typeof lesson[field] !== 'string') lesson[field] = stateText(lesson[field]); });
     LESSON_LIST_FIELDS.forEach(field => { if (lesson[field] != null && !Array.isArray(lesson[field])) lesson[field] = []; });

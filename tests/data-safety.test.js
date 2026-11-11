@@ -1844,6 +1844,18 @@ test('sanitizeState: 바른 차시는 바뀌지 않고(그림·탭·교수안은
     assert.doesNotThrow(() => sanitize6({ subjects: [{ lessons: [{ illustrations: [{ imgId: { toString: null } }] }] }] }), '어떤 값에도 던지지 않는다');
 });
 
+test('sanitizeState: 접은 블록 기억(foldedBlocks)은 탭마다 글자 열쇠 300개까지만 남기고, 바르면 같은 객체, 남길 것이 없으면 칸을 지운다', () => {
+    const good = { basicLearn: ['12-abc:0', '9-x1:1'], advLearn: ['3-q:0'] };
+    assert.strictEqual(W6.cleanLessonFields({ foldedBlocks: good }).foldedBlocks, good, '바른 기억은 같은 객체');
+    const many = Array.from({ length: 1000 }, (unused, i) => `k${i}`);
+    const odd = W6.cleanLessonFields({ foldedBlocks: { basicLearn: [...many, 5, null, 'x'.repeat(65)], 'bad id!': ['a'], advLearn: 'not a list', ['__proto__']: ['p'] } });
+    assert.deepStrictEqual(Object.keys(odd.foldedBlocks), ['basicLearn']);
+    assert.strictEqual(odd.foldedBlocks.basicLearn.length, 300);
+    assert.strictEqual(odd.foldedBlocks.basicLearn.at(-1), 'k999', '최근 것을 남긴다');
+    assert.ok(!('foldedBlocks' in W6.cleanLessonFields({ foldedBlocks: { basicLearn: [] } })), '빈 기억은 칸을 지운다');
+    assert.ok(!('foldedBlocks' in W6.cleanLessonFields({ foldedBlocks: ['a'] })), '객체가 아니면 지운다');
+});
+
 test('sanitizeState: 휴지통은 모양을 보고 지운 날짜를 ISO로 맞춘다(먼 미래는 지금으로). 없으면 만들지 않는다', () => {
     const iso = '2026-11-01T00:00:00.000Z';
     const good = { at: iso, lesson: { id: 1, title: '바른' } };

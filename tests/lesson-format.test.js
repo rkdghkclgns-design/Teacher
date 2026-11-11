@@ -274,13 +274,14 @@ test('지울 블록은 화면 글자와 원문 글자가 같아야 찾는다(빈
     assert.strictEqual(locateBlockToRemove(md, { index: 0, text: '' }), null, '글자 없는 블록은 찾지 않는다');
 });
 
-test('HTML 표는 태그를 뺀 글자로 찾고, 같은 글이 여럿이면 화면 순서에서 가까운 것부터 늘어놓는다', () => {
+test('HTML 표는 태그를 뺀 글자로 찾고, 같은 글이 여럿이면 화면 순서와 상관없이 원문 순서로 모두 돌려준다', () => {
     const table = '<table style="width: 100%;"><tr><th>구분</th><th>설명</th></tr><tr><td>가</td><td>나</td></tr></table>';
     const md = `- 같은 글\n\n${table}\n\n문단\n\n- 같은 글\n`;
     assert.strictEqual(locateBlockToRemove(md, { index: 1, text: '구분 설명 가 나' }).raw.trim(), table);
     const both = blocksToRemove(md, { index: 3, text: '같은 글' });
     assert.strictEqual(both.length, 2);
-    assert.ok(both[0].start > both[1].start, '뒤쪽(화면 순서 3)이 먼저');
+    assert.ok(both[0].start < both[1].start, '원문 순서(화면 순서는 숨긴 첫머리 때문에 어긋날 수 있다)');
+    assert.strictEqual(ctx.blockTextKey(' 같은 : 글 &amp; 끝'), '같은글&끝');
 });
 
 test('블록을 지우면 앞뒤를 빈 줄 하나로 띄우고, 앞뒤가 모두 <br> 간격이면 하나만 남긴다', () => {

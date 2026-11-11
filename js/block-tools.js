@@ -4,8 +4,9 @@
 // 지우기: 원문에서 그 블록만 뺀다. 화면 블록과 원문 블록은 글자가 같아야 짝짓고(lesson-format.js locateBlockToRemove),
 //  지운 뒤 화면에서 그 글이 정확히 하나 줄었는지 본다(화면이 숨긴 첫머리에 같은 글이 있어도 그것을 지우지 않게).
 //  바꾸기 전 글은 작업 기록에 남기고(lesson-review.js commitTabChange) Ctrl+Z로 되돌린다(format-toolbar.js recordLessonEdit).
-// 접기: 사용자가 고른 블록만 접는다. 원문은 바꾸지 않는다. 차시에 탭별로 접은 블록 글의 지문(foldedBlocks)을 기억해 화면을 그릴 때마다 다시 접고,
-//  접힌 블록을 누르면 펼친다. 글을 고쳐 지문이 바뀐 블록은 펼친 채로 그린다.
+// 접기: 사용자가 고른 블록만 접는다. 원문은 바꾸지 않는다. 차시에 탭별로 접은 블록의 열쇠(글 지문 + 같은 글 블록 가운데 몇째인지, foldedBlocks)를
+//  기억해 화면을 그릴 때마다 다시 접고, 접힌 블록을 누르면 펼친다. 글을 고쳐 지문이 바뀐 블록은 펼친 채로 그리고, 그 낡은 열쇠는 다음에 접거나 펼칠 때 버린다.
+//  불러온 데이터의 foldedBlocks는 data-safety.js safeFoldedBlocks가 모양과 개수를 맞춘다. HTML 내보내기에는 접힘을 싣지 않는다.
 // 기대는 것: lesson-format.js, lesson-opening.js, image-slot-place.js(slotPart·slotShownText), lesson-review.js(storedTabMarkdown·commitTabChange), format-toolbar.js.
 // 테스트: tests/block-tools.test.js
 
@@ -13,7 +14,8 @@ const BLOCK_TOOLS_ID = 'block-tools';
 const BLOCK_TOOLS_HIDE_MS = 350; // 블록에서 단추로 옮겨 가는 사이 단추를 숨기지 않고 기다리는 시간
 const BLOCK_TOOLS_GAP_PX = 6; // 블록 오른쪽 끝과 단추 사이
 const BLOCK_TOOLS_WIDTH_PX = 24;
-const BLOCK_FOLD_LIMIT = 300; // 탭 하나에 기억할 접은 블록 수(오래된 것부터 잊는다)
+const BLOCK_FOLD_LIMIT = 300; // 탭 하나에 기억할 접은 블록 수(오래된 것부터 잊는다). data-safety.js FOLDED_BLOCK_LIMIT와 같다
+const BLOCK_REMOVE_GAP_SLACK = 24; // 지운 블록 글자 수 외에 화면 글에서 함께 줄어도 되는 글자 수(블록 사이 빈칸과 겹친 <br> 간격 한 벌)
 const BLOCK_TOOL_SKIP = 'br, hr, script, style, .para-edit, .hidden, [data-image-slot], .mermaid';
 const BLOCK_TOOL_MEDIA = 'img, video, iframe, svg, .image-placeholder, [data-lesson-action="delete-image"]';
 const BLOCK_FOLDED = 'block-folded';
@@ -24,30 +26,50 @@ const BLOCK_TOOL_TEXT = {
     odd: '이 탭은 원문 구조가 특이해 단락을 바로 지울 수 없습니다. 도구 → 원문 전체 수정에서 지워 주세요.',
     notFound: '이 단락을 원문에서 똑같이 찾지 못해 지우지 않았습니다. 두 번 눌러 고치거나 도구 → 원문 전체 수정에서 지워 주세요.',
     hidden: '화면이 정리해 보여 주는 곳이라 이 단락을 바로 지울 수 없습니다. 도구 → 원문 전체 수정에서 지워 주세요.',
+    shifts: '이 단락을 지우면 화면이 숨겨 둔 첫머리 글이 드러나거나 다른 글이 함께 사라져 지우지 않았습니다. 도구 → 원문 전체 수정에서 지워 주세요.',
     last: '탭에 남은 마지막 단락이라 지우지 않았습니다. 탭을 비우려면 도구 → 원문 전체 수정을 써 주세요.',
     deleted: '단락을 지웠습니다. Ctrl+Z로 되돌릴 수 있습니다.',
     foldSaveFailed: '접은 상태를 저장하지 못했습니다. 화면에서는 접혀 있지만 다시 열면 펼쳐질 수 있습니다.'
 };
 
 /* ---------- 지우기 계획(DOM을 쓰지 않는다) ---------- */
-// 화면 블록(part: slotPart와 같은 { index, text, ... })을 원문에서 뺀 글. { ok: true, text } 또는 { ok: false, reason }.
-// 글이 같은 원문 블록을 화면 순서에서 가까운 것부터 시험해, 지운 뒤 화면 글에서 그 블록이 하나 줄어드는 첫 블록을 지운다. 원문의 줄바꿈(\r\n·\n)을 따른다
+// 원문 블록 하나를 지워 본 결과. 화면 글에서 그 블록이 하나 줄지 않으면(화면이 숨긴 곳의 블록) null.
+// clean: 화면 글이 그 블록 글자(와 간격)만큼만 줄었다. 차시 제목을 지워 숨긴 첫머리가 드러나거나 다른 글이 함께 숨으면 false
+function blockRemoval(text, located, shownBefore) {
+    const removed = removeLessonBlock(text, located);
+    const visible = slotSquash(located.raw);
+    if (removed == null || !visible) return null;
+    const next = text.includes('\r\n') ? removed.replace(/\n/g, '\r\n') : removed;
+    const shownAfter = slotSquash(slotShownText(next));
+    if (slotCount(shownAfter, visible) !== slotCount(shownBefore, visible) - 1) return null;
+    const dropped = shownBefore.length - shownAfter.length;
+    return { text: next, empty: !shownAfter, clean: dropped >= visible.length && dropped <= visible.length + BLOCK_REMOVE_GAP_SLACK };
+}
+
+// 화면 블록(part: slotPart에 occurrence·occurrences를 더한 것)을 원문에서 뺀 글. { ok: true, text } 또는 { ok: false, reason }.
+// 글이 같은 원문 블록 가운데 화면에 보이는 것만 원문 순서로 추리고, 화면에서 같은 글 블록 가운데 몇째인지(occurrence)로 고른다.
+// 보이는 수와 화면의 같은 글 블록 수가 다르면 짝을 확신할 수 없어 지우지 않는다. 원문의 줄바꿈(\r\n·\n)을 따른다
 function lessonBlockRemovePlan(source, part) {
     const text = String(source ?? '');
     if (!lessonBlocks(text)) return { ok: false, reason: BLOCK_TOOL_TEXT.odd };
     const candidates = blocksToRemove(text, part);
     if (!candidates.length) return { ok: false, reason: BLOCK_TOOL_TEXT.notFound };
     const shownBefore = slotSquash(slotShownText(text));
-    const next = candidates.map(located => {
-        const removed = removeLessonBlock(text, located);
-        const visible = slotSquash(located.raw);
-        if (removed == null || !visible) return null;
-        const candidate = text.includes('\r\n') ? removed.replace(/\n/g, '\r\n') : removed;
-        return slotCount(slotSquash(slotShownText(candidate)), visible) === slotCount(shownBefore, visible) - 1 ? candidate : null;
-    }).find(item => item !== null);
-    if (next == null) return { ok: false, reason: BLOCK_TOOL_TEXT.hidden };
-    if (!slotSquash(slotShownText(next))) return { ok: false, reason: BLOCK_TOOL_TEXT.last };
-    return { ok: true, text: next };
+    const shown = candidates.map(located => blockRemoval(text, located, shownBefore)).filter(Boolean);
+    if (!shown.length) return { ok: false, reason: BLOCK_TOOL_TEXT.hidden };
+    const occurrences = Number.isInteger(part.occurrences) ? part.occurrences : 1;
+    const chosen = shown.length === occurrences ? shown[part.occurrence || 0] : null;
+    if (!chosen) return { ok: false, reason: BLOCK_TOOL_TEXT.notFound };
+    if (chosen.empty) return { ok: false, reason: BLOCK_TOOL_TEXT.last };
+    if (!chosen.clean) return { ok: false, reason: BLOCK_TOOL_TEXT.shifts };
+    return { ok: true, text: chosen.text };
+}
+
+// 화면 블록을 원문과 짝지을 글(slotPart)에 같은 글 블록 가운데 몇째인지를 더한다
+function blockRemovePart(view, el) {
+    const key = blockTextKey(el.textContent || '');
+    const twins = [...view.children].filter(child => !child.matches('[data-image-slot]') && blockTextKey(child.textContent || '') === key);
+    return { ...slotPart(view, el), occurrence: twins.indexOf(el), occurrences: twins.length };
 }
 
 /* ---------- 접은 블록 기억 ---------- */
@@ -62,13 +84,28 @@ function blockFoldKey(text) {
 
 function foldedBlockKeys(mod, tabId) {
     const list = blockToolObject(mod?.foldedBlocks) ? mod.foldedBlocks[tabId] : null;
-    return Array.isArray(list) ? list.filter(key => typeof key === 'string') : [];
+    return Array.isArray(list) ? list.filter(key => typeof key === 'string').slice(-BLOCK_FOLD_LIMIT) : [];
 }
 
-// key를 접거나(folded true) 펼친 차시의 foldedBlocks. 빈 탭 칸은 지우고, 모두 비면 null
-function nextFoldedBlocks(mod, tabId, key, folded) {
+// 화면 블록마다 접기 기억 열쇠: 글 지문 + 같은 글 블록 가운데 몇째인지(같은 글 블록이 함께 접히지 않게). Map(블록 → 열쇠)
+function blockFoldKeys(view) {
+    const seen = new Map();
+    const keys = new Map();
+    [...view.children].forEach(el => {
+        if (!isBlockToolTarget(view, el)) return;
+        const print = blockFoldKey(el.textContent);
+        const nth = seen.get(print) || 0;
+        seen.set(print, nth + 1);
+        keys.set(el, `${print}:${nth}`);
+    });
+    return keys;
+}
+
+// key를 접거나(folded true) 펼친 차시의 foldedBlocks. live(지금 화면의 열쇠)가 있으면 화면에 없는 낡은 열쇠(고치거나 지운 블록)는 버린다.
+// 빈 탭 칸은 지우고, 모두 비면 null
+function nextFoldedBlocks(mod, tabId, key, folded, live = null) {
     const others = blockToolObject(mod?.foldedBlocks) ? mod.foldedBlocks : {};
-    const kept = foldedBlockKeys(mod, tabId).filter(item => item !== key);
+    const kept = foldedBlockKeys(mod, tabId).filter(item => item !== key && (!live || live.has(item)));
     const list = (folded ? [...kept, key] : kept).slice(-BLOCK_FOLD_LIMIT);
     const { [tabId]: dropped, ...rest } = others;
     const next = list.length ? { ...rest, [tabId]: list } : rest;
@@ -202,7 +239,7 @@ async function deleteLessonBlock(el) {
     hideBlockTools();
     if (blockDeleteBusy || !view || !mod || el.parentElement !== view || !blockDeleteAllowed(mod)) return;
     const before = storedTabMarkdown(mod, tabId);
-    const plan = lessonBlockRemovePlan(before, slotPart(view, el));
+    const plan = lessonBlockRemovePlan(before, blockRemovePart(view, el));
     if (!plan.ok) return void window.showToast?.(plan.reason, 'warning');
     const label = mod.tabContents ? reviewTabLabel(tabId) : '본문';
     blockDeleteBusy = true;
@@ -222,18 +259,18 @@ async function deleteLessonBlock(el) {
 // 보기 화면을 그린 뒤 부른다(api.js toggleEditorMode). 기억한 지문과 같은 글의 블록을 접는다
 window.applyBlockFolds = function (view, mod) {
     if (!view) return;
-    const keys = new Set(foldedBlockKeys(mod, blockToolsTab()));
-    [...view.children].forEach(el => {
-        el.classList.toggle(BLOCK_FOLDED, keys.size > 0 && isBlockToolTarget(view, el) && keys.has(blockFoldKey(el.textContent)));
-    });
+    const folded = new Set(foldedBlockKeys(mod, blockToolsTab()));
+    const keys = folded.size ? blockFoldKeys(view) : new Map();
+    [...view.children].forEach(el => el.classList.toggle(BLOCK_FOLDED, keys.has(el) && folded.has(keys.get(el))));
 };
 
 function toggleBlockFold(el) {
     const view = blockToolsView();
     const mod = blockToolsMod();
-    if (!view || !mod || el.parentElement !== view) return;
+    const keys = view ? blockFoldKeys(view) : new Map();
+    if (!view || !mod || !keys.has(el)) return;
     const folded = !el.classList.contains(BLOCK_FOLDED);
-    const next = nextFoldedBlocks(mod, blockToolsTab(), blockFoldKey(el.textContent), folded);
+    const next = nextFoldedBlocks(mod, blockToolsTab(), keys.get(el), folded, new Set(keys.values()));
     if (next) mod.foldedBlocks = next;
     else delete mod.foldedBlocks;
     window.applyBlockFolds(view, mod);

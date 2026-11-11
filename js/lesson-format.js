@@ -480,7 +480,8 @@ function replaceLessonBlock(source, located, text) {
 /* ---------- 단락 X 단추로 지우기 (paragraph-delete.js) ---------- */
 // 지울 블록은 고칠 때보다 엄격하게 찾는다. 편집 상자는 원문을 보여 주고 고르게 하지만 지우기는 누르자마자 반영된다.
 // 화면 블록의 글자와 원문 블록의 글자가 같아야 한다(빈칸·콜론은 빼고, &nbsp; 같은 문자 참조는 풀어서 견준다).
-// HTML 표처럼 글자 토큰이 없는 블록은 태그를 뺀 글자로 견준다. 같은 글이 여럿이면 화면 순서에서 가까운 블록부터 늘어놓는다(지우는 쪽이 차례로 시험한다)
+// HTML 표처럼 글자 토큰이 없는 블록은 태그를 뺀 글자로 견준다. 같은 글이 여럿이면 원문 순서로 모두 돌려준다.
+// 화면 순서(index)로는 고르지 않는다: 원문에는 화면이 숨긴 첫머리·강사 안내 칸이 있어 순서가 어긋난다. 지우는 쪽(block-tools.js)이 보이는 것만 추려 같은 글 가운데 몇째인지로 고른다
 const LF_ENTITY = { nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", '#39': "'" };
 const lfDecode = text => String(text || '').replace(/&(nbsp|amp|lt|gt|quot|apos|#39);/g, (all, name) => LF_ENTITY[name]);
 
@@ -489,13 +490,16 @@ function lfPlainText(block) {
     return lfNorm(lfDecode(lfNorm(chars) ? chars : block.raw.replace(/<[^>]*>/g, ' ')));
 }
 
+// 화면 블록 글자를 원문 블록 글자와 견줄 모양(빈칸·콜론을 빼고 문자 참조를 푼다)
+function blockTextKey(text) {
+    return lfNorm(lfDecode(text));
+}
+
 function blocksToRemove(source, part) {
     const blocks = lessonBlocks(source);
-    const shown = lfNorm(lfDecode(part.text));
+    const shown = blockTextKey(part.text);
     if (!blocks || !shown) return [];
-    return blocks.filter(block => block.index >= 0 && lfPlainText(block) === shown)
-        .sort((a, b) => Math.abs(a.index - part.index) - Math.abs(b.index - part.index))
-        .map(block => ({ start: block.start, raw: block.raw }));
+    return blocks.filter(block => block.index >= 0 && lfPlainText(block) === shown).map(block => ({ start: block.start, raw: block.raw }));
 }
 
 function locateBlockToRemove(source, part) {
@@ -529,6 +533,6 @@ function keepChosenNumbering(html) {
 if (typeof window !== 'undefined') {
     Object.assign(window, {
         lessonBlocks, findInlineRange, inlineFormatState, applyInlineFormat, applyBlockFormat,
-        normalizeLinkUrl, keepChosenNumbering, locateLessonBlock, replaceLessonBlock, blocksToRemove, locateBlockToRemove, removeLessonBlock
+        normalizeLinkUrl, keepChosenNumbering, locateLessonBlock, replaceLessonBlock, blockTextKey, blocksToRemove, locateBlockToRemove, removeLessonBlock
     });
 }

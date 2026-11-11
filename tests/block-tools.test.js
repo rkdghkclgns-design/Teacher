@@ -264,6 +264,34 @@ test('지우기: 화면이 숨긴 첫머리에 같은 글이 있어도 보이는
     assert.ok(!(viewOf(ctx).textContent || '').includes('게임 루프를 설명할 수'), '화면에서 사라졌다');
 });
 
+test('지우기: 같은 글 블록이 여럿이면 누른 그 블록을 지운다(숨긴 첫머리로 화면 순서가 어긋나도)', async () => {
+    const md = ['- 목표 하나', '', '- 목표 둘', '', '---', '', '# 📝 1차시', '', '따라 해 보세요.', '', 'A 단계입니다.', '', '따라 해 보세요.', '', 'B 단계입니다.', ''].join('\n');
+    for (const nth of [0, 1]) {
+        const mod = lesson(md);
+        const ctx = toolContext(mod);
+        const twins = [...viewOf(ctx).children].filter(el => el.textContent.trim() === '따라 해 보세요.');
+        assert.strictEqual(twins.length, 2);
+        await press(ctx, twins[nth], 'delete');
+        const left = stored(mod);
+        assert.strictEqual(left.split('따라 해 보세요.').length - 1, 1, `${nth}째: 하나만 지웠다`);
+        const keptBefore = left.indexOf('따라 해 보세요.') < left.indexOf('A 단계');
+        assert.strictEqual(keptBefore, nth === 1, `${nth}째를 눌렀으면 그것이 사라진다`);
+    }
+});
+
+test('지우기: 차시 제목을 지우면 숨긴 첫머리가 드러나므로 지우지 않고 알린다', async () => {
+    const md = ['- 숨긴 목표입니다.', '', '---', '', '# 📝 1차시', '', '본문 가입니다.', '', '본문 나입니다.', ''].join('\n');
+    const mod = lesson(md);
+    const ctx = toolContext(mod);
+    await press(ctx, block(ctx, '1차시'), 'delete');
+    assert.strictEqual(stored(mod), md);
+    assert.ok(ctx.toasts.some(([message, type]) => type === 'warning' && message.includes('드러나거나')), JSON.stringify(ctx.toasts));
+    const plain = lesson(['# 📝 1차시', '', '본문 가입니다.', ''].join('\n'));
+    const plainCtx = toolContext(plain);
+    await press(plainCtx, block(plainCtx, '1차시'), 'delete');
+    assert.ok(!stored(plain).includes('1차시'), '숨긴 첫머리가 없으면 제목도 지운다');
+});
+
 test('지우기: 화면이 나눠 그린 블록(이모지 줄)처럼 원문과 글이 다르면 지우지 않고 알린다', async () => {
     const md = LESSON.replace('레벨은 플레이어가 지나가는 길입니다.', '- 💡 핵심 항목입니다\n- 둘째 항목입니다');
     const mod = lesson(md);
@@ -319,6 +347,19 @@ test('접기: 탭마다 따로 기억하고, 글을 고친 블록은 펼친 채�
     const other = toolContext(mod, { tabId: 'assessment' });
     assert.ok(![...viewOf(other).children].some(el => el.classList.contains('block-folded')), '다른 탭은 접지 않는다');
     assert.strictEqual(call(ctx, 'nextFoldedBlocks')({ foldedBlocks: { basicLearn: ['a'], advLearn: 'odd' } }, 'advLearn', 'b', true).advLearn.length, 1, '모양이 틀린 기억은 버리고 새로 적는다');
+    await press(ctx, block(ctx, '지울 문단입니다'), 'fold');
+    assert.strictEqual(mod.foldedBlocks, undefined, '펼칠 때 화면에 없는 낡은 열쇠(고친 블록)도 버린다');
+});
+
+test('접기: 같은 글 블록은 따로 접힌다', async () => {
+    const md = LESSON.replace('레벨은 플레이어가 지나가는 길입니다.', '정리해 봅시다.\n\n레벨은 길입니다.\n\n정리해 봅시다.');
+    const mod = lesson(md);
+    const ctx = toolContext(mod);
+    const twins = () => [...viewOf(ctx).children].filter(el => el.textContent.trim() === '정리해 봅시다.');
+    await press(ctx, twins()[1], 'fold');
+    assert.deepStrictEqual(twins().map(el => el.classList.contains('block-folded')), [false, true]);
+    ctx.drawView(mod);
+    assert.deepStrictEqual(twins().map(el => el.classList.contains('block-folded')), [false, true], '다시 그려도 그 블록만');
 });
 
 (async () => {
