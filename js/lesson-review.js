@@ -1,6 +1,7 @@
 // lesson-review.js - 컨벤션 검수 패널, AI 수정 제안, 생성 직후 자동 수정, 수동 검수 기록
 // develocket-slide(assets/course-textbook.js, course-ai-tb.js @3a7303f)의 검수 카드, fixTextbook, repairOnce를 마크다운 탭에 맞게 옮겼다.
 // 원본의 교재는 짧아 통째로 고치지만 Teacher의 탭은 응답 한도를 넘을 수 있으므로, 지적이 있는 ## 섹션만 보내고 받은 섹션만 바꿔 끼운다.
+// 코드 블록을 자리 표시 줄로 바꿔 지키고, 큰 섹션은 나눠 지적이 있는 곳을 차례로 고쳐 받는 실행은 lesson-fix-run.js에 있다(requestSectionFix가 부른다).
 
 const REVIEW_FIX_MAX_CHARS = 30000; // 한 번에 고칠 분량 상한. 넘으면 필수 지적이 있는 섹션부터 고른다
 const REVIEW_FIX_MIN_KEEP = 0.7; // 이보다 짧아진 섹션은 내용이 잘린 것으로 보고 원문을 유지한다
@@ -42,14 +43,20 @@ function issueInSection(issue, section) {
     return issue.where === section.title;
 }
 
-// 고정 섹션은 대상에서 빼고, 분량이 넘으면 필수 지적이 있는 섹션부터 고른다. 결과는 문서 순서다.
-function pickFixSections(md, issues, lockedBlocks = []) {
+// 지적이 있는 섹션(rows), 그 가운데 고정하지 않은 섹션(open), 필수 지적이 많은 차례로 세운 고칠 섹션(ordered)
+function fixSectionRows(md, issues, lockedBlocks = []) {
     const lockedKeys = new Set(lockedBlocks.map(block => lockTitleKey(block.title)));
     const rows = mdSections(md)
         .map((section, index) => ({ ...section, index, hits: issues.filter(issue => issueInSection(issue, section)) }))
         .filter(row => row.hits.length);
     const open = rows.filter(row => !lockedKeys.has(lockTitleKey(row.title)));
-    const ordered = [...open].sort((a, b) => lintCounts(b.hits).required - lintCounts(a.hits).required);
+    return { rows, open, ordered: [...open].sort((a, b) => lintCounts(b.hits).required - lintCounts(a.hits).required) };
+}
+
+// 고정 섹션은 대상에서 빼고, 분량이 넘으면 필수 지적이 있는 섹션부터 고른다. 결과는 문서 순서다.
+// 한 호출에 담을 첫 묶음이다. 남은 섹션과 상한보다 큰 섹션은 lesson-fix-run.js(planFixRun)가 같은 실행에서 이어 고친다
+function pickFixSections(md, issues, lockedBlocks = []) {
+    const { rows, open, ordered } = fixSectionRows(md, issues, lockedBlocks);
     const chosen = ordered.reduce((picked, row) => {
         const used = picked.reduce((sum, item) => sum + item.text.length, 0);
         return !picked.length || used + row.text.length <= REVIEW_FIX_MAX_CHARS ? [...picked, row] : picked;
@@ -93,26 +100,37 @@ function fixCodeRule(scoped, quiz) {
     ].filter(Boolean).join(' ');
 }
 
+// 코드 블록을 자리 표시 줄로 바꿔 보낼 때 붙이는 지시(lesson-fix-run.js shieldFixCode). AI는 코드를 보지 못하고, 받은 답의 자리 표시 줄을 원래 블록으로 되돌린다
+const REVIEW_HOLDER_RULE = '- 코드 블록은 [[CODE-BLOCK-…]] 꼴의 자리 표시 줄로 바꿔 두었습니다. 자리 표시 줄은 한 글자도 바꾸지 말고 있던 자리에 한 줄씩 그대로 두며, 지우거나 되풀이하거나 다른 글과 한 줄에 쓰지 않습니다. 자리 표시가 가리키는 코드는 다시 쓰지 않습니다.';
+
 // quiz: 문항 모드(code-comments-tool.js isCodeCommentQuiz). 교차 검수 지적을 고칠 때는 코드 줄만 지키고 정답을 드러내는 주석 줄은 고쳐도 된다고 적는다(mergeSectionFix가 같은 기준으로 받는다)
-function buildFixPrompt(md, issues, plan, lockedBlocks = [], { quiz = false } = {}) {
+// 대상에 자리 표시로 바꾼 글(target.sent·target.codes)이 있으면 그 글을 보내고 자리 표시를 지키라고 적는다.
+// part: 큰 섹션에서 떼어 낸 조각 하나를 고친다({ title: 그 섹션의 제목 }) · again: 자리 표시를 지키지 않은 답을 다시 받을 때 적는 까닭(lesson-fix-run.js)
+function buildFixPrompt(md, issues, plan, lockedBlocks = [], { quiz = false, part = null, again = '' } = {}) {
     const sections = mdSections(md);
     const targetIndexes = plan.targets.map(target => target.index);
     const reference = sections.filter((section, index) => !targetIndexes.includes(index) && REVIEW_REFERENCE_TITLE.test(section.title));
     const scoped = issues.filter(issue => issue.missing || plan.targets.some(target => target.hits.includes(issue)));
     const codeRule = fixCodeRule(scoped, quiz);
+    const label = part ? '고칠 부분' : '고칠 섹션';
+    const keys = plan.targets.flatMap(target => (target.codes || []).map(code => code.key));
     return [
-        ['[작업] 아래 교안이 컨벤션 검수에서 지적을 받았습니다. [고칠 섹션]을 지적이 모두 해결되도록 고칩니다.',
+        [`[작업] 아래 교안이 컨벤션 검수에서 지적을 받았습니다. [${label}]을 지적이 모두 해결되도록 고칩니다.`,
             '- 지적과 관계없는 내용과 표현은 유지하고 분량을 줄이지 않습니다.',
-            '- 고칠 섹션의 ## 제목을 그대로 쓰고, 고칠 섹션만 출력합니다. 다른 섹션은 출력하지 않습니다.',
+            part
+                ? `- [고칠 부분]은 ${part.title ? `'## ${part.title}' 섹션` : '교안 본문'}에서 떼어 낸 한 부분입니다. 받은 부분만 고쳐 그 부분만 출력하고, 받지 않은 ## 제목이나 다른 부분을 더하지 않습니다.`
+                : '- 고칠 섹션의 ## 제목을 그대로 쓰고, 고칠 섹션만 출력합니다. 다른 섹션은 출력하지 않습니다.',
             // 코드 예제 규칙(시스템 글)의 '모든 코드 블록에 주석'과 어긋나지 않게, 있던 코드 블록의 주석은 따로 넣는다고 적는다(mergeSectionFix가 코드가 바뀐 섹션을 버린다)
             `- 이미지 태그(<!-- [IMG: ... ] -->), <img>, <div>, <table>, mermaid는 바꾸지 않고, ${codeRule}`,
+            keys.length ? REVIEW_HOLDER_RULE : '',
             issues.some(issue => issue.missing) ? '- 없는 섹션을 새로 써야 하면 ## 제목과 함께 출력합니다.' : '',
             lockedBlocks.length ? `- 고정 섹션(${lockedBlocks.map(block => block.title).join(', ')})은 출력하지 않습니다.` : ''
         ].filter(Boolean).join('\n'),
+        again ? `[다시 요청]\n앞선 답은 쓰지 못했습니다. ${again} 자리 표시 줄(${keys.join(', ')})을 한 글자도 바꾸지 말고 원래 있던 자리에 한 줄씩 그대로 둔 채, 다시 고쳐 출력합니다.` : '',
         `[문서 구조]\n${sections.filter(section => section.title).map(section => `- ${section.title}`).join('\n') || '(## 제목 없음)'}`,
         reference.length ? `[참고 섹션 — 고치지 않습니다]\n${reference.map(section => section.text).join('\n\n')}` : '',
         `[지적된 문제]\n${scoped.map(issueLine).join('\n')}`,
-        plan.targets.length ? `[고칠 섹션]\n${plan.targets.map(target => target.text).join('\n\n')}` : ''
+        plan.targets.length ? `[${label}]\n${plan.targets.map(target => target.sent ?? target.text).join('\n\n')}` : ''
     ].filter(Boolean).join('\n\n');
 }
 
@@ -122,6 +140,11 @@ function cleanFixResponse(text) {
     const cleaned = unwrapped.replace(REVIEW_MARKERS, '').trim();
     return typeof sanitizeMarkdownContent === 'function' ? sanitizeMarkdownContent(cleaned) : cleaned;
 }
+
+// AI 답(data)을 섹션 고치기에 쓸 글로 다듬는다(data.js extractText의 정리 규칙을 거친 뒤 감싼 펜스·이어쓰기 표시를 뗀다)
+const fixAnswerText = data => cleanFixResponse(extractText(data));
+// 보낸 글이 그대로 돌아왔을 때의 꼴(답과 같은 정리 규칙을 거친 글). 고치지 않고 돌려준 답을 가리고, 빠진 자리 표시의 앞 줄을 찾을 때 견준다
+const fixTextShape = text => fixAnswerText({ candidates: [{ content: { parts: [{ text: String(text ?? '') }] } }] });
 
 // 새 섹션의 자리: 학습 목표는 맨 앞, 개요는 학습 목표 다음, 체크리스트는 맨 끝, 나머지는 체크리스트 앞
 function newSectionIndex(sections, title) {
@@ -191,20 +214,48 @@ const sectionCodeLeeway = (target, quiz) => ({
     closing: (target.hits || []).some(issue => issue.msg === LESSON_UNCLOSED_ISSUE)
 });
 
-// 대상 섹션만 바꾼다. 다른 제목으로 돌아온 섹션은 본문이 비슷한 대상과만 짝지어, 새 개요가 지적된 섹션을 덮어쓰지 않게 한다.
-// 짝이 없는 섹션을 받을 수 없으면 뒷부분을 나눠 쓴 응답일 수 있으므로 응답 전체를 쓰지 않는다.
-// 코드 블록을 바꾼 섹션도 쓰지 않는다(keepsSectionCode: 섹션 고치기는 코드 줄을 고치지 않고, 주석은 확인하며 넣는 코드 주석 단계가 맡는다).
-// 결과 { md, dropped: [{ title, where }] } — dropped는 코드 블록을 바꿔 쓰지 않은 대상 섹션(where는 그 섹션의 지적 자리). quiz: 문항 모드
-function mergeSectionFix(md, fixedMd, targets, allowNew = false, { quiz = false } = {}) {
-    const doc = mdSections(md);
+// 고쳐 받은 섹션(조각) 글 하나를 받을지 정한다 → { status, text(받을 글), problem }.
+// status: applied(받는다) · same(고치지 않고 그대로 돌려준 답, target.shape와 같다) · cut(내용이 줄었거나 소주제·그림이 빠졌다, keepsSection)
+//   · code(코드 블록을 바꿨다, keepsSectionCode: 섹션 고치기는 코드 줄을 고치지 않고, 주석은 확인하며 넣는 코드 주석 단계가 맡는다)
+//   · holder(코드 블록 자리 표시가 빠졌거나 겹쳤거나 바뀌었다. problem이 그 까닭이고 lesson-fix-run.js가 한 번 더 받는다)
+// 자리 표시로 보낸 대상(target.codes)은 원래 블록을 되돌린 글로 본다. 자리 표시를 빠뜨렸어도 코드 블록을 스스로 그대로 적어 지킨 답은 받는다.
+// 다른 섹션의 자리 표시가 섞여 든 글(target.token: 이번 실행의 자리 표시 이름)도 받지 않는다. 자리 표시 글끼리도 견주어(target.sent) 코드만 남기고 글을 지운 답을 막는다
+function settleFixText(target, answer, quiz) {
+    const codes = target.codes || [];
+    const state = codes.length ? fixCodeState(answer, codes, target.token) : null;
+    const text = codes.length ? restoreFixCode(answer, codes) : answer;
+    const stray = !!target.token && fixCodeLeftover(text, target.text, target.token);
+    const keepsCode = keepsSectionCode(target.text, text, sectionCodeLeeway(target, quiz)) && !opensCodeFence(target.text, text);
+    const wrote = !!state && state.problem === 'missing' && !stray && keepsCode;
+    if (state && !state.ok && !wrote) return { status: 'holder', problem: state };
+    if (stray) return { status: 'holder', problem: { ok: false, problem: 'changed', keys: [] } };
+    if (typeof target.shape === 'string' && answer.trim() === target.shape.trim()) return { status: 'same' };
+    if (!keepsSection(target.text, text) || (codes.length > 0 && !keepsSection(target.sent, answer))) return { status: 'cut' };
+    return keepsCode ? { status: 'applied', text } : { status: 'code' };
+}
+
+// 고친 글이 닫지 않은 코드 블록을 새로 열었는가(뒤에 오는 글이 코드 안으로 들어간다). 원래 닫히지 않았던 글은 keptSectionBlock이 본다
+function opensCodeFence(before, after) {
+    if (typeof codeCommentBlocks !== 'function') return false;
+    const open = text => codeCommentBlocks(text).some(block => block.skip === 'unclosed');
+    return open(after) && !open(before);
+}
+
+// 받기로 한 결과(applied)의 글을 문서(doc: mdSections 결과)의 그 섹션에 넣는다
+function applyFixOutcomes(doc, outcomes) {
+    const texts = new Map(outcomes.filter(outcome => outcome.status === 'applied').map(outcome => [outcome.target.index, outcome.text]));
+    return doc.map((section, index) => (texts.has(index) ? { ...section, text: texts.get(index) } : section));
+}
+
+// 답(fixedMd)의 섹션을 대상과 짝지어, 받을 섹션만 바꾼 문서(doc)와 새 섹션(added), 대상마다의 결과(outcomes: { target, status, text, answer(짝지은 답), problem })를 돌려준다.
+// 다른 제목으로 돌아온 섹션은 본문이 비슷한 대상과만 짝지어, 새 개요가 지적된 섹션을 덮어쓰지 않게 한다.
+// 짝이 없는 섹션을 받을 수 없으면 뒷부분을 나눠 쓴 응답일 수 있으므로 응답 전체를 쓰지 않는다(status 'split'). 답에 없는 대상은 'absent'다
+function mergeFixSections(doc, fixedMd, targets, allowNew = false, { quiz = false } = {}) {
     const docKeys = new Set(doc.map(section => lockTitleKey(section.title)));
     const open = [...targets];
     const extras = [];
-    const replaced = new Map();
-    const take = (at, text) => {
-        const target = open.splice(at, 1)[0];
-        replaced.set(target.index, { text, target });
-    };
+    const answers = new Map();
+    const take = (at, text) => answers.set(open.splice(at, 1)[0], text);
     mdSections(fixedMd).filter(section => section.text.trim() && (section.title || targets.some(target => !target.title))).forEach(section => {
         const at = open.findIndex(target => lockTitleKey(target.title) === lockTitleKey(section.title));
         if (at >= 0) take(at, section.text);
@@ -212,20 +263,24 @@ function mergeSectionFix(md, fixedMd, targets, allowNew = false, { quiz = false 
     });
     const added = [];
     extras.forEach(section => {
-        const at = open.findIndex(target => isRenamedSection(target.text, section.text));
+        const at = open.findIndex(target => isRenamedSection(target.sent ?? target.text, section.text));
         if (at >= 0) take(at, section.text);
         else added.push(section);
     });
-    if (added.length && !allowNew) return { md, dropped: [] };
-    const dropped = [];
-    const base = doc.map((section, index) => {
-        const next = replaced.get(index);
-        if (next === undefined || !keepsSection(section.text, next.text)) return section;
-        if (keepsSectionCode(section.text, next.text, sectionCodeLeeway(next.target, quiz))) return { ...section, text: next.text };
-        dropped.push({ title: section.title, where: [...new Set((next.target.hits || []).map(issue => issue.where || section.title || '본문'))] });
-        return section;
-    });
-    return { md: added.reduce(insertSection, base).map(section => section.text).join('\n\n'), dropped };
+    if (added.length && !allowNew) return { doc, added: [], outcomes: targets.map(target => ({ target, status: 'split' })) };
+    const outcomes = targets.map(target => (answers.has(target) ? { target, answer: answers.get(target), ...settleFixText(target, answers.get(target), quiz) } : { target, status: 'absent' }));
+    return { doc: applyFixOutcomes(doc, outcomes), added, outcomes };
+}
+
+// 지적 자리 이름(안내 글에 쓴다): 그 섹션(조각)의 지적이 가리키는 자리, 없으면 섹션 제목
+const fixIssuePlaces = target => [...new Set((target.hits || []).map(issue => issue.where || target.title || '본문'))];
+
+// 대상 섹션만 바꾼 글(mergeFixSections). 결과 { md, dropped: [{ title, where }], outcomes } — dropped는 코드 블록을 바꿔 쓰지 않은 대상 섹션(where는 그 섹션의 지적 자리). quiz: 문항 모드
+function mergeSectionFix(md, fixedMd, targets, allowNew = false, { quiz = false } = {}) {
+    const { doc, added, outcomes } = mergeFixSections(mdSections(md), fixedMd, targets, allowNew, { quiz });
+    if (outcomes.some(outcome => outcome.status === 'split')) return { md, dropped: [], outcomes };
+    const dropped = outcomes.filter(outcome => outcome.status === 'code').map(outcome => ({ title: outcome.target.title, where: fixIssuePlaces(outcome.target) }));
+    return { md: added.reduce(insertSection, doc).map(section => section.text).join('\n\n'), dropped, outcomes };
 }
 
 // 병합한 글만 돌려준다(mergeSectionFix의 md)
@@ -245,19 +300,28 @@ function isBetterFix(before, after) {
     return b.required < a.required || (b.required === a.required && after.length < before.length);
 }
 
-// quiz: 문항 모드(문제은행 탭·최종 평가의 AI 수정 제안). 최종 평가의 시스템 글에 문항 속 코드 주석 규칙을 붙이고, 교차 검수 지적은 주석을 고친 답도 받는다.
-// 결과 { text, plan, dropped(코드 블록을 바꿔 반영하지 않은 섹션, mergeSectionFix) }
-async function requestSectionFix({ tabId, md, issues, lockedBlocks = [], onRetry = null, quiz = false }) {
-    const plan = pickFixSections(md, issues, lockedBlocks);
-    const needsNew = issues.some(issue => issue.missing);
-    if (!plan.targets.length && !needsNew) return { text: md, plan, dropped: [] };
+// 섹션 고치기 호출 하나 → 다듬은 답 글(fixAnswerText). 출력 한도에서 잘린 답은 쓰지 않는다
+async function askSectionFix({ tabId, quiz = false, onRetry = null }, prompt) {
     const data = await callGemini(TEXT_MODEL, {
-        contents: [{ role: 'user', parts: [{ text: buildFixPrompt(md, issues, plan, lockedBlocks, { quiz }) }] }],
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
         systemInstruction: { parts: [{ text: reviewSystemPrompt(tabId, quiz) }] },
         generationConfig: { maxOutputTokens: REVIEW_MAX_OUTPUT_TOKENS }
     }, onRetry);
     if (data?.candidates?.[0]?.finishReason === 'MAX_TOKENS') throw new Error('응답이 출력 한도에서 잘렸습니다.');
-    const merged = mergeSectionFix(md, cleanFixResponse(extractText(data)), plan.targets, needsNew, { quiz });
+    return fixAnswerText(data);
+}
+
+// quiz: 문항 모드(문제은행 탭·최종 평가의 AI 수정 제안). 최종 평가의 시스템 글에 문항 속 코드 주석 규칙을 붙이고, 교차 검수 지적은 주석을 고친 답도 받는다.
+// 결과 { text, plan, dropped(코드 블록을 바꿔 반영하지 않은 섹션), report(고친 곳과 고치지 못한 까닭, lesson-fix-run.js가 있을 때) }
+// lesson-fix-run.js가 있으면 코드 블록을 자리 표시로 지키고 큰 섹션은 나눠, 지적이 있는 곳을 차례로 고친다(runSectionFix. run: onStatus·isStopped·maxCalls·maxUnits).
+// 그 파일이 없으면(옛 화면이 캐시에 남은 때) 첫 묶음(pickFixSections)만 한 번에 고친다
+async function requestSectionFix({ tabId, md, issues, lockedBlocks = [], onRetry = null, quiz = false, ...run }) {
+    if (typeof runSectionFix === 'function') return runSectionFix({ tabId, md, issues, lockedBlocks, onRetry, quiz, ...run });
+    const plan = pickFixSections(md, issues, lockedBlocks);
+    const needsNew = issues.some(issue => issue.missing);
+    if (!plan.targets.length && !needsNew) return { text: md, plan, dropped: [] };
+    const answer = await askSectionFix({ tabId, quiz, onRetry }, buildFixPrompt(md, issues, plan, lockedBlocks, { quiz }));
+    const merged = mergeSectionFix(md, answer, plan.targets, needsNew, { quiz });
     return { text: restoreLockedSections(merged.md, lockedBlocks), plan, dropped: merged.dropped };
 }
 
@@ -284,10 +348,12 @@ async function autoFixGeneratedTab({ tabId, md, lockedBlocks = [], onStatus, onR
 }
 
 // 한 번 고쳐 받은 글. 실패하면 null(부른 쪽이 지금 글을 지킨다)
+// 한 회차에 한 곳(첫 묶음이나 큰 섹션의 조각 하나)만 고쳐 호출 수는 지금까지와 같다. 코드 블록 자리 표시가 어긋난 답만 한 번 더 받는다(maxCalls 2)
 async function fixRoundText({ tabId, md, required, lockedBlocks, onRetry, onStatus }) {
     try {
         onStatus(`🔍 컨벤션 필수 지적 ${required.length}건을 고치고 있습니다...`);
-        return (await requestSectionFix({ tabId, md, issues: required, lockedBlocks, onRetry })).text;
+        const again = step => { if (step.again) onStatus('🔍 코드 블록 자리를 지키지 않은 답이라 한 번 더 받고 있습니다...'); };
+        return (await requestSectionFix({ tabId, md, issues: required, lockedBlocks, onRetry, maxUnits: 1, maxCalls: 2, onStatus: again })).text;
     } catch (err) {
         console.warn('[자동 수정] 실패해 생성 결과를 유지합니다:', err.message);
         return null;
@@ -326,8 +392,15 @@ async function commitTabChange(mod, tabId, before, next, note, reason = '고치�
     return true;
 }
 
+// 고정 섹션과 분량 때문에 뺀 섹션 안내. deferred는 lesson-fix-run.js 없이 첫 묶음만 고칠 때만 생긴다(그 파일이 있으면 큰 섹션도 나눠 고친다)
 function fixPlanNote({ locked, deferred }) {
     return [locked ? `고정 섹션 ${locked}개는 고치지 않았습니다.` : '', deferred ? `분량이 많아 섹션 ${deferred}개는 이번 제안에서 뺐습니다. 반영한 뒤 다시 실행합니다.` : ''].filter(Boolean).join(' ');
+}
+
+// 차례로 고치는 동안 검수 창에 보일 글(step: lesson-fix-run.js runSectionFix가 호출마다 알린다). 호출 하나로 끝나면 단추 글만 보인다
+function reviewFixStatus({ no, total, again }) {
+    if (again) return `코드 블록 자리를 지키지 않은 답이라 다시 받고 있습니다... (${no}/${total})`;
+    return total > 1 ? `지적이 있는 곳을 차례로 고치고 있습니다... (${no}/${total})` : '';
 }
 
 // 지적을 섹션 지적과 주석 지적(codeComment)으로 나눈다. 섹션 지적은 지적이 있는 섹션만 고쳐 받고, 그 글의 주석이 모자란 코드 블록에는 주석만 더한다(code-comments-tool.js).
@@ -342,23 +415,33 @@ async function proposeLessonFix() {
     const canComment = typeof addGeneratedCodeComments === 'function';
     const quiz = typeof isCodeCommentQuiz === 'function' ? isCodeCommentQuiz(mod, tabId) : isQuestionBankTab(tabId);
     setReviewBusy(true);
+    const run = _review.run;
+    // 중지를 눌렀거나 검수 창을 닫았으면(다시 열어도) 받고 있는 답까지만 고치고 미리 보인다
+    const isStopped = () => !_review || _review.run !== run || !!_review.stop;
     try {
-        const { text, plan, dropped = [] } = sectionIssues.length
-            ? await requestSectionFix({ tabId, md, issues: sectionIssues, lockedBlocks, quiz })
+        const { text, plan, dropped = [], report = null } = sectionIssues.length
+            ? await requestSectionFix({ tabId, md, issues: sectionIssues, lockedBlocks, quiz, isStopped, onStatus: step => setReviewStatus(reviewFixStatus(step)) })
             : { text: md, plan: { targets: [], locked: 0, deferred: 0 } };
         const commented = canComment
-            ? await addGeneratedCodeComments({ md: text, tabId, quiz, lockedBlocks, notify: false })
+            ? await addGeneratedCodeComments({ md: text, tabId, quiz, lockedBlocks, notify: false, isStopped, onStatus: setReviewStatus })
             : { md: text, run: null, held: 0 };
+        // 고친 것과 고치지 못한 까닭·다음에 할 일(lesson-fix-run.js fixRunNote). 그 파일이 없으면 고정 섹션과 코드 블록을 바꿔 버린 섹션만 적는다
+        const fixNote = report && typeof fixRunNote === 'function' ? fixRunNote(plan, report) : [fixPlanNote(plan), droppedSectionsNote(dropped)].filter(Boolean).join(' ');
         // 섹션 지적이 모두 고정 섹션에 있거나, 주석이 모자란 블록이 모두 고정 섹션에 있어(부르지 않았다) 고칠 곳이 없다
-        const lockedSections = sectionIssues.length > 0 && !plan.targets.length && !sectionIssues.some(issue => issue.missing);
+        const noTargets = sectionIssues.length > 0 && !plan.targets.length && !sectionIssues.some(issue => issue.missing);
+        const lockedSections = noTargets && (plan.locked > 0 || !fixNote);
         const noComments = !sectionIssues.length && !commented.run; // 섹션 지적도, 보낸 주석 블록도 없다
         if (commented.md === md && (lockedSections || (noComments && commented.held > 0))) return window.showAlert('고칠 수 있는 섹션이 없습니다. 지적된 섹션이 모두 고정되어 있습니다.');
+        if (commented.md === md && noTargets && !commented.run) return window.showAlert(fixNote); // 어느 섹션의 지적인지 찾지 못한 지적뿐이다
         if (commented.md === md && noComments) return window.showAlert(`고칠 수 있는 지적이 없습니다.${infoIssueHint(issues)}`);
         if (commented.md === md && commented.run && !sectionIssues.length) return window.showAlert('주석을 넣지 못했습니다. AI 답이 코드를 바꿔 버렸거나 답을 받지 못했습니다. 잠시 뒤 다시 눌러 보세요.');
-        // 주석 호출이 없었어도 고정 섹션에 남긴 블록은 적는다(반영한 뒤에도 그 필수 지적이 남는 까닭). 코드 블록을 바꿔 버린 섹션도 적는다(바뀐 것이 없는 까닭)
+        // 주석 호출이 없었어도 고정 섹션에 남긴 블록은 적는다(반영한 뒤에도 그 필수 지적이 남는 까닭)
         const run = commented.run || (commented.held ? { fixed: [], remaining: 0, held: commented.held } : null);
-        const note = [fixPlanNote(plan), droppedSectionsNote(dropped), typeof commentRunNote === 'function' ? commentRunNote(run) : ''].filter(Boolean).join(' ');
-        const next = await previewAiChange(md, commented.md, { title: 'AI 수정 제안', tabId, note });
+        const note = [fixNote, typeof commentRunNote === 'function' ? commentRunNote(run) : ''].filter(Boolean).join(' ');
+        // 바뀐 섹션이 하나도 없으면 미리보기의 '바뀐 내용이 없습니다.' 뒤에 까닭을 잇는다
+        const unchanged = !alignMdSections(md, commented.md).some(sectionChanged);
+        const emptyNote = note ? '위 안내에 적은 까닭으로 반영할 수정안이 없습니다.' : 'AI가 고친 곳이 없습니다. 다시 실행하거나 원문에서 직접 고쳐 주세요.';
+        const next = await previewAiChange(md, commented.md, { title: 'AI 수정 제안', tabId, note, ...(unchanged ? { emptyNote } : {}) });
         if (next !== null) await commitTabChange(mod, tabId, md, next, `AI 수정 제안 반영 (${reviewTabLabel(tabId)})`);
     } catch (err) {
         console.error('[컨벤션 검수] AI 수정 제안 실패:', err);
@@ -469,7 +552,8 @@ function reviewRulesHtml(tabId) {
         </details>`;
 }
 
-function reviewPanelHtml(mod, tabId, md, busy) {
+// busy: 수정안을 만드는 중(진행 글 status와 중지 단추를 보인다. stopping: 중지를 눌러 받고 있는 답을 기다리는 중)
+function reviewPanelHtml(mod, tabId, md, busy, { status = '', stopping = false } = {}) {
     const issues = lintLessonMarkdown(md, tabId, lessonLintContext(mod, tabId));
     const fixLabel = busy ? '수정안을 만들고 있습니다...' : 'AI 수정 제안';
     return `
@@ -483,8 +567,10 @@ function reviewPanelHtml(mod, tabId, md, busy) {
                 ${reviewManualHtml(mod, tabId, md)}
                 ${reviewRulesHtml(tabId)}
             </div>
-            <div class="p-3 border-t border-white/10 flex justify-end gap-2">
+            <div class="p-3 border-t border-white/10 flex items-center justify-end gap-2">
+                ${busy ? `<p data-review-status class="flex-1 text-xs text-textMuted">${escapeHtml(status)}</p>` : ''}
                 <button data-review-action="close" class="px-4 py-2 text-xs font-bold text-textLight bg-white/10 rounded-lg hover:bg-white/20">닫기</button>
+                ${busy ? `<button data-review-action="stop" ${stopping ? 'disabled' : ''} class="px-4 py-2 text-xs font-bold text-textLight bg-white/10 rounded-lg hover:bg-white/20 disabled:opacity-50" title="받고 있는 답까지만 고치고 멈춥니다. 고친 데까지 미리 보입니다">중지</button>` : ''}
                 <button data-review-action="fix" ${fixableIssues(issues).length && !busy ? '' : 'disabled'} class="px-4 py-2 text-xs font-bold text-white bg-accent rounded-lg hover:bg-accentHover disabled:opacity-50" title="지적이 있는 섹션만 고치고 주석이 모자란 코드 블록에는 주석만 더한 수정안을 미리 본 뒤 반영합니다">${fixLabel}</button>
             </div>
         </div>`;
@@ -493,13 +579,22 @@ function reviewPanelHtml(mod, tabId, md, busy) {
 function renderReviewPanel() {
     const overlay = document.getElementById('lesson-review-dialog');
     const mod = _review && getEditingModule(_review.moduleId);
-    if (overlay && mod) overlay.innerHTML = reviewPanelHtml(mod, _review.tabId, getActiveTabContent(mod), _review.busy);
+    if (overlay && mod) overlay.innerHTML = reviewPanelHtml(mod, _review.tabId, getActiveTabContent(mod), _review.busy, { status: _review.status, stopping: _review.stop });
 }
 
+// 시작하거나 끝날 때 진행 글과 중지 표시를 지운다. 시작할 때마다 실행 표시(run)를 새로 붙인다(창을 닫았다 다시 열면 앞선 실행은 멈춘다)
 function setReviewBusy(busy) {
     if (!_review) return;
-    _review = { ..._review, busy };
+    _review = { ..._review, busy, status: '', stop: false, ...(busy ? { run: {} } : {}) };
     renderReviewPanel();
+}
+
+// 진행 글만 바꾼다(창을 통째로 다시 그리면 긴 탭을 호출마다 다시 검사한다). 중지를 누른 뒤에는 중지 글을 남긴다
+function setReviewStatus(text) {
+    if (!_review?.busy || _review.stop) return;
+    _review = { ..._review, status: text };
+    const line = document.getElementById('lesson-review-dialog')?.querySelector?.('[data-review-status]');
+    if (line) line.textContent = text;
 }
 
 function closeReviewPanel() {
@@ -511,6 +606,10 @@ function onReviewClick(event) {
     const action = event.target.dataset?.reviewAction;
     if (action === 'close') closeReviewPanel();
     if (action === 'fix' && _review && !_review.busy) proposeLessonFix();
+    if (action === 'stop' && _review?.busy && !_review.stop) {
+        _review = { ..._review, stop: true, status: '중지하는 중입니다. 받고 있는 답까지만 고칩니다...' };
+        renderReviewPanel();
+    }
 }
 
 async function onReviewChange(event) {

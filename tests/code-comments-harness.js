@@ -24,8 +24,8 @@ const PY = (...lines) => ['```python', ...lines, '```'].join('\n');
 const TAB_IDS = ['basicLearn', 'basicPrac', 'advLearn', 'advPrac', 'assessment', 'advAssessment'];
 
 // 화면과 같은 차례(index.html): code-comments.js는 data.js 바로 뒤, code-comments-tool.js는 lesson-volume.js 뒤
-const APP_FILES = ['data.js', 'code-comments.js', 'ai-errors.js', 'convention.js', 'lesson-lint.js', 'lesson-opening.js', 'course-meta.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js', 'lesson-review.js', 'md-toolbar.js', 'lesson-attachments.js', 'tabs.js', 'lesson-pipeline.js', 'ai-routing.js', 'api.js', 'cost-estimate.js', 'course-design.js', 'course-flow.js', 'lesson-volume.js', 'code-comments-tool.js', 'merge.js', 'gyosuan.js', 'data-safety.js'];
-const REAL_FILES = ['data.js', 'code-comments.js', 'ai-errors.js', 'claude.js', 'convention.js', 'lesson-lint.js', 'lesson-opening.js', 'course-meta.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js', 'lesson-review.js', 'md-toolbar.js', 'lesson-attachments.js', 'tabs.js', 'lesson-pipeline.js', 'ai-routing.js', 'cost-estimate.js', 'api.js', 'lesson-volume.js', 'code-comments-tool.js'];
+const APP_FILES = ['data.js', 'code-comments.js', 'ai-errors.js', 'convention.js', 'lesson-lint.js', 'lesson-opening.js', 'course-meta.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js', 'lesson-review.js', 'lesson-fix-run.js', 'md-toolbar.js', 'lesson-attachments.js', 'tabs.js', 'lesson-pipeline.js', 'ai-routing.js', 'api.js', 'cost-estimate.js', 'course-design.js', 'course-flow.js', 'lesson-volume.js', 'code-comments-tool.js', 'merge.js', 'gyosuan.js', 'data-safety.js'];
+const REAL_FILES = ['data.js', 'code-comments.js', 'ai-errors.js', 'claude.js', 'convention.js', 'lesson-lint.js', 'lesson-opening.js', 'course-meta.js', 'course-qbank.js', 'ai-edit-preview.js', 'lesson-editor-tools.js', 'lesson-review.js', 'lesson-fix-run.js', 'md-toolbar.js', 'lesson-attachments.js', 'tabs.js', 'lesson-pipeline.js', 'ai-routing.js', 'cost-estimate.js', 'api.js', 'lesson-volume.js', 'code-comments-tool.js'];
 
 function fakeElement() {
     const handlers = {};
