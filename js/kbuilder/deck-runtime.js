@@ -71,7 +71,7 @@
   /* ================= 영상 ================= */
   /* 삽입 플레이어는 교안이 허용하는 두 곳의 정해 둔 모양만 (js/lesson-sanitize.js lessonYoutubeEmbed · lessonVimeoEmbed 와 같다) */
   var EMBED = /^https:\/\/(?:www\.youtube-nocookie\.com\/embed\/[A-Za-z0-9_-]{11}(?:\?start=\d{1,6})?|player\.vimeo\.com\/video\/\d{1,12}\?(?:h=[0-9a-fA-F]{6,20}&)?dnt=1)$/;
-  var HTTP = /^https?:\/\/[^\s"'<>`\\]+$/;
+  var HTTPS = /^https:\/\/[^\s"'<>`\\]+$/; // 바깥 주소 영상은 https 만 (http 내부망 주소를 떠보거나 덱을 열기만 해도 요청이 나가지 않게)
   var PICTURE = /^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
   var GIF = /^data:image\/gif;base64,[A-Za-z0-9+/=]+$/;
   /* 재생·전체 화면·PIP 만 (카메라·마이크·자동 재생은 주지 않는다). 위 창을 옮기지 못하게 sandbox 로 묶는다 */
@@ -99,8 +99,9 @@
         ' referrerpolicy="strict-origin-when-cross-origin" sandbox="' + EMBED_SANDBOX + '"></iframe>';
     }
     if (meta.kind === "file") {
-      if (!HTTP.test(String(meta.src || ""))) return "";
-      return '<video data-video-live controls playsinline preload="metadata" src="' + esc(meta.src) + '" aria-label="' + label + '"></video>';
+      // 남의 덱을 열기만 해도 바깥 주소로 요청이 나가지 않게: 재생을 누르기 전에는 받지 않고(preload none), 리퍼러를 보내지 않는다
+      if (!HTTPS.test(String(meta.src || ""))) return "";
+      return '<video data-video-live controls playsinline preload="none" referrerpolicy="no-referrer" src="' + esc(meta.src) + '" aria-label="' + label + '"></video>';
     }
     return "";
   }

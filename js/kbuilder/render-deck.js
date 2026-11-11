@@ -106,7 +106,7 @@
   function videoBox(v) {
     var meta = videoInfo(v.ref) || {};
     var title = v.title || meta.title || "영상";
-    var link = /^https?:\/\//i.test(String(meta.link || "")) ? String(meta.link) : ""; // 링크는 http(s) 주소만
+    var link = /^https:\/\/[^\s"'<>`\\]+$/.test(String(meta.link || "")) ? String(meta.link) : ""; // 링크는 https 주소만
     return '<div class="slide-video" data-video-ref="' + esc(v.ref) + '" data-video-kind="' + esc(meta.kind || "") + '">' +
       '<div class="sv-stage"><div class="sv-card"><span class="sv-icon">▶</span></div></div>' +
       '<div class="sv-cap"><span class="sv-title">' + esc(title) + '</span>' +
@@ -344,7 +344,8 @@
   }
 
   /* ---------- 단계/절차 (번호 목록 3+개, → 없는 경우) ---------- */
-  function stepSequence(lines) {
+  /* 번호 줄만으로 된 목록의 단계 글 (개수는 보지 않는다 — '(이어서)'로 나눈 단계 장은 3개 미만이어도 단계다). 아니면 null */
+  function stepItems(lines) {
     var steps = [], ok = true;
     lines.forEach(function (l) {
       if (l.depth > 0) return;
@@ -354,7 +355,11 @@
       if (isStep(info.text)) steps.push(info.text.replace(/^\s*(\d+[.)]|[①②③④⑤⑥⑦⑧⑨])\s*/, ""));
       else ok = false;
     });
-    return (ok && steps.length >= 3) ? steps : null;
+    return ok ? steps : null;
+  }
+  function stepSequence(lines) {
+    var steps = stepItems(lines);
+    return (steps && steps.length >= 3) ? steps : null;
   }
   function slideSteps(s, num, total, key, steps) {
     var side = sideOf(s, key);
@@ -376,9 +381,12 @@
       pagenum(num, total);
   }
 
-  /* 슬라이드가 쓰는 배치 이름 — 그리기·나누기(paginateDeck)·PPTX 내보내기가 같은 판별을 쓴다 */
+  /* 슬라이드가 쓰는 배치 이름 — 그리기·나누기(paginateDeck)·PPTX 내보내기가 같은 판별을 쓴다.
+     '(이어서)'로 나눈 장은 나누기 전 슬라이드의 배치(s.layout)를 그대로 쓴다 — 장마다 다시 판별하면 항목 수에 따라
+     비교·카드로 바뀌어 하위 항목이 빠지거나, 단계가 3개 미만이 되어 번호 줄이 글 목록으로 바뀐다 */
   function layoutOf(s) {
     if (s.kind === "cover" || s.kind === "toc" || s.kind === "activity" || s.kind === "closing" || s.kind === "video") return s.kind;
+    if (s.layout === "content" || (s.layout === "steps" && stepItems(s.lines))) return s.layout;
     var st = statementInfo(s.lines);
     if (st && s.lines.length <= 3) return "statement";
     if (labeledGroups(s.lines)) return "compare";   // 비교·대조 / 용어 풀이
@@ -399,7 +407,7 @@
       case "statement": accent = point; inner = slideStatement(s, num, total, statementInfo(s.lines)); break;
       case "compare": accent = point; inner = slideCompare(s, num, total, labeledGroups(s.lines)); break;
       case "cards": accent = point; inner = slideCards(s, num, total, collectCards(s.lines)); break;
-      case "steps": accent = point; inner = slideSteps(s, num, total, key, stepSequence(s.lines)); break;
+      case "steps": accent = point; inner = slideSteps(s, num, total, key, stepItems(s.lines)); break;
       default:
         accent = point;
         inner = slideContent(s, num, total, key, { flip: accentIdx % 2 === 1, panel: accentIdx % 3 === 2 });
@@ -483,7 +491,8 @@
       var part = Object.assign({}, s, {
         num: i === 0 ? s.num : s.num + "-" + (i + 1), label: s.label || s.num,
         title: i === 0 ? s.title : s.title + " (이어서)",
-        lines: lines, visual: i === 0 ? s.visual : "", key: i === parts.length - 1 ? s.key : "", videos: []
+        lines: lines, visual: i === 0 ? s.visual : "", key: i === parts.length - 1 ? s.key : "", videos: [],
+        layout: layout // 나누기 전 배치 그대로 (layoutOf 가 먼저 본다)
       });
       if (layout === "steps") { part.stepFrom = steps; steps += lines.filter(function (l) { return l.depth === 0; }).length; }
       return part;
@@ -685,7 +694,7 @@
   window.KBuilder.deckHeuristics = {
     tagOf: tagOf, isFlow: isFlow, isChips: isChips, isStep: isStep,
     statementInfo: statementInfo, collectCards: collectCards,
-    labeledGroups: labeledGroups, stepSequence: stepSequence,
+    labeledGroups: labeledGroups, stepSequence: stepSequence, stepItems: stepItems,
     footOf: footOf, splitItems: splitItems, coverParts: coverParts, tocParts: tocParts,
     layoutOf: layoutOf, textRows: textRows
   };

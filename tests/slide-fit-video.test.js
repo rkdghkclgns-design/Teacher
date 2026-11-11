@@ -166,6 +166,36 @@ function cssRule(sheet, selector) {
     return bodies.join(';');
 }
 
+/* PPTX 만들기를 스텁(PptxGenJS)으로 돌려 슬라이드마다 넣은 글·그림·도형을 모은다. 파일은 쓰지 않는다 */
+async function pptxCalls(ctx, parsed) {
+    const calls = [];
+    let written = '';
+    ctx.PptxGenJS = function () {
+        this.defineLayout = () => {};
+        this.addSlide = () => {
+            const record = { texts: [], images: [], shapes: [] };
+            calls.push(record);
+            return {
+                set background(value) { record.background = value; },
+                addText: (value, opts) => record.texts.push({ value, opts }),
+                addImage: opts => record.images.push(opts),
+                addShape: (kind, opts) => record.shapes.push({ kind, opts })
+            };
+        };
+        this.writeFile = async opts => { written = opts.fileName; };
+    };
+    ctx.fetch = async () => ({ blob: async () => new Blob(['png'], { type: 'image/png' }), text: async () => '' });
+    const button = { textContent: 'PPTX' };
+    ctx.document.getElementById = id => (id === 'btn-pptx' ? button : null);
+    ctx.KBuilder.lastDeck = { parsed, key: 'd1', ctrl: null };
+    ctx.KBuilder.exportPPTX();
+    for (let i = 0; i < 20 && !written; i++) await new Promise(resolve => setImmediate(resolve));
+    assert.ok(written, 'PPTX를 만들었다');
+    return calls;
+}
+const pptxTexts = record => record.texts.map(t => (Array.isArray(t.value) ? t.value.map(r => r.text).join('') : String(t.value)));
+const pptxLinks = record => record.texts.flatMap(t => (Array.isArray(t.value) ? t.value : [])).filter(r => r.options && r.options.hyperlink).map(r => r.options.hyperlink.url);
+
 (async () => {
     const CSS = text('css/kbuilder/slides.css');
 
@@ -273,6 +303,55 @@ function cssRule(sheet, selector) {
             assert.ok((section.match(/class="keybar/g) || []).length <= 1);
             if (section.includes('class="keybar')) assert.ok(section.indexOf('class="cols') < section.indexOf('class="keybar'), '띠는 본문 뒤(흐름 안)에 온다');
         });
+    });
+
+    await run('나눈 장의 배치: (이어서)로 나눈 장은 원래 슬라이드의 배치를 그대로 쓴다(용어·카드 모양 글 목록은 글 목록, 단계는 3개 미만이어도 단계로 번호를 잇는다). 항목·하위 항목이 사라지지 않고 화면·PPTX가 같다', async () => {
+        const ctx = makeContext();
+        const K = ctx.KBuilder;
+        const sentence = '클라이언트가 보낸 입력을 서버가 받아 규칙에 맞는지 하나하나 검사하고 결과를 모든 접속자에게 다시 알려 주며 그 사이에 생긴 차이를 바로잡아 화면이 어긋나지 않게 맞춥니다';
+        const six = [0, 1, 2, 3, 4, 5];
+        const deck = deckOf(
+            ['### 슬라이드 1 - 용어', '- 대응 교수안: 전개 1', '- 슬라이드 문구:',
+                ...six.flatMap(i => [`  - 용어${i}: 짧은 설명 ${i}`, `    - 용어${i}의 세부 항목 하나 설명이 이어집니다`, `    - 용어${i}의 세부 항목 둘 설명이 이어집니다`]), '- 핵심 메시지: 용어를 익힌다.', ''],
+            ['### 슬라이드 2 - 역할', '- 대응 교수안: 전개 1', '- 슬라이드 문구:',
+                ...six.flatMap(i => [`  - 서버 역할 ${i}`, `    - 역할${i}의 덧붙임 하나 설명이 이어집니다`, `    - 역할${i}의 덧붙임 둘 설명이 이어집니다`]), '- 핵심 메시지: 역할을 나눈다.', ''],
+            ['### 슬라이드 3 - 단계', '- 대응 교수안: 전개 2', '- 슬라이드 문구:', ...[1, 2, 3, 4, 5].map(n => `  - ${n}. ${n}번째 단계에서는 ${sentence} ${sentence}`), '- 핵심 메시지: 단계를 따른다.', '']
+        );
+        const parsed = K.parseDeck(deck);
+        assert.deepStrictEqual(plain(parsed.slides.map(s => K.slideLayout(s))), ['content', 'content', 'steps'], '나누기 전 배치');
+        const paged = K.paginateDeck(parsed);
+        const base = s => s.title.replace(/ \(이어서\)$/, '');
+        ['용어', '역할', '단계'].forEach(title => assert.ok(paged.slides.filter(s => base(s) === title).length >= 2, `${title} 슬라이드를 나눈다`));
+        assert.ok(paged.slides.some(s => base(s) === '단계' && s.lines.length < 3), '단계가 3개 미만인 장이 있다(예전에는 글 목록으로 바뀌었다)');
+        // 장마다 원래 배치 그대로
+        assert.deepStrictEqual(plain(paged.slides.map(s => [s.title, K.slideLayout(s)])), plain(paged.slides.map(s => [s.title, base(s) === '단계' ? 'steps' : 'content'])));
+        // 화면(HTML·PDF가 같은 글): 하위 항목이 모두 남고, 비교·카드 칸으로 바뀌지 않으며, 단계 번호가 이어진다
+        const raw = K.renderDeckHtml(parsed);
+        const html = K.renderDeckHtml(paged);
+        const count = (h, pattern) => (h.match(new RegExp(pattern, 'g')) || []).length;
+        six.forEach(i => {
+            [`용어${i}의 세부 항목 하나`, `용어${i}의 세부 항목 둘`, `역할${i}의 덧붙임 하나`, `역할${i}의 덧붙임 둘`, `용어${i}`, `서버 역할 ${i}`].forEach(item => {
+                assert.strictEqual(count(html, item), count(raw, item), `${item}: 나누기 전과 같은 수`);
+                assert.ok(count(html, item) >= 1, `${item}이 그려진다`);
+            });
+        });
+        assert.strictEqual(count(html, 'class="cmp-col') + count(html, 'class="ct-card'), 0, '비교·카드 칸으로 바뀌지 않는다');
+        assert.deepStrictEqual([...html.matchAll(/class="step-num"[^>]*>(\d+)</g)].map(m => Number(m[1])), [1, 2, 3, 4, 5], '단계 번호가 이어진다');
+        assert.strictEqual(count(html, 'class="step-row'), 5);
+        // PPTX: 같은 배치 — 하위 항목 글이 모두 들어가고, 단계 장은 번호 칸으로 1~5를 잇는다
+        const calls = await pptxCalls(ctx, paged);
+        assert.strictEqual(calls.length, paged.slides.length);
+        const all = calls.flatMap(pptxTexts).join('\n');
+        six.forEach(i => [`용어${i}의 세부 항목 하나`, `용어${i}의 세부 항목 둘`, `역할${i}의 덧붙임 하나`, `역할${i}의 덧붙임 둘`].forEach(item => assert.ok(all.includes(item), `PPTX: ${item}`)));
+        const stepNumbers = record => record.texts.filter(t => typeof t.value === 'string' && /^\d+$/.test(t.value) && t.opts && t.opts.fill).map(t => Number(t.value)); // 색 칸에 든 번호(머리표 '03'은 아니다)
+        const numbers = paged.slides.flatMap((s, i) => (base(s) === '단계' ? stepNumbers(calls[i]) : []));
+        assert.deepStrictEqual(plain(numbers), [1, 2, 3, 4, 5], 'PPTX 단계 번호');
+        // 나누지 않은 단계 슬라이드도 PPTX에서 항목을 빼지 않는다(예전에는 6개까지만 넣었다)
+        const seven = K.paginateDeck(K.parseDeck(deckOf(['### 슬라이드 1 - 짧은 단계', '- 슬라이드 문구:', ...[1, 2, 3, 4, 5, 6, 7].map(n => `  - ${n}. ${n}단계를 한다`), ''])));
+        assert.strictEqual(seven.slides.length, 1);
+        const sevenCalls = await pptxCalls(ctx, seven);
+        assert.deepStrictEqual(stepNumbers(sevenCalls[0]), [1, 2, 3, 4, 5, 6, 7]);
+        assert.ok(pptxTexts(sevenCalls[0]).includes('7단계를 한다'));
     });
 
     /* ======================= 2. 핵심 메시지 ======================= */
@@ -620,7 +699,7 @@ function cssRule(sheet, selector) {
         assert.ok(/parentFn\("getSlideStudioVideos"\)/.test(studio) && /deckVideo\.offer\(ctrl\.stageInner,/.test(studio), '스튜디오가 덱을 붙인 뒤 교안 도우미에 물어 더한다');
     });
 
-    await run('화면 재생기(deckVideo.liveHtml): 종류마다 재생기를 만든다. 삽입 플레이어는 youtube-nocookie·player.vimeo.com 주소만, 파일은 http(s) 주소만 받는다', () => {
+    await run('화면 재생기(deckVideo.liveHtml): 종류마다 재생기를 만든다. 삽입 플레이어는 youtube-nocookie·player.vimeo.com 주소만, 파일은 https 주소만 받는다', () => {
         const ctx = makeContext();
         const live = ctx.KBuilder.deckVideo.liveHtml;
         const yt = live({ kind: 'youtube', embed: `${YT}?start=90` }, '제목 "따옴표"');
@@ -629,7 +708,7 @@ function cssRule(sheet, selector) {
         assert.ok(!/autoplay/.test(yt), '자동 재생 권한은 주지 않는다');
         assert.ok(live({ kind: 'vimeo', embed: 'https://player.vimeo.com/video/123456?h=abcdef12&dnt=1' }, 'v').includes('src="https://player.vimeo.com/video/123456?h=abcdef12&amp;dnt=1"'));
         const file = live({ kind: 'file', src: 'https://cdn.example.com/lag.mp4' }, 'lag');
-        assert.ok(file.startsWith('<video data-video-live') && file.includes('controls') && file.includes('preload="metadata"') && file.includes('src="https://cdn.example.com/lag.mp4"'), file);
+        assert.ok(file.startsWith('<video data-video-live') && file.includes('controls') && file.includes('src="https://cdn.example.com/lag.mp4"'), file);
         const wb = live({ kind: 'wb', poster: PNG }, '판서');
         assert.ok(wb.includes('<video data-video-live') && wb.includes(`poster="${PNG}"`) && !/<video[^>]*\ssrc=/.test(wb), '파일은 뒤에 붙인다');
         assert.ok(wb.includes(`<img data-video-live class="sv-poster" src="${PNG}"`), '인쇄에 쓸 대표 그림');
@@ -644,6 +723,61 @@ function cssRule(sheet, selector) {
             assert.ok(!/javascript:|evil\.example|svg\+xml|text\/html|a\.example/.test(html), `${JSON.stringify(meta)} → ${html}`);
             if (!meta || meta.kind !== 'wb') assert.strictEqual(html, '', JSON.stringify(meta));
         });
+    });
+
+    await run('편집 중 영상 칸 고르기(css): 편집 모드에서만 영상 칸의 삽입 플레이어·재생기가 마우스를 받지 않아 칸을 눌러 고르고 옮기고 지울 수 있다. 보기 모드에서는 그대로 재생된다', () => {
+        ['iframe', 'video'].forEach(tag => {
+            const rule = cssRule(CSS, `.deck-viewport.editing .slide-video .sv-stage > ${tag}`);
+            assert.ok(/pointer-events\s*:\s*none/.test(rule), `편집 중 ${tag}: ${rule}`);
+        });
+        // 편집 모드가 아닌 규칙은 재생기의 마우스를 막지 않는다
+        const css = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+        [...css.matchAll(/([^{}]*\.slide-video[^{}]*)\{([^{}]*)\}/g)].forEach(([, selector, body]) => {
+            if (/pointer-events\s*:\s*none/.test(body)) assert.ok(selector.split(',').every(one => one.includes('.editing')), `보기 모드에서 막는 규칙: ${selector.trim()}`);
+        });
+        // 편집기는 영상 칸을 고를 수 있는 객체로 둔다
+        assert.ok(/SELECTABLE = "[^"]*\.slide-video/.test(source('kbuilder/editor.js')));
+    });
+
+    await run('바깥 주소 영상(보안): https 주소만 받고, 재생을 누르기 전에는 요청하지 않으며(preload=none, no-referrer), http 주소는 재생기·링크를 만들지 않는다. 이 창의 파일(넣은 파일·판서 영상)은 그대로', async () => {
+        const ctx = makeContext();
+        const K = ctx.KBuilder;
+        const live = K.deckVideo.liveHtml;
+        const https = live({ kind: 'file', src: 'https://cdn.example.com/lag.mp4' }, 'lag');
+        assert.ok(https.includes('preload="none"') && https.includes('referrerpolicy="no-referrer"') && !https.includes('preload="metadata"'), https);
+        ['http://192.168.0.1/a.mp4', 'http://cdn.example.com/lag.mp4', 'HTTP://cdn.example.com/lag.mp4', '//cdn.example.com/lag.mp4'].forEach(src => assert.strictEqual(live({ kind: 'file', src }, 't'), '', src));
+        assert.ok(live({ kind: 'local', type: 'video/mp4' }, 'a').includes('preload="metadata"'), '이 창의 파일은 그대로');
+        assert.ok(live({ kind: 'wb', poster: PNG }, 'a').includes('preload="metadata"'), '판서 영상도 그대로');
+        // 그린 글: http 주소 영상의 링크는 내보내지 않는다(가리키는 값은 글자로만 남는다)
+        const HTTP_MP4 = 'http://192.168.0.1/a.mp4';
+        const HTTPS_MP4 = 'https://cdn.example.com/lag.mp4';
+        K.videoSource = {
+            info: ref => ({
+                [HTTP_MP4]: { kind: 'file', src: HTTP_MP4, link: HTTP_MP4, linkText: '동영상 파일 주소' },
+                [HTTPS_MP4]: { kind: 'file', src: HTTPS_MP4, link: HTTPS_MP4, linkText: '동영상 파일 주소' }
+            }[ref] || null),
+            blob: async () => null
+        };
+        const deck = deckOf(['### 슬라이드 1 - 영상: 내부 주소', `- 영상: [내부](${HTTP_MP4})`, ''], ['### 슬라이드 2 - 영상: 바깥 주소', `- 영상: [바깥](${HTTPS_MP4})`, '']);
+        const paged = K.paginateDeck(K.parseDeck(deck));
+        const html = K.renderDeckHtml(paged);
+        assert.ok(!/href="http:/.test(html) && html.includes(`href="${HTTPS_MP4}"`), html);
+        // 화면·HTML 내보내기: http 주소는 재생기를 만들지 않고, https 주소는 누르기 전에 받지 않는 재생기
+        const rootEl = K.inertRoot(html);
+        await K.deckVideo.exportInto(rootEl);
+        const boxes = Array.from(Array.prototype.slice.call(rootEl.querySelectorAll('.slide-video')), box => box.outerHTML);
+        assert.ok(!/<video|<iframe/.test(boxes[0]) && boxes[0].includes('data-video-state="missing"'), boxes[0]);
+        assert.ok(/<video data-video-live[^>]*preload="none"/.test(boxes[1]) && boxes[1].includes('referrerpolicy="no-referrer"'), boxes[1]);
+        // PPTX: http 주소 링크는 넣지 않는다
+        const calls = await pptxCalls(ctx, paged);
+        assert.deepStrictEqual(plain(pptxLinks(calls[0])), []);
+        assert.deepStrictEqual(plain(pptxLinks(calls[1])), [HTTPS_MP4]);
+        // 교안 도우미: http 주소 영상은 인용하지도, 풀지도 않는다
+        const mod = videoLesson(ctx);
+        mod.tabContents.advLearn += `\n\n${fileVideo('http://cdn.example.com/plain.mp4')}`;
+        assert.ok(!call(ctx, 'lessonTrackVideos')(mod, 'adv').some(v => v.ref.startsWith('http:')), 'http 주소는 인용하지 않는다');
+        assert.strictEqual(ctx.getSlideStudioVideo('m1', 'http://cdn.example.com/plain.mp4'), null);
+        assert.strictEqual(ctx.getSlideStudioVideo('m1', HTTPS_MP4).kind, 'file');
     });
 
     await run('저장·불러오기: 저장하는 글에서 재생기·배율 표시를 떼고(가리키는 값은 남긴다), 불러온 HTML의 재생기도 지운다', () => {

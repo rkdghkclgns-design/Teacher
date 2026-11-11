@@ -326,7 +326,7 @@
       slide.addShape("roundRect", { x: X(x), y: Y(y), w: X(w), h: Y(h - cap), fill: { color: "101A2E" }, line: { color: THEME.phLine, width: 3 }, rectRadius: 0.1 });
       slide.addText("▶", { x: X(x), y: Y(y), w: X(w), h: Y(h - cap), align: "center", valign: "middle", fontSize: PT(90), color: "FFFFFF" });
     }
-    var link = /^https?:\/\//i.test(String(meta.link || "")) ? String(meta.link) : "";
+    var link = /^https:\/\/[^\s"'<>`\\]+$/.test(String(meta.link || "")) ? String(meta.link) : ""; // 링크는 https 주소만 (화면과 같다)
     var runs = [{ text: "▶ " + title, options: { color: C.soft, bold: true } }];
     if (link) runs.push({ text: "   " + (meta.linkText || "영상 보기"), options: { color: C.mush, bold: true, hyperlink: { url: link, tooltip: title } } });
     slide.addText(runs, { x: X(x), y: Y(y + h - cap), w: X(w), h: Y(cap), align: "center", valign: "middle", fontSize: PT(24) });
@@ -379,7 +379,7 @@
     });
   }
   function stepsBody(slide, s, steps, accent, bw, bottom) {
-    var n = Math.min(6, steps.length);
+    var n = steps.length; // 모든 단계를 넣는다 (너무 많은 단계는 paginateDeck 이 '(이어서)' 장으로 나눈다)
     var from = s.stepFrom || 0; // (이어서) 슬라이드는 앞 장의 단계 번호를 잇는다
     var gap = 16, areaH = bottom - 330, rh = Math.min(90, (areaH - gap * (n - 1)) / n), y = 330;
     var num = Math.min(56, rh - 8), font = rh < 70 ? 22 : 27; // 띠가 높아져 줄이 낮아지면 글자도 줄인다
@@ -405,10 +405,12 @@
     var isAct = s.kind === "activity";
     var title = isAct ? s.title.replace(/^\[?활동\]?\s*[:：]?\s*/, "") : s.title;
     var H = window.KBuilder.deckHeuristics || {};
+    // 화면 렌더(renderSlide)와 같은 배치 판별 — '(이어서)'로 나눈 장은 나누기 전 배치(s.layout)를 그대로 쓴다
+    var layout = H.layoutOf ? H.layoutOf(s) : "";
 
     // 문구(statement) 레이아웃은 화면처럼 큰 제목 없이 작은 키커 + 중앙 큰 문구만 그린다
-    var st = !isAct && H.statementInfo ? H.statementInfo(s.lines) : null;
-    if (st && s.lines.length <= 3) {
+    var st = layout === "statement" && H.statementInfo ? H.statementInfo(s.lines) : null;
+    if (st) {
       slide.addText(title, { x: X(260), y: Y(240), w: X(1400), h: Y(60), align: "center", fontSize: PT(26), color: accent, bold: true });
       statementBody(slide, s, st);
       return;
@@ -423,15 +425,13 @@
     // 핵심 띠는 3줄 분량까지 키우고, 본문 칸은 그 위에서 끝낸다 (띠가 본문을 덮지 않게)
     var wide = keyBox(s, 1700), kb = keyBox(s, bw);
 
-    // 화면 렌더(renderSlide)와 같은 우선순위: 비교 → 카드 → 단계 → 불릿
-    if (!isAct) {
-      var groups = H.labeledGroups ? H.labeledGroups(s.lines) : null;
-      if (groups) { compareBody(slide, s, groups, H, bodyBottom(wide, 840)); keybarShape(slide, wide, accent); return; }
-      var cards = H.collectCards ? H.collectCards(s.lines) : null;
-      if (cards) { cardsBody(slide, s, cards, bodyBottom(wide, 830)); keybarShape(slide, wide, accent); return; }
-      var steps = H.stepSequence ? H.stepSequence(s.lines) : null;
-      if (steps) { stepsBody(slide, s, steps, accent, bw, bodyBottom(kb, 850)); sideBlock(slide, s, key, bodyBottom(kb, 830) - 330); keybarShape(slide, kb, accent); return; }
-    }
+    // 화면 렌더(renderSlide)와 같은 배치: 비교 · 카드 · 단계 · 불릿
+    var groups = layout === "compare" && H.labeledGroups ? H.labeledGroups(s.lines) : null;
+    if (groups) { compareBody(slide, s, groups, H, bodyBottom(wide, 840)); keybarShape(slide, wide, accent); return; }
+    var cards = layout === "cards" && H.collectCards ? H.collectCards(s.lines) : null;
+    if (cards) { cardsBody(slide, s, cards, bodyBottom(wide, 830)); keybarShape(slide, wide, accent); return; }
+    var steps = layout === "steps" && H.stepItems ? H.stepItems(s.lines) : null;
+    if (steps) { stepsBody(slide, s, steps, accent, bw, bodyBottom(kb, 850)); sideBlock(slide, s, key, bodyBottom(kb, 830) - 330); keybarShape(slide, kb, accent); return; }
 
     // 기본: 불릿 + 이미지(또는 영상)
     var lines = bodyLines(s);

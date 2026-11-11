@@ -438,6 +438,8 @@ image-slot { display: block; }
 .slide-video .sv-stage { position: relative; flex: 1 1 auto; min-height: 0; width: 100%; aspect-ratio: 16 / 9; border-radius: var(--radius); border: 8px solid #fff; box-shadow: 0 24px 50px rgba(43,34,64,.14); background: #101a2e; overflow: hidden; box-sizing: border-box; }
 .slide-video .sv-stage > iframe, .slide-video .sv-stage > video, .slide-video .sv-stage > img { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; object-fit: contain; background: #101a2e; }
 .slide-video .sv-poster { display: none; }
+/* 편집하는 동안에는 삽입 플레이어·재생기가 마우스를 받지 않는다 — 영상 칸을 그림 위에서 눌러 고르고 옮기고 지울 수 있게 (보기 모드에서는 그대로 재생) */
+.deck-viewport.editing .slide-video .sv-stage > iframe, .deck-viewport.editing .slide-video .sv-stage > video { pointer-events: none; }
 .slide-video .sv-card { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 28px; text-align: center; color: #dfe6f2; font-size: var(--type-small); font-weight: 700; }
 .slide-video .sv-icon { width: 108px; height: 108px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; font-size: 46px; padding-left: 8px; box-sizing: border-box; }
 .slide-video[data-video-state="ready"] .sv-card { display: none; }

@@ -14,6 +14,8 @@ const DECK_MAPS_FIELD = /^(?:[-*]\s+)?대응\s*교수안\s*[:：]\s*/;
 const DECK_GIF_VALUE = /^data:image\/gif;base64,[A-Za-z0-9+/=]+$/;
 const DECK_PICTURE_VALUE = /^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
 const VIDEO_LINK_TEXT = { youtube: 'YouTube에서 보기', vimeo: 'Vimeo에서 보기', file: '동영상 파일 주소' };
+// 슬라이드에 넣는 바깥 주소 영상(.mp4·.webm 주소)은 https만. 교안은 http 주소도 받지만, 남이 준 덱을 열 때 내부망 주소로 요청이 나가지 않게 슬라이드에는 넣지 않는다(js/kbuilder/deck-runtime.js도 막는다)
+const slideFileVideo = parsed => parsed?.kind === 'file' && /^https:\/\//.test(parsed.src);
 
 const ownValue = (map, key) => (map && typeof map === 'object' && Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined);
 const decodeVideoText = text => String(text ?? '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#0*39;/g, "'").replace(/&amp;/g, '&');
@@ -54,7 +56,7 @@ function lessonLineVideos(mod, line) {
             continue;
         }
         const parsed = parseLessonVideoUrl(src);
-        if (parsed?.kind === 'file') found.push({ at: match.index, ref: parsed.src, title: videoFileTitle(parsed.src) });
+        if (slideFileVideo(parsed)) found.push({ at: match.index, ref: parsed.src, title: videoFileTitle(parsed.src) });
     }
     for (const match of line.matchAll(/<iframe\b[^>]*>/gi)) {
         const embed = lessonEmbedFrameSrc(videoTagAttr(match[0], 'src')); // 허용한 삽입 주소만, 정해 둔 모양으로
@@ -268,8 +270,8 @@ function resolveLessonVideo(mod, ref) {
         const src = ownValue(mod.images, gif[1]);
         return typeof src === 'string' && DECK_GIF_VALUE.test(src) ? { kind: 'gif', src } : null;
     }
-    const parsed = parseLessonVideoUrl(value); // http(s) 주소만, YouTube·Vimeo·mp4·webm만
-    if (!parsed) return null;
+    const parsed = parseLessonVideoUrl(value); // http(s) 주소만, YouTube·Vimeo·mp4·webm만. 파일 주소는 https만(slideFileVideo)
+    if (!parsed || (parsed.kind === 'file' && !slideFileVideo(parsed))) return null;
     const link = { link: parsed.link, linkText: VIDEO_LINK_TEXT[parsed.kind] };
     return parsed.kind === 'file' ? { kind: 'file', src: parsed.src, ...link } : { kind: parsed.kind, embed: parsed.src, ...link };
 }
