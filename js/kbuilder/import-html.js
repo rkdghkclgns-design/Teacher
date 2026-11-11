@@ -21,6 +21,9 @@
     var root = inertRoot(html);
     // 슬라이드는 svg·math·style 을 쓰지 않는다 (animate 등으로 href 를 우회하는 경로를 막는다)
     qsa("script,iframe,object,embed,link,meta,base,form,svg,math,style", root).forEach(function (el) { el.remove(); });
+    // 영상 재생기(내보낸 파일이 품은 <video>·그림)와 상태 표시는 버린다 — 저장본에는 가리키는 값만 두고 열 때 다시 붙인다 (deck-runtime.js)
+    qsa("[data-video-live]", root).forEach(function (el) { el.remove(); });
+    qsa("[data-video-state]", root).forEach(function (el) { el.removeAttribute("data-video-state"); });
     qsa("*", root).forEach(function (el) {
       var unsafe = Array.prototype.slice.call(el.attributes).filter(function (a) {
         var name = a.name.toLowerCase();

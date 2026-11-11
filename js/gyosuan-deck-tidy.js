@@ -1,9 +1,13 @@
-// gyosuan-deck-tidy.js - 슬라이드 편성안(deckMd) 다듬기: 빈 그림 자리·빈 표·빈 도식 블록을 덜어 내고, 여러 문장을 한 줄에 이은 긴 슬라이드 문구는 문장마다 나눈다
+// gyosuan-deck-tidy.js - 슬라이드 편성안(deckMd) 다듬기: 빈 그림 자리·빈 표·빈 도식 블록을 덜어 내고, 여러 문장을 한 줄에 이은 긴 슬라이드 문구는 문장마다 나누고,
+// 긴 핵심 메시지는 들어가는 앞 문장까지만 남긴다(shortenDeckKey). 영상 칸('- 영상: [제목](가리키는 값)', gyosuan-videos.js)은 그대로 둔다
 // 스튜디오(js/kbuilder render-deck.js)는 '이미지/시각' 줄이 있으면 그림이 없어도 빈 그림 칸을 그린다. 그림이 없는 그 줄을 빼면 그림 칸 없는 레이아웃이 된다.
 // 만든 편성안은 자동 그림을 붙인 뒤(gyosuan-images.js) 저장하기 전에 다듬고, 저장해 둔 편성안은 화면 편집본이 없을 때 스튜디오에 넘기는 글만 다듬는다(gyosuan.js).
 // 슬라이드·칸 나누기는 kbuilder parser.js parseDeck과 같은 규칙을 따른다(### 머리줄이 슬라이드, 들여쓰지 않은 '이름:' 줄이 칸, ## 비고는 건드리지 않는다). 테스트: tests/gyosuan-regen.test.js
 
-const DECK_FIELD = /^(?:[-*]\s+)?(대응\s*교수안|슬라이드\s*문구|이미지\s*[/·]\s*시각|이미지|핵심\s*메시지)\s*[:：]\s*(.*)$/;
+const DECK_FIELD = /^(?:[-*]\s+)?(대응\s*교수안|슬라이드\s*문구|이미지\s*[/·]\s*시각|이미지|핵심\s*메시지|동영상|영상)\s*[:：]\s*(.*)$/;
+// 핵심 메시지는 슬라이드 아래 띠에 3줄까지만 보인다(css/kbuilder/slides.css). 그 안에 드는 분량으로 쓰게 지시하고(gyosuan.js buildSectionPrompt), 넘게 쓴 줄은 아래 shortenDeckKey가 줄인다
+const DECK_KEY_MAX = 90;
+const DECK_KEY_RULE = `- 핵심 메시지는 한두 문장으로 짧게 씁니다(공백 포함 ${DECK_KEY_MAX}자 이내). 설명이나 여러 항목을 이어 붙이지 않습니다(슬라이드 아래 띠에 세 줄까지만 보입니다).`;
 const DECK_FENCE = /^\s*(```|~~~)/;
 const DECK_MD_IMAGE = /!\[[^\]]*\]\(\s*([^)\s]*)[^)]*\)/g;
 const DECK_HTML_IMAGE = /<img\b[^>]*>/gi;
@@ -123,14 +127,54 @@ const deckFieldName = name => {
     if (/대응교수안/.test(key)) return 'maps';
     if (/슬라이드문구/.test(key)) return 'lines';
     if (/이미지/.test(key)) return 'visual';
+    if (/영상/.test(key)) return 'video'; // 영상 칸(학습 탭의 영상을 가리키는 값, gyosuan-videos.js). 그대로 둔다
     return 'key';
 };
+
+// 핵심 메시지 칸(머리줄과 그 아래 덧붙임 줄, 슬라이드는 이어 붙여 그린다)의 글이 DECK_KEY_MAX자를 넘으면 들어가는 앞 문장까지만 남긴다.
+// 문장 끝에서만 끊는다(낱말 가운데서 자르지 않는다). 첫 문장부터 넘치거나 문장 경계가 없으면, 또 굵게(**)·코드(`) 표시가 끊는 자리를 넘어 이어지면 그대로 둔다
+// (그때는 슬라이드가 3줄에서 말줄임으로 자른다, css/kbuilder/slides.css). 바꿀 것이 없으면 받은 줄 그대로
+function shortenDeckKey(lines) {
+    const head = (lines[0] || '').match(/^(\s*(?:[-*]\s+)?핵심\s*메시지\s*[:：]\s*)(.*)$/);
+    if (!head) return lines;
+    const rest = lines.slice(1);
+    const subs = rest.filter(line => line.trim());
+    if (subs.some(line => !/^\s+[-*]\s+\S/.test(line))) return lines; // 목록이 아닌 줄(표·코드 블록)이 딸려 있으면 건드리지 않는다
+    const full = [head[2].trim(), ...subs.map(line => line.replace(/^\s+[-*]\s+/, '').trim())].filter(Boolean).join(' ');
+    if (full.length <= DECK_KEY_MAX) return lines;
+    const kept = [];
+    for (const sentence of deckSentences(full)) {
+        if ([...kept, sentence].join(' ').length > DECK_KEY_MAX) break;
+        kept.push(sentence);
+    }
+    const short = kept.join(' ');
+    if (!short || openBold(short) || (short.match(/`/g) || []).length % 2) return lines;
+    return [`${head[1]}${short}`, ...trailingBlanks(rest)];
+}
+
+// 영상을 가리키는 값인가: 판서 영상 wb:그림 키 · 넣은 파일 local:vid_키 · 움직이는 GIF gif:그림 키 · http(s) 주소, 또는 [제목](그 값). kbuilder parser.js parseVideoField와 같다
+const DECK_VIDEO_REF = /^(?:wb:[\w-]{1,80}|gif:[\w-]{1,80}|local:vid_[a-z0-9]{6,40}|https?:\/\/[^\s"'<>`\\]{4,2000})$/;
+function isDeckVideoValue(value) {
+    const text = String(value || '').trim();
+    const link = text.match(/^\[[^\]]*\]\((\S+)\)$/);
+    return DECK_VIDEO_REF.test(link ? link[1] : text);
+}
+
+// '영상:' 줄이 영상 칸인가: 값이 영상을 가리키거나, 값 없이 바로 아래 들여 쓴 목록 줄이 영상을 가리킬 때만(parseDeck과 같다).
+// 아니면('- 영상: 시청 후 토론' 같은 문구) 예전처럼 앞 칸에 딸린 글 줄이다. rest: 그 줄 뒤의 덩어리
+function isDeckVideoField(value, rest) {
+    if (String(value || '').trim()) return isDeckVideoValue(value);
+    const next = rest.find(chunk => chunk.kind !== 'line' || chunk.line.trim());
+    const sub = next && next.kind === 'line' && deckIndent(next.line) >= 1 ? next.line.trim().match(/^[-*]\s+(.*)$/) : null;
+    return !!sub && isDeckVideoValue(sub[1]);
+}
 
 // 몸통을 칸으로 묶는다. 첫 칸 앞의 줄은 이름 없는 칸(parseDeck이 그리지 않는다)
 function deckGroups(body) {
     const groups = [{ field: null, chunks: [] }];
-    deckChunks(body).forEach(chunk => {
-        const field = chunk.kind === 'line' && deckIndent(chunk.line) === 0 ? chunk.line.trim().match(DECK_FIELD) : null;
+    deckChunks(body).forEach((chunk, at, chunks) => {
+        const match = chunk.kind === 'line' && deckIndent(chunk.line) === 0 ? chunk.line.trim().match(DECK_FIELD) : null;
+        const field = match && (deckFieldName(match[1]) !== 'video' || isDeckVideoField(match[2], chunks.slice(at + 1))) ? match : null;
         if (field) groups.push({ field: deckFieldName(field[1]), chunks: [chunk] });
         else groups[groups.length - 1].chunks.push(chunk);
     });
@@ -140,12 +184,12 @@ function deckGroups(body) {
 // 칸 하나를 다듬는다 → { field, lines, keep, hasContent, removed }. 이미지/시각 칸은 진짜 그림이 있을 때만, 슬라이드 문구 칸은 덜어 내고 빈 칸이 되면 뺀다
 function tidyDeckGroup(group, images) {
     let removed = false;
-    const lines = [];
+    const kept = [];
     group.chunks.forEach((chunk, at) => {
         if (chunk.kind !== 'line') {
             const dead = chunk.kind === 'fence' ? isEmptyFence(chunk) : isDeadTable(chunk.lines);
             if (dead) removed = true;
-            else lines.push(...chunk.lines);
+            else kept.push(...chunk.lines);
             return;
         }
         const head = !!group.field && at === 0;
@@ -153,8 +197,9 @@ function tidyDeckGroup(group, images) {
         const line = stripped === chunk.line ? chunk.line : deckTidiedLine(stripped);
         if (stripped !== chunk.line) removed = true;
         if (!head && stripped !== chunk.line && isBareBullet(line)) return;
-        lines.push(...(group.field === 'lines' && !head ? splitDeckLine(line) : [line]));
+        kept.push(...(group.field === 'lines' && !head ? splitDeckLine(line) : [line]));
     });
+    const lines = group.field === 'key' ? shortenDeckKey(kept) : kept; // 긴 핵심 메시지는 들어가는 앞 문장까지만
     const value = group.field ? ((lines[0] || '').trim().match(DECK_FIELD)?.[2] || '').trim() : '';
     const hasContent = !!value || lines.slice(group.field ? 1 : 0).some(line => line.trim());
     const keep = group.field === 'visual' ? DECK_REAL_IMAGE.test(lines.map(line => outsideInlineCode(line, text => text, () => '')).join('\n'))
@@ -173,7 +218,7 @@ const trailingBlanks = lines => {
 function tidyDeckSlide(slide, images) {
     const groups = deckGroups(slide.body).map(group => ({ group, result: tidyDeckGroup(group, images) }));
     const removed = groups.some(({ result }) => result.removed);
-    const content = groups.some(({ result }) => result.keep && result.hasContent && ['lines', 'visual', 'key'].includes(result.field));
+    const content = groups.some(({ result }) => result.keep && result.hasContent && ['lines', 'visual', 'key', 'video'].includes(result.field));
     if (removed && !content) return null;
     const body = groups.flatMap(({ group, result }) => (result.keep ? result.lines : trailingBlanks(group.chunks.flatMap(chunk => chunk.lines || [chunk.line]))));
     return [slide.header, ...body];

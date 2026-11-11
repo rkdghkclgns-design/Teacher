@@ -2,7 +2,7 @@
 // 문서 양식과 조립은 develocket-slide(assets/generate.js @3a7303f)의 컨벤션을 따르고,
 // 생성 프롬프트는 이 앱의 교안 생성 방식(페르소나·어투·참고 자료·멀티턴 few-shot)을 쓴다.
 // 교수안은 갈래(data.js LESSON_TRACKS)마다 따로 만든다. 기본학습 갈래는 기본학습·기본실습 탭으로 mod.gyosuan에, 심화학습 갈래는 심화학습·심화실습 탭으로 mod.gyosuanAdv에
-// { docMd, deckMd, deckHtml, sessionDecks, deckRev, deckDirty, images, slideStyle, sourceKey, sourceMap, previous, updatedAt } 으로 저장한다(sourceMap·previous는 gyosuan-regen.js).
+// { docMd, deckMd, deckHtml, sessionDecks, deckRev, deckDirty, images, slideStyle, sourceKey, sourceMap, previous, citedVideos, updatedAt } 으로 저장한다(sourceMap·previous는 gyosuan-regen.js, citedVideos는 gyosuan-videos.js).
 // images는 교수안·편성안의 ![설명](local:id)가 가리키는 래스터 data URL이고, sessionDecks는 차시별로 연 덱의 편집본이다.
 // 예전에 네 탭을 함께 담아 만든 mod.gyosuan은 그대로 기본학습 교수안으로 둔다(gyosuan-view.js가 그렇다고 알린다).
 
@@ -351,11 +351,11 @@ function buildSectionPrompt(section, style) {
         '- 슬라이드 문구:',
         ...slides.lines,
         '- 이미지/시각: (그릴 장면 한 줄 제안. 어울리는 그림이 없으면 이 줄을 뺀다)',
-        '- 핵심 메시지: (이 슬라이드의 한 줄 메시지)',
+        '- 핵심 메시지: (이 슬라이드의 한 줄 메시지. 한두 문장, 90자 이내)', // 길이 규칙과 넘는 줄 줄이기는 gyosuan-deck-tidy.js(DECK_KEY_MAX · DECK_KEY_RULE)
         '',
         '[슬라이드 규칙]',
         slides.deck,
-        GYOSUAN_DECK_EMPTY_RULE,
+        GYOSUAN_DECK_EMPTY_RULE, ...(typeof DECK_KEY_RULE === 'string' ? [DECK_KEY_RULE] : []),
         '',
         `[섹션 제목] ${section.title}${section.minutes ? ` (${section.minutes}분 수업)` : ''}`,
         `[원고]\n${section.text.trim().slice(0, GYOSUAN_SECTION_CHARS)}`
@@ -564,7 +564,7 @@ function nextGyosuan(mod, parts, draft, style, keepDoc, trackId = 'basic') {
     };
     // 바뀐 섹션 안내에 쓰는 원고 지문과 되돌릴 수 있게 바꾸기 전 교수안(gyosuan-regen.js)
     const extra = typeof gyosuanRegenFields === 'function' ? gyosuanRegenFields(mod, base, parts, keepDoc, trackId) : {};
-    return { ...next, images: usedGyosuanImages(next), ...extra };
+    return { ...next, images: usedGyosuanImages(next), ...(draft.citedVideos ? { citedVideos: draft.citedVideos } : {}), ...extra }; // citedVideos: 편성안을 만들 때 인용한 영상(gyosuan-videos.js)
 }
 
 // 갈래의 학습·실습 탭 이름(예: 심화학습·심화실습)
@@ -604,7 +604,7 @@ async function runGyosuanGeneration(moduleId, opts = {}) {
         const attached = window.attachGyosuanImages ? await window.attachGyosuanImages(mod, texts, track.id) : texts;
         // 그림을 붙인 뒤 그림 없는 그림 칸·빈 표·빈 도식을 덜고 여러 문장을 이은 문구를 나눈다(gyosuan-deck-tidy.js)
         const draft = typeof tidyGyosuanDeck === 'function' ? { ...attached, deckMd: tidyGyosuanDeck(attached.deckMd, { ...mod.images, ...(keepDoc ? mod[track.field]?.images : {}), ...attached.images }) } : attached;
-        mod[track.field] = nextGyosuan(mod, parts, draft, style, keepDoc, track.id);
+        mod[track.field] = nextGyosuan(mod, parts, typeof withLessonVideos === 'function' ? withLessonVideos(draft, mod, track.id) : draft, style, keepDoc, track.id); // 그 갈래 탭의 영상을 그 절의 슬라이드에 인용해 담는다(gyosuan-videos.js)
         Object.assign(mod, withHistoryNote(mod, `${track.label} ${keepDoc ? '슬라이드 편성안 AI 생성' : '교수안·슬라이드 편성안 AI 생성'}`));
         _gyosuanEditing = null;
         await saveGyosuan(mod);
@@ -679,7 +679,8 @@ window.getSlideStudioPayload = function (moduleKey, session = null) {
     const whole = index === null;
     const advanced = track !== LESSON_TRACKS[0].id;
     const deckHtml = (whole ? gyosuan?.deckHtml : gyosuan?.sessionDecks?.[index]) || null;
-    const deckMd = resolveGyosuanImages(whole ? gyosuan?.deckMd : gyosuanSessionDeckMd(mod, index, track), mod, track);
+    const shown = !deckHtml && mod && typeof lateVideoLesson === 'function' ? lateVideoLesson(mod, track) : mod; // 화면 편집본이 없으면 편성안을 만든 뒤에 넣은 영상까지 인용한 편성안으로(저장한 편성안은 그대로, gyosuan-videos.js)
+    const deckMd = resolveGyosuanImages(whole ? gyosuanOf(shown, track)?.deckMd : gyosuanSessionDeckMd(shown, index, track), mod, track);
     return {
         deckMd: deckHtml || typeof tidyGyosuanDeck !== 'function' ? deckMd : tidyGyosuanDeck(deckMd), // 화면 편집본이 없을 때만 다듬어 넘긴다(저장한 편성안은 그대로, gyosuan-deck-tidy.js)
         deckHtml,

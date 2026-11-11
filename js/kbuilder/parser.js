@@ -46,6 +46,8 @@
     var inNotes = false;
 
     function flush() {
+      // 문구·그림 없이 영상만 있는 슬라이드는 영상 슬라이드다 (제목에 '정리'·'활동'이 들어 있어도)
+      if (cur && cur.videos.length && !cur.lines.length && !cur.visual) cur.kind = "video";
       if (cur) slides.push(cur);
       cur = null;
       curField = null;
@@ -88,6 +90,7 @@
           maps: "",
           lines: [],   // 슬라이드 문구 items {text, depth}
           visual: "",  // 이미지/시각
+          videos: [],  // 영상 {ref, title} — 영상 값이 아니라 가리키는 값만 (그릴 때 푼다)
           key: "",     // 핵심 메시지
           kind: classify(title)
         };
@@ -103,8 +106,16 @@
       var content = bullet ? bullet[1].trim() : line;
 
       // 필드 시작 키워드 감지 (대응 교수안 / 슬라이드 문구 / 이미지·시각 / 핵심 메시지)
-      var fieldMatch = content.match(/^(대응\s*교수안|슬라이드\s*문구|이미지\s*[\/·]\s*시각|이미지|핵심\s*메시지)\s*[:：]\s*(.*)$/);
-      if (depth <= 0 && fieldMatch) {
+      var fieldMatch = content.match(/^(대응\s*교수안|슬라이드\s*문구|이미지\s*[\/·]\s*시각|이미지|핵심\s*메시지|동영상|영상)\s*[:：]\s*(.*)$/);
+      // 영상 칸: '- 영상: [제목](가리키는 값)', 또는 '- 영상:' 아래에 들여 쓴 '- [제목](값)' 줄.
+      // 값이 정해 둔 모양이 아니면 칸이 아니라 예전처럼 글 줄로 읽는다 ('- 영상: 시청 후 토론' 같은 문구를 잃지 않게)
+      var videoField = fieldMatch && /영상/.test(fieldMatch[1]) ? { video: parseVideoField(fieldMatch[2]), head: !fieldMatch[2].trim() && !!parseVideoField(nextSubItem(lines, i)) } : null;
+      if (depth <= 0 && videoField && (videoField.video || videoField.head)) {
+        if (videoField.video) cur.videos.push(videoField.video);
+        curField = "video";
+        continue;
+      }
+      if (depth <= 0 && fieldMatch && !videoField) {
         var fname = fieldMatch[1].replace(/\s+/g, "");
         var fval = fieldMatch[2].trim();
         if (/대응교수안/.test(fname)) { cur.maps = fval; curField = "maps"; }
@@ -122,11 +133,36 @@
         cur.visual += (cur.visual ? " " : "") + content;
       } else if (curField === "key" && bullet) {
         cur.key += (cur.key ? " " : "") + content;
+      } else if (curField === "video" && bullet) {
+        var more = parseVideoField(content);
+        if (more) cur.videos.push(more);
       }
     }
     flush();
 
     return { meta: fm.meta, slides: slides, notes: notes };
+  }
+
+  /* 영상 칸의 값 → {ref, title} | null
+     가리키는 값은 판서 영상(wb:그림 키) · 넣은 동영상 파일(local:vid_키) · 움직이는 GIF(gif:그림 키) · http(s) 주소만 받는다.
+     주소가 어느 곳의 영상인지(YouTube·Vimeo·mp4)는 그릴 때 교안 도우미가 가린다 — 여기서는 속성에 넣어도 되는 글자인지만 본다 */
+  var VIDEO_REF = /^(?:wb:[\w-]{1,80}|gif:[\w-]{1,80}|local:vid_[a-z0-9]{6,40}|https?:\/\/[^\s"'<>`\\]{4,2000})$/;
+  /* i 번째 줄 바로 아래의 들여 쓴 목록 줄의 글 (빈 줄은 건너뛴다). 없으면 "" */
+  function nextSubItem(lines, i) {
+    for (var k = i + 1; k < lines.length; k++) {
+      var t = lines[k].trim();
+      if (!t) continue;
+      var bullet = t.match(/^[-*]\s+(.*)$/);
+      return bullet && indentDepth(lines[k]) > 0 ? bullet[1].trim() : "";
+    }
+    return "";
+  }
+  function parseVideoField(text) {
+    var value = String(text == null ? "" : text).trim();
+    var link = value.match(/^\[([^\]]*)\]\((\S+)\)$/);
+    var ref = link ? link[2] : value;
+    if (!VIDEO_REF.test(ref)) return null;
+    return { ref: ref, title: link ? link[1].replace(/\s+/g, " ").trim() : "" };
   }
 
   function classify(title) {
@@ -295,6 +331,7 @@
 
   window.KBuilder = window.KBuilder || {};
   window.KBuilder.parseDeck = parseDeck;
+  window.KBuilder.parseVideoField = parseVideoField;
   window.KBuilder.parseDoc = parseDoc;
   window.KBuilder.escapeHtml = escapeHtml;
   window.KBuilder.classify = classify;

@@ -84,6 +84,13 @@
   K.genImage = genImage;
   K.AI = { hasKey: imageReady }; // auto-images.available() 가 보는 관문
 
+  /* ---------- 영상 칸 (학습 탭의 판서 영상·넣은 동영상·움직이는 GIF) ----------
+     편성안과 저장본에는 가리키는 값만 있다. 어떤 영상인지(info)와 파일(blob)은 그릴 때 교안 도우미가 그 차시에서 찾아 준다 */
+  K.videoSource = {
+    info: function (ref) { var get = parentFn("getSlideStudioVideo"); return get && moduleId ? get(moduleId, ref) : null; },
+    blob: function (ref) { var get = parentFn("getSlideStudioVideoBlob"); return get && moduleId ? get(moduleId, ref) : null; }
+  };
+
   /* ---------- 안내 · 상태 ---------- */
   function showNotice(msg) {
     $("app").style.display = "none";
@@ -105,6 +112,7 @@
   /* 지금 덱을 저장용 HTML 로 — 끌어다 놓은 이미지는 innerHTML 에 없으므로 src 로 굽고, 편집·탐색 흔적은 지운다 */
   function serializeDeck() {
     var root = K.inertRoot(ctrl.stageInner.innerHTML);
+    K.deckRuntime.strip(root); // 영상 재생기·글 칸 배율은 실행 중에만 쓴다 — 저장본에는 넣지 않고 열 때마다 다시 붙이고 잰다
     qsa("image-slot", root).forEach(function (slot) {
       var src = liveSlotSrc(slot.id ? $(slot.id) : null);
       if (src) slot.setAttribute("src", src);
@@ -325,6 +333,8 @@
   /* ---------- PDF (print.js) — 슬라이드 한 장을 16:9 한 페이지로. 페이지 크기·대상은 slide-studio.html 에 고정했다 ---------- */
   function printDeck() {
     K.editor.setEdit(false);
+    K.deckFit.all(ctrl.stageInner);          // 감춘 슬라이드까지 글 칸 배율을 다시 잰다
+    K.deckVideo.hydrateAll(ctrl.stageInner); // 영상 칸에 찍힐 그림을 붙인다 (재생기는 인쇄에서 감추고 제목·링크 칸을 찍는다)
     window.print();
   }
 
@@ -436,7 +446,8 @@
     if (isSample) { $("btn-import-html").hidden = true; $("btn-fill-images").hidden = true; }
     var parsed = K.parseDeck(String(payload.deckMd || ""));
     var meta = deckMeta(parsed.meta || {}, payload);
-    var deck = Object.assign({}, parsed, { meta: meta });
+    // 넘치는 항목은 '(이어서)' 슬라이드로, 옆 칸에 둘 수 없는 영상은 바로 뒤 영상 슬라이드로 넘긴 편성 (화면과 PPTX 가 함께 쓴다)
+    var deck = K.paginateDeck(Object.assign({}, parsed, { meta: meta }));
     var saved = payload.deckHtml ? K.sanitizeDeckHtml(String(payload.deckHtml)) : "";
     if (!saved && !deck.slides.length) { showNotice("표시할 슬라이드가 없습니다. 교안 도우미에서 슬라이드를 먼저 만들어 주세요."); return; }
 
@@ -451,6 +462,12 @@
     } else {
       ctrl = K.buildDeck(deck, mount);
     }
+    // 이 덱에 아직 보인 적 없는 영상(저장한 뒤 학습 탭에 넣은 영상)은 마무리 앞에 영상 슬라이드로 더한다. 지운 영상 칸은 되살리지 않는다
+    var listVideos = isSample ? null : parentFn("getSlideStudioVideos");
+    var videos = [];
+    try { videos = listVideos ? listVideos(moduleId, session) : []; }
+    catch (err) { console.error("[slide-studio] video list failed:", err); } // 영상 목록을 못 받아도 덱은 연다
+    if (K.deckVideo.offer(ctrl.stageInner, videos, meta)) ctrl.sync();
     K.editor.init(ctrl);
     applyTheme(lsGet("kb-theme") || "maple");
     K.animOrder.ensureAll(ctrl.stageInner); // 슬라이드를 넘기는 것만으로 저장본이 달라지지 않게 미리 굽는다
