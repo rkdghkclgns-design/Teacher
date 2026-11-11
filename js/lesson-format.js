@@ -477,6 +477,50 @@ function replaceLessonBlock(source, located, text) {
     return normalized.slice(0, start) + String(text).trimEnd() + tail + normalized.slice(start + raw.length);
 }
 
+/* ---------- 단락 X 단추로 지우기 (paragraph-delete.js) ---------- */
+// 지울 블록은 고칠 때보다 엄격하게 찾는다. 편집 상자는 원문을 보여 주고 고르게 하지만 지우기는 누르자마자 반영된다.
+// 화면 블록의 글자와 원문 블록의 글자가 같아야 한다(빈칸·콜론은 빼고, &nbsp; 같은 문자 참조는 풀어서 견준다).
+// HTML 표처럼 글자 토큰이 없는 블록은 태그를 뺀 글자로 견준다. 같은 글이 여럿이면 화면 순서에서 가까운 블록부터 늘어놓는다(지우는 쪽이 차례로 시험한다)
+const LF_ENTITY = { nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", '#39': "'" };
+const lfDecode = text => String(text || '').replace(/&(nbsp|amp|lt|gt|quot|apos|#39);/g, (all, name) => LF_ENTITY[name]);
+
+function lfPlainText(block) {
+    const chars = lfProject(block.raw).chars.map(ch => ch.c).join('');
+    return lfNorm(lfDecode(lfNorm(chars) ? chars : block.raw.replace(/<[^>]*>/g, ' ')));
+}
+
+function blocksToRemove(source, part) {
+    const blocks = lessonBlocks(source);
+    const shown = lfNorm(lfDecode(part.text));
+    if (!blocks || !shown) return [];
+    return blocks.filter(block => block.index >= 0 && lfPlainText(block) === shown)
+        .sort((a, b) => Math.abs(a.index - part.index) - Math.abs(b.index - part.index))
+        .map(block => ({ start: block.start, raw: block.raw }));
+}
+
+function locateBlockToRemove(source, part) {
+    return blocksToRemove(source, part)[0] || null;
+}
+
+// locateBlockToRemove로 찾은 블록을 지운 원문. 그사이 원문이 바뀌었으면 null.
+// 앞뒤 블록은 빈 줄 하나로 띄워 붙지 않게 하고(문단끼리 이어지거나 <br> 칸에 묻히지 않게), 지운 자리 앞뒤가 모두 <br> 간격이면 하나만 남긴다
+const LF_GAP_LINE = /^\s*(?:<br\s*\/?>\s*)+$/i;
+const LF_BLANK_LINES = /^(?:[ \t]*\n)+/;
+
+function removeLessonBlock(source, located) {
+    const normalized = String(source || '').replace(/\r\n?/g, '\n');
+    const { start, raw } = located;
+    if (normalized.slice(start, start + raw.length) !== raw) return null;
+    const head = normalized.slice(0, start).trimEnd();
+    let rest = normalized.slice(start + raw.length).replace(LF_BLANK_LINES, '');
+    const restFirst = rest.split('\n')[0];
+    if (LF_GAP_LINE.test(head.split('\n').at(-1) || '') && LF_GAP_LINE.test(restFirst)) {
+        rest = rest.slice(restFirst.length).replace(/^\n/, '').replace(LF_BLANK_LINES, '');
+    }
+    if (!head || !rest) return head + rest;
+    return `${head}\n\n${rest}`;
+}
+
 // postprocessHtml이 <ol>을 글머리 목록으로 바꾼 뒤, 서식 막대로 고른 번호 목록만 번호로 되돌린다
 function keepChosenNumbering(html) {
     return String(html || '').replace(/<!--\s*번호 목록\s*-->\s*<ul style="list-style:disc;/g, '<ul style="list-style:decimal;');
@@ -485,6 +529,6 @@ function keepChosenNumbering(html) {
 if (typeof window !== 'undefined') {
     Object.assign(window, {
         lessonBlocks, findInlineRange, inlineFormatState, applyInlineFormat, applyBlockFormat,
-        normalizeLinkUrl, keepChosenNumbering, locateLessonBlock, replaceLessonBlock
+        normalizeLinkUrl, keepChosenNumbering, locateLessonBlock, replaceLessonBlock, blocksToRemove, locateBlockToRemove, removeLessonBlock
     });
 }

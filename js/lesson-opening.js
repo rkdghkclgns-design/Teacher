@@ -8,7 +8,9 @@ const OPENING_TIME_LINE = /^\s*[-*]\s+\**\s*\d+\s*분?\s*[~∼～-]\s*\d+\s*분/
 const OPENING_TIME_HEAD = /^\s*(?:#{3,6}\s*|\*\*)?\s*(?:타임\s*테이블|시간표|시간\s*배분|수업\s*흐름)\s*(?:\*\*)?\s*:?\s*(?:\*\*)?\s*$/;
 const OPENING_TIME_TABLE = /^\s*\|\s*(?:시간|소요\s*시간|분|구간|타임\s*테이블)\s*(?:\([^)|]*\))?\s*\|/;
 const OPENING_KEYWORD_LINE = /^\s*[-*]\s+\*\*[^*]+\*\*\s*:?\s*$/;
-const OPENING_FILLER_LINE = /^\s*(?:$|[-*+]\s|\d+[.)]\s|\||<br|\*\*[^*]+\*\*\s*:?\s*$)/;
+// 머리말로 보는 줄: 빈 줄, 목록, 표, <br>, 굵은 라벨, 구분선(차시 전환 구분선 세트 '<br><br> + --- + <br>'가 목록과 제목 사이에 낀다)
+const OPENING_FILLER_LINE = /^\s*(?:$|[-*+]\s|\d+[.)]\s|\||<br|<hr|\*\*[^*]+\*\*\s*:?\s*$|(?:-{3,}|\*{3,}|_{3,})\s*$)/;
+const OPENING_LESSON_TITLE = /📝/; // 차시 제목(# 📝 ...). 탭은 이 제목으로 시작하므로 앞에 붙은 글은 문장이어도 머리말이다
 const OPENING_GAP_LINE = /^\s*(?:<br\s*\/?>\s*)*$/;
 const OPENING_SENTENCE_END = /다\.?\**\s*$/;
 const OPENING_GOAL_TITLE = /학습\s*목표/;
@@ -98,9 +100,11 @@ function cleanedSection(section, index, firstTitle) {
     return isOverviewSection(section) ? cleanedOverview(section.lines) : section.lines;
 }
 
-const isOpeningFiller = lines => {
+// 제목 없는 첫머리가 머리말인가. 목록·간격·구분선·그림뿐이면 머리말이다. 차시 제목(# 📝) 앞이면 문장도 머리말로 본다.
+// 코드 블록이 든 첫머리는 어느 쪽이든 남긴다
+const isOpeningFiller = (lines, beforeLessonTitle) => {
     const coded = openingFences(lines);
-    return lines.every((line, index) => !coded[index] && (OPENING_FILLER_LINE.test(line) || OPENING_IMAGE_LINE.test(line)));
+    return lines.every((line, index) => !coded[index] && (beforeLessonTitle || OPENING_FILLER_LINE.test(line) || OPENING_IMAGE_LINE.test(line)));
 };
 
 // 첫 큰 제목(# 📝 ...) 앞에 목록만 있으면 머리말이다. 차시 안에 학습 목표가 있으면 통째로 빼고, 없으면 학습 목표만 남긴다.
@@ -109,7 +113,8 @@ function withoutPreamble(sections) {
     const firstTitle = sections.findIndex(section => section.level === 1);
     if (firstTitle < 1) return sections;
     const head = sections.slice(0, firstTitle);
-    const opening = head.every(section => (section.level === 0 ? isOpeningFiller(section.lines) : isGoalSection(section) || isOverviewSection(section)));
+    const lessonTitle = OPENING_LESSON_TITLE.test(sections[firstTitle].title);
+    const opening = head.every(section => (section.level === 0 ? isOpeningFiller(section.lines, lessonTitle) : isGoalSection(section) || isOverviewSection(section)));
     if (!opening) return sections;
     const body = sections.slice(firstTitle);
     return [...(body.some(isGoalSection) ? [] : head.filter(isGoalSection)), ...body];

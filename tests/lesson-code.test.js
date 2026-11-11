@@ -465,6 +465,17 @@ const BASH_BLOCK = ['```bash', 'ls \\', '  -la', '```'].join('\n');
         assert.ok(!mod.tabContents.basicPrac.includes('```'));
     });
 
+    await run('탭 생성: 차시 제목 앞에 붙인 목표·배경 목록과 구분선은 저장하지 않는다', async () => {
+        const mod = { id: 1, title: '새 차시', tabContents: {} };
+        const answer = ['- 생태계를 개관할 수 있습니다.', '- 사례를 분석할 수 있습니다.', '', '<br>', '', '- 창작의 주체가 이동하고 있습니다.', '',
+            '<br><br>', '', '---', '', '<br>', '', '# 📝 새 차시: 생성형 AI 생태계', '', '## 1. 기획 실습 (⏱ 40분)', '', '기획서를 씁니다.', '<!-- END -->'].join('\n');
+        const aiCtx = generationContext(async () => reply(answer), mod);
+        await call(aiCtx, 'generateTabContent')(1, 'basicPrac', { quiet: true });
+        const saved = mod.tabContents.basicPrac;
+        assert.ok(saved.startsWith('# 📝 새 차시: 생성형 AI 생태계'), saved.slice(0, 120));
+        ['생태계를 개관', '창작의 주체', '---'].forEach(text => assert.ok(!saved.includes(text), text));
+    });
+
     await run('교안 전체 생성: 청크 끝의 코드 블록을 닫는 펜스를 지우지 않고 코드 차시를 알린다', async () => {
         const mod = { id: 7, title: 'Python 합계', description: '반복문으로 합계를 구합니다.', status: 'waiting' };
         const body = [
