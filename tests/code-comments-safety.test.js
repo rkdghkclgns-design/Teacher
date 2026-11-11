@@ -181,7 +181,8 @@ const sourceKey = (ctx, mod, track = 'basic') => call(ctx, 'hashSource')(call(ct
         ctx.ai = route(ctx, { tab: () => reply(DRAFT), fix: () => reply(changed), comment: commentReply() });
         await call(ctx, 'generateTabContent')(1, 'basicPrac');
         const saved = mod.tabContents.basicPrac;
-        assert.deepStrictEqual(ctx.calls.map(item => item.kind), ['tab', 'fix', 'comment']);
+        // 섹션 고치기는 코드 블록을 자리 표시 줄로 바꿔 보낸다(lesson-fix-run.js). 자리 표시를 빼고 코드를 새로 써 넣은 답이라 한 번 더 받고, 그래도 같아 버린다
+        assert.deepStrictEqual(ctx.calls.map(item => item.kind), ['tab', 'fix', 'fix', 'comment']);
         assert.ok(!saved.includes('total = 100') && saved.includes(PY(`# ${NOTE}`, 'total = 0', `# ${NOTE}`, 'for n in [1, 2, 3]:', `    # ${NOTE}`, '    total += n', `# ${NOTE}`, 'print(total)')), saved);
         assert.ok(!ctx.toasts.some(toast => toast.message === '컨벤션 필수 지적을 자동으로 고쳤습니다.'), JSON.stringify(ctx.toasts));
         const fixCall = callsOf(ctx, 'fix')[0];
@@ -239,7 +240,7 @@ const sourceKey = (ctx, mod, track = 'basic') => call(ctx, 'hashSource')(call(ct
         call(held, 'runConventionCheck')(1);
         await call(held, 'proposeLessonFix')();
         assert.deepStrictEqual(held.calls.map(item => item.kind), ['fix']);
-        assert.strictEqual(held.previews[0].opts.note, '고정 섹션의 코드 블록 1개는 고치지 않았습니다.');
+        assert.strictEqual(held.previews[0].opts.note, '지적이 있는 섹션 1개를 고쳤습니다. 고정 섹션의 코드 블록 1개는 고치지 않았습니다.');
     });
 
     await run('검수: 이름표를 몰라 세지 못한 블록(정보)은 권장으로 세지 않고 따로 보이며, 그것만 있으면 AI 수정 제안을 켜지 않고 알린다', async () => {

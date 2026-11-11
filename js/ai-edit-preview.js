@@ -166,8 +166,10 @@ function sectionRowHtml(row, index, checked, dropGone = false) {
         </div>`;
 }
 
-function aiChangeHtml({ title, note, summary, rows, accepted, dropGone = false, cancelLabel = '취소' }) {
+// emptyNote: 바뀐 섹션이 없을 때 '바뀐 내용이 없습니다.' 뒤에 잇는 까닭(AI 수정 제안이 고친 곳을 하나도 반영하지 못했을 때)
+function aiChangeHtml({ title, note, summary, rows, accepted, dropGone = false, cancelLabel = '취소', emptyNote = '' }) {
     const changed = rows.map((row, index) => ({ row, index })).filter(({ row }) => sectionChanged(row));
+    const empty = `<p class="text-xs text-textMuted">바뀐 내용이 없습니다.${emptyNote ? ` ${escapeHtml(emptyNote)}` : ''}</p>`;
     return `
         <div class="bg-[#1a1a2e] border border-white/10 rounded-2xl w-[720px] max-w-[92vw] max-h-[84vh] flex flex-col shadow-2xl">
             <div class="p-4 border-b border-white/10">
@@ -176,7 +178,7 @@ function aiChangeHtml({ title, note, summary, rows, accepted, dropGone = false, 
                 ${note ? `<p class="text-xs text-amber-300 mt-1">${escapeHtml(note)}</p>` : ''}
             </div>
             <div class="flex-1 overflow-y-auto p-4 space-y-2">
-                ${changed.length ? changed.map(({ row, index }) => sectionRowHtml(row, index, accepted.has(index), dropGone)).join('') : '<p class="text-xs text-textMuted">바뀐 내용이 없습니다.</p>'}
+                ${changed.length ? changed.map(({ row, index }) => sectionRowHtml(row, index, accepted.has(index), dropGone)).join('') : empty}
                 ${changed.length && changed.length < rows.length ? `<p class="text-xs text-textMuted">변경 없는 섹션 ${rows.length - changed.length}개는 그대로 둡니다.</p>` : ''}
             </div>
             <div class="p-3 border-t border-white/10 flex justify-end gap-2">
@@ -188,13 +190,14 @@ function aiChangeHtml({ title, note, summary, rows, accepted, dropGone = false, 
 
 // 고른 섹션을 반영한 마크다운을 돌려준다. 취소하면 null
 // rewrite: 탭 전체를 다시 쓴 글이다 (defaultAcceptedRows 참고) / cancelLabel: 취소 단추 이름(오래 걸린 작업은 '반영하지 않기')
-function previewAiChange(beforeMd, afterMd, { title = 'AI 수정 미리보기', tabId, note = '', truncated = false, rewrite = false, cancelLabel = '취소' } = {}) {
+// emptyNote: 바뀐 섹션이 없을 때 보일 까닭(aiChangeHtml)
+function previewAiChange(beforeMd, afterMd, { title = 'AI 수정 미리보기', tabId, note = '', truncated = false, rewrite = false, cancelLabel = '취소', emptyNote = '' } = {}) {
     const rows = alignMdSections(beforeMd, afterMd);
     let accepted = defaultAcceptedRows(rows, truncated, rewrite);
     return new Promise(resolve => {
         const overlay = document.createElement('div');
         overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9200]';
-        overlay.innerHTML = aiChangeHtml({ title, note, summary: lintDeltaLabel(beforeMd, composeSectionChoice(rows, accepted), tabId), rows, accepted, dropGone: rewrite && !truncated, cancelLabel });
+        overlay.innerHTML = aiChangeHtml({ title, note, summary: lintDeltaLabel(beforeMd, composeSectionChoice(rows, accepted), tabId), rows, accepted, dropGone: rewrite && !truncated, cancelLabel, emptyNote });
         overlay.addEventListener('change', event => {
             const index = Number(event.target.dataset?.sectionRow);
             if (Number.isNaN(index)) return;
