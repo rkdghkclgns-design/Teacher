@@ -571,11 +571,11 @@ async function run(name, fn) {
         assert.ok(!notice.includes('<img') && notice.includes('내용이 있는 차시 1개'));
     });
 
-    await run('차시 구성: 표와 화면이 같은 내용을 씀', async () => {
+    await run('교시 구성: 표와 화면이 같은 내용을 씀', async () => {
         const modules = [{ title: '블록', minutes: 120, flow: [{ phase: '전개', title: '본문', minutes: 120 }] }];
         const rows = plain(call('sessionRows')(modules));
         assert.deepStrictEqual(rows.map(row => row.title), ['블록 (1/2)', '블록 (2/2)']);
-        assert.ok(call('sessionTableLines')(modules).join('\n').includes('2차시. 블록 (2/2)'));
+        assert.ok(call('sessionTableLines')(modules).join('\n').includes('2교시. 블록 (2/2)'), '1시간 칸은 교시로 부른다');
         assert.deepStrictEqual(plain(call('sessionRows')([{ title: '빈 블록', minutes: 0, flow: [] }])), []);
         assert.deepStrictEqual(plain(call('sessionTableLines')([{ title: '빈 블록', minutes: 0, flow: [] }])), [], '시간이 없으면 표도 없다');
     });

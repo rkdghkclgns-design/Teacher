@@ -1230,7 +1230,7 @@ function safeTabContents(tabs) {
     return sameFields(kept, tabs) ? tabs : kept;
 }
 
-// 교수안: 글·화면 편집본은 글만, 차시별 화면 편집본(sessionDecks)도 글만, 그림은 차시 그림과 같은 규칙. 모두 바르면 같은 객체, 객체가 아니면 null
+// 교수안: 글·화면 편집본은 글만, 교시별 화면 편집본(sessionDecks)도 글만, 그림은 차시 그림과 같은 규칙. 모두 바르면 같은 객체, 객체가 아니면 null
 function safeGyosuan(gyosuan) {
     if (!isObject(gyosuan)) return null;
     const next = { ...gyosuan };

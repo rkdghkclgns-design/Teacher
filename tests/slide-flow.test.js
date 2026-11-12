@@ -1,5 +1,5 @@
 // 슬라이드 흐름 테스트 (실행: node tests/slide-flow.test.js)
-// 편성안 수정·슬라이드 형식·차시별 산출물·참고 이미지·이미지 자동 생성·MD 변환·HTML 불러오기를 다룬다.
+// 편성안 수정·슬라이드 형식·교시별 산출물·참고 이미지·이미지 자동 생성·MD 변환·HTML 불러오기를 다룬다.
 // AI 호출만 스텁으로 두고 실제 파일을 실행한다. DOM이 필요한 동작(print, DOMParser, 파일 선택)은 여기서 다루지 않는다.
 const fs = require('fs');
 const vm = require('vm');
@@ -320,7 +320,7 @@ const draftLesson = () => ({ id: 'm1', title: '재미', hours: 1, tabContents: {
         assert.strictEqual(noDeck.gyosuan.deckMd, undefined);
     });
 
-    await run('편성안 수정: 차시 덱만 고쳐 둔 경우에도 다시 만들기를 안내', async () => {
+    await run('편성안 수정: 교시 덱만 고쳐 둔 경우에도 다시 만들기를 안내', async () => {
         const mod = lesson({ docMd: DOC, deckMd: DECK, sessionDecks: { 1: '<y>' }, sourceKey: 'k' });
         const ctx = withLesson(mod);
         ctx.toggleGyosuanEdit('deckMd');
@@ -391,13 +391,13 @@ const draftLesson = () => ({ id: 'm1', title: '재미', hours: 1, tabContents: {
         assert.strictEqual(mod.gyosuan.deckHtml, '<새 덱>');
         assert.strictEqual(ctx.saveSlideStudioHtml('m1', '<편집>', { rev: 2, session: null }), true);
         assert.strictEqual(mod.gyosuan.deckHtml, '<편집>');
-        assert.strictEqual(ctx.saveSlideStudioHtml('m1', '<1차시>', { rev: 2, session: 1 }), true);
-        assert.strictEqual(mod.gyosuan.deckHtml, '<편집>', '차시 덱 저장은 전체 덱을 건드리지 않는다');
-        assert.strictEqual(mod.gyosuan.sessionDecks[1], '<1차시>');
+        assert.strictEqual(ctx.saveSlideStudioHtml('m1', '<1교시>', { rev: 2, session: 1 }), true);
+        assert.strictEqual(mod.gyosuan.deckHtml, '<편집>', '교시 덱 저장은 전체 덱을 건드리지 않는다');
+        assert.strictEqual(mod.gyosuan.sessionDecks[1], '<1교시>');
     });
 
-    await run('스튜디오 payload: 차시를 고르면 그 차시 덱과 저장본을 준다', async () => {
-        const mod = lesson({ docMd: DOC, deckMd: DECK, deckHtml: '<전체>', sessionDecks: { 1: '<2차시>' }, deckRev: 5 });
+    await run('스튜디오 payload: 교시를 고르면 그 교시 덱과 저장본을 준다', async () => {
+        const mod = lesson({ docMd: DOC, deckMd: DECK, deckHtml: '<전체>', sessionDecks: { 1: '<2교시>' }, deckRev: 5 });
         const ctx = withLesson(mod);
         const whole = ctx.getSlideStudioPayload('m1');
         assert.strictEqual(whole.session, null);
@@ -406,46 +406,46 @@ const draftLesson = () => ({ id: 'm1', title: '재미', hours: 1, tabContents: {
         assert.strictEqual(whole.rev, 5);
         const second = ctx.getSlideStudioPayload('m1', 1);
         assert.strictEqual(second.session, 1);
-        assert.strictEqual(second.deckHtml, '<2차시>');
-        assert.ok(second.deckMd.includes('주제: 2차시. 재미 (2/2)'));
-        assert.ok(second.docMd.includes('# 2차시. 재미 (2/2)'));
-        assert.strictEqual(ctx.getSlideStudioPayload('m1', 9).session, null, '없는 차시는 전체 덱');
+        assert.strictEqual(second.deckHtml, '<2교시>');
+        assert.ok(second.deckMd.includes('주제: 2교시. 재미 (2/2)'));
+        assert.ok(second.docMd.includes('# 2교시. 재미 (2/2)'));
+        assert.strictEqual(ctx.getSlideStudioPayload('m1', 9).session, null, '없는 교시는 전체 덱');
         assert.strictEqual(ctx.getSlideStudioPayload('m1', NaN).session, null);
     });
 
-    await run('차시별 교수안: 목표·개요·흐름·평가·유의사항을 차시마다 갖춘다', async () => {
+    await run('교시별 교수안: 목표·개요·흐름·평가·유의사항을 교시마다 갖춘다', async () => {
         const ctx = makeContext();
         const md = call(ctx, 'gyosuanSessionsMd')(lesson());
         assert.ok(md.startsWith('---\n교과목: 게임 기획 입문'));
-        const first = md.slice(md.indexOf('# 1차시.'), md.indexOf('# 2차시.'));
-        const second = md.slice(md.indexOf('# 2차시.'));
+        const first = md.slice(md.indexOf('# 1교시.'), md.indexOf('# 2교시.'));
+        const second = md.slice(md.indexOf('# 2교시.'));
         [first, second].forEach(block => {
             ['## 학습 목표', '- 재미 요소를 설명할 수 있다.', '## 개요', '| 대상 | 완전 초보 |', '## 수업 흐름 한눈에 보기', '**합계**', '## 진행', '## 평가·체크포인트', '## 강사 유의사항', '- 용어 암기를 강요하지 않는다.']
                 .forEach(text => assert.ok(block.includes(text), text));
-            assert.ok(!block.includes('| 소요 |'), '소요는 차시 시간으로 바꾼다');
+            assert.ok(!block.includes('| 소요 |'), '소요는 교시 시간으로 바꾼다');
         });
-        assert.ok(first.includes('| 차시 | 1 / 2차시 (약 1시간) |'));
+        assert.ok(first.includes('| 교시 | 1 / 2교시 (약 1시간) |'));
         assert.ok(first.includes('| 다루는 내용 | 재미 분석 · 활동: 기획 메모 실습 |'), first.slice(0, 600));
         assert.ok(first.includes('- 학생 활동 확인: 게임의 재미 요소를 고른다.'));
-        assert.ok(first.includes('체크리스트는 수업을 마치는 차시에 확인한다.'));
-        assert.ok(second.includes('- MDA를 설명했는가'), '교수안의 평가는 마지막 차시에');
+        assert.ok(first.includes('체크리스트는 수업을 마치는 교시에 확인한다.'));
+        assert.ok(second.includes('- MDA를 설명했는가'), '교수안의 평가는 마지막 교시에');
         assert.ok(second.includes('학습 후 체크리스트 2항목, 문제은행 2문항으로 학습 목표 도달을 확인한다.'));
-        assert.ok(first.includes('*남은 활동은 다음 차시에 이어서 진행한다.*'));
-        assert.ok(second.includes('*앞 차시에서 시작한 활동을 이어서 진행한다.*'));
+        assert.ok(first.includes('*남은 활동은 다음 교시에 이어서 진행한다.*'));
+        assert.ok(second.includes('*앞 교시에서 시작한 활동을 이어서 진행한다.*'));
         assert.ok(second.includes('**설명 내용**: 메모 양식을 안내한다.'), '이어지는 단계도 지침을 싣는다');
-        assert.ok(second.includes('**설명 내용**: 이번 차시 흐름 - '), '연결 도입에도 설명 내용을 넣는다');
-        assert.ok(second.includes("'(이어서)'·'(다음 차시에 계속)'"));
+        assert.ok(second.includes('**설명 내용**: 이번 교시 흐름 - '), '연결 도입에도 설명 내용을 넣는다');
+        assert.ok(second.includes("'(이어서)'·'(다음 교시에 계속)'"));
         assert.ok(second.includes('가장 긴 전개 단계에서 시간을 덜었다'));
     });
 
-    await run('차시별 편성안: 차시마다 표지·목차·목표·체크리스트·마무리', async () => {
+    await run('교시별 편성안: 교시마다 표지·목차·목표·체크리스트·마무리', async () => {
         const ctx = makeContext();
         const parse = md => ctx.KBuilder.parseDeck(md);
         const mod = lesson();
         const first = parse(call(ctx, 'gyosuanSessionDeckMd')(mod, 0));
         const second = parse(call(ctx, 'gyosuanSessionDeckMd')(mod, 1));
-        assert.strictEqual(first.meta['주제'], '1차시. 재미 (1/2)');
-        assert.strictEqual(first.meta['차시'], '1/2');
+        assert.strictEqual(first.meta['주제'], '1교시. 재미 (1/2)');
+        assert.strictEqual(first.meta['교시'], '1/2');
         [first, second].forEach(deck => {
             deck.slides.forEach((slide, index) => assert.strictEqual(slide.num, String(index + 1), '번호를 1번부터 다시 매긴다'));
             assert.strictEqual(deck.slides[0].kind, 'cover');
@@ -456,39 +456,39 @@ const draftLesson = () => ({ id: 'm1', title: '재미', hours: 1, tabContents: {
             assert.strictEqual(deck.slides.filter(slide => slide.kind === 'cover').length, 1, '원래 표지는 다시 싣지 않는다');
             assert.strictEqual(deck.slides.filter(slide => slide.title === '마무리').length, 1, '원래 마무리는 다시 싣지 않는다');
         });
-        assert.ok(first.slides[0].lines.some(line => line.text === '(하단) 1차시 / 2차시 · 1시간'));
-        assert.ok(first.slides[1].lines.some(line => line.text.startsWith('도입. ')), '목차는 이번 차시 흐름');
-        assert.ok(first.slides.at(-1).lines.some(line => line.text === '다음 차시: 재미'));
+        assert.ok(first.slides[0].lines.some(line => line.text === '(하단) 1교시 / 2교시 · 1시간'));
+        assert.ok(first.slides[1].lines.some(line => line.text.startsWith('도입. ')), '목차는 이번 교시 흐름');
+        assert.ok(first.slides.at(-1).lines.some(line => line.text === '다음 교시: 재미'));
         assert.ok(second.slides.at(-1).lines.some(line => line.text.includes('스스로 확인합니다')));
-        assert.ok(first.slides.at(-2).lines.some(line => line.text === '□ 재미 분석'), '중간 차시 체크리스트는 다룬 내용');
-        assert.deepStrictEqual(plain(second.slides.at(-2).lines.map(line => line.text)), ['□ MDA 세 층을 설명합니다.', '□ 기획 메모를 씁니다.'], '마지막 차시는 교안 체크리스트');
+        assert.ok(first.slides.at(-2).lines.some(line => line.text === '□ 재미 분석'), '중간 교시 체크리스트는 다룬 내용');
+        assert.deepStrictEqual(plain(second.slides.at(-2).lines.map(line => line.text)), ['□ MDA 세 층을 설명합니다.', '□ 기획 메모를 씁니다.'], '마지막 교시는 교안 체크리스트');
     });
 
-    await run('차시별 편성안: 걸친 단계의 슬라이드는 시간 비율로 나눈다', async () => {
+    await run('교시별 편성안: 걸친 단계의 슬라이드는 시간 비율로 나눈다', async () => {
         const ctx = makeContext();
         const mod = lesson();
         const titles = index => ctx.KBuilder.parseDeck(call(ctx, 'gyosuanSessionDeckMd')(mod, index)).slides.map(slide => slide.title);
         assert.ok(titles(0).includes('재미의 세 층'));
-        assert.ok(!titles(0).includes('기획 메모 쓰는 법'), '전개 2는 60분 중 10분만 1차시에 있다');
+        assert.ok(!titles(0).includes('기획 메모 쓰는 법'), '전개 2는 60분 중 10분만 1교시에 있다');
         assert.ok(titles(1).includes('기획 메모 쓰는 법') && titles(1).includes('메모 돌려 읽기'));
-        assert.deepStrictEqual(plain(call(ctx, 'shareSlides')([{}, {}], [0, 0])), [0, 0], '대응 단계가 없으면 첫 차시');
+        assert.deepStrictEqual(plain(call(ctx, 'shareSlides')([{}, {}], [0, 0])), [0, 0], '대응 단계가 없으면 첫 교시');
         assert.deepStrictEqual(plain(call(ctx, 'shareSlides')([{}, {}, {}, {}], [30, 30])), [0, 0, 1, 1]);
         const unmapped = { ...lesson(), gyosuan: { docMd: DOC, deckMd: DECK.replace('대응 교수안: 전개 1', '대응 교수안: 전개 9') } };
         assert.ok(ctx.KBuilder.parseDeck(call(ctx, 'gyosuanSessionDeckMd')(unmapped, 0)).slides.some(slide => slide.title === '재미의 세 층'), '대응 단계를 찾지 못해도 슬라이드를 버리지 않는다');
     });
 
-    await run('차시 산출물: 문서 주제를 제목으로 쓴다', async () => {
+    await run('교시 산출물: 문서 주제를 제목으로 쓴다', async () => {
         const ctx = makeContext();
         const renamed = { ...lesson(), title: '차시 이름이 다름' };
         const list = plain(call(ctx, 'gyosuanSessionList')(renamed));
         assert.strictEqual(list[0].title, '재미 (1/2)', '완성 MD는 차시 이름과 주제가 다를 수 있다');
-        assert.ok(call(ctx, 'gyosuanSessionsMd')(renamed).includes('# 차시별 교수안 - 재미'));
+        assert.ok(call(ctx, 'gyosuanSessionsMd')(renamed).includes('# 교시별 교수안 - 재미'));
     });
 
-    await run('차시별 편성안: 대응 교수안을 차시 교수안 번호로 바꾼다', async () => {
+    await run('교시별 편성안: 대응 교수안을 교시 교수안 번호로 바꾼다', async () => {
         const ctx = makeContext();
         const deck = ctx.KBuilder.parseDeck(call(ctx, 'gyosuanSessionDeckMd')(lesson(), 1));
-        assert.strictEqual(deck.slides.find(slide => slide.title === '메모 돌려 읽기').maps, '전개 1', '2차시 교수안에서는 첫 전개다');
+        assert.strictEqual(deck.slides.find(slide => slide.title === '메모 돌려 읽기').maps, '전개 1', '2교시 교수안에서는 첫 전개다');
     });
 
     await run('참고 이미지: 래스터 data URL만 받고 24장까지', async () => {
@@ -686,7 +686,7 @@ const draftLesson = () => ({ id: 'm1', title: '재미', hours: 1, tabContents: {
         assert.ok(sort([{ name: 'a.md', text: DOC }, { name: 'b.md', text: DOC }]).error.includes('두 개'));
         assert.ok(sort([{ name: '메모.md', text: '그냥 글' }]).error.includes('메모.md'));
         assert.strictEqual(plain(sort([{ name: '교수안.md', text: '짧은 글' }])).docMd, '짧은 글', '내용으로 모르면 파일 이름을 본다');
-        assert.ok(plain(sort([{ name: 'x.md', text: call(ctx, 'gyosuanSessionsMd')(lesson()) }])).docMd, '차시별 교수안의 ## 슬라이드 목록을 편성안으로 보지 않는다');
+        assert.ok(plain(sort([{ name: 'x.md', text: call(ctx, 'gyosuanSessionsMd')(lesson()) }])).docMd, '교시별 교수안의 ## 슬라이드 목록을 편성안으로 보지 않는다');
         const samples = ctx.KBuilder.samples;
         const sample = plain(sort([{ name: 'x.md', text: samples.doc }, { name: 'y.md', text: samples.deck }]));
         assert.ok(sample.docMd && sample.deckMd, '원본 샘플 형식');
@@ -765,12 +765,12 @@ const draftLesson = () => ({ id: 'm1', title: '재미', hours: 1, tabContents: {
         const target = call(makeContext(), 'importTarget');
         const withSource = session => ({ source: { session } });
         assert.strictEqual(target(withSource(null), 1, 3).session, null, '전체 덱 파일은 전체 덱으로');
-        assert.strictEqual(target(withSource(1), null, 3).session, 1, '차시 파일은 전체 화면에서 열어도 그 차시로');
+        assert.strictEqual(target(withSource(1), null, 3).session, 1, '교시 파일은 전체 화면에서 열어도 그 교시로');
         assert.strictEqual(target({ source: null }, 2, 3).session, 2, '소스가 없으면 지금 연 덱');
-        assert.ok(target(withSource(5), null, 3).error.includes('6차시'));
+        assert.ok(target(withSource(5), null, 3).error.includes('6교시'));
     });
 
-    await run('HTML 불러오기: 전체 덱은 MD와 번호를 함께, 차시 덱은 편집본만 바꾼다', async () => {
+    await run('HTML 불러오기: 전체 덱은 MD와 번호를 함께, 교시 덱은 편집본만 바꾼다', async () => {
         const ctx = makeContext();
         const imported = call(ctx, 'importedGyosuan');
         const base = { docMd: '옛', deckMd: '옛덱', deckHtml: '<옛>', sessionDecks: { 0: '<a>' }, deckRev: 2, sourceKey: 'k' };

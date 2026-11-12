@@ -83,7 +83,7 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
     const ctx = makeContext(async () => { throw new Error('호출되면 안 됨'); });
     const call = name => vm.runInContext(name, ctx);
 
-    await run('차시 분할: 60분 경계와 이어지는 단계', async () => {
+    await run('교시 분할: 60분 경계와 이어지는 단계', async () => {
         const modules = [{ title: '블록', minutes: 150, flow: [{ phase: '도입', title: '시작', minutes: 10 }, { phase: '전개', title: '본문', minutes: 130 }, { phase: '정리', title: '끝', minutes: 10 }] }];
         const sessions = plain(call('splitSessions')(modules));
         assert.deepStrictEqual(sessions.map(s => s.minutes), [60, 60, 30]);
@@ -93,27 +93,27 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
         assert.strictEqual(call('sessionTitle')(modules, call('splitSessions')(modules)[1]), '블록 (2/3)');
     });
 
-    await run('차시 분할: 도입·정리를 넣어도 차시 시간 유지', async () => {
+    await run('교시 분할: 도입·정리를 넣어도 교시 시간 유지', async () => {
         const modules = [{ title: '블록', minutes: 120, flow: [{ phase: '전개', title: '본문', minutes: 120 }] }];
         const sessions = call('splitSessions')(modules);
         const steps = plain(call('sessionSteps')(modules, sessions[1], 1, sessions.length));
         assert.deepStrictEqual(steps.map(step => step.kind), ['도입', '전개', '정리']);
         assert.strictEqual(sum(steps, 'minutes'), 60);
-        assert.ok(steps[0].text.includes('이전 차시 연결'));
+        assert.ok(steps[0].text.includes('이전 교시 연결'));
         assert.ok(steps[1].text.includes('(이어서)'));
     });
 
-    await run('차시 구성표: 과정 설계서와 교수안', async () => {
+    await run('교시 구성표: 과정 설계서와 교수안', async () => {
         const table = call('subjectSessionLines')({ lessons: [{ title: '블록', hours: 2, flow: [{ phase: '전개', title: '본문', minutes: 120 }] }] }).join('\n');
-        // 19차: 차시 하나가 하루 8시간이라 과정 설계서의 1시간 칸은 교시로 부른다(교수안의 차시 구성표는 그대로)
+        // 19차: 차시 하나가 하루 8시간이라 과정 설계서의 1시간 칸은 교시로 부른다. 20차: 교수안의 구성표도 교시로 부른다
         assert.ok(table.includes('### 시간표 (1교시 = 1시간)') && table.includes('| 교시 | 시간 | 진행 단계 |') && table.includes('2교시. 블록 (2/2)'), table);
         assert.deepStrictEqual(plain(call('gyosuanSessionTable')([['도입', '10분', '시작'], ['정리', '20분', '끝']], '짧은 수업')), [], '60분 이하는 표 없음');
-        assert.ok(call('gyosuanSessionTable')([['전개', '1시간 30분', '본문']], '긴 수업').join('\n').includes('2차시.'));
+        assert.ok(call('gyosuanSessionTable')([['전개', '1시간 30분', '본문']], '긴 수업').join('\n').includes('2교시.'));
     });
 
-    await run('차시별 교수안: 교수안 본문과 슬라이드 재사용', async () => {
+    await run('교시별 교수안: 교수안 본문과 슬라이드 재사용', async () => {
         const md = call('gyosuanSessionsMd')({ title: '재미', hours: 1.5, gyosuan: { docMd: DOC, deckMd: DECK } });
-        ['# 차시별 교수안 - 재미', '# 1차시. 재미 (1/2)', '# 2차시. 재미 (2/2)', '**설명 내용**: 분석 설명', '앞 차시에서 시작한 활동을 이어서 진행한다.', '- 재미 분석 슬라이드'].forEach(text => assert.ok(md.includes(text), text));
+        ['# 교시별 교수안 - 재미', '# 1교시. 재미 (1/2)', '# 2교시. 재미 (2/2)', '**설명 내용**: 분석 설명', '앞 교시에서 시작한 활동을 이어서 진행한다.', '- 재미 분석 슬라이드'].forEach(text => assert.ok(md.includes(text), text));
         assert.strictEqual(call('gyosuanSessionsMd')({ title: '없음', hours: 1, gyosuan: { docMd: '' } }), '');
         const withTable = DOC.replace('## 진행', `### 차시 구성 (1차시 = 1시간)
 
@@ -122,13 +122,13 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
 | 1차시. 재미 | 1시간 | 전개 |
 
 ## 진행`);
-        assert.deepStrictEqual(plain(call('gyosuanFlow')({ title: '재미', hours: 1.5, gyosuan: { docMd: withTable } })).map(step => step.minutes), [10, 70, 10], '차시 구성표를 수업 흐름으로 읽지 않는다');
+        assert.deepStrictEqual(plain(call('gyosuanFlow')({ title: '재미', hours: 1.5, gyosuan: { docMd: withTable } })).map(step => step.minutes), [10, 70, 10], '예전 이름의 차시 구성표도 수업 흐름으로 읽지 않는다');
         const grouped = DOC.replace('### 전개 1 - 재미 분석', '### 전개 1 - 재미 분석\n\n본문\n\n### 전개 2 - 재미 정리');
         assert.deepStrictEqual(plain(call('gyosuanFlow')({ title: '재미', gyosuan: { docMd: grouped } })).map(step => step.minutes), [10, 35, 35, 10], '표가 전개를 묶어도 표의 시간을 지킨다');
         assert.deepStrictEqual(['90분', '1시간 30분', '1.5시간', '90분 (1시간 30분)', '2시간'].map(call('readMinutes')), [90, 90, 90, 90, 120]);
         assert.deepStrictEqual(plain(call('subjectSessionLines')({ lessons: [{ title: '빈 차시' }] })), [], '시간이 없으면 표를 만들지 않는다');
         assert.ok(!call('gyosuanSessionTable')([['전개', '90분', '본문']], '수업').join('').includes('<br>'), '교수안 표에는 HTML을 쓰지 않는다');
-        assert.ok(!md.includes('「재미 (2/2)」'), '멘트에는 차시 번호를 넣지 않는다');
+        assert.ok(!md.includes('「재미 (2/2)」'), '멘트에는 교시 번호를 넣지 않는다');
         const fallback = plain(call('gyosuanFlow')({ title: '재미', hours: 1.5, gyosuan: { docMd: DOC.replace(/\| 전개 1 \| 70분[^\n]*\n/, '') } }));
         assert.strictEqual(fallback.length, 3, '표와 섹션 수가 달라도 섹션은 유지');
     });
@@ -528,11 +528,11 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
         ctx.globalState.subjects = [];
     });
 
-    await run('차시별 편성안: 슬라이드 번호를 다시 매김', async () => {
+    await run('교시별 편성안: 슬라이드 번호를 다시 매김', async () => {
         const md = call('gyosuanSessionDecksMd')({ title: '재미', hours: 1.5, gyosuan: { docMd: DOC, deckMd: DECK } });
-        assert.ok(md.includes('# 슬라이드 편성안 - 1차시. 재미 (1/2)') && md.includes('### 슬라이드 3 - 재미 분석 슬라이드'));
-        assert.ok(md.includes('### 슬라이드 3 - 재미 분석 (이어서)'), '슬라이드가 없는 차시는 전개 활동마다 한 장 만든다');
-        assert.strictEqual((md.match(/^### 슬라이드 1 - 표지$/gm) || []).length, 2, '표지는 차시마다 새로 만든다');
+        assert.ok(md.includes('# 슬라이드 편성안 - 1교시. 재미 (1/2)') && md.includes('### 슬라이드 3 - 재미 분석 슬라이드'));
+        assert.ok(md.includes('### 슬라이드 3 - 재미 분석 (이어서)'), '슬라이드가 없는 교시는 전개 활동마다 한 장 만든다');
+        assert.strictEqual((md.match(/^### 슬라이드 1 - 표지$/gm) || []).length, 2, '표지는 교시마다 새로 만든다');
         assert.strictEqual(call('gyosuanSessionDecksMd')({ title: '없음', gyosuan: { docMd: '' } }), '');
     });
 

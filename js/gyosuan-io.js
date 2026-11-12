@@ -144,7 +144,7 @@ window.importGyosuanMdFiles = async function (moduleId, trackId = currentGyosuan
 function importTarget(imported, session, sessionCount) {
     const target = imported.source ? imported.source.session : session;
     if (target === null || target < sessionCount) return { session: target };
-    return { error: `이 파일은 ${target + 1}차시 슬라이드입니다. 이 수업은 ${sessionCount}차시까지 있어 넣을 수 없습니다.` };
+    return { error: `이 파일은 ${target + 1}교시 슬라이드입니다. 이 수업은 ${sessionCount}교시까지 있어 넣을 수 없습니다.` };
 }
 
 function importedGyosuan(base, imported, session) {
@@ -174,7 +174,7 @@ function rememberImportedTheme(theme) {
     }
 }
 
-// 스튜디오와 강사뷰가 함께 쓴다. session: 지금 연 차시 덱 번호, 없으면 null
+// 스튜디오와 강사뷰가 함께 쓴다. session: 지금 연 교시 덱 번호, 없으면 null
 // moduleKey: 스튜디오 주소의 module 값(gyosuan.js studioModuleKey. 심화학습은 '차시 id~adv'). 그 갈래의 교수안에 넣는다
 // read: 조각으로 읽은 파일(importGyosuanHtmlFile). 있으면 그림을 떼어 둔 글로 읽는다(readExportedGyosuanHtml)
 window.importGyosuanHtml = async function (moduleKey, text, session = null, read = null) {

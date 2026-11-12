@@ -281,15 +281,16 @@ const bankLesson = () => ({
         assert.ok(basic.deckMd.includes('기본덱') && !basic.deckMd.includes('심화덱') && basic.rev === 1 && basic.track === 'basic' && basic.title === '재미');
         assert.ok(adv.deckMd.includes('심화덱') && !adv.deckMd.includes('기본덱') && adv.rev === 3 && adv.track === 'adv' && adv.title === '재미 (심화학습)');
         assert.ok(adv.fileBase.endsWith('_심화') && !basic.fileBase.includes('심화'), `${basic.fileBase} / ${adv.fileBase}`);
-        assert.strictEqual(adv.sessions.length, 2, '90분 심화학습 교수안은 차시 둘');
+        assert.strictEqual(adv.sessions.length, 2, '90분 심화학습 교수안은 교시 둘');
         const session = plain(ctx.getSlideStudioPayload('m1~adv', 1));
-        assert.ok(session.session === 1 && session.docMd.includes('2차시') && session.deckMd.includes('심화덱'), '한 차시 덱도 심화학습 교수안에서');
+        assert.ok(session.session === 1 && session.docMd.includes('2교시') && session.deckMd.includes('심화덱'), '한 교시 덱도 심화학습 교수안에서');
+        assert.ok(session.fileBase.endsWith('_심화_2교시'), session.fileBase);
         // 저장: 그 갈래의 덱에만, 덱 번호가 다르면 받지 않는다
         assert.strictEqual(ctx.saveSlideStudioHtml('m1~adv', '<낡은 심화>', { rev: 1, session: null }), false);
         assert.strictEqual(ctx.saveSlideStudioHtml('m1~adv', '<심화 편집>', { rev: 3, session: null }), true);
-        assert.strictEqual(ctx.saveSlideStudioHtml('m1~adv', '<심화 1차시>', { rev: 3, session: 0 }), true);
+        assert.strictEqual(ctx.saveSlideStudioHtml('m1~adv', '<심화 1교시>', { rev: 3, session: 0 }), true);
         assert.strictEqual(ctx.saveSlideStudioHtml('m1', '<기본 편집>', { rev: 1, session: null }), true);
-        assert.deepStrictEqual([mod.gyosuanAdv.deckHtml, mod.gyosuanAdv.sessionDecks[0], mod.gyosuan.deckHtml, mod.gyosuan.sessionDecks], ['<심화 편집>', '<심화 1차시>', '<기본 편집>', undefined]);
+        assert.deepStrictEqual([mod.gyosuanAdv.deckHtml, mod.gyosuanAdv.sessionDecks[0], mod.gyosuan.deckHtml, mod.gyosuan.sessionDecks], ['<심화 편집>', '<심화 1교시>', '<기본 편집>', undefined]);
         // 불러오기: 스튜디오가 넘긴 '~adv'로 심화학습 덱을 바꾼다
         ctx.KBuilder.readExportedHtml = () => ({ html: '<불러온 심화>', theme: 'maple', source: null });
         assert.deepStrictEqual(plain(await ctx.importGyosuanHtml('m1~adv', '<html>')), { ok: true });
@@ -349,12 +350,13 @@ const bankLesson = () => ({
         ctx.downloadGyosuanMd('m1', 'deckMd', 'basic');
         ctx.downloadGyosuanSessions('m1', 'adv');
         ctx.downloadGyosuanSession('m1', 'deck:0', 'adv');
-        assert.deepStrictEqual(saved.map(file => file.name.replace(/^.*?_(?=[^_]*$)/, '')), ['심화교수안', '슬라이드편성안', '심화차시별교수안', '심화편성안']);
+        assert.deepStrictEqual(saved.map(file => file.name.replace(/^.*?_(?=[^_]*$)/, '')), ['심화교수안', '슬라이드편성안', '심화교시별교수안', '심화편성안']);
+        assert.ok(saved[3].name.endsWith('_1교시_심화편성안'), saved[3].name);
         assert.ok(saved[0].md.includes('심화 본문') && saved[1].md.includes('기본') && saved[2].md.includes('심화') && saved[3].md.includes('심화'));
     });
 
     /* ======================= 5. 그림 쓰임 ======================= */
-    await run('그림 쓰임: 심화학습 교수안·편성안·화면 편집본·차시 덱이 가리키는 그림은 덜어 내지 않고, 지울 때도 쓰는 곳으로 센다. 작업 기록도 그 그림을 담는다', () => {
+    await run('그림 쓰임: 심화학습 교수안·편성안·화면 편집본·교시 덱이 가리키는 그림은 덜어 내지 않고, 지울 때도 쓰는 곳으로 센다. 작업 기록도 그 그림을 담는다', () => {
         const pctx = { console };
         vm.createContext(pctx);
         loadLessonTracks(pctx, { tabs: true });

@@ -542,7 +542,7 @@ const pptxLinks = record => record.texts.flatMap(t => (Array.isArray(t.value) ? 
         // 심화학습 덱은 심화 탭의 영상만
         mod.gyosuanAdv = { docMd: doc, deckMd: BASE_DECK.replace('1. 서버의 역할', '1. 지연 보상').replace('### 슬라이드 3 - 서버의 역할', '### 슬라이드 3 - 지연 보상'), deckRev: 1 };
         assert.deepStrictEqual(plain(refsOf(ctx.getSlideStudioPayload('m1~adv')).flatMap(([, refs]) => refs)), ['gif:img_gif1', 'https://cdn.example.com/lag.mp4']);
-        // 차시 하나만 연 덱에도 그 차시에 든 절의 영상이 들어간다
+        // 교시 하나만 연 덱에도 그 교시에 든 절의 영상이 들어간다
         const sessions = whole.sessions.map(item => refsOf(ctx.getSlideStudioPayload('m1', item.index)).flatMap(([, refs]) => refs));
         assert.deepStrictEqual(plain(sessions.flat().sort()), ['local:vid_intro000001', 'wb:img_wb1', YT].sort(), JSON.stringify(sessions));
         // 그 덱이 보여야 하는 영상 목록(getSlideStudioVideos): 가리키는 값과 제목만(영상 값은 없다)
@@ -555,7 +555,7 @@ const pptxLinks = record => record.texts.flatMap(t => (Array.isArray(t.value) ? 
         assert.deepStrictEqual(plain(refsOf(ctx.getSlideStudioPayload('m1'))), []);
         assert.deepStrictEqual(plain(ctx.getSlideStudioVideos('m1')), listed);
         const perSession = plain(whole.sessions).map(item => plain(ctx.getSlideStudioVideos('m1', item.index)).map(v => v.ref));
-        assert.deepStrictEqual(perSession.flat().sort(), listed.map(v => v.ref).sort(), '차시 덱은 그 차시의 영상만');
+        assert.deepStrictEqual(perSession.flat().sort(), listed.map(v => v.ref).sort(), '교시 덱은 그 교시의 영상만');
         assert.ok(perSession.length > 1 && perSession.every(refs => refs.length < listed.length), JSON.stringify(perSession));
         // 차시 글이 이상해 영상을 모으다 멈춰도(남이 준 파일의 탭 값이 글이 아님) 슬라이드는 영상 없이 연다
         const broken = { ...mod, tabContents: { ...mod.tabContents, basicLearn: { not: 'text' } }, gyosuan: { docMd: doc, deckMd: BASE_DECK, deckRev: 5 } };

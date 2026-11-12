@@ -26,7 +26,7 @@ const OUTPUT_IMG_ATTR_RE = /\s([^\s=>"'\/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^
 const OUTPUT_NUMBER_HEAD = /^\d+[_.\s-]*/; // ZIP 파일 이름·머리의 01_ 같은 번호
 const OUTPUT_HTML_NAME = /\.html?$/i;
 const OUTPUT_MD_NAME = /\.(md|markdown|txt)$/i;
-const OUTPUT_GYOSUAN_NAME = /(교수안|편성안)(_묶음)?$/; // 07_교수안·09_심화교수안(예전 ZIP은 06_교수안), 08_슬라이드편성안, …_교수안, …_심화교수안, …_차시별편성안, …_교수안_편성안_묶음
+const OUTPUT_GYOSUAN_NAME = /(교수안|편성안)(_묶음)?$/; // 07_교수안·09_심화교수안(예전 ZIP은 06_교수안), 08_슬라이드편성안, …_교수안, …_심화교수안, …_교시별편성안·…_2교시_교수안(예전 이름 …_차시별편성안·…_2차시_교수안), …_교수안_편성안_묶음
 const OUTPUT_GYOSUAN_TEXT = /^##\s*진행\s*$|^(?:###\s*슬라이드|##\s*슬라이드\s*편성)/m; // gyosuan-io.js gyosuanFileKind와 같은 표시
 const OUTPUT_TAB_SEPARATOR = '\n\n---\n\n';
 const OUTPUT_CONFIRM_LESSONS = 5; // 확인 창에 제목을 보일 차시 수(나머지는 '외 N개')
