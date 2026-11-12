@@ -660,6 +660,8 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             resultText = commented.md;
             commentRun = commented.run;
         }
+        // 학습 탭은 첫머리를 개요 → 학습 정보 → 학습 목표 차례로 두고 학습 정보를 차시 메타데이터로 쓴다(lesson-info.js). 다른 탭은 그대로다
+        if (typeof applyLessonInfoFrame === 'function') resultText = applyLessonInfoFrame(resultText, { mod, tabId, lockedBlocks });
         if (tabId === 'basicPrac' && typeof withQuestFileName === 'function') resultText = withQuestFileName(resultText, mod, subj);
         // 기존 탭을 다시 만들면 바뀐 섹션을 보고 고른다. 묶어서 생성할 때는 묻지 않고 기존 글을 히스토리에 남긴다
         saveOpenEditsFor(mod, tabId);
@@ -681,6 +683,8 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             }
             // 섹션을 골라 반영하면 (⏱) 합계가 목표에서 벗어날 수 있어 고른 글로 다시 매긴다(lesson-volume.js)
             if (volume && resultText !== generated && typeof retimeVolumeChoice === 'function') resultText = retimeVolumeChoice(resultText, { targetMinutes: volume.targetMinutes, lockedBlocks, tabId });
+            // 고른 섹션이 섞여도 첫머리 차례만 다시 맞춘다. 반영하지 않은 학습 정보는 다시 넣지 않는다(lesson-info.js)
+            if (resultText !== generated && typeof orderLessonOpening === 'function') resultText = orderLessonOpening(resultText, { mod, tabId });
             if (!opts.background) document.getElementById('editor-loading').style.display = 'flex'; // 막지 않는 작업은 진행 막대가 이어서 보인다
         }
         if (!lessonHere()) return lessonGone(resultText);

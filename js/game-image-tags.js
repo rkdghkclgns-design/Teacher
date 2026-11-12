@@ -77,7 +77,7 @@ function gameQuoteBlockEnd(source, quote, kinds, starts) {
     return -1;
 }
 
-// 그 줄이 든 섹션이 그림을 넣지 않는 곳인지: 첫 제목 앞(교안 맨 위), 학습 목표·개요·요약 같은 글 위주 섹션(api.js IMAGE_SKIP_SECTIONS)
+// 그 줄이 든 섹션이 그림을 넣지 않는 곳인지: 첫 제목 앞(교안 맨 위), 학습 목표·개요·학습 정보·요약 같은 글 위주 섹션(api.js IMAGE_SKIP_SECTIONS)
 function gameSectionSkipped(lines, kinds, end) {
     for (let i = end; i >= 0; i--) {
         if (kinds[i] === 'heading') return IMAGE_SKIP_SECTIONS.test(lines[i]);

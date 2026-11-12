@@ -26,11 +26,25 @@ function lessonTitleTaken(title, selfId) {
     return allLessonEntries().some(({ lesson }) => String(lesson.title).trim() === text && String(lesson.id) !== String(selfId));
 }
 
+// 툴 공식 페이지 주소로 받는 모양: https만, 빈칸·따옴표·괄호·꺾쇠 없이(교안 학습 정보의 링크가 된다, lesson-info.js)
+const TOOL_URL_RE = /^https:\/\/[^\s"'<>()`\\]+$/i;
+
+// 형식: "이름 | 버전 | 주소" 한 줄에 하나. 버전과 주소는 빼도 된다. 주소는 https만 받고 아니면 버린다(주소 칸은 받은 주소가 있을 때만 둔다)
 function parseToolLines(text) {
     return String(text || '').split('\n')
         .map(line => line.split('|').map(part => part.trim()))
         .filter(([name]) => name)
-        .map(([name, version = '']) => ({ name, version }));
+        .map(([name, version = '', ...rest]) => {
+            const url = rest.join('|').trim();
+            return TOOL_URL_RE.test(url) ? { name, version, url } : { name, version };
+        });
+}
+
+// 툴 한 줄(parseToolLines가 다시 읽는 모양). 빈 칸은 끝에서부터 뺀다
+function toolLineText(tool) {
+    const parts = [tool?.name || '', tool?.version || '', tool?.url || ''];
+    while (parts.length > 1 && !parts[parts.length - 1]) parts.pop();
+    return parts.join(' | ');
 }
 
 function toolLabel(tool) {
@@ -594,7 +608,7 @@ function metaDialogHtml(subject, mod) {
                     <textarea id="meta-flow" rows="4" class="${field}">${escapeHtml(flowLinesText(mod.flow))}</textarea>
                     <p id="meta-flow-note" class="text-xs text-textMuted min-h-[1em]">${escapeHtml(metaFlowNote(flowLinesText(mod.flow), mod))}</p>
                 </div>
-                <div><label class="${label}">사용 툴과 버전 (이름 | 버전, 버전 의존 정보는 본문이 아니라 여기서 관리합니다)</label><textarea id="meta-tools" rows="2" class="${field}">${escapeHtml((mod.tools || []).map(tool => `${tool.name}${tool.version ? ` | ${tool.version}` : ''}`).join('\n'))}</textarea></div>
+                <div><label class="${label}">사용 툴과 버전 (이름 | 버전 | 공식 페이지 주소, 주소는 https만이며 빼도 됩니다. 버전 의존 정보는 본문이 아니라 여기서 관리합니다)</label><textarea id="meta-tools" rows="2" class="${field}">${escapeHtml((mod.tools || []).map(toolLineText).join('\n'))}</textarea></div>
                 <div><label class="${label}">교안 생성 옵션 (지정하지 않으면 과정 기본값을 씁니다)</label>${lessonGenFieldsHtml('meta', mod.gen)}</div>
                 <div><label class="${label}">선행 차시 (메타데이터 전용, 본문에서는 언급하지 않습니다)</label><div class="space-y-1 max-h-28 overflow-y-auto">${metaPrereqRows(mod)}</div></div>
                 <div><label class="${label}">NCS 능력단위요소</label><div id="meta-element-status">${metaElementStatus()}</div><div id="meta-elements" class="space-y-1 max-h-40 overflow-y-auto mb-2">${metaElementRows()}</div>${metaRegisterForm(subject)}<p id="meta-status-text" class="text-xs text-accent mt-1 min-h-[1em]"></p></div>

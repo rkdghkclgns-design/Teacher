@@ -146,13 +146,19 @@ const fixAnswerText = data => cleanFixResponse(extractText(data));
 // 보낸 글이 그대로 돌아왔을 때의 꼴(답과 같은 정리 규칙을 거친 글). 고치지 않고 돌려준 답을 가리고, 빠진 자리 표시의 앞 줄을 찾을 때 견준다
 const fixTextShape = text => fixAnswerText({ candidates: [{ content: { parts: [{ text: String(text ?? '') }] } }] });
 
-// 새 섹션의 자리: 학습 목표는 맨 앞, 개요는 학습 목표 다음, 체크리스트는 맨 끝, 나머지는 체크리스트 앞
+// 새 섹션의 자리: 첫머리는 개요 → 학습 정보 → 학습 목표 차례다. 개요는 맨 앞, 학습 정보는 개요 다음(없으면 맨 앞),
+// 학습 목표는 학습 정보나 개요 다음(둘 다 없으면 맨 앞), 체크리스트는 맨 끝, 나머지는 체크리스트 앞.
+// 예전 차례(학습 목표 → 개요)의 탭에 빠진 개요를 넣어도 맨 앞에 둔다(새 차례가 된다)
 function newSectionIndex(sections, title) {
     const start = sections[0] && !sections[0].title ? 1 : 0;
-    const goals = sections.findIndex(section => /학습\s*목표/.test(section.title));
+    const after = test => {
+        const at = sections.findIndex(section => test(section.title));
+        return at < 0 ? -1 : at + 1;
+    };
     const checklist = sections.findIndex(section => /체크리스트/.test(section.title));
-    if (/학습\s*목표/.test(title)) return start;
-    if (LESSON_OVERVIEW_TITLE.test(title)) return goals < 0 ? start : goals + 1;
+    if (LESSON_OVERVIEW_TITLE.test(title)) return start;
+    if (LESSON_INFO_TITLE.test(title)) return Math.max(start, after(text => LESSON_OVERVIEW_TITLE.test(text)));
+    if (/학습\s*목표/.test(title)) return Math.max(start, after(text => LESSON_INFO_TITLE.test(text)), after(text => LESSON_OVERVIEW_TITLE.test(text)));
     return /체크리스트/.test(title) || checklist < 0 ? sections.length : checklist;
 }
 

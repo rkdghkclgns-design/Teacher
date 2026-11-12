@@ -41,6 +41,7 @@ function openingSections(md) {
 
 const isOverviewSection = section => section.level === 2 && LESSON_OVERVIEW_TITLE.test(section.title);
 const isGoalSection = section => section.level === 2 && OPENING_GOAL_TITLE.test(section.title) && LESSON_FRAME_TITLE.test(section.title);
+const isInfoSection = section => section.level === 2 && LESSON_INFO_TITLE.test(section.title); // 학습 정보(lesson-info.js가 차시 메타데이터로 쓴다)
 const isTimeLine = line => OPENING_TIME_LINE.test(line) && !OPENING_SENTENCE_END.test(line);
 
 // 빠진 자리에 남은 <br>과 빈 줄을 한 벌로 줄인다
@@ -108,13 +109,14 @@ const isOpeningFiller = (lines, beforeLessonTitle) => {
 };
 
 // 첫 큰 제목(# 📝 ...) 앞에 목록만 있으면 머리말이다. 차시 안에 학습 목표가 있으면 통째로 빼고, 없으면 학습 목표만 남긴다.
+// 머리말의 개요·학습 정보는 뺀다(학습 정보는 새로 만든 학습 탭에 코드가 다시 쓴다, lesson-info.js).
 // 내용 섹션이 앞에 있는 교안(끝에 # 일일 퀘스트가 붙는 경우)은 머리말이 아니다
 function withoutPreamble(sections) {
     const firstTitle = sections.findIndex(section => section.level === 1);
     if (firstTitle < 1) return sections;
     const head = sections.slice(0, firstTitle);
     const lessonTitle = OPENING_LESSON_TITLE.test(sections[firstTitle].title);
-    const opening = head.every(section => (section.level === 0 ? isOpeningFiller(section.lines, lessonTitle) : isGoalSection(section) || isOverviewSection(section)));
+    const opening = head.every(section => (section.level === 0 ? isOpeningFiller(section.lines, lessonTitle) : isGoalSection(section) || isOverviewSection(section) || isInfoSection(section)));
     if (!opening) return sections;
     const body = sections.slice(firstTitle);
     return [...(body.some(isGoalSection) ? [] : head.filter(isGoalSection)), ...body];

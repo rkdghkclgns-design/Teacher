@@ -167,7 +167,9 @@ function renderLessonHTML(md, opts) {
     // 항목에 딸린 '용어: 설명'은 왼쪽 막대로. 후처리가 라벨 끝 콜론을 지우기 전에 찾는다
     if (typeof markTermParagraphs === 'function') html = markTermParagraphs(html);
     if (postprocess && typeof postprocessHtml === 'function') html = postprocessHtml(html);
-    return sanitizeLessonHtml(html); // 후처리가 글자를 지워 태그가 이어 붙을 수 있으므로 맨 끝에서 거른다
+    const clean = sanitizeLessonHtml(html); // 후처리가 글자를 지워 태그가 이어 붙을 수 있으므로 맨 끝에서 거른다
+    // 체크리스트의 '(다시 보기: 섹션 제목)'을 그 ## 제목으로 가는 링크로 그린다(checklist-links.js). 저장한 글은 그대로다
+    return typeof linkChecklistReviews === 'function' ? linkChecklistReviews(clean) : clean;
 }
 if (typeof window !== 'undefined') window.renderLessonHTML = renderLessonHTML;
 
@@ -247,6 +249,9 @@ function lessonScreenInput(md, images) {
         typeof lessonVideoUrl === 'function' ? lessonVideoUrl : null,
         typeof lessonVimeoParts === 'function' ? lessonVimeoParts : null,
         typeof lessonVideoStart === 'function' ? lessonVideoStart : null,
+        // 체크리스트 다시 보기 링크(checklist-links.js)와 섹션 찾기(lesson-lint.js)
+        typeof linkChecklistReviews === 'function' ? linkChecklistReviews : null,
+        typeof findLessonSection === 'function' ? findLessonSection : null,
         typeof DOMParser !== 'undefined' ? DOMParser : null
     ];
     return { text, refs: [...refs], loose, pipeline };
@@ -1124,6 +1129,8 @@ async function generateModuleContent(moduleId, keyConcepts) {
 
             fullContent = restoreLockedSections(await processImageTags(mod, fullContent, { onStatus: setLoadingStatus, inject: !volume }), lockedBlocks);
         }
+        // 기본학습 첫머리를 개요 → 학습 정보 → 학습 목표 차례로 두고 학습 정보를 차시 메타데이터로 쓴다(lesson-info.js). 최종 평가는 바꾸지 않는다
+        if (typeof applyLessonInfoFrame === 'function') fullContent = applyLessonInfoFrame(fullContent, { mod, tabId: 'basicLearn', lockedBlocks });
         if (volume && subj && !lessonStillLive(subj, mod)) return lessonGone(fullContent);
 
         mod.content = fullContent;
@@ -1695,7 +1702,8 @@ function autoInjectImageTags(markdown) {
     // - 개요·Overview: 차시 시작 안내문 (이미지 불필요, 사용자 요청)
     // - 요약·정리·마무리·Summary: 마무리 섹션도 보통 이미지 불요
     // - 학습 후 체크리스트: 확인 목록이라 그림이 필요 없다(그림 한 장에 검색어·판정·그림 호출이 든다)
-    const SKIP_RE = /학습\s*목표|Objectives?|교강사\s*가이드|강사\s*전용|개요|Overview|요약|정리|마무리|Summary|체크리스트/i;
+    // - 학습 정보: 수업 시간·선행·툴을 적는 차시 메타데이터 칸이다(lesson-info.js)
+    const SKIP_RE = /학습\s*목표|Objectives?|교강사\s*가이드|강사\s*전용|개요|Overview|요약|정리|마무리|Summary|체크리스트|학습\s*정보/i;
 
     // 섹션을 헤딩 단위로 분리하여 각 섹션의 길이·이미지 보유 여부 점검
     // 코드 블록 안의 # 줄과 이미지 태그는 제목·그림으로 보지 않는다
@@ -1765,7 +1773,7 @@ function pickImageTags(markdown, tags, amount) {
 }
 
 const IMAGE_TAG_RE = /<!--\s*\[IMG:\s*"?([^"]+)"?\]\s*-->/g;
-const IMAGE_SKIP_SECTIONS = /학습\s*목표|objectives?|개요|overview|요약|정리|마무리|summary|체크리스트/i;
+const IMAGE_SKIP_SECTIONS = /학습\s*목표|objectives?|개요|overview|요약|정리|마무리|summary|체크리스트|학습\s*정보/i;
 const IMAGE_TIME_LABEL = /\(\s*⏱[^()]*\)/g; // 섹션 제목의 (⏱ N분). 그림 자리 검색어에는 넣지 않는다
 
 // 예시 게임 그림 태그: <!-- [IMG: "game: 공식 영어 제목"] -->. AI 그림 모델 대신 인터넷(위키백과)에서 그 게임의 실제 그림을 찾는다(game-images.js)

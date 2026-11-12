@@ -294,6 +294,11 @@
             text-underline-offset: 2px;
         }
 
+        /* 체크리스트 다시 보기 링크가 가리키는 제목이 위쪽 고정 막대(탭 줄)에 가리지 않게 (checklist-links.js) */
+        .markdown-body h2[id] {
+            scroll-margin-top: 5rem;
+        }
+
         /* 설정 빠른 선택: 지금 설정과 같은 묶음 (setup-helpers.js) */
         [data-backup-images][aria-pressed="true"] {
             background: #7c5bf5;
@@ -2105,6 +2110,8 @@
     <script src="./js/lesson-lint.js?v=125"></script>
     <script src="./js/lesson-objectives.js?v=125"></script>
     <script src="./js/lesson-opening.js?v=125"></script>
+    <script src="./js/lesson-info.js?v=125"></script>
+    <script src="./js/checklist-links.js?v=125"></script>
     <script src="./js/lesson-pipeline.js?v=125"></script>
     <script src="./js/lesson-material.js?v=125"></script>
     <script src="./js/course-ncs.js?v=125"></script>

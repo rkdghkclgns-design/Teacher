@@ -1289,11 +1289,11 @@ function textRow(row, need, may = []) {
     return sameFields(next, row) ? row : next;
 }
 
-// 목록 칸의 줄(카드·검색·차시 정보 창·교재 내보내기가 줄마다 글로 쓴다): 학습 목표는 글, 툴은 name·version, 선행 차시는 title과 id(글·숫자),
-// 변경 이력은 at·note. 쓸 수 없는 줄은 빼고 바른 줄은 그대로 둔다
+// 목록 칸의 줄(카드·검색·차시 정보 창·교재 내보내기가 줄마다 글로 쓴다): 학습 목표는 글, 툴은 name·version·url(공식 페이지, 있을 때. 교안 학습 정보가 https만 링크로 쓴다),
+// 선행 차시는 title과 id(글·숫자), 변경 이력은 at·note. 쓸 수 없는 줄은 빼고 바른 줄은 그대로 둔다
 const LESSON_ROW_RULES = {
     objectives: row => (typeof row === 'string' ? row : ['number', 'boolean'].includes(typeof row) ? String(row) : null),
-    tools: row => textRow(row, ['name'], ['version']),
+    tools: row => textRow(row, ['name'], ['version', 'url']),
     prereqs: row => {
         const next = textRow(row, ['title']);
         if (!next || next.id == null || ['string', 'number'].includes(typeof next.id)) return next;

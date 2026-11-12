@@ -11,8 +11,8 @@ const GYOSUAN_SECTION_CHARS = 8000;
 const GYOSUAN_INTRO_CHARS = 2000;
 const GYOSUAN_REFERENCE_CHARS = 4000;
 const GYOSUAN_CONCURRENCY = 3;
-// 전개가 아닌 교안 머리말·강사 전용 섹션 (머리말은 교수안 머리말 작성 근거로만 쓴다)
-const GYOSUAN_INTRO_TITLE = /학습\s*목표|^개요|들어가며/;
+// 전개가 아닌 교안 머리말·강사 전용 섹션 (머리말은 교수안 머리말 작성 근거로만 쓴다). 학습 정보(수업 시간·선행·툴, lesson-info.js)도 머리말이다
+const GYOSUAN_INTRO_TITLE = /학습\s*목표|^개요|^학습\s*정보|들어가며/;
 const GYOSUAN_SKIP_TITLE = /교강사 가이드|학습 후 체크리스트/;
 const GYOSUAN_BLOCK_FORMAT =
     '**강사 활동**: (강사가 수업에서 실제로 할 행동 1~2문장)\n' +
