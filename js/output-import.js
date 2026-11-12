@@ -93,7 +93,8 @@ function lessonSourcePayload(mods, { tabIds = null, withGyosuan = false, track =
             const source = withGyosuan && outputIsMap(mod[slot.field]) ? mod[slot.field] : null;
             const docMd = source?.docMd || '';
             const deckMd = docMd ? source.deckMd || '' : '';
-            const gyosuan = docMd ? { docMd, deckMd, images: outputSourceImages(usedLessonImages(source.images, [docMd, deckMd]), shown[index]) } : null;
+            const briefMd = docMd && typeof source.briefMd === 'string' ? source.briefMd : ''; // 간이 교수안(그림 없는 글, gyosuan-brief.js)도 담아 다시 불러오면 되살린다
+            const gyosuan = docMd ? { docMd, deckMd, ...(briefMd ? { briefMd } : {}), images: outputSourceImages(usedLessonImages(source.images, [docMd, deckMd]), shown[index]) } : null;
             return {
                 title: mod.title || '',
                 description: mod.description || '',
@@ -410,10 +411,11 @@ function outputImportNotes(raw) {
     return Object.keys(notes).length ? notes : null;
 }
 
-// 받은 교수안 하나(글은 문자열만, 그림은 검사를 지난 것만). 교수안 문서가 없으면 null
+// 받은 교수안 하나(글은 문자열만, 그림은 검사를 지난 것만). 간이 교수안(briefMd)은 글일 때만 받는다. 교수안 문서가 없으면 null
 function outputValidGyosuan(raw) {
     const docMd = outputText(raw?.docMd);
-    return docMd ? { docMd, deckMd: outputText(raw.deckMd), images: outputValidImages(raw.images), updatedAt: new Date().toISOString() } : null;
+    const briefMd = outputText(raw?.briefMd);
+    return docMd ? { docMd, deckMd: outputText(raw.deckMd), ...(briefMd ? { briefMd } : {}), images: outputValidImages(raw.images), updatedAt: new Date().toISOString() } : null;
 }
 
 function normalizeImportedLesson(raw, id) {

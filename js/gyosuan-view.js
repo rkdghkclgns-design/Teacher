@@ -2,11 +2,12 @@
 // 생성과 스튜디오 연결은 gyosuan.js, 변환·불러오기·참고 이미지는 gyosuan-io.js에 있다.
 // 위쪽 기본학습 | 심화학습 고르기(tabs.js)로 고른 갈래의 교수안(mod.gyosuan · mod.gyosuanAdv)을 보인다.
 
-const GYOSUAN_EDIT_LABELS = { docMd: 'MD 수정', deckMd: '편성안 수정' };
+const GYOSUAN_EDIT_LABELS = { docMd: 'MD 수정', deckMd: '편성안 수정', briefMd: '간이 교수안 수정' };
 const _gyosuanTabs = typeof BroadcastChannel === 'function' ? new BroadcastChannel('gyosuan-lesson') : null;
 let _gyosuanForeignChange = null; // 다른 탭이 고친 차시 id
 let _gyosuanSampleFor = null; // 샘플을 펼친 차시 id
 let _gyosuanDeckViewFor = null; // 편성안을 문서로 펼친 '차시 id~갈래'(gyosuanViewKey)
+let _gyosuanBriefViewFor = null; // 간이 교수안(briefMd, gyosuan-brief.js)을 펼친 '차시 id~갈래'. 편성안 펼침과 함께 켜지지 않는다
 const LEGACY_GYOSUAN_NOTE = '예전 방식으로 기본·심화를 함께 담은 교수안입니다. 다시 만들면 기본학습과 기본실습만으로 만듭니다.';
 
 // 차시와 갈래를 함께 가리키는 키(편성안 펼침·원문 수정 상태)
@@ -70,6 +71,11 @@ function gyosuanDocHtml(mod, mark = null, trackId = 'basic') {
 function gyosuanDeckHtml(mod, trackId = 'basic') {
     const md = stripFrontmatter(resolveGyosuanImages(gyosuanOf(mod, trackId).deckMd, mod, trackId));
     return `<div class="gyosuan-deck-view">${sanitizeLessonHtml(marked.parse(md))}</div>`;
+}
+
+// 간이 교수안은 그림 없는 짧은 글이라 편성안 보기와 같은 서식으로 그린다
+function gyosuanBriefHtml(mod, trackId = 'basic') {
+    return `<div class="gyosuan-deck-view gyosuan-brief-view">${sanitizeLessonHtml(marked.parse(String(gyosuanOf(mod, trackId).briefMd || '')))}</div>`;
 }
 
 // 차시가 하나면 차시별 내려받기와 같으므로 보여 주지 않는다
@@ -164,9 +170,11 @@ function gyosuanToolbarHtml(mod, trackId = 'basic') {
             ${editButton('docMd', 'ph-pencil-simple')}
             ${editButton('deckMd', 'ph-slideshow')}
             ${gyosuan.deckMd && !editing ? button('toggleGyosuanDeckView()', 'ph-eye', _gyosuanDeckViewFor === gyosuanViewKey(mod, track) ? '교수안 보기' : '편성안 보기') : ''}
+            ${gyosuanBriefToolsHtml(mod, track, editing, button, editButton)}
             ${editing === 'deckMd' || gyosuan.deckDirty ? button(`rebuildGyosuanDeck(${id})`, 'ph-arrows-clockwise', '슬라이드 다시 만들기') : ''}
             ${hasDoc ? button(`downloadGyosuanMd('${mod.id}', 'docMd', '${track}')`, 'ph-download-simple', 'MD') : ''}
             ${gyosuan.deckMd ? button(`downloadGyosuanMd('${mod.id}', 'deckMd', '${track}')`, 'ph-download-simple', '편성안 MD') : ''}
+            ${gyosuan.briefMd ? button(`downloadGyosuanMd('${mod.id}', 'briefMd', '${track}')`, 'ph-download-simple', '간이 교수안 MD') : ''}
             ${hasDoc ? button(`downloadGyosuanSessions(${id})`, 'ph-clock', '차시별 MD') : ''}
             ${hasDoc ? button(`downloadGyosuanSessionDecks(${id})`, 'ph-presentation', '차시별 편성안') : ''}
             ${hasDoc ? gyosuanSessionPickHtml(mod, track) : ''}
@@ -178,7 +186,18 @@ function gyosuanToolbarHtml(mod, trackId = 'basic') {
         ${gyosuanRefTrayHtml(mod)}`;
 }
 
-// 고치는 중인 칸(docMd | deckMd). 그 차시의 그 갈래를 고치는 중일 때만
+// 간이 교수안 단추: 있으면 보기 전환과 원문 수정, 교수안만 있으면 만들기(gyosuan-brief.js generateGyosuanBrief). 원문을 고치는 동안은 수정 단추만 보인다
+// button·editButton: gyosuanToolbarHtml의 단추 모양
+function gyosuanBriefToolsHtml(mod, trackId, editing, button, editButton) {
+    const gyosuan = gyosuanOf(mod, trackId);
+    if (!gyosuan.briefMd && editing !== 'briefMd') {
+        return gyosuan.docMd && !editing && typeof window.generateGyosuanBrief === 'function' ? button(`generateGyosuanBrief('${mod.id}', '${trackId}')`, 'ph-sparkle', '간이 교수안 만들기') : '';
+    }
+    const shown = _gyosuanBriefViewFor === gyosuanViewKey(mod, trackId);
+    return (editing ? '' : button('toggleGyosuanBriefView()', 'ph-list-checks', shown ? '교수안 보기' : '간이 교수안 보기')) + editButton('briefMd', 'ph-note-pencil');
+}
+
+// 고치는 중인 칸(docMd | deckMd | briefMd). 그 차시의 그 갈래를 고치는 중일 때만
 function gyosuanEditField(mod, trackId = currentGyosuanTrack()) {
     return _gyosuanEditing?.id === mod.id && (_gyosuanEditing.track || LESSON_TRACKS[0].id) === lessonTrack(trackId).id ? _gyosuanEditing.field : null;
 }
@@ -197,6 +216,7 @@ function gyosuanSampleHtml() {
 
 function gyosuanBodyHtml(mod, trackId = 'basic') {
     if (gyosuanEditField(mod, trackId)) return '<textarea id="gyosuan-raw" class="gyosuan-raw" spellcheck="false" onchange="saveGyosuanRaw()"></textarea>';
+    if (_gyosuanBriefViewFor === gyosuanViewKey(mod, trackId) && gyosuanOf(mod, trackId).briefMd) return gyosuanBriefHtml(mod, trackId);
     if (_gyosuanDeckViewFor === gyosuanViewKey(mod, trackId) && gyosuanOf(mod, trackId).deckMd) return gyosuanDeckHtml(mod, trackId);
     return gyosuanDocHtml(mod, null, trackId) || '<p class="gyosuan-note">교수안이 없습니다. 완성 MD를 불러오거나 재생성으로 만들 수 있습니다.</p>';
 }
@@ -241,20 +261,43 @@ window.showLessonView = function () {
     if (mod) renderEditor(mod);
 };
 
-// 고른 갈래의 교수안·편성안 원문 칸을 열고 닫는다
+// 고른 갈래의 교수안·편성안·간이 교수안 원문 칸을 열고 닫는다. 간이 교수안을 고치러 열면 '보기'로 닫을 때 간이 교수안이 보인다
 window.toggleGyosuanEdit = function (field = 'docMd') {
     const mod = getEditingModule();
     if (!mod) return;
     const track = currentGyosuanTrack();
     _gyosuanEditing = gyosuanEditField(mod, track) === field ? null : { id: mod.id, field, track };
+    if (_gyosuanEditing && field === 'briefMd') {
+        _gyosuanBriefViewFor = gyosuanViewKey(mod, track);
+        _gyosuanDeckViewFor = null;
+    }
     renderGyosuanView(mod);
 };
 
+// 편성안 보기와 간이 교수안 보기는 함께 켜지지 않는다(하나를 켜면 다른 하나는 끈다)
 window.toggleGyosuanDeckView = function () {
     const mod = getEditingModule();
     if (!mod) return;
     const key = gyosuanViewKey(mod, currentGyosuanTrack());
     _gyosuanDeckViewFor = _gyosuanDeckViewFor === key ? null : key;
+    _gyosuanBriefViewFor = null;
+    renderGyosuanView(mod);
+};
+
+window.toggleGyosuanBriefView = function () {
+    const mod = getEditingModule();
+    if (!mod) return;
+    const key = gyosuanViewKey(mod, currentGyosuanTrack());
+    _gyosuanBriefViewFor = _gyosuanBriefViewFor === key ? null : key;
+    _gyosuanDeckViewFor = null;
+    renderGyosuanView(mod);
+};
+
+// 간이 교수안을 막 만들었을 때 그 갈래의 간이 교수안을 펼친다(gyosuan-brief.js). 화면에서 다른 갈래를 골랐으면 펼침만 기억하고 그 갈래 화면을 그린다
+window.openGyosuanBriefView = function (mod, trackId = currentGyosuanTrack()) {
+    if (!mod) return;
+    _gyosuanBriefViewFor = gyosuanViewKey(mod, trackId);
+    _gyosuanDeckViewFor = null;
     renderGyosuanView(mod);
 };
 
@@ -333,7 +376,8 @@ window.downloadGyosuanMd = function (moduleId, field = 'docMd', trackId = curren
     const mod = getEditingModule(moduleId);
     const md = gyosuanOf(mod, trackId)?.[field];
     if (!md) return;
-    downloadMd(resolveGyosuanImages(md, mod, trackId), `${lessonFileBase(mod)}_${gyosuanFileTag(trackId, field === 'deckMd' ? '슬라이드편성안' : '교수안')}`);
+    const name = { deckMd: '슬라이드편성안', briefMd: '간이교수안' }[field] || '교수안';
+    downloadMd(resolveGyosuanImages(md, mod, trackId), `${lessonFileBase(mod)}_${gyosuanFileTag(trackId, name)}`);
 };
 
 // 교수안 문서(HTML 한 파일). 교수안 서식(css/gyosuan-doc.css)을 문서 안에 넣어 따로 열어도 같은 모양이다

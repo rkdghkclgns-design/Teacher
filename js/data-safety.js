@@ -1175,7 +1175,7 @@ const SAFE_TAB_KEY = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
 const LESSON_LIST_FIELDS = ['objectives', 'tools', 'prereqs', 'illustrations', 'refImages', 'history'];
 const LESSON_TEXT_FIELDS = ['content', 'uploadedMdName', 'uploadedMdContent'];
 const LESSON_INFO_TEXT_FIELDS = ['category', 'reviewStatus']; // 차시 카드·검색·차시 정보 창이 글로 쓰는 칸(있을 때 글로 맞춘다)
-const GYOSUAN_TEXT_FIELDS = ['docMd', 'deckMd', 'deckHtml'];
+const GYOSUAN_TEXT_FIELDS = ['docMd', 'deckMd', 'deckHtml', 'briefMd']; // briefMd: 간이 교수안(gyosuan-brief.js)
 const TRASH_FUTURE_MS = 24 * 60 * 60 * 1000; // 이보다 먼 미래로 적힌 지운 날짜는 지금으로 본다(영영 비워지지 않는 일이 없게)
 
 const textOrNull = value => (typeof value === 'string' ? value : null);

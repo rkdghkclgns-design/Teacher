@@ -665,3 +665,8 @@
 .gyosuan-deck-view h3 { font-size: 14px; font-weight: 700; margin: 20px 0 6px; color: #1d4ed8; }
 .gyosuan-deck-view ul { list-style: disc; padding-left: 20px; }
 .gyosuan-deck-view img { max-width: 100%; }
+/* 간이 교수안(gyosuan-brief.js): 교안 순서 번호 목록과 안내 문단 */
+.gyosuan-brief-view ol { list-style: decimal; padding-left: 20px; }
+.gyosuan-brief-view li > ol,
+.gyosuan-brief-view li > ul { margin: 2px 0 4px; }
+.gyosuan-brief-view p { margin: 0 0 12px; color: #4b5563; }

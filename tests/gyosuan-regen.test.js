@@ -238,7 +238,7 @@ const DECK_OUT = [
         assert.deepStrictEqual([opts.title, opts.okLabel], ['기본학습 교수안 다시 생성', '다시 생성']);
         assert.ok(message.startsWith("기본학습 교수안을 다시 생성합니다.\n\n[바뀐 내용]\n- 기본학습 탭: 바뀐 섹션 '재미 분석'\n\n"), message);
         assert.ok(message.includes("지금 교수안은 '이전 교수안으로' 단추로 되돌릴 수 있습니다."), message);
-        assert.ok(message.includes('글: AI 호출 약 12회') && message.includes('걸리는 시간'), '비용·시간 미리 보기(confirmWithEstimate)');
+        assert.ok(message.includes('글: AI 호출 약 13회') && message.includes('걸리는 시간'), '비용·시간 미리 보기(confirmWithEstimate)');
     });
 
     await run('재생성 확인: 그 갈래만 기존 만들기 길로(교수안과 편성안을 함께) 지금 교안으로 다시 만들고, 바꾸기 전 교수안은 이전 교수안 칸에 남는다. 다른 갈래는 그대로', async () => {

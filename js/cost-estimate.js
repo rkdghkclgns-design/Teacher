@@ -17,6 +17,7 @@ const ESTIMATE_RULES = {
     ncsCalls: 1,                                    // NCS 배정(교과·차시)
     gyosuanCalls: 12,                               // 교수안 하나(갈래마다 하나): 머리말 1 + 전개(섹션마다 1, 최대 14) + 도입·정리 1
     gyosuanWaitCalls: 6,                            // 전개는 셋씩 함께 부르므로 기다리는 시간은 호출 6번쯤
+    gyosuanBriefCalls: 1,                           // 간이 교수안 하나(교수안마다 하나, 교수안을 다 만든 뒤 한 번 부른다. gyosuan-brief.js)
     qbankCalls: 2,                                  // 문제은행 하나(갈래마다 하나) 채우기. 코드가 든 문항은 주석 보강이 가끔 더해짐
     artCalls: 4,                                    // SVG 삽화(후보 1회 + 그림 최대 3장)
     ocrMaxCallsPerPdf: 8,                           // 스캔 PDF: 30쪽까지 4쪽마다 1회
@@ -117,7 +118,7 @@ const sumWork = list => list.reduce((total, work) => {
     return total;
 }, {});
 
-// work: { tabs, images(교안 그림), slideImages(슬라이드 그림), ncs, gyosuan, qbank, art, ocr, volume(분량을 채우는 학습 탭 수), volumeCalls(그 긴 호출 수),
+// work: { tabs, images(교안 그림), slideImages(슬라이드 그림), ncs, gyosuan(교수안마다 간이 교수안 호출도 센다), brief(간이 교수안만 만드는 수), qbank, art, ocr, volume(분량을 채우는 학습 탭 수), volumeCalls(그 긴 호출 수),
 // practiceCalls(실습 시간을 정한 실습 탭의 더 드는 이어쓰기 호출), codeComments(코드 주석 넣기 호출 수, 다시 받기 제외),
 // motionPlans(움직이는 GIF로 만들 그림 속 관계를 읽는 호출 수, image-motion.js) } 개수 →
 // 본문 호출(body), 기다리는 시간으로 센 본문 호출(bodyWait), 짧은 호출(short), 그림 장수(images), 분량 보강·자동 수정의 긴 호출(long, 있을 때만).
@@ -127,9 +128,11 @@ function estimateCallSplit(work = {}) {
     const tabs = (work.tabs || 0) * rule.tabCalls + (work.practiceCalls || 0);
     const others = (work.ncs || 0) * rule.ncsCalls + (work.qbank || 0) * rule.qbankCalls + (work.art || 0) * rule.artCalls + (work.ocr || 0) + (work.codeComments || 0) + (work.motionPlans || 0);
     const long = work.volumeCalls ?? (work.volume || 0) * volumeCallsFor();
+    const plans = work.gyosuan || 0;
+    const briefs = (plans + (work.brief || 0)) * rule.gyosuanBriefCalls; // 간이 교수안은 교수안 뒤에 차례로 부르므로 기다리는 시간에도 그대로 더한다
     return {
-        body: tabs + others + (work.gyosuan || 0) * rule.gyosuanCalls,
-        bodyWait: tabs + others + (work.gyosuan || 0) * rule.gyosuanWaitCalls,
+        body: tabs + others + plans * rule.gyosuanCalls + briefs,
+        bodyWait: tabs + others + plans * rule.gyosuanWaitCalls + briefs,
         short: (work.images || 0) * rule.shortCallsPerImage + (work.slideImages || 0) * rule.shortCallsPerSlideImage,
         images: (work.images || 0) + (work.slideImages || 0),
         ...(long > 0 ? { long } : {})

@@ -77,15 +77,15 @@ test('교수안·문제은행은 갈래(기본학습·심화학습)마다 하나
     const two = plain(lessonWork({ tabs: 0, gyosuan: 2, qbank: 2, ncs: false }, 'section', 4));
     assert.deepStrictEqual([one.gyosuan, one.qbank, one.slideImages], [1, 1, 4]);
     assert.deepStrictEqual([two.gyosuan, two.qbank, two.slideImages], [2, 2, 8]);
-    assert.strictEqual(plain(estimateCallSplit(two)).body, 2 * 12 + 2 * 2, '교수안 12번 × 2 + 문제은행 2번 × 2');
+    assert.strictEqual(plain(estimateCallSplit(two)).body, 2 * (12 + 1) + 2 * 2, '교수안 12번과 간이 교수안 1번 × 2 + 문제은행 2번 × 2');
     assert.deepStrictEqual([plain(lessonWork({ gyosuan: 0, qbank: false }, 'section', 4)).gyosuan, plain(lessonWork({ gyosuan: -3, qbank: 'x' }, 'section', 4)).qbank], [0, 0], '이상한 값은 0');
 });
 
 test('호출 수: 본문·짧은 호출·그림을 나눠 세고, SVG 삽화면 그림 장수만큼 글 호출이 는다', () => {
-    // 탭 5×2 + NCS 1 + 문제은행 2 + 교수안 12 = 25, 기다리는 시간은 교수안을 6으로 / 짧은 호출 15×1 + 4×2 = 23
-    assert.deepStrictEqual(plain(estimateCallSplit(FULL)), { body: 25, bodyWait: 19, short: 23, images: 19 });
-    assert.strictEqual(estimateCalls(FULL), 48);
-    assert.strictEqual(estimateCalls(FULL, 'svg'), 67);
+    // 탭 5×2 + NCS 1 + 문제은행 2 + 교수안 12 + 간이 교수안 1 = 26, 기다리는 시간은 교수안을 6으로(간이 교수안은 그대로 1) / 짧은 호출 15×1 + 4×2 = 23
+    assert.deepStrictEqual(plain(estimateCallSplit(FULL)), { body: 26, bodyWait: 20, short: 23, images: 19 });
+    assert.strictEqual(estimateCalls(FULL), 49);
+    assert.strictEqual(estimateCalls(FULL, 'svg'), 68);
     assert.strictEqual(estimateCalls({}), 0);
     assert.strictEqual(estimateCalls({ ocr: 3 }), 3);
 });
@@ -95,9 +95,9 @@ test('시간: 잰 기록이 없으면 모델·추론 강도로 어림하고 그�
     // 20회 × 20초 + 탭 사이 10 × 4초 = 440초 ≈ 7.3분 → 5~11분
     assert.deepStrictEqual([guessed.calls, guessed.minutesLow, guessed.minutesHigh, guessed.measured, guessed.costLabel], [20, 5, 11, false, '낮음']);
     const full = summary(FULL);
-    assert.deepStrictEqual([full.minutesLow, full.minutesHigh], [13, 28], '본문 19×20초 + 짧은 호출 23×6초 + 그림 19×25초 + 간격 125초');
+    assert.deepStrictEqual([full.minutesLow, full.minutesHigh], [13, 29], '본문 20×20초 + 짧은 호출 23×6초 + 그림 19×25초 + 간격 125초');
     const svg = summary(FULL, { imageSource: 'svg' });
-    assert.deepStrictEqual([svg.minutesLow, svg.minutesHigh], [12, 26], 'SVG 삽화는 그림 한 장을 본문 호출 하나로 잰다');
+    assert.deepStrictEqual([svg.minutesLow, svg.minutesHigh], [12, 27], 'SVG 삽화는 그림 한 장을 본문 호출 하나로 잰다');
     const slow = summary({ tabs: 10 }, { model: 'claude-opus-5-5', effort: 'max' });
     assert.deepStrictEqual([slow.minutesLow, slow.minutesHigh], [42, 91]);
     assert.ok(slow.minutesHigh > guessed.minutesHigh * 4, '최고 모델·최대 강도는 훨씬 오래 걸린다');
@@ -113,7 +113,7 @@ test('시간: 본문·짧은 호출·그림 모델을 따로 잰 기록을 쓴�
         'gemini-nano-banana-2.1': { count: 3, avg: 20000 }
     };
     const measured = summary(FULL, { timings, imageModel: 'gemini-nano-banana-2.1' });
-    // 19×10 + 23×2 + 19×20 + 125 = 741초 ≈ 12.4분 → 9~19분
+    // 20×10 + 23×2 + 19×20 + 125 = 751초 ≈ 12.5분 → 9~19분
     assert.deepStrictEqual([measured.minutesLow, measured.minutesHigh, measured.measured], [9, 19, true]);
 });
 
@@ -135,10 +135,10 @@ test('기록: 본문 호출과 짧은 호출을 따로 모으고, 예전 기록�
 
 test('보이는 글: 글·그림·걸리는 시간 세 줄, 장수는 약(남은 자리는 그대로), 최대·이상은 쓰지 않는다', () => {
     const full = lines(FULL);
-    assert.deepStrictEqual(full, ['글: AI 호출 약 48회 · 비용 낮음(Gemini 3.8 Flash)', '그림: 약 19장(슬라이드 그림 4장 포함) · Nano Banana 2.1 · 장마다 요금', '걸리는 시간: 약 13~28분']);
+    assert.deepStrictEqual(full, ['글: AI 호출 약 49회 · 비용 낮음(Gemini 3.8 Flash)', '그림: 약 19장(슬라이드 그림 4장 포함) · Nano Banana 2.1 · 장마다 요금', '걸리는 시간: 약 13~29분']);
     const svg = lines(FULL, { imageSource: 'svg' });
     assert.strictEqual(svg[1], '그림: 약 19장(슬라이드 그림 4장 포함) · 글 모델이 SVG로 그림 · 글 비용에 포함');
-    assert.ok(svg[0].includes('약 67회'), svg[0]);
+    assert.ok(svg[0].includes('약 68회'), svg[0]);
     const higgs = lines(FULL, { imageSource: 'higgsfield' }, { ...LABELS, imageLabel: 'Higgsfield · Recraft V4.1' });
     assert.ok(higgs[1].endsWith('· Higgsfield · Recraft V4.1 · 크레딧 사용'), higgs[1]);
     assert.ok(lines({ tabs: 5, images: 20 })[1].startsWith('그림: 약 20장 · '));

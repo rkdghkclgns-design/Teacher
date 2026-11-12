@@ -61,14 +61,22 @@ function adoptInlineImages(md, images = {}) {
 }
 
 /* ---------- 완성 MD 변환 ---------- */
+// 간이 교수안(gyosuan-brief.js)은 '## 시간이 되면 권장' 절이나 파일 이름(…_간이교수안.md)으로 가른다
 function gyosuanFileKind(name, text) {
     if (/^##\s*진행\s*$/m.test(text)) return 'docMd';
     if (/^(?:###\s*슬라이드|##\s*슬라이드\s*편성)/m.test(text)) return 'deckMd';
+    if (/^##\s*시간이 되면 권장\s*$/m.test(text) || /간이\s*교수안/.test(name)) return 'briefMd';
     if (/편성안/.test(name)) return 'deckMd';
     return /교수안/.test(name) ? 'docMd' : null;
 }
 
-// files = [{ name, text }] → { docMd?, deckMd? } 또는 { error }
+// 간이 교수안: 올렸으면 그것, 다른 교수안만 올렸으면 옛 교수안의 간이 교수안이라 뺀다(undefined), 아니면 지금 것
+function convertedBrief(base, sorted) {
+    if (sorted.briefMd !== undefined) return sorted.briefMd;
+    return sorted.docMd !== undefined && sorted.docMd !== base?.docMd ? undefined : base?.briefMd;
+}
+
+// files = [{ name, text }] → { docMd?, deckMd?, briefMd? } 또는 { error }
 function sortGyosuanFiles(files) {
     const sorted = {};
     for (const file of files) {
@@ -85,8 +93,11 @@ function sortGyosuanFiles(files) {
 function convertedGyosuan(base, sorted) {
     const doc = adoptInlineImages(sorted.docMd ?? base?.docMd ?? '', base?.images);
     const deck = adoptInlineImages(sorted.deckMd ?? base?.deckMd ?? '', doc.images);
+    const { briefMd: _oldBrief, ...rest } = base || {};
+    const briefMd = convertedBrief(base, sorted);
     return {
-        ...base,
+        ...rest,
+        ...(typeof briefMd === 'string' && briefMd ? { briefMd } : {}),
         docMd: doc.md,
         deckMd: deck.md,
         images: usedGyosuanImages({ docMd: doc.md, deckMd: deck.md, images: deck.images }),
@@ -113,6 +124,7 @@ window.importGyosuanMdFiles = async function (moduleId, trackId = currentGyosuan
         const texts = await Promise.all(files.map(readGyosuanFile));
         const sorted = sortGyosuanFiles(files.map((file, index) => ({ name: file.name, text: texts[index] })));
         if (sorted.error) return window.showAlert(sorted.error);
+        if (sorted.briefMd !== undefined && sorted.docMd === undefined && !mod[track.field]?.docMd) return window.showAlert(`간이 교수안은 교수안과 함께 고르거나 ${track.label} 교수안이 있는 차시에 불러와 주세요.`);
         const replacing = mod[track.field]?.docMd || gyosuanHasDeck(mod, track.id);
         if (replacing) {
             const ok = await confirmAsync(`올린 파일로 이 차시의 ${track.label} 교수안·편성안을 바꿉니다. 편성안을 바꾸면 슬라이드 화면 편집 내용도 사라집니다. 계속할까요?`, { title: `${track.label} 교수안 바꾸기`, okLabel: '바꾸기', tone: 'danger' });
@@ -143,8 +155,10 @@ function importedGyosuan(base, imported, session) {
     const source = imported.source;
     const doc = adoptInlineImages(source?.doc || base?.docMd || '', base?.images);
     const deck = adoptInlineImages(source?.deck || base?.deckMd || '', doc.images);
+    // 파일의 다른 교수안으로 바꾸면 옛 교수안의 간이 교수안은 뺀다(교수안 화면의 '간이 교수안 만들기'로 다시 만든다)
+    const { briefMd: _oldBrief, ...rest } = base || {};
     return {
-        ...base,
+        ...(source?.doc && source.doc !== base?.docMd ? rest : base),
         docMd: doc.md,
         deckMd: deck.md,
         images: usedGyosuanImages({ docMd: doc.md, deckMd: deck.md, images: deck.images }),
