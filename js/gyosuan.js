@@ -3,7 +3,7 @@
 // 생성 프롬프트는 이 앱의 교안 생성 방식(페르소나·어투·참고 자료·멀티턴 few-shot)을 쓴다.
 // 교수안은 갈래(data.js LESSON_TRACKS)마다 따로 만든다. 기본학습 갈래는 기본학습·기본실습 탭으로 mod.gyosuan에, 심화학습 갈래는 심화학습·심화실습 탭으로 mod.gyosuanAdv에
 // { docMd, deckMd, deckHtml, sessionDecks, deckRev, deckDirty, images, slideStyle, sourceKey, sourceMap, previous, citedVideos, briefMd, updatedAt } 으로 저장한다(sourceMap·previous는 gyosuan-regen.js, citedVideos는 gyosuan-videos.js, briefMd(간이 교수안)는 gyosuan-brief.js).
-// images는 교수안·편성안의 ![설명](local:id)가 가리키는 래스터 data URL이고, sessionDecks는 차시별로 연 덱의 편집본이다.
+// images는 교수안·편성안의 ![설명](local:id)가 가리키는 래스터 data URL이고, sessionDecks는 교시(1시간)별로 연 덱의 편집본이다(키는 0부터 센 교시 번호).
 // 예전에 네 탭을 함께 담아 만든 mod.gyosuan은 그대로 기본학습 교수안으로 둔다(gyosuan-view.js가 그렇다고 알린다).
 
 const GYOSUAN_MAX_SECTIONS = 14;
@@ -687,7 +687,8 @@ function parseStudioModuleKey(key) {
     return track ? { moduleId: text.slice(0, at), track: track.id } : { moduleId: key, track: LESSON_TRACKS[0].id };
 }
 
-// session: 한 차시만 여는 번호, null이면 전체 덱. 범위를 벗어나면 전체 덱을 준다. moduleKey: studioModuleKey(심화학습은 '~adv'가 붙는다)
+// session: 한 교시(1시간)만 여는 번호, null이면 전체 덱. 범위를 벗어나면 전체 덱을 준다. moduleKey: studioModuleKey(심화학습은 '~adv'가 붙는다)
+// 교시 덱의 화면 편집본이 있으면 그 편집본을 만든 주제로 편성안을 준다(예전 'N차시.' 주제로 만든 그림 칸 id, course-sessions.js sessionDeckTopic)
 window.getSlideStudioPayload = function (moduleKey, session = null) {
     const { moduleId, track } = parseStudioModuleKey(moduleKey);
     const mod = getEditingModule(moduleId);
@@ -699,14 +700,14 @@ window.getSlideStudioPayload = function (moduleKey, session = null) {
     const advanced = track !== LESSON_TRACKS[0].id;
     const deckHtml = (whole ? gyosuan?.deckHtml : gyosuan?.sessionDecks?.[index]) || null;
     const shown = !deckHtml && mod && typeof lateVideoLesson === 'function' ? lateVideoLesson(mod, track) : mod; // 화면 편집본이 없으면 편성안을 만든 뒤에 넣은 영상까지 인용한 편성안으로(저장한 편성안은 그대로, gyosuan-videos.js)
-    const deckMd = resolveGyosuanImages(whole ? gyosuanOf(shown, track)?.deckMd : gyosuanSessionDeckMd(shown, index, track), mod, track);
+    const deckMd = resolveGyosuanImages(whole ? gyosuanOf(shown, track)?.deckMd : gyosuanSessionDeckMd(shown, index, track, deckHtml || ''), mod, track);
     return {
         deckMd: deckHtml || typeof tidyGyosuanDeck !== 'function' ? deckMd : tidyGyosuanDeck(deckMd), // 화면 편집본이 없을 때만 다듬어 넘긴다(저장한 편성안은 그대로, gyosuan-deck-tidy.js)
         deckHtml,
         docMd: resolveGyosuanImages(whole ? gyosuan?.docMd : gyosuanSessionPlanMd(mod, index, track), mod, track),
         title: mod ? gyosuanTopic(mod, track) : '',
         subject: subject?.title || '',
-        fileBase: mod ? `${lessonFileBase(mod, subject)}${advanced ? '_심화' : ''}${whole ? '' : `_${index + 1}차시`}` : '',
+        fileBase: mod ? `${lessonFileBase(mod, subject)}${advanced ? '_심화' : ''}${whole ? '' : `_${index + 1}교시`}` : '',
         ncs: { list: (subject?.ncs?.units || []).map(unit => ({ code: unit.code, name: unit.name })), auto: !subject?.ncs?.confirmed },
         sessions,
         session: index,

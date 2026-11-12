@@ -168,7 +168,7 @@ async function run(name, fn) {
         assert.ok(doc.blocks.some(b => b.type === 'callout' && /멘트/.test(b.label)));
         const tables = doc.blocks.filter(b => b.type === 'table');
         assert.strictEqual(tables.length, 3);
-        assert.deepStrictEqual(Array.from(tables[2].headers), ['차시', '시간', '진행 단계'], '60분이 넘으면 차시 구성표를 넣는다');
+        assert.deepStrictEqual(Array.from(tables[2].headers), ['교시', '시간', '진행 단계'], '60분이 넘으면 교시 구성표를 넣는다(1시간 칸은 교시)');
         assert.deepStrictEqual(Array.from(tables[1].headers), ['단계', '시간', '핵심']);
         assert.strictEqual(tables[1].rows.length, 3, '구분선 행은 제외');
         assert.ok(tables[0].rows.some(r => r[0] === '대상'));

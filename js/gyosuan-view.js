@@ -82,14 +82,14 @@ function gyosuanBriefHtml(mod, trackId = 'basic') {
     return `<div class="gyosuan-deck-view gyosuan-brief-view">${stale}${sanitizeLessonHtml(marked.parse(String(gyosuan.briefMd || '')))}</div>`;
 }
 
-// 차시가 하나면 차시별 내려받기와 같으므로 보여 주지 않는다
+// 교시(1시간)가 하나면 교시별 내려받기와 같으므로 보여 주지 않는다
 function gyosuanSessionPickHtml(mod, trackId = 'basic') {
     const sessions = gyosuanSessionList(mod, trackId);
     if (sessions.length < 2) return '';
-    const options = (kind, label) => `<optgroup label="${label}">${sessions.map(session => `<option value="${kind}:${session.index}">${session.index + 1}차시 ${label}</option>`).join('')}</optgroup>`;
+    const options = (kind, label) => `<optgroup label="${label}">${sessions.map(session => `<option value="${kind}:${session.index}">${session.index + 1}교시 ${label}</option>`).join('')}</optgroup>`;
     return `
-        <select aria-label="차시 하나 받기" onchange="downloadGyosuanSession('${mod.id}', this.value, '${lessonTrack(trackId).id}'); this.value = ''" class="gyosuan-tool">
-            <option value="">차시 하나 받기</option>
+        <select aria-label="교시 하나 받기" onchange="downloadGyosuanSession('${mod.id}', this.value, '${lessonTrack(trackId).id}'); this.value = ''" class="gyosuan-tool">
+            <option value="">교시 하나 받기</option>
             ${options('doc', '교수안')}
             ${gyosuanOf(mod, trackId).deckMd ? options('deck', '편성안') : ''}
         </select>`;
@@ -179,8 +179,8 @@ function gyosuanToolbarHtml(mod, trackId = 'basic') {
             ${hasDoc ? button(`downloadGyosuanMd('${mod.id}', 'docMd', '${track}')`, 'ph-download-simple', 'MD') : ''}
             ${gyosuan.deckMd ? button(`downloadGyosuanMd('${mod.id}', 'deckMd', '${track}')`, 'ph-download-simple', '편성안 MD') : ''}
             ${gyosuan.briefMd ? button(`downloadGyosuanMd('${mod.id}', 'briefMd', '${track}')`, 'ph-download-simple', '간이 교수안 MD') : ''}
-            ${hasDoc ? button(`downloadGyosuanSessions(${id})`, 'ph-clock', '차시별 MD') : ''}
-            ${hasDoc ? button(`downloadGyosuanSessionDecks(${id})`, 'ph-presentation', '차시별 편성안') : ''}
+            ${hasDoc ? button(`downloadGyosuanSessions(${id})`, 'ph-clock', '교시별 MD') : ''}
+            ${hasDoc ? button(`downloadGyosuanSessionDecks(${id})`, 'ph-presentation', '교시별 편성안') : ''}
             ${hasDoc ? gyosuanSessionPickHtml(mod, track) : ''}
             ${hasDoc ? button(`downloadGyosuanHtml(${id})`, 'ph-file-html', 'HTML') : ''}
             ${hasDoc ? button(`printGyosuan(${id})`, 'ph-file-pdf', 'PDF') : ''}

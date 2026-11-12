@@ -230,7 +230,7 @@ function lateVideoLesson(mod, trackId = 'basic') {
     }
 }
 
-// 스튜디오가 묻는다: 이 덱(전체 덱, session을 주면 그 차시 덱)이 보여야 하는 영상 [{ ref, title }]. 영상 값은 없다. moduleKey: studioModuleKey(심화학습은 '~adv')
+// 스튜디오가 묻는다: 이 덱(전체 덱, session을 주면 그 교시 덱)이 보여야 하는 영상 [{ ref, title }]. 영상 값은 없다. moduleKey: studioModuleKey(심화학습은 '~adv')
 // 편성안을 만든 뒤에 넣은 영상까지 인용한 편성안에서 읽는다. 스튜디오는 화면 편집본에 아직 보인 적 없는 영상만 영상 슬라이드로 더한다(js/kbuilder/deck-runtime.js deckVideo.offer)
 window.getSlideStudioVideos = function (moduleKey, session = null) {
     const { moduleId, track } = parseStudioModuleKey(moduleKey);
