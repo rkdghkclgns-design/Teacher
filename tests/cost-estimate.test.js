@@ -66,8 +66,8 @@ test('그림 자리: 탭마다 탭 글 규칙의 최소 섹션 수로 센다(모
     assert.strictEqual(tabImageCount(['basicPrac', 'advPrac'], 'section'), 6);
     assert.strictEqual(tabImageCount(ALL_TABS, 'none'), 0);
     assert.strictEqual(tabImageCount(['constructor', '__proto__'], 'all'), 0, '모르는 탭 이름은 세지 않는다');
-    // 심화 학습을 만들면 기본 학습처럼 낭독 분량 채우기(긴 호출 27번)도 센다
-    assert.deepStrictEqual(plain(lessonWork({ tabs: ['basicPrac', 'advLearn'] }, 'all', 0)), { tabs: 2, images: 25, slideImages: 0, ncs: 1, gyosuan: 0, qbank: 0, art: 0, volume: 1, volumeCalls: 27, volumeMinutes: 480, volumeAdv: 1 });
+    // 심화 학습을 만들면 기본 학습처럼 낭독 분량 채우기도 센다. 실습 시간을 모르면 학습 탭은 480 − 120 = 360분(긴 호출 18 + 자동 수정 3 = 21번)
+    assert.deepStrictEqual(plain(lessonWork({ tabs: ['basicPrac', 'advLearn'] }, 'all', 0)), { tabs: 2, images: 25, slideImages: 0, ncs: 1, gyosuan: 0, qbank: 0, art: 0, volume: 1, volumeCalls: 21, volumeMinutes: 360, volumeAdv: 1 });
     assert.strictEqual(plain(lessonWork({ tabs: [] }, 'all')).ncs, 0, '빈 탭 목록이면 NCS 배정도 없다');
     assert.strictEqual(plain(lessonWork({ tabs: 6 }, 'all', 0)).images, 50, '탭 수만 알면 여섯 탭의 평균으로 센다');
 });

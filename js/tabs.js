@@ -503,7 +503,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         mainQuestText: subj?.mainQuest?.description || '',
         codeTopic: lessonCodeTopic(mod), // 코드를 다루는 차시면 설명마다 예제 코드 블록을 쓰게 한다
         targetMinutes: learnTargetMinutes(mod, tabId), // 학습 탭의 낭독 목표(분, 다른 탭은 0)
-        practiceMinutes: lessonPracticeMinutes(mod, tabId), // 강사가 정한 실습 시간(분, 정하지 않았거나 실습 탭이 아니면 0)
+        practiceMinutes: lessonPracticeMinutes(mod, tabId), // 강사가 정한 실습 시간(분, 정하지 않았거나 실습 탭이 아니면 0. 실습 탭 지시는 0이면 기본 120분으로 쓴다)
         isMainQuest: mod.id === 'mainQuest' // 최종 평가 탭에는 핵심 요약 상자 규칙을 주지 않는다(ui.js questRuleOptions)
     };
     const { systemInstruction, userPrompt } = buildTaskContext('tab_content', baseArgs);
@@ -531,7 +531,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             }
         };
 
-        // ─── CONTINUE/END 분할 생성 루프 (긴 탭, 특히 학습 탭 480분이 잘리지 않도록) ───
+        // ─── CONTINUE/END 분할 생성 루프 (긴 탭, 특히 낭독 수백 분인 학습 탭이 잘리지 않도록) ───
         const CONTINUE_MARKER = '<!-- CONTINUE -->';
         const END_MARKER = '<!-- END -->';
         // 학습 탭은 분량이 가장 커서 청크를 더 허용하고, 실습 시간을 정한 실습 탭은 시간에 맞춰 늘린다(lesson-lint.js tabChunkLimit)

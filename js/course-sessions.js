@@ -106,18 +106,20 @@ function sessionRows(modules) {
     return sessions.map((session, index) => ({ title: sessionTitle(modules, session), minutes: session.minutes, steps: sessionSteps(modules, session, index, sessions.length) }));
 }
 
-function sessionTableLines(modules, separator = '<br>') {
+// period: 1시간 칸의 이름. 교수안은 '차시'(차시별 교수안·슬라이드와 같다), 과정 설계서는 '교시'(차시 하나가 하루 8시간이라 1시간 칸은 교시로 부른다)
+function sessionTableLines(modules, separator = '<br>', period = '차시') {
     const rows = sessionRows(modules).map((row, index) => {
         const steps = row.steps.map(step => `${step.label} ${step.text} (${fmtMinutes(step.minutes)})`);
-        return `| ${index + 1}차시. ${mdCell(row.title)} | ${fmtMinutes(row.minutes)} | ${mdCell(steps.join(separator))} |`;
+        return `| ${index + 1}${period}. ${mdCell(row.title)} | ${fmtMinutes(row.minutes)} | ${mdCell(steps.join(separator))} |`;
     });
-    return rows.length ? ['### 차시 구성 (1차시 = 1시간)', '', '| 차시 | 시간 | 진행 단계 |', '|---|---|---|', ...rows, ''] : [];
+    const heading = period === '차시' ? '### 차시 구성 (1차시 = 1시간)' : `### 시간표 (1${period} = 1시간)`;
+    return rows.length ? [heading, '', `| ${period} | 시간 | 진행 단계 |`, '|---|---|---|', ...rows, ''] : [];
 }
 
-// 과정 설계서: 교과의 차시를 모듈로 삼아 시간표를 만든다
+// 과정 설계서: 교과의 차시(하루 8시간)를 모듈로 삼아 1교시(1시간) 단위 시간표를 만든다
 function subjectSessionLines(subject) {
     const modules = subject.lessons.map(lesson => ({ title: lesson.title, minutes: lessonMinutes(lesson), flow: lesson.flow }));
-    return sessionTableLines(modules);
+    return sessionTableLines(modules, '<br>', '교시');
 }
 
 // 교수안의 수업 흐름 표 행([단계, 시간, 핵심])에서 진행 단계를 만든다

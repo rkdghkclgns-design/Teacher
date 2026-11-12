@@ -34,7 +34,7 @@ const MERGE_BUSY_TEXT = '진행 중인 생성이 끝난 뒤 다시 시도해주�
 const MERGE_LOADING_TEXT = 'AI가 상세 교안을 작성하고 있습니다...';
 const MERGE_GONE_TEXT = '병합한 기본학습을 채우는 동안 그 차시를 지웠거나 백업·PC 폴더를 불러와 차시에 넣지 않았습니다.';
 
-// 병합한 기본학습의 낭독 목표(분, lesson-lint.js learnTargetMinutes). 분량 채우기(lesson-volume.js)를 싣지 않은 화면은 0(받은 글 그대로 둔다)
+// 병합한 기본학습의 낭독 목표(분, lesson-lint.js learnTargetMinutes: 480분 − 과정 기본 기본실습 시간, 기본 360분). 분량 채우기(lesson-volume.js)를 싣지 않은 화면은 0(받은 글 그대로 둔다)
 const mergeVolumeTarget = () => (typeof ensureSpokenVolume === 'function' && typeof learnTargetMinutes === 'function' ? learnTargetMinutes(null, 'basicLearn') : 0);
 
 // 병합한 새 차시가 아직 그 교과(지금 데이터)에 있는가. 채우는 동안 지우거나 백업·PC 폴더를 불러오면 아니다(api.js lessonStillLive)
@@ -152,7 +152,7 @@ async function executeMerge() {
         const data = await callGemini(TEXT_MODEL, payload);
 
         const draft = extractText(data);
-        // 병합한 기본학습도 낭독 목표(480분)까지 채운다(lesson-volume.js). 채우기를 싣지 않은 화면은 받은 글 그대로다
+        // 병합한 기본학습도 낭독 목표(480분 − 기본실습 시간)까지 채운다(lesson-volume.js). 채우기를 싣지 않은 화면은 받은 글 그대로다
         const filled = target ? await fillMergedLearn(subj, newLesson, draft, snapshot, target) : { md: draft, volume: null };
         if (filled.gone) {
             const kept = filled.md && typeof keepVolumeText === 'function' ? ` ${await keepVolumeText(newLesson, filled.md, 'basicLearn')}` : '';

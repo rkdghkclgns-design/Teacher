@@ -1,5 +1,5 @@
-// 학습 탭 480분과 실습 시간 테스트 (실행: node tests/tab-time.test.js)
-// 기본학습·심화학습의 낭독 목표(차시 시간과 관계없이 480분), 심화학습의 지시·이어쓰기·분량 보강과 분량 채우기(탭 생성·탭 위 단추·묻는 창·예고),
+// 학습 탭 낭독 목표와 실습 시간 테스트 (실행: node tests/tab-time.test.js)
+// 기본학습·심화학습의 낭독 목표(차시 시간과 관계없이 하루 480분 − 같은 트랙 실습 시간, 실습 기본 120분이면 360분), 심화학습의 지시·이어쓰기·분량 보강과 분량 채우기(탭 생성·탭 위 단추·묻는 창·예고),
 // 강사가 정한 실습 시간(과정 기본값·차시 값·실습 탭 단추)이 지시·이어쓰기·청크 상한·예고에 닿는지, 정하지 않으면 지시가 예전과 같은지,
 // (⏱) 합계 알림과 불러온 저장본의 실습 시간 검사를 실제 파일로 확인한다. AI 응답만 스텁이고 키는 쓰지 않는다.
 const fs = require('fs');
@@ -16,7 +16,9 @@ const plain = value => JSON.parse(JSON.stringify(value));
 const call = (ctx, name) => vm.runInContext(name, ctx);
 const FILL_UNIT = '가나다라마바사아자차. ';
 const filler = n => FILL_UNIT.repeat(Math.ceil(n / FILL_UNIT.length)).slice(0, n).trim();
-const TARGET_CHARS = 480 * 250;
+// 19차: 실습 시간을 정하지 않은 학습 탭의 낭독 목표(480 − 120 = 360분)
+const LEARN = 360;
+const TARGET_CHARS = LEARN * 250;
 const hash = text => crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
 
 function fakeElement() {
@@ -146,16 +148,14 @@ function promptContext() {
     return ctx;
 }
 
-// 실습 시간을 정하지 않았을 때의 기본실습·심화실습 탭 지시(바꾸기 전과 한 글자도 같아야 한다)
-const OLD_BASIC_PRAC = '이 교안의 "기본 실습" 영역을 작성하세요. 학생이 핵심 내용을 직접 체험하는 실습 과제를 설계하세요.\n[시간 배분 — 이 탭: 90~120분]\n이 탭은 "기본 학습" 본과정을 보완하는 독립 기본 실습 모듈로, 90~120분 분량입니다.\n각 ## 제목 끝에 (⏱ N분)을 명시하고, 합계가 90~120분이 되게 하세요.\n\n[분량 규칙 — 절대 준수]\n- 순수 텍스트(마크다운 서식 제외) 최소 8,000자 이상.\n- 마크다운 줄 수 기준 최소 250줄 이상.\n- ## 대주제(실습 파트) 최소 3개.\n- 짧은 교안은 불합격 처리됩니다.\n\n[필수 포함 항목]\n- 실습 목표 및 개요 (기본학습에서 배운 핵심 개념과 연결)\n- 실습 과제 최소 3개 (각 과제에 아래 항목 모두 포함):\n  * 과제 제목, 과제 설명 (상세하게)\n  * 단계별 수행 절차 (Step-by-Step, 최소 5단계)\n  * ⏱️ 예상 소요시간, 🎚️ 난이도(초급)\n  * 예시 결과물 또는 기대 산출물 설명\n  * 평가 기준 (체크리스트 또는 루브릭)\n- 실습 중 자주 하는 실수 및 해결 가이드';
-const OLD_ADV_PRAC = '이 교안의 "심화 실습" 영역을 작성하세요. 도전적이고 창의적인 프로젝트형 과제를 설계하세요.\n[시간 배분 — 이 탭: 90~120분]\n이 탭은 "기본 학습" 본과정을 보완하는 독립 심화 실습 모듈로, 90~120분 분량입니다.\n각 ## 제목 끝에 (⏱ N분)을 명시하고, 합계가 90~120분이 되게 하세요.\n\n[분량 규칙 — 절대 준수]\n- 순수 텍스트(마크다운 서식 제외) 최소 8,000자 이상.\n- 마크다운 줄 수 기준 최소 250줄 이상.\n- ## 대주제(실습 파트) 최소 3개.\n- 짧은 교안은 불합격 처리됩니다.\n\n[필수 포함 항목]\n- 심화 실습 목표 및 개요 (심화학습에서 배운 고급 개념과 연결)\n- 프로젝트형 실습 과제 최소 2개 (각 과제에 아래 항목 모두 포함):\n  * 프로젝트 제목, 시나리오 설명 (실무 상황 기반)\n  * 단계별 수행 절차 (Step-by-Step, 최소 7단계)\n  * ⏱️ 예상 소요시간, 🎚️ 난이도(중급~고급)\n  * 예시 결과물 또는 기대 산출물 설명\n  * 평가 기준 (100점 만점 루브릭: S/A/B/C/F)\n- 도전 과제 또는 보너스 미션 1개\n- 팀 프로젝트 진행 시 역할 분배 가이드';
 // 바뀌지 않아야 할 다른 지시의 sha256 앞 16자(이 묶음을 시작하기 전 코드에서 같은 입력으로 잰 값).
-// 기본학습 탭 지시는 18차에 첫머리 차례(개요 → 학습 목표)를 바꿔 다시 쟀다(tests/lesson-info.test.js가 바뀐 글을 본다)
+// 기본학습 탭 지시는 18차에 첫머리 차례(개요 → 학습 목표)를 바꿔 다시 쟀다(tests/lesson-info.test.js가 바뀐 글을 본다).
+// 19차에 기본실습 이어쓰기(기본 120분 실습), 기본학습·기본실습 과정 설계 지시(하루 480분 − 실습, 기본 실습 120분)를 바꿔 다시 쟀다
 const PINNED = {
     tab_basicLearn: '2f73034e361d5db0', tab_assessment: '13349ea0610eb3a3',
-    cont_basicLearn: 'b212c475f1a1cbcd', cont_basicPrac: 'ba3a5e78f8f06d7e', cont_assessment: 'ba3a5e78f8f06d7e',
+    cont_basicLearn: 'b212c475f1a1cbcd', cont_basicPrac: 'b9201ff5fb01a88f', cont_assessment: 'ba3a5e78f8f06d7e',
     volume_system: '70a87b493ebd09b6', volume_user: '494fa97e4c7df814',
-    brief_basicLearn: 'e061f91ab2e3b211', brief_basicPrac: '9a1de5b816050a04', brief_gyosuan: '9a1de5b816050a04',
+    brief_basicLearn: 'f5461c5369754168', brief_basicPrac: '51b4113703b57e70', brief_gyosuan: '9a1de5b816050a04',
     gen_basicPrac: '150894263488005a', gen_basicLearn: '0ad2abc8517f47de'
 };
 
@@ -182,14 +182,14 @@ async function run(name, fn) {
         return sys.slice(sys.indexOf('[이어쓰기 규칙]'));
     };
 
-    /* ---------- 학습 탭 480분 ---------- */
-    await run('낭독 목표: 기본학습·심화학습은 차시 시간과 관계없이 정확히 480분이고, 다른 탭은 0이다. 최종 평가는 채우지 않는다', () => {
+    /* ---------- 학습 탭 낭독 목표 ---------- */
+    await run('낭독 목표: 기본학습·심화학습은 차시 시간과 관계없이 480분 − 같은 트랙 실습 시간이고(정하지 않으면 360분), 다른 탭은 0이다. 최종 평가는 채우지 않는다', () => {
         const target = call(pure, 'learnTargetMinutes');
         [{}, { hours: 1 }, { hours: 2, minutes: 120 }, { hours: 10, minutes: 600 }, null].forEach(mod => {
-            assert.deepStrictEqual([target(mod, 'basicLearn'), target(mod, 'advLearn')], [480, 480], JSON.stringify(mod));
+            assert.deepStrictEqual([target(mod, 'basicLearn'), target(mod, 'advLearn')], [LEARN, LEARN], JSON.stringify(mod));
         });
         assert.deepStrictEqual(['basicPrac', 'advPrac', 'assessment', 'constructor'].map(tabId => target({ hours: 10 }, tabId)), [0, 0, 0, 0]);
-        assert.strictEqual(call(pure, 'basicLearnTargetMinutes')({ hours: 10 }), 480, '예전 이름도 같은 값');
+        assert.strictEqual(call(pure, 'basicLearnTargetMinutes')({ hours: 10 }), LEARN, '예전 이름도 같은 값');
         const fills = call(pure, 'fillsLearnVolume');
         assert.deepStrictEqual([fills({ id: 1 }, 'basicLearn'), fills({ id: 1 }, 'advLearn'), fills({ id: 'mainQuest' }, 'advLearn'), fills({ id: 1 }, 'advPrac'), fills(null, 'basicLearn')], [true, true, false, false, false]);
     });
@@ -201,7 +201,7 @@ async function run(name, fn) {
             '## 대주제 최소 8개, ### 소주제 최소 16개.', '표(Table) 최소 6개, mermaid 다이어그램 최소 3개', '학습 목표부터 "## ✅ 학습 후 체크리스트"까지', '<!-- CONTINUE -->']
             .forEach(part => assert.ok(text.includes(part), part));
         ['90~120분', '12,000자', '350줄', '짧은 교안은 불합격'].forEach(part => assert.ok(!text.includes(part), part));
-        assert.ok(build('tab_content', { tabId: 'advLearn', tabLabel: '심화학습' }).userPrompt.includes('480분은 120,000자 이상입니다.'), '목표를 모르면 480분');
+        assert.ok(build('tab_content', { tabId: 'advLearn', tabLabel: '심화학습' }).userPrompt.includes('360분은 90,000자 이상입니다.'), '목표를 모르면 360분(480 − 실습 기본 120)');
     });
 
     await run('심화학습 이어쓰기·분량 보강: 첫 청크와 같은 낭독 480분 기준과 심화 역할을 준다. 기본학습 지시에는 심화 역할이 없다', () => {
@@ -219,13 +219,14 @@ async function run(name, fn) {
         const brief = call(pure, 'lessonDesignBrief');
         const lesson = { minutes: 120, hours: 2, flow: [{ phase: '도입', title: '시작', minutes: 10 }], gen: { length: '길게 (약 1,500자)', level: '실무 경험자' } };
         const adv = brief(lesson, 'advLearn');
-        assert.ok(adv.includes('심화 학습 탭은 이 시간으로 줄이지 않고 낭독 480분(공백 포함 약 120,000자) 분량을 지킵니다.') && adv.includes('[진행 단계 — 내용 순서만 참고합니다]'), adv);
+        assert.ok(adv.includes('심화 학습 탭은 차시 시간과 관계없이 하루 8시간(480분)에서 같은 트랙 실습 120분을 뺀 낭독 360분(공백 포함 약 90,000자) 분량을 지킵니다.') && adv.includes('[진행 단계 — 내용 순서만 참고합니다]'), adv);
         ['비례해 줄이세요', '(10분)', '섹션 하나당 분량'].forEach(part => assert.ok(!adv.includes(part), part));
-        assert.ok(brief({ minutes: 600, hours: 10 }, 'advLearn').includes('낭독 480분(공백 포함 약 120,000자)'), '10시간 차시도 480분');
+        assert.ok(brief({ minutes: 600, hours: 10 }, 'advLearn').includes('낭독 360분(공백 포함 약 90,000자)'), '10시간 차시도 360분');
+        assert.ok(brief({ minutes: 480, hours: 8, gen: { advPracMinutes: 240 } }, 'advLearn').includes('같은 트랙 실습 240분을 뺀 낭독 240분'), '심화실습 240분이면 심화학습 240분');
         assert.ok(!call(pure, 'lessonGenBrief')(lesson, 'advLearn').includes('섹션 하나당 분량') && call(pure, 'lessonGenBrief')(lesson, 'advPrac').includes('섹션 하나당 분량'));
     });
 
-    await run('심화학습 탭 생성: 초안 뒤 분량 보강으로 낭독 480분을 넘기고 (⏱) 합계는 480분이다. \'심화\'로 시작하는 섹션도 늘리고 기본학습은 건드리지 않는다', async () => {
+    await run('심화학습 탭 생성: 초안 뒤 분량 보강으로 낭독 목표(기본 360분)를 넘기고 (⏱) 합계는 목표 이상이며 초안에 적힌 시간(460분)을 깎지 않는다. \'심화\'로 시작하는 섹션도 늘리고 기본학습은 건드리지 않는다', async () => {
         const mod = lessonOf();
         const ctx = genContext();
         ctx.currentMod = mod;
@@ -235,10 +236,10 @@ async function run(name, fn) {
         assert.deepStrictEqual(result, { ok: true, partial: false });
         const saved = mod.tabContents.advLearn;
         assert.ok(call(ctx, 'spokenChars')(saved) >= TARGET_CHARS, String(call(ctx, 'spokenChars')(saved)));
-        assert.strictEqual(call(ctx, 'volumeLabelSum')(saved), 480);
+        assert.ok(call(ctx, 'volumeLabelSum')(saved) >= call(ctx, 'volumeLabelSum')(advDraft()), '적힌 시간 아래로 줄이지 않는다(19차 검토)');
         assert.ok(volumePrompts(ctx).length > 5 && volumePrompts(ctx).every(text => text.startsWith('volume_expand|advLearn|') && text.split('|')[2].includes('심화 이론')), volumePrompts(ctx)[0]);
-        assert.ok(statuses.some(text => text.includes('심화학습 분량 채우는 중') && text.includes('/480분')), statuses.find(text => text.includes('낭독')));
-        assert.ok(ctx.alerts.at(-1).includes('심화학습 탭이 생성되었습니다. 낭독 약') && ctx.alerts.at(-1).includes('(목표 480분)'), ctx.alerts.at(-1));
+        assert.ok(statuses.some(text => text.includes('심화학습 분량 채우는 중') && text.includes(`/${LEARN}분`)), statuses.find(text => text.includes('낭독')));
+        assert.ok(ctx.alerts.at(-1).includes('심화학습 탭이 생성되었습니다. 낭독 약') && ctx.alerts.at(-1).includes(`(목표 ${LEARN}분)`), ctx.alerts.at(-1));
         assert.strictEqual(mod.tabContents.basicLearn, null);
         const open = (title, tabId) => call(ctx, 'isVolumeContentSection')({ title, text: `## ${title}\n\n본문입니다.` }, new Set(), tabId);
         assert.deepStrictEqual([open('1. 심화 이론 (⏱ 60분)', 'advLearn'), open('1. 심화 이론 (⏱ 60분)', 'basicLearn'), open('실습 안내', 'advLearn')], [true, false, false], '기본학습의 심화 섹션은 늘리지 않는다');
@@ -255,7 +256,7 @@ async function run(name, fn) {
         fresh.currentMod = lessonOf();
         fresh.confirmAnswer = false;
         await call(fresh, 'startLessonGeneration')(1);
-        assert.ok(fresh.confirms[0].message.includes('기본학습·심화학습은 탭마다 낭독 480분') && fresh.confirms[0].message.includes('탭 2개에 긴 호출이 약 54번'), fresh.confirms[0].message);
+        assert.ok(fresh.confirms[0].message.includes(`기본학습·심화학습은 탭마다 낭독 ${LEARN}분`) && fresh.confirms[0].message.includes('탭 2개에 긴 호출이 약 42번'), fresh.confirms[0].message);
     });
 
     await run('심화학습 이어쓰기 상한: 학습 탭은 6단락, 정하지 않은 실습 탭은 3단락까지 받는다', async () => {
@@ -279,15 +280,15 @@ async function run(name, fn) {
         vm.runInContext("currentLessonTab = 'advLearn'; _lessonPanel = null;", ctx);
         call(ctx, 'syncVolumeChip')(mod);
         const chip = ctx.elements['lesson-volume-chip'];
-        assert.ok(chip.className.includes('amber') && chip.innerHTML.includes('/ 목표 480분') && chip.innerHTML.includes('data-volume-tab="advLearn"') && chip.innerHTML.includes('분량 채우기'), chip.innerHTML);
+        assert.ok(chip.className.includes('amber') && chip.innerHTML.includes(`/ 목표 ${LEARN}분`) && chip.innerHTML.includes('data-volume-tab="advLearn"') && chip.innerHTML.includes('분량 채우기'), chip.innerHTML);
         const panel = call(ctx, 'reviewPanelHtml')(mod, 'advLearn', start, false);
-        assert.ok(panel.includes('분(목표 480분)'), '검수 패널에도 심화학습 낭독 시간');
+        assert.ok(panel.includes(`분(목표 ${LEARN}분)`), '검수 패널에도 심화학습 낭독 시간');
         ctx.callGemini = volumeModel(ctx, {});
         answerPreview(ctx, 'apply');
         await call(ctx, 'fillLessonVolume')('1', 'advLearn');
         const asked = ctx.confirms[0];
         assert.strictEqual(asked.opts.title, '심화학습 분량 채우기');
-        assert.ok(asked.message.startsWith('심화학습은 지금 낭독 약') && asked.message.includes('심화학습은 낭독 480분(공백 포함 약 120,000자)'), asked.message);
+        assert.ok(asked.message.startsWith('심화학습은 지금 낭독 약') && asked.message.includes('심화학습은 낭독 360분(공백 포함 약 90,000자)'), asked.message);
         assert.ok(call(ctx, 'spokenChars')(mod.tabContents.advLearn) >= TARGET_CHARS, '반영했다');
         assert.ok(ctx.previewHtml.includes('심화학습 분량 채우기 미리보기') || ctx.previewHtml.includes('심화학습을 낭독 약'), ctx.previewHtml.slice(0, 300));
         assert.deepStrictEqual(ctx.archived.map(item => [item.tabId, item.reason, item.content === start, item.title]), [['advLearn', '분량 채우기 전', true, '게임 경제 · 심화학습']]);
@@ -321,10 +322,10 @@ async function run(name, fn) {
         assert.deepStrictEqual([declined.cancelled, ctx.prompts.length], [true, 0]);
         const asked = ctx.confirms[0];
         assert.strictEqual(asked.opts.title, '심화학습 만들기');
-        assert.ok(asked.message.startsWith('«심화학습» 탭을 만듭니다.') && asked.message.includes('480분') && asked.message.includes('긴 호출이 약 27번') && asked.message.includes('심화학습은 낭독 480분'), asked.message);
+        assert.ok(asked.message.startsWith('«심화학습» 탭을 만듭니다.') && asked.message.includes(`${LEARN}분`) && asked.message.includes('긴 호출이 약 21번') && asked.message.includes(`심화학습은 낭독 ${LEARN}분`), asked.message);
         vm.runInContext("currentLessonTab = 'advLearn'", ctx);
         const hint = call(ctx, 'emptyTabPromptHtml')(ctx.currentMod, false);
-        assert.ok(hint.includes('심화학습은 강사가 소리 내어 읽어도 480분이 걸리는 분량까지') && !hint.includes('수십 초'), hint);
+        assert.ok(hint.includes(`심화학습은 강사가 소리 내어 읽어도 ${LEARN}분이 걸리는 분량까지`) && !hint.includes('수십 초'), hint);
     });
 
     await run('미리 보기: 심화학습을 만들면 기본학습처럼 분량 보강 호출을 더하고, 둘 다 만들면 탭마다 센다', () => {
@@ -334,13 +335,17 @@ async function run(name, fn) {
         const work = (input, extra) => plain(vm.runInContext('lessonWork', ectx)(input, 'section', 0, extra));
         const note = w => vm.runInContext('estimateNote', ectx)(plain(vm.runInContext('estimateSummary', ectx)(w, { model: 'gemini-3.8-flash', timings: {} })), 'gemini-3.8-flash');
         const adv = work({ tabs: ['advLearn'] });
-        assert.deepStrictEqual([adv.volume, adv.volumeCalls, adv.volumeMinutes, adv.volumeAdv], [1, 27, 480, 1]);
+        assert.deepStrictEqual([adv.volume, adv.volumeCalls, adv.volumeMinutes, adv.volumeAdv], [1, 21, LEARN, 1]);
         const both = work({ tabs: ['basicLearn', 'basicPrac', 'advLearn'] });
-        assert.deepStrictEqual([both.volume, both.volumeCalls, both.volumeAdv], [2, 54, 1]);
-        assert.ok(note(adv).includes('심화학습은 낭독 480분(공백 포함 약 120,000자)이 될 때까지') && note(adv).includes('긴 호출이 약 27번'), note(adv));
-        assert.ok(note(both).includes('기본학습·심화학습은 탭마다 낭독 480분') && note(both).includes('탭 2개에 긴 호출이 약 54번'), note(both));
+        assert.deepStrictEqual([both.volume, both.volumeCalls, both.volumeAdv], [2, 42, 1]);
+        assert.ok(note(adv).includes('심화학습은 낭독 360분(공백 포함 약 90,000자)이 될 때까지') && note(adv).includes('긴 호출이 약 21번'), note(adv));
+        assert.ok(note(both).includes(`기본학습·심화학습은 탭마다 낭독 ${LEARN}분`) && note(both).includes('탭 2개에 긴 호출이 약 42번'), note(both));
+        // 19차: 트랙마다 실습 시간이 달라 학습 탭 목표가 다르면 탭마다 그 목표로 세고, 안내에는 범위를 보인다
+        const split = work({ tabs: ['basicLearn', 'advLearn'], volumeMinutes: { basicLearn: 300, advLearn: LEARN } });
+        assert.deepStrictEqual([split.volumeCalls, split.volumeMinutes, split.volumeMinutesLow], [15 + 3 + 18 + 3, LEARN, 300]);
+        assert.ok(note(split).includes('기본학습·심화학습은 탭마다 낭독 300~360분(공백 포함 약 75,000~90,000자)'), note(split));
         assert.ok(!('volume' in work({ tabs: ['advLearn'], fillsVolume: false })), '최종 평가는 세지 않는다');
-        assert.strictEqual(vm.runInContext('estimateCallSplit', ectx)({ tabs: 2, volume: 2 }).long, 54, '긴 호출 수를 모르면 탭마다 480분 상한으로');
+        assert.strictEqual(vm.runInContext('estimateCallSplit', ectx)({ tabs: 2, volume: 2 }).long, 42, '긴 호출 수를 모르면 탭마다 기본 360분 상한으로');
     });
 
     /* ---------- 실습 시간 ---------- */
@@ -364,10 +369,12 @@ async function run(name, fn) {
         assert.deepStrictEqual([chunks('basicLearn'), chunks('advLearn'), chunks('assessment', 600), chunks('advPrac', 95)], [6, 6, 3, 3]);
     });
 
-    await run('실습 지시: 실습 시간을 정하면 그 시간과 시간에 맞춘 최소 분량을 주고, 정하지 않으면 예전 지시와 한 글자도 같다', () => {
-        assert.strictEqual(tabText('basicPrac'), OLD_BASIC_PRAC);
-        assert.strictEqual(tabText('advPrac'), OLD_ADV_PRAC);
-        assert.strictEqual(tabText('basicPrac', { practiceMinutes: 95 }), OLD_BASIC_PRAC, '받을 수 없는 값은 정하지 않은 것');
+    await run('실습 지시: 실습 시간을 정하면 그 시간과 시간에 맞춘 최소 분량을 주고, 정하지 않으면 기본 120분으로 준다(옛 90~120분은 없다)', () => {
+        assert.strictEqual(tabText('basicPrac'), tabText('basicPrac', { practiceMinutes: 120 }), '정하지 않으면 기본 120분과 같다');
+        assert.strictEqual(tabText('advPrac'), tabText('advPrac', { practiceMinutes: 120 }));
+        assert.strictEqual(tabText('basicPrac', { practiceMinutes: 95 }), tabText('basicPrac'), '받을 수 없는 값은 정하지 않은 것');
+        ['[시간 배분 — 이 탭: 120분]', '합계가 정확히 120분이 되게 하세요.', '최소 9,000자 이상', '최소 288줄 이상', '실습 과제 최소 3개'].forEach(part => assert.ok(tabText('basicPrac').includes(part), part));
+        assert.ok(tabText('advPrac').includes('프로젝트형 실습 과제 최소 2개') && ![tabText('basicPrac'), tabText('advPrac')].some(prompt => prompt.includes('90~120분')));
         const basic = tabText('basicPrac', { practiceMinutes: 180 });
         ['[시간 배분 — 이 탭: 180분]', '독립 기본 실습 모듈로, 180분 분량입니다.', '합계가 정확히 180분이 되게 하세요.', '최소 13,500자 이상', '최소 432줄 이상', '## 대주제(실습 파트) 최소 3개.', '실습 과제 최소 5개', '최소 5단계']
             .forEach(part => assert.ok(basic.includes(part), part));
@@ -382,10 +389,10 @@ async function run(name, fn) {
         ['최소 45,000자 이상', '최소 1,440줄 이상', '프로젝트형 실습 과제 최소 6개', '## 대주제(실습 파트) 최소 3개.'].forEach(part => assert.ok(long.includes(part), part));
         assert.ok(tabText('basicPrac', { practiceMinutes: 600 }).includes('실습 과제 최소 8개'));
         assert.ok(contRules('advPrac', { practiceMinutes: 240 }).includes('이 탭은 240분 실습입니다.') && contRules('advPrac', { practiceMinutes: 240 }).includes('합계가 정확히 240분'));
-        assert.ok(!contRules('advPrac').includes('분 실습입니다'), '정하지 않으면 이어쓰기도 그대로');
+        assert.ok(contRules('advPrac').includes('이 탭은 120분 실습입니다.'), '정하지 않으면 이어쓰기도 기본 120분');
     });
 
-    await run('바뀌지 않는 지시: 실습 시간을 정하지 않으면 기본학습·학습이해도 탭, 이어쓰기, 분량 보강, 과정 설계 지시가 바꾸기 전과 같다', () => {
+    await run('바뀌지 않는 지시: 실습 시간을 정하지 않으면 기본학습·학습이해도 탭, 이어쓰기, 분량 보강, 과정 설계 지시가 정한 글과 같다(19차에 실습 기본 120분·학습 360분으로 바뀐 셋은 다시 쟀다)', () => {
         const volumeArgs = { tabId: 'basicLearn', tabLabel: '기본학습', targetMinutes: 480, outline: ['학습 목표', '1. 반복문 (⏱ 60분)'], objectives: ['반복문으로 합계를 구하는 코드를 작성할 수 있습니다.'], sectionTitle: '1. 반복문 (⏱ 60분)', sectionText: '## 1. 반복문 (⏱ 60분)\n\n반복문은 같은 일을 되풀이합니다.', requestChars: 12000, subtopics: 5 };
         const volume = build('volume_expand', volumeArgs);
         const lesson = { title: '차시', minutes: 120, hours: 2, objectives: ['목표를 작성할 수 있습니다.'], flow: [{ phase: '도입', title: '시작', minutes: 10 }, { phase: '전개', title: '본문', minutes: 100 }, { phase: '정리', title: '끝', minutes: 10 }], gen: { level: '실무 경험자', length: '길게 (약 1,500자)' } };
@@ -399,7 +406,7 @@ async function run(name, fn) {
             gen_basicPrac: genBrief('basicPrac'), gen_basicLearn: genBrief('basicLearn')
         };
         Object.entries(PINNED).forEach(([key, expected]) => assert.strictEqual(hash(now[key]), expected, `${key}가 바뀌었다:\n${now[key].slice(0, 300)}`));
-        assert.ok(brief('basicPrac').includes('비례해 줄이세요') && brief('advPrac').includes('비례해 줄이세요'), '실습 시간을 정하지 않은 실습 탭은 예전처럼 줄인다');
+        assert.ok(['basicPrac', 'advPrac'].every(tabId => brief(tabId).includes('기본 실습 시간 120분 분량으로 씁니다.') && !brief(tabId).includes('비례해 줄이세요')), '실습 시간을 정하지 않은 실습 탭은 차시 시간으로 줄이지 않고 기본 120분으로 쓴다');
     });
 
     await run('과정 설계 지시: 실습 시간을 정한 실습 탭은 차시 시간으로 줄이라고 하지 않고 정한 시간으로 쓴다고 한다', () => {
@@ -448,7 +455,7 @@ async function run(name, fn) {
         ctx.currentMod = mod;
         ctx.globalState.courseDesign = { genOptions: { advPracMinutes: 150 } };
         const button = (m, tabId, place) => call(ctx, 'practiceTimeButtonHtml')(m, tabId, place);
-        assert.ok(button(mod, 'basicPrac').includes('실습 시간 기본 90~120분') && button(mod, 'basicPrac').includes('id="lesson-practice-time"') && button(mod, 'basicPrac').includes('data-practice-tab="basicPrac"'));
+        assert.ok(button(mod, 'basicPrac').includes('실습 시간 기본 120분') && button(mod, 'basicPrac').includes('id="lesson-practice-time"') && button(mod, 'basicPrac').includes('data-practice-tab="basicPrac"'));
         assert.ok(button(mod, 'advPrac').includes('실습 시간 150분(과정 기본값)'));
         assert.deepStrictEqual([button(mod, 'basicLearn'), button({ ...mod, id: 'mainQuest' }, 'basicPrac'), button(mod, 'constructor')], ['', '', '']);
         assert.ok(!button(mod, 'advPrac', 'empty').includes('id="lesson-practice-time"'), '빈 탭 안내의 단추는 같은 id를 쓰지 않는다');
@@ -464,6 +471,7 @@ async function run(name, fn) {
         assert.strictEqual(mod.history[0].note, '기본실습 시간 240분으로 정함');
         assert.ok(ctx.asked[0].message.includes('10분에서 600분 사이') && ctx.asked[0].opts.title === '기본실습 시간' && ctx.asked[0].opts.value === '', JSON.stringify(ctx.asked[0]));
         assert.ok(ctx.toasts.at(-1).message.includes('기본실습 시간을 240분으로 정했습니다.') && ctx.toasts.at(-1).message.includes('이미 만든 기본실습은 바뀌지 않습니다'), ctx.toasts.at(-1).message);
+        assert.ok(ctx.toasts.at(-1).message.includes('기본학습 낭독 목표는 240분입니다.') && ctx.toasts.at(-1).kind === 'success', '같은 트랙 학습 탭의 새 목표(480 − 240)를 알린다');
         ctx.callGemini = volumeModel(ctx, { tabReply: () => reply('## 실습 (⏱ 240분)\n\n본문입니다.') });
         answerPreview(ctx, 'apply');
         await call(ctx, 'generateTabContent')(1, 'basicPrac', { quiet: true });
@@ -520,8 +528,8 @@ async function run(name, fn) {
         const header = call(ctx, 'practiceTimeButtonHtml')(mod, 'basicPrac', 'header');
         assert.ok(shown(header).length <= 10 && shown(header) === '실습 130분' && header.includes('title="실습 시간 130분. 이 차시에서 정한 실습 시간입니다'), header);
         const unset = call(ctx, 'practiceTimeButtonHtml')(lessonOf(), 'advPrac', 'header');
-        assert.ok(shown(unset) === '실습 90~120분' && shown(unset).length <= 10, shown(unset));
-        assert.strictEqual(shown(call(ctx, 'practiceTimeButtonHtml')(lessonOf(), 'advPrac', 'empty')), '실습 시간 기본 90~120분');
+        assert.ok(shown(unset) === '실습 기본 120분' && shown(unset).length <= 10, shown(unset));
+        assert.strictEqual(shown(call(ctx, 'practiceTimeButtonHtml')(lessonOf(), 'advPrac', 'empty')), '실습 시간 기본 120분');
     });
 
     await run('갈래 고르기: 키보드로 기본학습 | 심화학습을 바꾸면 다시 그린 고르기의 고른 단추로 포커스를 돌려준다(숨은 사본은 건너뛴다)', async () => {
@@ -593,7 +601,7 @@ async function run(name, fn) {
         const lesson = lessonOf({ basicPrac: md(60) }, { gen: { basicPracMinutes: 120 } });
         const panel = call(ctx, 'reviewPanelHtml')(lesson, 'basicPrac', md(60), false);
         assert.ok(panel.includes('실습 시간 120분 · (⏱) 합계 60분') && panel.includes('text-amber-300'), panel.slice(0, 600));
-        assert.ok(call(ctx, 'reviewPanelHtml')(lessonOf({ advPrac: md(60) }), 'advPrac', md(60), false).includes('실습 시간: 정하지 않음(기본 90~120분)'));
+        assert.ok(call(ctx, 'reviewPanelHtml')(lessonOf({ advPrac: md(60) }), 'advPrac', md(60), false).includes('실습 시간: 정하지 않음(기본 120분)'));
         assert.ok(!call(ctx, 'reviewPanelHtml')(lessonOf({ basicLearn: md(60) }), 'basicLearn', md(60), false).includes('실습 시간'));
     });
 
@@ -616,15 +624,15 @@ async function run(name, fn) {
     await run('일괄 생성 보고: 낭독 목표에 못 미친 학습 탭을 탭마다 적고, 다시 시도한 탭과 합친다', async () => {
         const ctx = genContext();
         ctx.currentMod = lessonOf({ basicPrac: '글', advPrac: '글', assessment: '글', advAssessment: '글' }); // 빈 탭은 두 학습 탭뿐
-        vm.runInContext("generateTabContent = async (id, tabId) => { window.currentMod.tabContents[tabId] = '## 글'; return { ok: true, short: true, readMinutes: tabId === 'basicLearn' ? 300 : 410, targetMinutes: 480 }; };", ctx);
+        vm.runInContext("generateTabContent = async (id, tabId) => { window.currentMod.tabContents[tabId] = '## 글'; return { ok: true, short: true, readMinutes: tabId === 'basicLearn' ? 300 : 340, targetMinutes: 360 }; };", ctx);
         const filled = plain(await call(ctx, 'fillMissingTabs')(1));
-        assert.deepStrictEqual([filled.short, filled.readMinutes, filled.shortTabs], [true, 300, [{ tabId: 'basicLearn', label: '기본학습', readMinutes: 300 }, { tabId: 'advLearn', label: '심화학습', readMinutes: 410 }]]);
+        assert.deepStrictEqual([filled.short, filled.readMinutes, filled.shortTabs], [true, 300, [{ tabId: 'basicLearn', label: '기본학습', readMinutes: 300 }, { tabId: 'advLearn', label: '심화학습', readMinutes: 340 }]]);
         const item = { lessonId: 1, title: '게임 경제', subject: { id: 's1', title: '교과' } };
         const report = plain(await call(ctx, 'runLessonQueue')([item], async () => ({ ok: true, ...filled })));
         const html = call(ctx, 'lessonRunReportHtml')(report);
-        assert.ok(html.includes('낭독 분량이 목표에 못 미친 차시 1개') && html.includes('기본학습 낭독 약 300분 · 심화학습 낭독 약 410분') && html.includes("'분량 채우기'"), html);
-        const merged = plain(call(ctx, 'shortOfAttempts')({ short: true, readMinutes: 300, shortTabs: [filled.shortTabs[0]] }, { ok: true, short: true, readMinutes: 410, shortTabs: [filled.shortTabs[1]] }));
-        assert.deepStrictEqual([merged.readMinutes, merged.shortTabs.map(tab => tab.tabId)], [410, ['basicLearn', 'advLearn']]);
+        assert.ok(html.includes('낭독 분량이 목표에 못 미친 차시 1개') && html.includes('기본학습 낭독 약 300분 · 심화학습 낭독 약 340분') && html.includes("'분량 채우기'"), html);
+        const merged = plain(call(ctx, 'shortOfAttempts')({ short: true, readMinutes: 300, shortTabs: [filled.shortTabs[0]] }, { ok: true, short: true, readMinutes: 340, shortTabs: [filled.shortTabs[1]] }));
+        assert.deepStrictEqual([merged.readMinutes, merged.shortTabs.map(tab => tab.tabId)], [340, ['basicLearn', 'advLearn']]);
         assert.deepStrictEqual(plain(call(ctx, 'shortOfAttempts')({ ok: false }, { ok: true })), {});
     });
 

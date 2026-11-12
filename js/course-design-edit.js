@@ -1,8 +1,8 @@
-// course-design-edit.js - 과정 설계 미리보기의 블록·진행 단계 편집과 차시 구성 표시
+// course-design-edit.js - 과정 설계 미리보기의 블록·진행 단계 편집과 1시간 단위 시간표 표시
 // 편집 규칙은 develocket-slide(assets/course-ui.js setPath @3a7303f)를 따른다. 모든 변경은 새 초안을 돌려준다.
+// 단원은 늘 5차시(블록) × 하루 8시간이라(course-design.js) 블록 수와 블록 시간은 고치지 않고, 제목·학습목표·진행 단계만 고친다.
 
 const DESIGN_MIN_BLOCK_MINUTES = 10;
-const DESIGN_NEW_BLOCK_MINUTES = 60;
 const DESIGN_PHASES = ['도입', '전개', '정리'];
 const DESIGN_OBJECTIVE_BULLET = /^\s*(?:\d+[.)]|[-*•])\s*/;
 
@@ -25,9 +25,9 @@ function editDesignModule(draft, unitIndex, moduleIndex, change) {
     return { ...draft, units, edited: true };
 }
 
+// 블록 시간은 고치지 않는다(차시 하나 = 8시간)
 const DESIGN_MODULE_FIELDS = {
     title: (module, value) => ({ title: value.trim() || module.title }),
-    minutes: (module, value) => ({ minutes: roundMinutes(value, DESIGN_MIN_BLOCK_MINUTES) }),
     objectives: (module, value) => ({ objectives: parseObjectiveLines(value) })
 };
 
@@ -37,7 +37,9 @@ const DESIGN_STEP_FIELDS = {
     minutes: (step, value) => ({ minutes: roundMinutes(value, DESIGN_FLOW_STEP_MINUTES) })
 };
 
+// 고칠 수 없는 칸(블록 시간 등)이면 초안을 그대로 돌려준다
 function setDesignModuleField(draft, unitIndex, moduleIndex, field, value) {
+    if (!Object.prototype.hasOwnProperty.call(DESIGN_MODULE_FIELDS, field)) return draft;
     return editDesignModule(draft, unitIndex, moduleIndex, module => DESIGN_MODULE_FIELDS[field](module, value));
 }
 
@@ -65,23 +67,11 @@ function setDesignUnitTitle(draft, unitIndex, value) {
     return { ...draft, edited: true, units: mapAt(draft.units, unitIndex, unit => ({ ...unit, title: value.trim() || unit.title })) };
 }
 
-function addDesignBlock(draft, unitIndex) {
-    const title = '새 블록';
-    const block = { title, minutes: DESIGN_NEW_BLOCK_MINUTES, objectives: [], flow: defaultFlow(DESIGN_NEW_BLOCK_MINUTES, title), isDefault: false };
-    return { ...draft, edited: true, units: mapAt(draft.units, unitIndex, unit => ({ ...unit, modules: [...unit.modules, block] })) };
-}
-
-// 단원에는 블록이 하나는 있어야 하므로 마지막 블록은 지우지 않는다
-// 남은 블록의 isDefault를 지워 시간을 맞출 때 지운 블록이 기본 블록으로 되살아나지 않게 한다
-function removeDesignBlock(draft, unitIndex, moduleIndex) {
-    const without = unit => unit.modules.filter((_, i) => i !== moduleIndex).map(module => ({ ...module, isDefault: false }));
-    return { ...draft, edited: true, units: mapAt(draft.units, unitIndex, unit => (unit.modules.length > 1 ? { ...unit, modules: without(unit) } : unit)) };
-}
-
 function fitDesignBlock(draft, unitIndex, moduleIndex) {
     return editDesignModule(draft, unitIndex, moduleIndex, module => ({ flow: fitFlow(module.flow, module.minutes, module.title) }));
 }
 
+// 단원을 5차시 × 8시간으로 다시 맞춘다(course-design.js normalizeDesignUnit)
 function fitDesignUnit(draft, unitIndex) {
     return { ...draft, edited: true, units: mapAt(draft.units, unitIndex, normalizeDesignUnit) };
 }
@@ -90,8 +80,6 @@ function designEditAction(draft, action, data) {
     const [unit, module, step] = [Number(data.unit), Number(data.module), Number(data.step)];
     if (action === 'add-step') return addDesignStep(draft, unit, module);
     if (action === 'del-step') return removeDesignStep(draft, unit, module, step);
-    if (action === 'add-block') return addDesignBlock(draft, unit);
-    if (action === 'del-block') return removeDesignBlock(draft, unit, module);
     if (action === 'fit-block') return fitDesignBlock(draft, unit, module);
     if (action === 'fit-unit') return fitDesignUnit(draft, unit);
     return null;
@@ -101,7 +89,9 @@ function designEditAction(draft, action, data) {
 const designFlowMinutes = module => (module.flow || []).reduce((sum, step) => sum + (Number(step.minutes) || 0), 0);
 const designBlockMinutes = unit => unit.modules.reduce((sum, module) => sum + (Number(module.minutes) || 0), 0);
 const designFlowMatches = module => designFlowMinutes(module) === Number(module.minutes);
-const designUnitMatches = unit => designBlockMinutes(unit) === Number(unit.hours) * 60;
+// 단원은 정확히 5차시이고 차시마다 8시간(합계 40시간)이어야 한다
+const designUnitMatches = unit => Number(unit.hours) === DESIGN_UNIT_TOTAL_HOURS && unit.modules.length === DESIGN_LESSONS_PER_UNIT
+    && unit.modules.every(module => Number(module.minutes) === DESIGN_LESSON_MINUTES);
 
 function designTimeMismatches(draft) {
     return draft.units.reduce((count, unit) => count + (designUnitMatches(unit) ? 0 : 1) + unit.modules.filter(module => !designFlowMatches(module)).length, 0);
@@ -109,7 +99,6 @@ function designTimeMismatches(draft) {
 
 function designModuleNotes(module) {
     return [
-        module.minutes > DESIGN_MODULE_MAX_MINUTES && '블록은 3시간 이하로 나누세요',
         module.objectives.length > DESIGN_MAX_OBJECTIVES && `학습목표는 ${DESIGN_MAX_OBJECTIVES}개 이하를 권장합니다`,
         ...module.objectives.map((objective, i) => {
             const note = lintObjective(objective);
@@ -157,11 +146,9 @@ function designBlockHtml(module, unitIndex, moduleIndex) {
     return `
         <div class="p-2 rounded-lg bg-black/20 border border-white/5 space-y-1.5">
             <div class="flex items-center gap-1">
-                <span class="text-[0.6875rem] font-bold text-accent shrink-0">블록 ${unitIndex + 1}-${moduleIndex + 1}</span>
-                <input data-design-field="title" ${attrs} value="${escapeHtml(module.title)}" aria-label="블록 제목" class="flex-1 min-w-0 ${DESIGN_FIELD_CLASS}">
-                <input type="number" min="10" step="5" data-design-field="minutes" ${attrs} value="${Number(module.minutes) || 0}" aria-label="블록 시간(분)" class="w-16 text-right ${DESIGN_FIELD_CLASS}">
-                <span class="text-[0.6875rem] text-textMuted">분</span>
-                <button data-design-action="del-block" ${attrs} title="블록 삭제" class="px-1 text-rose-300 text-xs">✕</button>
+                <span class="text-[0.6875rem] font-bold text-accent shrink-0">${moduleIndex + 1}차시</span>
+                <input data-design-field="title" ${attrs} value="${escapeHtml(module.title)}" aria-label="차시 제목" class="flex-1 min-w-0 ${DESIGN_FIELD_CLASS}">
+                <span class="text-[0.6875rem] text-textMuted shrink-0" title="차시 하나는 하루 ${DESIGN_LESSON_HOURS}시간(실습 포함)입니다">${fmtMinutes(Number(module.minutes) || 0)}</span>
             </div>
             <label class="block text-[0.6875rem] text-textMuted">학습목표 (한 줄에 하나, ${DESIGN_MAX_OBJECTIVES}개 이하, '~할 수 있습니다')
                 <textarea data-design-field="objectives" ${attrs} rows="2" class="block w-full mt-0.5 ${DESIGN_FIELD_CLASS}">${escapeHtml(module.objectives.join('\n'))}</textarea>
@@ -174,22 +161,25 @@ function designBlockHtml(module, unitIndex, moduleIndex) {
         </div>`;
 }
 
+// 단원 머리줄: 5차시 × 8시간이면 ✓, 아니면(예전 초안) 지금 차시 수와 합계를 보이고 다시 맞추는 단추를 둔다
 function designUnitStatusHtml(unit, unitIndex) {
     const matched = designUnitMatches(unit);
+    const shape = `${DESIGN_LESSONS_PER_UNIT}차시 × ${DESIGN_LESSON_HOURS}시간`;
+    const text = matched ? `${shape} = ${DESIGN_UNIT_TOTAL_HOURS}시간 ✓` : `차시 ${unit.modules.length}개 · 합계 ${fmtMinutes(designBlockMinutes(unit))} ≠ ${shape}`;
     return `
-        <span class="text-[0.6875rem] ${matched ? 'text-emerald-400' : 'text-amber-400'}">블록 합계 ${fmtMinutes(designBlockMinutes(unit))}${matched ? ' ✓' : ` ≠ ${fmtMinutes(Number(unit.hours) * 60)}`}</span>
-        ${matched ? '' : `<button data-design-action="fit-unit" data-unit="${unitIndex}" class="px-1.5 py-0.5 text-[0.6875rem] rounded bg-white/10 text-textLight font-bold">시간 맞추기</button>`}`;
+        <span class="text-[0.6875rem] ${matched ? 'text-emerald-400' : 'text-amber-400'}">${text}</span>
+        ${matched ? '' : `<button data-design-action="fit-unit" data-unit="${unitIndex}" class="px-1.5 py-0.5 text-[0.6875rem] rounded bg-white/10 text-textLight font-bold">${DESIGN_LESSONS_PER_UNIT}차시로 맞추기</button>`}`;
 }
 
-// 표의 셀로 조립하면 제목이 HTML로 해석되므로 sessionRows 값을 글자 그대로 넣는다
+// 표의 셀로 조립하면 제목이 HTML로 해석되므로 sessionRows 값을 글자 그대로 넣는다. 1시간 칸은 교시로 부른다(차시 하나가 하루 8시간)
 function sessionTableHtml(rows) {
     const body = rows.map((row, index) => `
         <tr class="border-t border-white/5 align-top">
-            <td class="py-1 pr-2 text-textLight"><b>${index + 1}차시</b> ${escapeHtml(row.title)}</td>
+            <td class="py-1 pr-2 text-textLight"><b>${index + 1}교시</b> ${escapeHtml(row.title)}</td>
             <td class="py-1 pr-2 text-textMuted whitespace-nowrap">${fmtMinutes(row.minutes)}</td>
             <td class="py-1 text-textMuted">${row.steps.map(step => `<div><b class="text-textLight">${escapeHtml(step.label)}</b> ${escapeHtml(step.text)} (${fmtMinutes(step.minutes)})</div>`).join('')}</td>
         </tr>`).join('');
-    return `<table class="w-full mt-1 text-[0.6875rem]"><thead><tr class="text-left text-textMuted"><th class="pr-2 font-bold">차시</th><th class="pr-2 font-bold">시간</th><th class="font-bold">진행 단계</th></tr></thead><tbody>${body}</tbody></table>`;
+    return `<table class="w-full mt-1 text-[0.6875rem]"><thead><tr class="text-left text-textMuted"><th class="pr-2 font-bold">교시</th><th class="pr-2 font-bold">시간</th><th class="font-bold">진행 단계</th></tr></thead><tbody>${body}</tbody></table>`;
 }
 
 function designSessionsHtml(unit, unitIndex) {
@@ -197,7 +187,7 @@ function designSessionsHtml(unit, unitIndex) {
     if (!rows.length) return '';
     const open = _designSessionsOpen.has(unitIndex);
     return `
-        <button data-design-action="sessions" data-unit="${unitIndex}" class="px-1.5 py-0.5 text-[0.6875rem] font-bold rounded bg-white/10 text-textLight hover:bg-white/20">차시 구성 ${open ? '접기' : `보기 (${rows.length}차시)`}</button>
+        <button data-design-action="sessions" data-unit="${unitIndex}" class="px-1.5 py-0.5 text-[0.6875rem] font-bold rounded bg-white/10 text-textLight hover:bg-white/20">1시간 단위 시간표 ${open ? '접기' : `보기 (${rows.length}교시)`}</button>
         ${open ? sessionTableHtml(rows) : ''}`;
 }
 
@@ -208,11 +198,8 @@ function designUnitHtml(unit, unitIndex) {
                 <span class="text-xs font-bold text-textLight shrink-0">${unitIndex + 1}.</span>
                 <input data-design-unit-title="${unitIndex}" value="${escapeHtml(unit.title)}" aria-label="단원 제목" class="flex-1 min-w-0 ${DESIGN_FIELD_CLASS}">
                 <span id="design-unit-status-${unitIndex}" class="flex items-center gap-1 shrink-0">${designUnitStatusHtml(unit, unitIndex)}</span>
-                <input type="number" min="1" data-design-hours="${unitIndex}" value="${Number(unit.hours) || 0}" aria-label="단원 시간" class="w-14 ${DESIGN_FIELD_CLASS} text-right">
-                <span class="text-[0.6875rem] text-textMuted">시간</span>
             </div>
             ${unit.modules.map((module, moduleIndex) => designBlockHtml(module, unitIndex, moduleIndex)).join('')}
-            <button data-design-action="add-block" data-unit="${unitIndex}" class="px-1.5 py-0.5 text-[0.6875rem] font-bold rounded bg-white/10 text-textLight hover:bg-white/20">＋ 블록</button>
             <div id="design-sessions-${unitIndex}">${designSessionsHtml(unit, unitIndex)}</div>
         </div>`;
 }

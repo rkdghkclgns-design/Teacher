@@ -213,22 +213,32 @@ const LESSON_MD = [
         ['75%', '교수안 1/2', 'NCS 1 확정 전', '완료 1/2'].forEach(text => assert.ok(chips.includes(text), text));
         assert.ok(call('subjectOverviewChips')(subjects[1]).includes('25%'));
         const bar = call('renderCourseTimeBar')();
-        assert.ok(bar.includes('fitSubjectHours') && bar.includes('목표'), '목표와 다르면 맞추기 버튼을 보여 준다');
+        assert.ok(bar.includes('fitSubjectHours') && bar.includes('합계 8시간 / 목표 80시간') && bar.includes('목표 = 단원 2개 × 40시간(1단원 = 5차시 × 하루 8시간)'), '목표(단원 수 × 40시간)와 다르면 맞추기 버튼을 보여 준다');
+        // 19차: 목표는 저장된 과정 총 시간이 아니라 단원 수 × 40시간이다(저장된 8시간과 같아도 단추가 보인다)
         ctx.globalState.courseDesign = { totalHours: 8 };
-        assert.ok(!call('renderCourseTimeBar')().includes('fitSubjectHours'));
+        assert.ok(call('renderCourseTimeBar')().includes('fitSubjectHours'), '예전에 저장한 과정 총 시간은 쓰지 않는다');
+        const fiveDays = id => ({ id, title: `교과 ${id}`, lessons: Array.from({ length: 5 }, (_, i) => ({ id: `${id}_${i}`, title: `차시 ${i + 1}`, hours: 8 })) });
+        ctx.globalState.subjects = [fiveDays('a'), fiveDays('b')];
+        ctx.globalState.courseDesign = { totalHours: 40 }; // 두 번째 설계 묶음만 센 옛 값
+        const shaped = call('renderCourseTimeBar')();
+        assert.ok(!shaped.includes('fitSubjectHours') && shaped.includes('합계 80시간 / 목표 80시간'), shaped);
+        ctx.globalState.subjects = subjects;
     });
 
-    await run('교과 현황: 비율대로 맞추면 합계가 목표가 되고 진행 단계도 따라간다', async () => {
+    await run('교과 현황: 맞추기는 40시간이 아닌 교과만 40시간으로 맞추고 진행 단계도 따라간다. 5차시 × 8시간 교과는 그대로 둔다', async () => {
         const flow = [{ phase: '도입', title: '가', minutes: 60 }, { phase: '정리', title: '나', minutes: 120 }];
+        const shapedLessons = Array.from({ length: 5 }, (_, i) => ({ id: 10 + i, title: `하루 ${i + 1}`, hours: 8, minutes: 480 }));
         const subjects = [
             { id: 's1', title: '기획', lessons: [{ id: 'mainQuest', title: '퀘스트' }, { id: 1, title: '가', hours: 3, flow }, { id: 2, title: '나', hours: 3 }] },
-            { id: 's2', title: '개발', lessons: [{ id: 3, title: '다', hours: 2 }] }
+            { id: 's2', title: '개발', lessons: [{ id: 3, title: '다', hours: 2 }] },
+            { id: 's3', title: '설계', lessons: shapedLessons }
         ];
         ctx.globalState.subjects = subjects;
         ctx.globalState.courseDesign = { totalHours: 16 };
         ctx.courseData = subjects[0].lessons;
         await call('applySubjectHours')();
-        assert.strictEqual(call('courseLessonMinutes')(subjects[0]) + call('courseLessonMinutes')(subjects[1]), 960);
+        assert.deepStrictEqual(subjects.map(subject => call('courseLessonMinutes')(subject)), [2400, 2400, 2400], '교과마다 40시간');
+        assert.ok(subjects[2].lessons === shapedLessons && shapedLessons.every(lesson => lesson.hours === 8), '5차시 × 8시간 교과는 손대지 않는다');
         assert.strictEqual(subjects[0].lessons[0].id, 'mainQuest', '메인 퀘스트는 그대로');
         assert.strictEqual(ctx.courseData, subjects[0].lessons, '현재 교과 목록도 함께 바뀐다');
         const lesson = subjects[0].lessons[1];
@@ -625,23 +635,19 @@ const LESSON_MD = [
         Object.assign(ctx, { archiveContents: original.archive, fillMissingTabs: original.fill, lockedSectionBlocks: original.locked });
     });
 
+    // 19차: 단원은 늘 5차시 × 8시간이라 블록을 더하거나 지우지 않고(＋ 블록·✕ 단추가 없다), 차시 시간도 칸 대신 글로 보인다
     await run('과정 설계: 단원명과 블록을 초안에서 고친다', async () => {
         const draft = { units: [{ title: '단원', hours: 2, modules: [{ title: '블록', minutes: 120, objectives: [], flow: [], isDefault: true }] }] };
         const named = call('setDesignUnitTitle')(draft, 0, ' 새 단원 ');
         assert.strictEqual(named.units[0].title, '새 단원');
         assert.strictEqual(call('setDesignUnitTitle')(draft, 0, '  ').units[0].title, '단원', '빈 제목은 되돌린다');
         assert.strictEqual(draft.units[0].title, '단원', '초안을 바꾸지 않고 새로 돌려준다');
-        const added = call('designEditAction')(draft, 'add-block', { unit: '0' });
-        assert.strictEqual(added.units[0].modules.length, 2);
-        assert.strictEqual(call('designFlowMatches')(added.units[0].modules[1]), true);
-        assert.strictEqual(added.edited, true);
-        const kept = call('designEditAction')(added, 'del-block', { unit: '0', module: '1' });
-        assert.strictEqual(kept.units[0].modules[0].isDefault, false, '지운 블록이 시간 맞추기로 되살아나지 않는다');
-        const removed = call('designEditAction')(added, 'del-block', { unit: '0', module: '0' });
-        assert.deepStrictEqual(plain(removed.units[0].modules).map(block => block.title), ['새 블록']);
-        assert.strictEqual(call('designEditAction')(removed, 'del-block', { unit: '0', module: '0' }).units[0].modules.length, 1, '마지막 블록은 지우지 않는다');
+        assert.deepStrictEqual(['add-block', 'del-block'].map(action => call('designEditAction')(draft, action, { unit: '0', module: '0' })), [null, null], '차시를 더하거나 지우지 않는다');
+        const fitted = call('designEditAction')(draft, 'fit-unit', { unit: '0' });
+        assert.deepStrictEqual([fitted.units[0].modules.length, fitted.units[0].hours, fitted.edited], [5, 40, true], '예전 초안은 5차시로 맞춘다');
         const html = call('designUnitHtml')({ ...draft.units[0], title: '"><script>' }, 0);
-        assert.ok(!html.includes('"><script>') && html.includes('data-design-action="add-block"') && html.includes('data-design-action="del-block"'));
+        assert.ok(!html.includes('"><script>') && !html.includes('data-design-action="add-block"') && !html.includes('data-design-action="del-block"') && !html.includes('data-design-field="minutes"') && !html.includes('data-design-hours'));
+        assert.ok(html.includes('data-design-action="fit-unit"') && html.includes('1차시'), '차시 수가 다르면 5차시로 맞추기 단추');
     });
 
     await run('참고 파일: 그 차시의 프롬프트에만 붙는다', async () => {

@@ -3,7 +3,19 @@
 
 const courseLessons = subject => subjectLessons(subject).filter(lesson => lesson.id !== 'mainQuest');
 const courseLessonMinutes = subject => courseLessons(subject).reduce((sum, lesson) => sum + lessonMinutes(lesson), 0);
-const courseTargetMinutes = () => (Number(globalState.courseDesign?.totalHours) || 0) * 60;
+// 단원(교과) 하나 = 5차시 × 8시간 = 2,400분(course-design.js). 그 파일보다 먼저 실려도 되게 부를 때 센다
+const unitTargetMinutes = () => DESIGN_UNIT_TOTAL_HOURS * 60;
+// 과정 목표 시간 = 차시가 있는 교과(단원) 수 × 40시간. 예전에 저장한 과정 총 시간(courseDesign.totalHours)은 단원을 더하거나 지워도 바뀌지 않아 쓰지 않는다
+const courseTargetMinutes = () => courseUnitCount() * unitTargetMinutes();
+
+// 5차시 × 8시간 교과인가(최종 평가를 뺀 차시가 정확히 5개이고 모두 480분)
+const subjectIsFiveDays = subject => {
+    const lessons = courseLessons(subject);
+    return lessons.length === DESIGN_LESSONS_PER_UNIT && lessons.every(lesson => lessonMinutes(lesson) === DESIGN_LESSON_MINUTES);
+};
+
+// 시간을 맞출 교과: 차시가 있고 40시간이 아닌 교과. 5차시 × 8시간 교과(늘 40시간)는 건드리지 않는다
+const subjectsToFit = () => globalState.subjects.filter(subject => courseLessons(subject).length && !subjectIsFiveDays(subject) && courseLessonMinutes(subject) !== unitTargetMinutes());
 
 /* ---------- 교과 카드 배지 ---------- */
 function subjectBadge(text, title, style = 'bg-white/10 text-textLight') {
@@ -57,21 +69,24 @@ function timeBarSegment({ subject, index, minutes }) {
         <button onclick="location.hash='#editor/${escapeHtml(String(subject.id))}'" style="flex:${minutes};min-width:${label.length * 0.5 + 0.25}rem" title="${escapeHtml(`${label}. ${subject.title} — ${fmtMinutes(minutes)}`)}" class="h-4 rounded-sm bg-accent/40 hover:bg-accent text-[0.6875rem] font-bold text-white whitespace-nowrap">${label}</button>`;
 }
 
+// 과정 시간 막대. 목표는 단원 수 × 40시간이고(1단원 = 5차시 × 하루 8시간), 다르면 40시간이 아닌 단원만 맞추는 단추를 둔다
 function renderCourseTimeBar() {
     const rows = globalState.subjects.map((subject, index) => ({ subject, index, minutes: courseLessonMinutes(subject) })).filter(row => row.minutes);
     const total = rows.reduce((sum, row) => sum + row.minutes, 0);
     if (!total) return '';
     const target = courseTargetMinutes();
-    const matched = !target || target === total;
+    const matched = target === total;
+    const rule = `목표 = 단원 ${courseUnitCount()}개 × ${DESIGN_UNIT_TOTAL_HOURS}시간(1단원 = ${DESIGN_LESSONS_PER_UNIT}차시 × 하루 ${DESIGN_LESSON_HOURS}시간)`;
     const lines = timeBarLines(rows).map(line => `<div data-time-row class="flex flex-wrap gap-0.5">${line.map(timeBarSegment).join('')}</div>`).join('');
     return `
         <div class="shrink-0 mb-3 rounded-xl border border-white/10 bg-white/5 p-2.5">
             <div class="flex items-center justify-between gap-2 text-[0.6875rem]">
                 <span class="font-bold text-textLight">과정 시간</span>
-                <span class="${matched ? 'text-emerald-400' : 'text-amber-400'}">합계 ${fmtMinutes(total)}${target ? ` / 목표 ${fmtMinutes(target)}` : ''}</span>
+                <span class="${matched ? 'text-emerald-400' : 'text-amber-400'}">합계 ${fmtMinutes(total)} / 목표 ${fmtMinutes(target)}</span>
             </div>
+            <p class="mt-0.5 text-[0.6875rem] text-textMuted">${rule}</p>
             <div class="flex flex-col gap-0.5 mt-1.5">${lines}</div>
-            ${matched ? '' : '<button onclick="fitSubjectHours()" class="mt-1.5 text-[0.6875rem] font-bold px-2 py-0.5 rounded bg-white/10 text-textLight hover:bg-accent">비율대로 맞추기</button>'}
+            ${matched ? '' : `<button onclick="fitSubjectHours()" title="5차시 × 8시간 교과는 그대로 두고, 40시간이 아닌 교과의 차시 시간만 비율대로 맞춥니다" class="mt-1.5 text-[0.6875rem] font-bold px-2 py-0.5 rounded bg-white/10 text-textLight hover:bg-accent">단원마다 ${DESIGN_UNIT_TOTAL_HOURS}시간으로 맞추기</button>`}
         </div>`;
 }
 
@@ -81,24 +96,26 @@ function fittedLessons(subject, minutes) {
     return lessons.map((lesson, index) => lessonWithHours(lesson, split[index] / 60) || lesson);
 }
 
+// 40시간이 아닌 교과만 차시 시간을 비율대로 40시간으로 맞춘다. 5차시 × 8시간 교과와 이미 40시간인 교과는 손대지 않는다
 async function applySubjectHours() {
-    const subjects = globalState.subjects.filter(courseLessonMinutes);
-    const fitted = allocateTime(subjects.length, courseTargetMinutes(), subjects.map(courseLessonMinutes), DESIGN_FLOW_STEP_MINUTES);
-    subjects.forEach((subject, index) => {
+    const subjects = subjectsToFit();
+    subjects.forEach(subject => {
         const quests = (subject.lessons || []).filter(lesson => lesson.id === 'mainQuest');
-        subject.lessons = [...quests, ...fittedLessons(subject, fitted[index])];
+        subject.lessons = [...quests, ...fittedLessons(subject, unitTargetMinutes())];
         if (subject.id === currentSubjectId) courseData = subject.lessons;
     });
     await saveState();
     renderSidebar();
     renderOverviewLNB();
-    window.showToast?.('교과 시간을 과정 목표에 맞췄습니다.', 'success');
+    window.showToast?.(`교과 ${subjects.length}개의 시간을 ${DESIGN_UNIT_TOTAL_HOURS}시간으로 맞췄습니다.`, 'success');
 }
 
-// 차시 시간을 비율대로 늘이거나 줄인다. 진행 단계 시간도 함께 맞춘다
+// 40시간이 아닌 교과의 차시 시간을 비율대로 늘이거나 줄인다(진행 단계 시간도 함께). 앱의 확인 창으로 먼저 묻는다
 window.fitSubjectHours = function () {
     if (generationBusy()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.'); // 생성 중인 차시 객체를 바꾸면 결과가 사라진다
-    window.showConfirm(`교과 시간을 비율대로 조정해 합계를 ${fmtMinutes(courseTargetMinutes())}으로 맞출까요? 차시와 진행 단계 시간이 바뀝니다.`, applySubjectHours, { okLabel: '시간 맞추기', tone: 'primary' });
+    const count = subjectsToFit().length;
+    if (!count) return window.showToast?.(`모든 교과가 이미 ${DESIGN_UNIT_TOTAL_HOURS}시간입니다.`, 'success');
+    window.showConfirm(`${DESIGN_UNIT_TOTAL_HOURS}시간이 아닌 교과 ${count}개의 차시 시간을 비율대로 조정해 교과마다 ${DESIGN_UNIT_TOTAL_HOURS}시간으로 맞출까요? 5차시 × 8시간 교과는 그대로 둡니다. 차시와 진행 단계 시간이 바뀝니다.`, applySubjectHours, { okLabel: '시간 맞추기', tone: 'primary' });
 };
 
 /* ---------- 차시 구성 화면 ---------- */

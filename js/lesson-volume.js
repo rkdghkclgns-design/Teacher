@@ -1,4 +1,4 @@
-// lesson-volume.js - 학습 탭(기본학습·심화학습)을 강사가 소리 내어 읽어도 목표 시간(480분)이 차는 분량까지 섹션마다 나눠 채운다
+// lesson-volume.js - 학습 탭(기본학습·심화학습)을 강사가 소리 내어 읽어도 목표 시간(480분 − 같은 트랙 실습 시간, 기본 360분)이 차는 분량까지 섹션마다 나눠 채운다
 // 초안을 받은 뒤 목표에 못 미친 내용 섹션 끝에 새 ### 소주제를 이어 붙인다. 있던 글·고정 섹션·학습 목표·개요·체크리스트·그림 자리는 그대로 둔다.
 // 분량은 lesson-lint.js spokenChars로 센다(공백 포함 1분에 250자, 코드·표·그림·서식 기호 제외). 목표는 lesson-lint.js learnTargetMinutes.
 // 탭 생성(tabs.js generateTabContent)·교안 전체 생성(api.js generateModuleContent)·탭 위 '분량 채우기'가 쓴다. 테스트: tests/lesson-volume.test.js, tests/tab-time.test.js
@@ -9,7 +9,7 @@ const VOLUME_REQUEST_STEP = 500;
 const VOLUME_START_RATIO = 0.7;       // 부탁한 글자 가운데 실제로 늘어난 비율. 모르는 처음에는 70%로 본다
 const VOLUME_RATIO_MIN = 0.4;
 const VOLUME_RATIO_MAX = 1;
-const VOLUME_CHARS_PER_CALL = 5000;   // 호출 상한 = 목표 글자 ÷ 이 값(480분이면 24번)
+const VOLUME_CHARS_PER_CALL = 5000;   // 호출 상한 = 목표 글자 ÷ 이 값(기본 360분이면 18번, 480분이면 24번)
 const VOLUME_CALL_LIMIT = 48;
 const VOLUME_STALL_CHARS = 800;       // 이보다 적게 늘면 늘지 않은 것으로 본다
 const VOLUME_STALL_LIMIT = 2;         // 잇달아 늘지 않으면 멈춘다
@@ -260,8 +260,9 @@ const volumeChecklistText = (md, lockedBlocks = []) => withoutChecklistRefTimes(
 
 // 내용 섹션의 (⏱ N분)을 낭독 길이에 맞춰 다시 매긴다. 학습 목표·개요·체크리스트·고정·실습·요약 섹션의 라벨은 그대로 두고,
 // 목표 시간에서 그 합을 뺀 시간을 낭독 글자 비율로 5분 단위로 나눈다(섹션마다 5분 이상). 남은 시간은 5분 단위로 올려 라벨 합계가 목표 시간 이상이 된다.
+// keepWritten이면 섹션마다 이미 적힌 시간 아래로는 줄이지 않는다(분량 채우기: 예전 480분 탭처럼 목표보다 길게 쓴 라벨을 깎지 않는다. 합계는 목표보다 길 수 있다).
 // 다시 매긴 제목과 어긋나지 않게 체크리스트의 다시 보기에 적힌 옛 시간도 뗀다
-function retimeSections(md, targetMinutes, lockedKeys = new Set(), tabId = 'basicLearn') {
+function retimeSections(md, targetMinutes, lockedKeys = new Set(), tabId = 'basicLearn', { keepWritten = false } = {}) {
     const sections = mdSections(md).map((section, index) => ({ ...section, index }));
     const quest = volumeQuestStart(sections);
     const open = sections.filter(section => section.index < quest && isVolumeContentSection(section, lockedKeys, tabId));
@@ -270,7 +271,8 @@ function retimeSections(md, targetMinutes, lockedKeys = new Set(), tabId = 'basi
     const kept = sections.filter(section => !openIndexes.has(section.index)).reduce((sum, section) => sum + volumeTitleMinutes(section.title), 0);
     const total = Math.max(open.length * VOLUME_TIME_UNIT, Math.ceil((targetMinutes - kept) / VOLUME_TIME_UNIT) * VOLUME_TIME_UNIT);
     const minutes = allocateTime(open.length, total, open.map(section => spokenChars(section.text)), VOLUME_TIME_UNIT);
-    const labels = new Map(open.map((section, i) => [section.index, minutes[i]]));
+    const floor = section => (keepWritten ? volumeTitleMinutes(section.title) : 0);
+    const labels = new Map(open.map((section, i) => [section.index, Math.max(minutes[i], floor(section))]));
     const retimed = sections.map(section => (labels.has(section.index) ? withTitleMinutes(section.text, labels.get(section.index)) : section.text)).join('\n\n');
     return withoutChecklistRefTimes(retimed, lockedKeys);
 }
@@ -402,14 +404,13 @@ function volumeFailure(job, err) {
     return 'error';
 }
 
-// 끝난 글: 중지하지 않았으면 (⏱ N분)을 다시 매기고(붙인 글이 있거나 라벨 합계가 목표에서 벗어났을 때) 고정 섹션을 되돌리고 체크리스트를 맨 끝에 둔다
+// 끝난 글: 중지하지 않았고 붙인 글이 있을 때만 (⏱ N분)을 다시 매기고(적힌 시간 아래로는 줄이지 않는다), 고정 섹션을 되돌리고 체크리스트를 맨 끝에 둔다.
+// 붙인 글이 없으면 라벨은 그대로다(목표보다 길게 적은 예전 480분 탭의 시간을 목표로 깎지 않는다)
 function volumeFinalText(job) {
-    const sum = volumeLabelSum(job.md);
-    const labelsFit = sum >= job.targetMinutes && sum <= job.targetMinutes + BASIC_LEARN_LABEL_SLACK;
     let md = job.md;
-    if (!job.stopped && (job.added > 0 || !labelsFit)) {
+    if (!job.stopped && job.added > 0) {
         try {
-            md = retimeSections(md, job.targetMinutes, job.lockedKeys, job.tabId);
+            md = retimeSections(md, job.targetMinutes, job.lockedKeys, job.tabId, { keepWritten: true });
         } catch (err) {
             console.warn('[분량 채우기] (⏱) 시간을 다시 매기지 못해 그대로 둡니다:', err);
         }
@@ -444,13 +445,12 @@ function rebaseVolumeParts(current, parts, { targetMinutes, lockedBlocks = [], t
     return volumeFinalText({ md, added: (parts || []).length, stopped, targetMinutes, lockedKeys, lockedBlocks, tabId });
 }
 
-// 미리 보기에서 섹션을 골라 반영한 글은 (⏱) 합계가 목표에서 벗어날 수 있어 고른 글로 다시 매긴다(고정 섹션의 라벨은 그대로).
-// 다시 매긴 섹션과 예전 체크리스트를 함께 고를 수 있어, 합계가 맞아 다시 매기지 않아도 다시 보기의 옛 시간은 뗀다
+// 미리 보기에서 섹션을 골라 반영한 글은 (⏱) 합계가 목표보다 모자랄 수 있어 고른 글로 다시 매긴다(고정 섹션의 라벨은 그대로, 적힌 시간 아래로는 줄이지 않는다).
+// 합계가 이미 목표 이상이면 다시 매기지 않는다(목표보다 길어도 된다). 다시 매긴 섹션과 예전 체크리스트를 함께 고를 수 있어 다시 보기의 옛 시간은 늘 뗀다
 function retimeVolumeChoice(md, { targetMinutes, lockedBlocks = [], tabId = 'basicLearn' } = {}) {
-    const sum = volumeLabelSum(md);
-    if (sum >= targetMinutes && sum <= targetMinutes + BASIC_LEARN_LABEL_SLACK) return volumeChecklistText(md, lockedBlocks);
+    if (volumeLabelSum(md) >= targetMinutes) return volumeChecklistText(md, lockedBlocks);
     try {
-        return retimeSections(md, targetMinutes, new Set(lockedBlocks.map(block => lockTitleKey(block.title))), tabId);
+        return retimeSections(md, targetMinutes, new Set(lockedBlocks.map(block => lockTitleKey(block.title))), tabId, { keepWritten: true });
     } catch (err) {
         console.warn('[분량 채우기] 고른 글의 (⏱) 시간을 다시 매기지 못해 그대로 둡니다:', err);
         return md;
@@ -490,7 +490,7 @@ function volumeShownText(mod, tabId = 'basicLearn') {
     return typeof cleanLessonOpening === 'function' ? cleanLessonOpening(stored) : stored;
 }
 
-// 탭 위 '낭독 약 N분 / 목표 480분'. 학습 탭(기본학습·심화학습)을 볼 때만 보이고(최종 평가와 교수안·슬라이드·문제은행 화면에서는 숨긴다) 모자라면 '분량 채우기'를 붙인다.
+// 탭 위 '낭독 약 N분 / 목표 M분'(M = 480 − 같은 트랙 실습 시간). 학습 탭(기본학습·심화학습)을 볼 때만 보이고(최종 평가와 교수안·슬라이드·문제은행 화면에서는 숨긴다) 모자라면 '분량 채우기'를 붙인다.
 // 분은 내림이라 모자란 글이 목표 시간으로 보이지 않는다(lesson-lint.js readAloudMinutes)
 window.syncVolumeChip = function (mod = getEditingModule()) {
     const chip = document.getElementById('lesson-volume-chip');

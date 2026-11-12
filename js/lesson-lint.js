@@ -167,18 +167,53 @@ function closeOpenFence(md) {
 }
 
 /* ---------- 낭독 분량 ---------- */
-// 강사가 소리 내어 읽는 속도(공백 포함 1분에 250자)와 학습 탭(기본학습·심화학습)의 낭독 시간. (⏱ N분) 합계는 목표보다 30분까지 길어도 된다
+// 강사가 소리 내어 읽는 속도(공백 포함 1분에 250자)와 학습 탭(기본학습·심화학습)의 낭독 시간. (⏱ N분) 합계는 목표보다 30분까지 길어도 된다.
+// 차시 하나는 하루 8시간이다. 기본 트랙(기본학습+기본실습)과 심화 트랙(심화학습+심화실습)이 각각 실습을 포함해 8시간이라,
+// 학습 탭의 낭독 목표는 8시간에서 그 트랙 실습 탭의 실습 시간을 뺀 만큼이다(실습 시간을 정하지 않으면 120분 → 학습 360분)
 const READ_CHARS_PER_MINUTE = 250;
-const LEARN_TARGET_MINUTES = 480;
+const TRACK_DAY_MINUTES = 480;        // 트랙 하나(학습+실습)의 하루. course-design.js DESIGN_LESSON_MINUTES(차시 하나)와 같다
+const PRACTICE_DEFAULT_MINUTES = 120; // 실습 시간을 차시에도 과정에도 정하지 않았을 때의 실습 시간. 실습 탭 지시와 안내 글이 같은 값을 쓴다
+const LEARN_MIN_MINUTES = 60;         // 실습을 길게 정해도 학습 탭 낭독은 이보다 줄이지 않는다
+const PRACTICE_LONG_MINUTES = 420;    // 실습 시간이 이만큼 이상이면 학습 탭 낭독이 60분 남짓이라 알린다
+const LEARN_TARGET_MINUTES = TRACK_DAY_MINUTES - PRACTICE_DEFAULT_MINUTES; // 실습 시간을 정하지 않은 학습 탭의 낭독 목표(360분). 차시를 모를 때도 이 값이다
 const BASIC_LEARN_MIN_MINUTES = LEARN_TARGET_MINUTES; // 예전 이름. 같은 값이다(새 코드는 LEARN_TARGET_MINUTES를 쓴다)
 const BASIC_LEARN_LABEL_SLACK = 30;
 const LEARN_VOLUME_TABS = ['basicLearn', 'advLearn']; // 낭독 분량까지 채우는 학습 탭
+const LEARN_PRACTICE_TAB = { basicLearn: 'basicPrac', advLearn: 'advPrac' }; // 학습 탭과 같은 트랙의 실습 탭
 const SPOKEN_SKIP_LINE = /^\s*\|.*\|\s*$|class="image-(?:wrapper|placeholder)"/; // 파이프 표 줄과 저장된 그림 칸 줄(다시 찾기 버튼·그림 설명까지)
 const SPOKEN_MARKS = /[■▣□▪◆●▶►•※]|\p{Extended_Pictographic}|\uFE0F|\u200D/gu; // 소리 내어 읽지 않는 장식 기호와 그림 문자
 
-// 학습 탭(기본학습·심화학습)의 목표 낭독 시간(분). 차시 시간이 길어도 짧아도 늘 480분이다. 다른 탭은 0(분량을 채우지 않는다)
-function learnTargetMinutes(mod, tabId = 'basicLearn') {
-    return LEARN_VOLUME_TABS.includes(tabId) ? LEARN_TARGET_MINUTES : 0;
+// 학습 탭(기본학습·심화학습)의 목표 낭독 시간(분) = 480 − 같은 트랙 실습 탭의 실습 시간(정하지 않으면 120분), 60분 아래로 줄이지 않는다.
+// 차시 시간과는 관계없다. 다른 탭은 0(분량을 채우지 않는다). courseOptions: 과정 기본값 대신 볼 값(저장하기 전의 일괄 생성 창 칸)
+function learnTargetMinutes(mod, tabId = 'basicLearn', courseOptions) {
+    if (!LEARN_VOLUME_TABS.includes(tabId)) return 0;
+    return learnMinutesFor(trackPracticeMinutes(mod, LEARN_PRACTICE_TAB[tabId], courseOptions));
+}
+
+// 실습 N분인 트랙의 학습 탭 낭독(분): 480 − N(60분 아래로 줄이지 않는다). 받을 수 없는 값이면 기본 실습 120분으로 본다
+function learnMinutesFor(practiceMinutes) {
+    return Math.max(LEARN_MIN_MINUTES, TRACK_DAY_MINUTES - practicePromptMinutes(practiceMinutes));
+}
+
+// 트랙 실습 탭의 실습 시간(분): 차시에서 정한 값 → 과정 기본값 → 기본 120분. 차시를 모르면(병합 전 등) 과정 기본값부터 본다
+function trackPracticeMinutes(mod, practiceTab, courseOptions) {
+    return lessonPracticeMinutes(mod || {}, practiceTab, courseOptions) || PRACTICE_DEFAULT_MINUTES;
+}
+
+// 실습 탭 지시가 쓰는 실습 시간(분): 강사가 정한 값, 없거나 받을 수 없는 값이면 기본 120분
+function practicePromptMinutes(minutes) {
+    return practiceMinutesValue(minutes) || PRACTICE_DEFAULT_MINUTES;
+}
+
+// 실습 시간을 420분 이상으로 정했을 때 알릴 글(막지 않는다). 실습 탭이 아니거나 420분보다 짧거나 정하지 않았으면 ''
+const PRACTICE_TRACK_NAMES = { basicPrac: { practice: '기본실습', learn: '기본학습' }, advPrac: { practice: '심화실습', learn: '심화학습' } };
+function practiceLongNote(tabId, minutes) {
+    const n = practiceMinutesValue(minutes);
+    const names = Object.prototype.hasOwnProperty.call(PRACTICE_TRACK_NAMES, tabId) ? PRACTICE_TRACK_NAMES[tabId] : null;
+    if (!names || !n || n < PRACTICE_LONG_MINUTES) return '';
+    const learn = learnMinutesFor(n);
+    const over = n + learn > TRACK_DAY_MINUTES ? ` ${names.learn}은 ${LEARN_MIN_MINUTES}분 아래로 줄이지 않아 하루 8시간(${TRACK_DAY_MINUTES}분)을 넘습니다.` : '';
+    return `${names.practice}을 ${n}분으로 정하면 하루 8시간(${TRACK_DAY_MINUTES}분) 가운데 ${names.learn} 낭독은 ${learn}분만 남습니다.${over}`;
 }
 
 // 기본 학습의 목표 낭독 시간(분). learnTargetMinutes(mod, 'basicLearn')과 같다
@@ -212,7 +247,7 @@ function practiceMinutesValue(value) {
     return Number.isInteger(minutes) && minutes >= min && minutes <= max && minutes % step === 0 ? minutes : null;
 }
 
-// 그 차시 실습 탭의 시간: { minutes, from }. 차시에서 정한 값(from 'lesson'), 없으면 과정 기본값('course'), 둘 다 없으면 0('', 지시문의 기본 90~120분).
+// 그 차시 실습 탭의 시간: { minutes, from }. 차시에서 정한 값(from 'lesson'), 없으면 과정 기본값('course'), 둘 다 없으면 0('', 지시문은 기본 120분으로 쓴다).
 // 실습 탭이 아니거나 최종 평가면 0. courseOptions: 과정 기본값 대신 볼 값(저장하기 전의 일괄 생성 창 칸)
 function lessonPracticeTime(mod, tabId, courseOptions) {
     const key = practiceKeyOf(tabId);

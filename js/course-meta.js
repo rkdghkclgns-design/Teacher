@@ -788,6 +788,7 @@ async function saveLessonMeta() {
         ...metaElementResult()
     };
     Object.assign(mod, withMetaHistory(mod, next));
+    if (typeof warnLongPractice === 'function') warnLongPractice(next.gen); // 실습을 420분 이상으로 정했으면 학습 탭이 짧아진다고 알린다(막지 않는다, course-design.js)
     const targetId = document.getElementById('meta-subject').value;
     if (targetId !== String(subject.id) && moveLessonToSubject(mod, targetId)) closeMovedLesson(mod);
     await saveState();

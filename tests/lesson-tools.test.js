@@ -105,7 +105,8 @@ const DECK = `### 슬라이드 1 - 표지\n- 대응 교수안: -\n\n### 슬라�
 
     await run('차시 구성표: 과정 설계서와 교수안', async () => {
         const table = call('subjectSessionLines')({ lessons: [{ title: '블록', hours: 2, flow: [{ phase: '전개', title: '본문', minutes: 120 }] }] }).join('\n');
-        assert.ok(table.includes('### 차시 구성 (1차시 = 1시간)') && table.includes('2차시. 블록 (2/2)'));
+        // 19차: 차시 하나가 하루 8시간이라 과정 설계서의 1시간 칸은 교시로 부른다(교수안의 차시 구성표는 그대로)
+        assert.ok(table.includes('### 시간표 (1교시 = 1시간)') && table.includes('| 교시 | 시간 | 진행 단계 |') && table.includes('2교시. 블록 (2/2)'), table);
         assert.deepStrictEqual(plain(call('gyosuanSessionTable')([['도입', '10분', '시작'], ['정리', '20분', '끝']], '짧은 수업')), [], '60분 이하는 표 없음');
         assert.ok(call('gyosuanSessionTable')([['전개', '1시간 30분', '본문']], '긴 수업').join('\n').includes('2차시.'));
     });

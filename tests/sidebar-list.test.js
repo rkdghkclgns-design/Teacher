@@ -34,6 +34,7 @@ function makeContext(count) {
     ctx.window = ctx;
     vm.createContext(ctx);
     vm.runInContext(sliceFunction(read('js/ui.js'), 'function escapeHtml('), ctx);
+    vm.runInContext(read('js/course-design.js'), ctx); // 과정 목표 시간(단원 수 × 40시간, courseUnitCount)은 index.html처럼 먼저 싣는다
     vm.runInContext(read('js/course-overview.js'), ctx);
     vm.runInContext(sliceFunction(read('js/course-meta.js'), 'function renderTrashFooter('), ctx);
     vm.runInContext(sliceFunction(read('js/ui.js'), 'function renderOverviewLNB('), ctx);
@@ -89,7 +90,8 @@ run('과정 시간: 교과 25개의 번호가 잘리지 않게 줄을 나눈다'
     const ctx = makeContext(25);
     const bar = vm.runInContext('renderCourseTimeBar()', ctx);
     const lines = bar.split('data-time-row').slice(1);
-    assert.deepStrictEqual(lines.map(line => (line.match(/<button /g) || []).length), [7, 6, 6, 6], '한 줄에 8개를 넘지 않고 고르게 나눈다');
+    // 교과 버튼만 센다(19차: 차시가 1개뿐인 교과라 목표(단원 수 × 40시간)와 달라 막대 아래에 맞추기 단추가 함께 보인다)
+    assert.deepStrictEqual(lines.map(line => (line.match(/<button onclick="location/g) || []).length), [7, 6, 6, 6], '한 줄에 8개를 넘지 않고 고르게 나눈다');
     const buttons = bar.match(/<button onclick="location[^>]*>[^<]*<\/button>/g) || [];
     assert.deepStrictEqual(buttons.map(button => button.replace(/<[^>]*>/g, '')), Array.from({ length: 25 }, (_, i) => String(i + 1)), '번호 1~25가 차례로 모두 있다');
     buttons.forEach((button, i) => {
