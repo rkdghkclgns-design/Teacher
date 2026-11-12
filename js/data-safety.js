@@ -1352,6 +1352,42 @@ function safeFoldedBlocks(value) {
     return unchanged ? value : Object.fromEntries(entries);
 }
 
+// 강사 대본(lesson-script.js lessonScripts: { 탭 id: { sections: [{ key, title, sourceHash, text }], updatedAt } }). 탭은 기본학습·심화학습만 받는다.
+// 섹션은 열쇠(200자까지)·제목(300자까지)·지문('해시-길이' 36진수)·대본 글(비지 않고 40,000자까지)이 모두 글인 것만, 같은 열쇠는 앞의 것만, 탭마다 80개까지 남긴다.
+// 모르는 칸은 버리고, 시각(updatedAt)은 40자까지의 글일 때만 둔다. 남길 것이 없으면 null(칸을 지운다). 고칠 것이 없으면 같은 객체.
+// 작업 기록(historyEntry)은 대본을 담지 않는다. 되돌린 탭 글과 지문이 다르면 대본 화면이 '교안이 바뀜'으로 보인다
+const SCRIPT_TAB_IDS = ['basicLearn', 'advLearn'];
+const SCRIPT_SECTION_LIMIT = 80;
+const SCRIPT_FIELD_CHARS = { key: 200, title: 300, text: 40000, at: 40 };
+const SCRIPT_HASH_RE = /^[0-9a-z]{1,8}-[0-9a-z]{1,8}$/;
+function safeScriptSection(item) {
+    if (!isObject(item)) return null;
+    const { key, title, sourceHash, text } = item;
+    const ok = typeof key === 'string' && key.length > 0 && key.length <= SCRIPT_FIELD_CHARS.key
+        && typeof title === 'string' && title.length <= SCRIPT_FIELD_CHARS.title
+        && typeof sourceHash === 'string' && SCRIPT_HASH_RE.test(sourceHash)
+        && typeof text === 'string' && !!text.trim() && text.length <= SCRIPT_FIELD_CHARS.text;
+    if (!ok) return null;
+    return Object.keys(item).length === 4 ? item : { key, title, sourceHash, text };
+}
+function safeScriptTab(tab) {
+    if (!isObject(tab) || !Array.isArray(tab.sections)) return null;
+    const seen = new Set();
+    const sections = tab.sections.map(safeScriptSection).filter(item => item && !seen.has(item.key) && !!seen.add(item.key)).slice(0, SCRIPT_SECTION_LIMIT);
+    if (!sections.length) return null;
+    const at = typeof tab.updatedAt === 'string' && tab.updatedAt.length <= SCRIPT_FIELD_CHARS.at ? tab.updatedAt : '';
+    const next = { sections, ...(at ? { updatedAt: at } : {}) };
+    const same = sections.length === tab.sections.length && sections.every((item, i) => item === tab.sections[i]) && sameFields({ ...next, sections: tab.sections }, tab);
+    return same ? tab : next;
+}
+function safeLessonScripts(value) {
+    if (!isObject(value)) return null;
+    const entries = SCRIPT_TAB_IDS.filter(id => Object.prototype.hasOwnProperty.call(value, id)).map(id => [id, safeScriptTab(value[id])]).filter(([, tab]) => tab);
+    if (!entries.length) return null;
+    const same = entries.length === Object.keys(value).length && entries.every(([id, tab]) => tab === value[id]);
+    return same ? value : Object.fromEntries(entries);
+}
+
 // 차시(최종 평가 포함)의 안쪽 값을 그 자리에서 고친다(sanitizeState가 부른다)
 function cleanLessonFields(lesson) {
     lesson.images = safeImageMap(lesson.images);
@@ -1361,6 +1397,11 @@ function cleanLessonFields(lesson) {
         const folded = safeFoldedBlocks(lesson.foldedBlocks);
         if (folded) lesson.foldedBlocks = folded;
         else delete lesson.foldedBlocks;
+    }
+    if (lesson.lessonScripts !== undefined) {
+        const scripts = safeLessonScripts(lesson.lessonScripts);
+        if (scripts) lesson.lessonScripts = scripts;
+        else delete lesson.lessonScripts;
     }
     LESSON_TEXT_FIELDS.forEach(field => { if (lesson[field] !== undefined) lesson[field] = textOrNull(lesson[field]); });
     LESSON_INFO_TEXT_FIELDS.forEach(field => { if (lesson[field] != null && typeof lesson[field] !== 'string') lesson[field] = stateText(lesson[field]); });

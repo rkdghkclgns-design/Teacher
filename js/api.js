@@ -3228,7 +3228,9 @@ window.cancelFileUpload = function (moduleId) {
 function tabGenerateButtonsHtml(mod, tabless) {
     if (tabless) return '';
     const practice = typeof practiceTimeButtonHtml === 'function' ? practiceTimeButtonHtml(mod, currentLessonTab) : '';
-    return `${practice}
+    // 기본학습·심화학습의 '대본보기'(세로 2분할 강사 대본, lesson-script-view.js)
+    const script = typeof lessonScriptButtonHtml === 'function' ? lessonScriptButtonHtml(mod, currentLessonTab) : '';
+    return `${script}${practice}
                     <button id="lesson-tab-generate" onclick="runTabJob('${mod.id}', currentLessonTab)"
                         class="px-2.5 py-1.5 text-[0.6875rem] font-bold text-accent bg-accent/10 border border-accent/30 rounded hover:bg-accent/20 transition-colors flex items-center gap-1 shrink-0">
                         <i class="ph-bold ph-sparkle"></i> 이 탭 생성
@@ -3498,6 +3500,7 @@ ${tabGenerateButtonsHtml(mod, tabless)}
     drawnLessonScreen = null;
     applyLessonPanel(mod);
     syncSlidePanel(mod);
+    window.applyLessonScriptView?.(mod); // 대본보기를 열어 둔 같은 차시·탭이면 세로 2분할 대본 화면을 다시 연다(lesson-script-view.js)
 
     // 인라인 에디팅 기능 활성화 (약간의 지연 후 렌더 트리가 안전할 때)
     setTimeout(() => initInlineEditing(), 100);
@@ -3668,6 +3671,8 @@ window.toggleEditorMode = function (mode) {
 
     if (mode === 'edit') {
 
+        window.leaveLessonScriptView?.(); // 원문 전체 수정은 대본 화면을 닫고 원문 칸을 보인다(lesson-script-view.js)
+
         renderView.classList.add('hidden');
 
         rawView.classList.remove('hidden');
@@ -3742,6 +3747,8 @@ window.toggleEditorMode = function (mode) {
             }
 
         }
+
+        window.keepLessonScriptView?.(); // 대본 화면이 떠 있으면 보기 화면을 다시 숨긴다(탭 글이 바뀌었으면 대본 화면을 다시 그린다)
 
     }
 

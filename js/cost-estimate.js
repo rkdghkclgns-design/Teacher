@@ -37,7 +37,7 @@ const LONG_CALL_FACTOR = 3;                                // 잰 기록이 없�
 // lesson-lint.js LEARN_TARGET_MINUTES·READ_CHARS_PER_MINUTE·LEARN_VOLUME_TABS·PRACTICE_MINUTE_KEYS와 같다(테스트는 lesson-lint.js 없이 돈다)
 const ESTIMATE_VOLUME = { minutes: 480, charsPerMinute: 250, tabs: ['basicLearn', 'advLearn'], practiceTabs: ['basicPrac', 'advPrac'] };
 const IMAGE_CALL_SECONDS = { gemini: 25, higgsfield: 60 }; // 잰 기록이 없을 때 그림 한 장(초)
-const ESTIMATE_GAPS = { image: 7, tab: 4 };                // 교안 그림 사이 간격(api.js IMAGE_TAG_GAP_MS), 탭·단계 사이 쉬는 시간(초)
+const ESTIMATE_GAPS = { image: 7, tab: 4, script: 2 };     // 교안 그림 사이 간격(api.js IMAGE_TAG_GAP_MS), 탭·단계 사이 쉬는 시간, 강사 대본 호출 사이(lesson-script-view.js SCRIPT_CALL_GAP_MS)(초)
 const ESTIMATE_GAME_SECONDS = 5;                           // 예시 게임 그림 한 장: 위키백과 검색·라이선스·그림 받기(AI 호출 없음, 사이 간격 없음)
 const EFFORT_FACTOR = { low: 0.7, medium: 1, high: 1.5, xhigh: 1.75, max: 2 };
 const COST_LABEL = { low: '낮음', mid: '보통', high: '높음' };
@@ -120,13 +120,13 @@ const sumWork = list => list.reduce((total, work) => {
 
 // work: { tabs, images(교안 그림), slideImages(슬라이드 그림), ncs, gyosuan(교수안마다 간이 교수안 호출도 센다), brief(간이 교수안만 만드는 수), qbank, art, ocr, volume(분량을 채우는 학습 탭 수), volumeCalls(그 긴 호출 수),
 // practiceCalls(실습 시간을 정한 실습 탭의 더 드는 이어쓰기 호출), codeComments(코드 주석 넣기 호출 수, 다시 받기 제외),
-// motionPlans(움직이는 GIF로 만들 그림 속 관계를 읽는 호출 수, image-motion.js) } 개수 →
+// motionPlans(움직이는 GIF로 만들 그림 속 관계를 읽는 호출 수, image-motion.js), lessonScripts(강사 대본 호출 수: 섹션·소주제 조각마다 하나, lesson-script-view.js) } 개수 →
 // 본문 호출(body), 기다리는 시간으로 센 본문 호출(bodyWait), 짧은 호출(short), 그림 장수(images), 분량 보강·자동 수정의 긴 호출(long, 있을 때만).
 // volumeCalls가 없으면 탭마다 480분 상한으로 센다. 예시 게임 그림(work.gameImages)은 위키백과에서 찾아 호출로 세지 않는다(estimateSummary가 시간만 더한다)
 function estimateCallSplit(work = {}) {
     const rule = ESTIMATE_RULES;
     const tabs = (work.tabs || 0) * rule.tabCalls + (work.practiceCalls || 0);
-    const others = (work.ncs || 0) * rule.ncsCalls + (work.qbank || 0) * rule.qbankCalls + (work.art || 0) * rule.artCalls + (work.ocr || 0) + (work.codeComments || 0) + (work.motionPlans || 0);
+    const others = (work.ncs || 0) * rule.ncsCalls + (work.qbank || 0) * rule.qbankCalls + (work.art || 0) * rule.artCalls + (work.ocr || 0) + (work.codeComments || 0) + (work.motionPlans || 0) + (work.lessonScripts || 0);
     const long = work.volumeCalls ?? (work.volume || 0) * volumeCallsFor();
     const plans = work.gyosuan || 0;
     const briefs = (plans + (work.brief || 0)) * rule.gyosuanBriefCalls; // 간이 교수안은 교수안 뒤에 차례로 부르므로 기다리는 시간에도 그대로 더한다
@@ -203,7 +203,7 @@ function estimateSummary(work, { model = '', effort = 'medium', timings = readAi
     const longSeconds = long.measured ? long.seconds : body.seconds * LONG_CALL_FACTOR; // 잰 긴 호출이 없으면 본문 호출 시간(잰 값이면 그 값)의 3배
     const imageSeconds = imageSource === 'svg' ? body.seconds : secondsPerImage(imageModel, imageSource, timings);
     const seconds = split.bodyWait * body.seconds + split.short * shortSeconds + (split.long || 0) * longSeconds + split.images * imageSeconds
-        + (work.images || 0) * ESTIMATE_GAPS.image + (work.tabs || 0) * ESTIMATE_GAPS.tab + gameImages * ESTIMATE_GAME_SECONDS;
+        + (work.images || 0) * ESTIMATE_GAPS.image + (work.tabs || 0) * ESTIMATE_GAPS.tab + (work.lessonScripts || 0) * ESTIMATE_GAPS.script + gameImages * ESTIMATE_GAME_SECONDS;
     const minutes = seconds / 60;
     const minutesLow = Math.max(1, Math.round(minutes * 0.7));
     const minutesHigh = Math.max(minutesLow, Math.ceil(minutes * 1.5));
