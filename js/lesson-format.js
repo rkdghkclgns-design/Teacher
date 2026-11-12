@@ -169,7 +169,7 @@ function lfBest(blocks, index, attempt) {
 
 function lfLocateBlock(blocks, part) {
     const hit = lfBest(blocks, part.index, block => {
-        const score = lfBlockScore(lfProject(block.raw), part.text);
+        const score = lfBlockScore(lfScoreProjection(block), part.text);
         return score ? { block, score } : null;
     });
     return hit ? hit.block : null;
@@ -485,8 +485,29 @@ function replaceLessonBlock(source, located, text) {
 const LF_ENTITY = { nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", '#39': "'" };
 const lfDecode = text => String(text || '').replace(/&(nbsp|amp|lt|gt|quot|apos|#39);/g, (all, name) => LF_ENTITY[name]);
 
+// 토큰 트리의 글자(원문 위치 없이). 인용 안의 목록(핵심 요약 상자, lesson-summary.js)은 안쪽 토큰 원문에서 > 표시가 빠져 위치로 되짚지 못하므로 이 글자로 견준다
+function lfTokenText(token) {
+    if (!token) return '';
+    if (token.type === 'escape') return token.text ?? String(token.raw || '').slice(1);
+    if (token.type === 'codespan' || token.type === 'code') return token.text || '';
+    if (token.type === 'br') return '\n';
+    if (token.type === 'list') return (token.items || []).map(lfTokenText).join('\n');
+    if (Array.isArray(token.tokens)) return token.tokens.map(lfTokenText).join('');
+    return token.type === 'text' ? token.text ?? token.raw ?? '' : '';
+}
+
+// 블록의 보이는 글자. 인용 블록은 원문 위치로 되짚은 글자보다 토큰 글자가 길면(인용 안 목록) 토큰 글자를 쓴다
+function lfShownChars(block) {
+    const projected = lfProject(block.raw).chars.map(ch => ch.c).join('');
+    const quoted = block.token.type === 'blockquote' ? lfTokenText(block.token) : '';
+    return lfNorm(quoted).length > lfNorm(projected).length ? quoted : projected;
+}
+
+// 두 번 눌러 고칠 블록 고르기(lfLocateBlock)의 점수용 글자. 핵심 요약 상자가 앞 문단과 같은 문장을 되풀이해도 상자를 고른다
+const lfScoreProjection = block => ({ chars: [...lfShownChars(block)].map(c => ({ c })) });
+
 function lfPlainText(block) {
-    const chars = lfProject(block.raw).chars.map(ch => ch.c).join('');
+    const chars = lfShownChars(block);
     return lfNorm(lfDecode(lfNorm(chars) ? chars : block.raw.replace(/<[^>]*>/g, ' ')));
 }
 

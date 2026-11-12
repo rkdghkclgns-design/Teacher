@@ -503,7 +503,8 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         mainQuestText: subj?.mainQuest?.description || '',
         codeTopic: lessonCodeTopic(mod), // 코드를 다루는 차시면 설명마다 예제 코드 블록을 쓰게 한다
         targetMinutes: learnTargetMinutes(mod, tabId), // 학습 탭의 낭독 목표(분, 다른 탭은 0)
-        practiceMinutes: lessonPracticeMinutes(mod, tabId) // 강사가 정한 실습 시간(분, 정하지 않았거나 실습 탭이 아니면 0)
+        practiceMinutes: lessonPracticeMinutes(mod, tabId), // 강사가 정한 실습 시간(분, 정하지 않았거나 실습 탭이 아니면 0)
+        isMainQuest: mod.id === 'mainQuest' // 최종 평가 탭에는 핵심 요약 상자 규칙을 주지 않는다(ui.js questRuleOptions)
     };
     const { systemInstruction, userPrompt } = buildTaskContext('tab_content', baseArgs);
 
@@ -624,6 +625,13 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         if (!mod.tabContents) mod.tabContents = { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null, advAssessment: null };
         resultText = cleanLessonOpening(restoreLockedSections(resultText, lockedBlocks));
         if (typeof checklistLast === 'function') resultText = checklistLast(resultText, tabId);
+        // 학습 탭은 내용 섹션마다 핵심 요약 상자를 하나만 맨 끝에 둔다(lesson-summary.js). 다른 탭은 그대로다.
+        // 최종 평가에는 상자를 두지 않는다(규칙을 주지 않지만 AI가 써 넣었으면 뗀다)
+        const summaryLast = md => {
+            if (mod.id === 'mainQuest') return typeof withoutSummaryBoxes === 'function' ? withoutSummaryBoxes(md) : md;
+            return typeof summaryBoxesLast === 'function' ? summaryBoxesLast(md, tabId, lockedBlocks) : md;
+        };
+        resultText = summaryLast(resultText);
         if (!resultText.trim()) throw new Error('AI 응답이 비어 있습니다.');
         // 학습 탭은 모자란 섹션마다 새 소주제를 이어 붙여 낭독 목표 분량까지 채운다. 그림 자리는 초안에만 미리 넣는다(붙인 소주제에는 넣지 않는다)
         const volume = volumeSnap && !partialDueToError && !_tabGenStop ? await ensureSpokenVolume({
@@ -660,6 +668,7 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
             resultText = commented.md;
             commentRun = commented.run;
         }
+        resultText = summaryLast(resultText); // 분량 채우기·고치기 뒤에도 핵심 요약 상자는 섹션 끝에 하나다
         // 학습 탭은 첫머리를 개요 → 학습 정보 → 학습 목표 차례로 두고 학습 정보를 차시 메타데이터로 쓴다(lesson-info.js). 다른 탭은 그대로다
         if (typeof applyLessonInfoFrame === 'function') resultText = applyLessonInfoFrame(resultText, { mod, tabId, lockedBlocks });
         if (tabId === 'basicPrac' && typeof withQuestFileName === 'function') resultText = withQuestFileName(resultText, mod, subj);
@@ -878,9 +887,12 @@ async function reinforceCurrentTab(moduleId, command = '') {
             window.setPipelineStatus('AI가 고친 글을 받고 있습니다...');
             // 문항(문제은행 탭·최종 평가)은 문항 속 코드 주석 규칙을 받는다(code-comments-tool.js isCodeCommentQuiz)
             const quizComments = typeof isCodeCommentQuiz === 'function' ? isCodeCommentQuiz(mod, tabId) : isQuestionBankTab(tabId);
+            // 학습 탭(최종 평가 빼고)은 섹션 끝 핵심 요약 상자를 지키게 한다(data.js section_summary, lesson-summary.js)
+            const learnSummary = mod.id !== 'mainQuest' && (tabId === 'basicLearn' || tabId === 'advLearn') && !!CONTEXT_CORE.rules.section_summary;
             const systemInstruction = CONTEXT_CORE.personas.instructor +
                 '\n[규칙]\n- 기존 교안 내용을 유지하면서, 사용자의 보강 명령에 따라 내용을 개선하세요.\n- 전체 구조와 서식은 보존하되, 요청된 부분만 보강·수정하세요.\n- ' +
                 CONTEXT_CORE.rules.content_design + '\n- ' +
+                (learnSummary ? CONTEXT_CORE.rules.section_summary + '\n- ' : '') +
                 CONTEXT_CORE.rules.korean_period + '\n- ' +
                 (CONTEXT_CORE.rules.emoji_rule || '') +
                 (!isQuestionBankTab(tabId) && CONTEXT_CORE.rules.code_examples ? '\n- ' + CONTEXT_CORE.rules.code_examples : '') +
@@ -904,7 +916,8 @@ async function reinforceCurrentTab(moduleId, command = '') {
             const commented = typeof addGeneratedCodeComments === 'function'
                 ? await addGeneratedCodeComments({ md: received, tabId, quiz: isCodeCommentQuiz(mod, tabId), lockedBlocks, label: shownLabel, onStatus: window.setPipelineStatus, isStopped: () => _tabGenStop, signal: window.aiStopSignal(), notify: false })
                 : { md: received, run: null };
-            const resultText = commented.md;
+            // 받은 글의 핵심 요약 상자도 섹션 끝에 하나만 둔다(학습 탭, lesson-summary.js)
+            const resultText = learnSummary && typeof summaryBoxesLast === 'function' ? summaryBoxesLast(commented.md, tabId, lockedBlocks) : commented.md;
             if (_tabGenStop) return;
             // 기다리는 동안 이 탭을 고쳤으면 고친 글을 지키고, 다시 실행하게 한다
             saveOpenEditsFor(mod, tabId);

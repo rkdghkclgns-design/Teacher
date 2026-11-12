@@ -157,8 +157,10 @@ function postprocessHtml(source) {
 // 기존에는 편집기만 postprocessHtml을 적용하고 PDF/이력 경로는 누락되어
 // 같은 교안이 화면과 내보내기에서 다르게 렌더되는 불일치가 있었다.
 // opts.postprocess: 기본 true. (이미지 치환은 호출 측에서 미리 수행)
+// opts.callouts: 핵심 요약·💡·⚠️·✅ 상자 class를 붙일지(기본 true). 문제은행 탭·최종 평가는 부르는 쪽이 false로 준다(lesson-summary.js lessonCalloutsFor)
 function renderLessonHTML(md, opts) {
     const postprocess = !opts || opts.postprocess !== false;
+    const callouts = postprocess && (!opts || opts.callouts !== false);
     const safe = stripInstructorCallouts((md == null) ? '' : String(md));
     let html = (typeof marked !== 'undefined')
         ? marked.parse(safe)
@@ -167,6 +169,8 @@ function renderLessonHTML(md, opts) {
     // 항목에 딸린 '용어: 설명'은 왼쪽 막대로. 후처리가 라벨 끝 콜론을 지우기 전에 찾는다
     if (typeof markTermParagraphs === 'function') html = markTermParagraphs(html);
     if (postprocess && typeof postprocessHtml === 'function') html = postprocessHtml(html);
+    // 핵심 요약 상자와 💡·⚠️·✅ 문단에 상자 class만 붙인다(lesson-summary.js). 감싸지 않아 블록 수가 그대로이고 코드 블록은 건드리지 않는다
+    if (callouts && typeof markLessonCallouts === 'function') html = markLessonCallouts(html);
     const clean = sanitizeLessonHtml(html); // 후처리가 글자를 지워 태그가 이어 붙을 수 있으므로 맨 끝에서 거른다
     // 체크리스트의 '(다시 보기: 섹션 제목)'을 그 ## 제목으로 가는 링크로 그린다(checklist-links.js). 저장한 글은 그대로다
     return typeof linkChecklistReviews === 'function' ? linkChecklistReviews(clean) : clean;
@@ -206,8 +210,9 @@ function lessonScreenNonce() {
     return Array.from(bytes, byte => 'abcdefghijklmnopqrstuvwxyz0123456789'[byte % 36]).join('');
 }
 
-// 그린 결과를 가르는 것: 넣은 글, 글에 쓰인 그림 키와 그 그림 값, 그리는 함수들(바꿔 끼운 함수도 가른다)
-function lessonScreenInput(md, images) {
+// 그린 결과를 가르는 것: 넣은 글, 글에 쓰인 그림 키와 그 그림 값, 그리는 함수들(바꿔 끼운 함수도 가른다),
+// 상자 class를 붙이는지(callouts, renderLessonHTML opts.callouts. 같은 글도 문제은행 탭·최종 평가에서는 상자 없이 그린다)
+function lessonScreenInput(md, images, { callouts = true } = {}) {
     const text = String(md || '');
     const picture = typeof EXPORT_PICTURE_RE !== 'undefined' ? EXPORT_PICTURE_RE : /^data:image\//;
     const pictures = new Map(Object.entries(images || {}).filter(([, data]) => typeof data === 'string' && picture.test(data)));
@@ -239,6 +244,7 @@ function lessonScreenInput(md, images) {
         typeof markTermParagraphs === 'function' ? markTermParagraphs : null,
         typeof postprocessHtml === 'function' ? postprocessHtml : null,
         typeof keepChosenNumbering === 'function' ? keepChosenNumbering : null,
+        typeof markLessonCallouts === 'function' ? markLessonCallouts : null, // 핵심 요약·💡·⚠️·✅ 상자 class(lesson-summary.js)
         typeof sanitizeLessonHtml === 'function' ? sanitizeLessonHtml : null,
         typeof cleanLessonElement === 'function' ? cleanLessonElement : null,
         typeof legacyRegenerateArgs === 'function' ? legacyRegenerateArgs : null,
@@ -254,12 +260,12 @@ function lessonScreenInput(md, images) {
         typeof findLessonSection === 'function' ? findLessonSection : null,
         typeof DOMParser !== 'undefined' ? DOMParser : null
     ];
-    return { text, refs: [...refs], loose, pipeline };
+    return { text, refs: [...refs], loose, pipeline, callouts: callouts !== false };
 }
 
-// 같은 글·그림·함수로 그린 결과인가(그림 값은 같은 글자열이어야 한다)
+// 같은 글·그림·함수·상자 그리기로 그린 결과인가(그림 값은 같은 글자열이어야 한다)
 function sameLessonScreenInput(a, b) {
-    return !!a && !!b && a.text === b.text
+    return !!a && !!b && a.text === b.text && (a.callouts !== false) === (b.callouts !== false)
         && a.pipeline.length === b.pipeline.length && a.pipeline.every((fn, i) => fn === b.pipeline[i])
         && a.refs.length === b.refs.length && a.refs.every(([key, value], i) => b.refs[i][0] === key && b.refs[i][1] === value);
 }
@@ -374,7 +380,7 @@ function drawMarkedLessonScreen(input, md, images, preview) {
     }
     const marks = lessonScreenMarks(input, images);
     if (!marks) return null;
-    const html = renderLessonHTML(preprocessMarkdown(inlineLessonImages(md, marks.images)));
+    const html = renderLessonHTML(preprocessMarkdown(inlineLessonImages(md, marks.images)), lessonScreenOpts(input));
     const done = restoreLessonScreenMarks(html, marks);
     if (done === null) {
         console.warn('[차시 화면] 그림 표시가 다른 모양으로 남아 그림을 넣은 글로 다시 그립니다.');
@@ -393,13 +399,22 @@ function drawLessonScreen(input, md, images, preview = false) {
     } catch (err) {
         console.warn('[차시 화면] 그림을 뺀 글로 그리지 못해 그림을 넣은 글로 다시 그립니다:', err?.message || err);
     }
-    const html = renderLessonHTML(preprocessMarkdown(inlineLessonImages(md, images)));
+    const html = renderLessonHTML(preprocessMarkdown(inlineLessonImages(md, images)), lessonScreenOpts(input));
     rememberLessonScreen(input, html, null, preview);
     return html;
 }
 
-function renderLessonScreen(md, images, { preview = false } = {}) {
-    return drawLessonScreen(lessonScreenInput(md, images), md, images, preview);
+// 그리기 옵션: 상자 class를 붙이지 않는 화면이면 { callouts: false }, 아니면 예전처럼 옵션 없이 그린다
+const lessonScreenOpts = input => (input && input.callouts === false ? { callouts: false } : undefined);
+
+// 지금 보는 차시·탭의 화면이 상자 class를 붙이는지(문제은행 탭·최종 평가는 아니다, lesson-summary.js). 그 파일을 싣지 않았으면 예전처럼 붙인다
+function lessonScreenCallouts(mod) {
+    const tabId = typeof currentLessonTab !== 'undefined' ? currentLessonTab : 'basicLearn';
+    return typeof lessonCalloutsFor === 'function' ? lessonCalloutsFor(mod, tabId) : true;
+}
+
+function renderLessonScreen(md, images, { preview = false, callouts = true } = {}) {
+    return drawLessonScreen(lessonScreenInput(md, images, { callouts }), md, images, preview);
 }
 
 // v5.9 포팅: 한국어 마침표 뒤 줄바꿈 HTML 후처리
@@ -1001,7 +1016,8 @@ async function generateModuleContent(moduleId, keyConcepts) {
             otherLessonsText: otherLessonsText,
             uploadedMdContent: mod.uploadedMdContent,
             codeTopic,
-            targetMinutes
+            targetMinutes,
+            isMainQuest: moduleId === 'mainQuest' // 최종 평가 본문에는 핵심 요약 상자 규칙을 주지 않는다(ui.js buildFullRules)
         });
 
         setLoadingStatus('교안 작성 중... (1단계: 초안 생성)');
@@ -1041,7 +1057,8 @@ async function generateModuleContent(moduleId, keyConcepts) {
                 chunkIndex: chunkCount,
                 previousContent: contextTail,
                 codeTopic,
-                targetMinutes
+                targetMinutes,
+                isMainQuest: moduleId === 'mainQuest'
             });
 
             // API 쿨다운
@@ -1087,6 +1104,12 @@ async function generateModuleContent(moduleId, keyConcepts) {
 
         fullContent = cleanLessonOpening(restoreLockedSections(fullContent, lockedBlocks));
         if (typeof checklistLast === 'function') fullContent = checklistLast(fullContent, 'basicLearn');
+        // 내용 섹션마다 핵심 요약 상자를 하나만 맨 끝에 둔다(lesson-summary.js). 최종 평가에는 상자를 두지 않는다(규칙을 주지 않지만 AI가 써 넣었으면 뗀다)
+        const summaryLast = md => {
+            if (moduleId === 'mainQuest') return typeof withoutSummaryBoxes === 'function' ? withoutSummaryBoxes(md) : md;
+            return typeof summaryBoxesLast === 'function' ? summaryBoxesLast(md, 'basicLearn', lockedBlocks) : md;
+        };
+        fullContent = summaryLast(fullContent);
 
         // 기본 학습은 모자란 섹션마다 새 소주제를 이어 붙여 낭독 목표 분량까지 채운다. 그림 자리는 초안에만 미리 넣는다(붙인 소주제에는 넣지 않는다)
         const isStopped = () => !!window.isTabGenerationStopped?.();
@@ -1130,6 +1153,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
             fullContent = restoreLockedSections(await processImageTags(mod, fullContent, { onStatus: setLoadingStatus, inject: !volume }), lockedBlocks);
         }
         // 기본학습 첫머리를 개요 → 학습 정보 → 학습 목표 차례로 두고 학습 정보를 차시 메타데이터로 쓴다(lesson-info.js). 최종 평가는 바꾸지 않는다
+        fullContent = summaryLast(fullContent); // 분량 채우기·고치기 뒤에도 핵심 요약 상자는 섹션 끝에 하나다
         if (typeof applyLessonInfoFrame === 'function') fullContent = applyLessonInfoFrame(fullContent, { mod, tabId: 'basicLearn', lockedBlocks });
         if (volume && subj && !lessonStillLive(subj, mod)) return lessonGone(fullContent);
 
@@ -3356,7 +3380,8 @@ function renderEditor(mod) {
         // 렌더 시 local:그림 id를 저장된 그림으로 바꾸고, 없는 그림 자리(AI가 규칙을 무시하고 낸 local: 링크 포함)는 비운다(내보내기와 같은 규칙, lesson-export.js inlineLessonImages).
         // 그림 키 모양 하나로 찾아 그림 목록에서 꺼내므로(그림 id로 정규식을 만들지 않는다) 이상한 id로 차시가 열리지 않거나 멈추지 않고, img_1이 img_10을 건드리지 않는다.
         // 그림 넣기 → v7.6 공통 마크다운 전처리 → renderLessonHTML과 같은 HTML을 그리되, 큰 그림 데이터는 글 처리 밖에 두고 맨 끝에 넣는다(drawLessonScreen)
-        const screenInput = lessonScreenInput(renderText, mod.images);
+        // 문제은행 탭·최종 평가는 핵심 요약·💡·⚠️·✅ 상자 없이 그린다(lessonScreenCallouts)
+        const screenInput = lessonScreenInput(renderText, mod.images, { callouts: lessonScreenCallouts(mod) });
 
         try {
 
@@ -3717,7 +3742,7 @@ window.toggleEditorMode = function (mode) {
             const renderText = typeof cleanLessonOpening === 'function' ? cleanLessonOpening(rawView.value) : rawView.value;
 
             // 보기 모드로 돌아올 때도 같은 규칙으로 그림을 넣고 없는 그림 자리는 비우고(lesson-export.js inlineLessonImages), v7.6 마크다운 전처리도 같다(drawLessonScreen)
-            const screenInput = lessonScreenInput(renderText, mod.images);
+            const screenInput = lessonScreenInput(renderText, mod.images, { callouts: lessonScreenCallouts(mod) });
 
             try {
 

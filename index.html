@@ -654,6 +654,81 @@
             font-style: italic;
         }
 
+        /* 섹션 끝 핵심 요약 상자와 💡(핵심)·⚠️(주의)·✅(확인) 문단 상자 (js/lesson-summary.js markLessonCallouts가 class만 붙인다).
+           글자색과 바탕을 직접 정해 둘레 색과 관계없이 읽히고, 내보내기(js/lesson-export.js)도 같은 모양이다 */
+        .markdown-body blockquote.lesson-summary {
+            margin: 1.75rem 0 1rem;
+            padding: 0.9rem 1.25rem 0.7rem;
+            border: 1px solid #d6ccfb;
+            border-left: 6px solid #7c5bf5;
+            border-radius: 10px;
+            background: #f5f2ff;
+            color: #2a2540;
+            font-style: normal;
+            box-shadow: 0 1px 3px rgba(124, 91, 245, 0.12);
+        }
+        .markdown-body blockquote.lesson-summary > p.lesson-summary-head {
+            margin: 0 0 0.45rem;
+            font-size: 0.95rem;
+            font-weight: 800;
+            color: #4c2fc9;
+        }
+        .markdown-body blockquote.lesson-summary > ul {
+            margin: 0;
+            padding-left: 1.25rem;
+        }
+        .markdown-body blockquote.lesson-summary li {
+            margin-bottom: 0.3rem;
+            line-height: 1.7;
+        }
+        .markdown-body p.lesson-callout {
+            padding: 0.55rem 0.9rem;
+            border-left-width: 4px;
+            border-left-style: solid;
+            border-radius: 0 8px 8px 0;
+            color: #2f2f3d;
+        }
+        /* 바로 뒤 목록은 같은 상자로 잇는다(감싸지 않으므로 화면 블록 수는 그대로다) */
+        .markdown-body p.lesson-callout:has(+ ul, + ol) {
+            margin-bottom: 0;
+            border-bottom-right-radius: 0;
+        }
+        .markdown-body p.lesson-callout + ul,
+        .markdown-body p.lesson-callout + ol {
+            margin-top: 0;
+            padding: 0.15rem 0.9rem 0.6rem 2.4rem;
+            border-left-width: 4px;
+            border-left-style: solid;
+            border-radius: 0 0 8px 0;
+            color: #2f2f3d;
+        }
+        .markdown-body p.lesson-callout-key,
+        .markdown-body p.lesson-callout-key + ul,
+        .markdown-body p.lesson-callout-key + ol {
+            border-left-color: #f59e0b;
+            background: #fffaeb;
+        }
+        .markdown-body p.lesson-callout-warn,
+        .markdown-body p.lesson-callout-warn + ul,
+        .markdown-body p.lesson-callout-warn + ol {
+            border-left-color: #ef4444;
+            background: #fff4f4;
+        }
+        .markdown-body p.lesson-callout-check,
+        .markdown-body p.lesson-callout-check + ul,
+        .markdown-body p.lesson-callout-check + ol {
+            border-left-color: #10b981;
+            background: #effcf6;
+        }
+        @media print {
+            .markdown-body blockquote.lesson-summary,
+            .markdown-body p.lesson-callout {
+                break-inside: avoid;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+        }
+
 
 
         /* v7.2: 이미지, 도표, 관계도 중앙 정렬 */
@@ -2072,6 +2147,7 @@
     <script src="./js/ai-routing.js?v=125"></script>
     <script src="./js/lesson-attachments.js?v=125"></script>
     <script src="./js/lesson-sanitize.js?v=125"></script>
+    <script src="./js/lesson-summary.js?v=125"></script>
     <script src="./js/lesson-format.js?v=125"></script>
     <script src="./js/lesson-export.js?v=125"></script>
     <script src="./js/import-stream.js?v=125"></script>

@@ -175,6 +175,8 @@ function cleanVolumeAddition(data, { sectionText = '', truncated = data?.candida
     if (truncated) text = cutAtLastBreak(text);
     text = closeOpenFence(text.trim());
     if (typeof sanitizeMarkdownContent === 'function') text = sanitizeMarkdownContent(text) || '';
+    // 핵심 요약 상자는 섹션에 하나만 둔다(lesson-summary.js). AI가 소주제에 상자를 써 넣었으면 뗀다
+    if (typeof withoutSummaryBoxes === 'function') text = withoutSummaryBoxes(text);
     const seen = new Set(subtopicTitles(sectionText));
     const own = volumeBareKey(mdSections(sectionText)[0]?.title);
     const kept = volumeSplitBlocks(text).filter(block => {
@@ -190,14 +192,17 @@ function cleanVolumeAddition(data, { sectionText = '', truncated = data?.candida
 }
 
 /* ---------- 이어 붙이기 ---------- */
-// 섹션 끝(끝의 <br> 간격 줄 앞)에 덧붙인다. 섹션 사이는 빈 줄 하나로 잇는다(checklistLast와 같다). 다른 섹션은 그대로다
+// 섹션 끝(끝의 <br> 간격 줄 앞)에 덧붙인다. 섹션 끝에 핵심 요약 상자가 있으면 그 상자 앞에 넣고 상자는 맨 끝에 둔다(lesson-summary.js summaryTailStart).
+// 섹션 사이는 빈 줄 하나로 잇는다(checklistLast와 같다). 다른 섹션은 그대로다
 function appendToSection(md, index, addition) {
     const sections = mdSections(md);
     if (!sections[index] || !String(addition || '').trim()) return md;
     const lines = sections[index].text.split('\n');
-    let end = lines.length;
+    const boxAt = typeof summaryTailStart === 'function' ? summaryTailStart(lines) : -1;
+    let end = boxAt >= 0 ? boxAt : lines.length;
     while (end > 1 && /^\s*(?:<br\s*\/?>\s*)*$/i.test(lines[end - 1])) end -= 1;
-    const text = [lines.slice(0, end).join('\n').trimEnd(), '<br>', String(addition).trim(), lines.slice(end).join('\n').trim()].filter(Boolean).join('\n\n');
+    const rest = boxAt >= 0 ? ['<br>', lines.slice(boxAt).join('\n').trim()] : [lines.slice(end).join('\n').trim()];
+    const text = [lines.slice(0, end).join('\n').trimEnd(), '<br>', String(addition).trim(), ...rest].filter(Boolean).join('\n\n');
     return sections.map((section, i) => (i === index ? text : section.text)).join('\n\n');
 }
 
@@ -310,7 +315,8 @@ function requestVolumeAddition(job, plan) {
     const { systemInstruction, userPrompt } = buildTaskContext('volume_expand', {
         tabId: job.tabId, tabLabel: reviewTabLabel(job.tabId), title: job.mod.title, description: job.mod.description, targetMinutes: job.targetMinutes,
         outline: mdSections(job.md).filter(section => section.title).map(section => section.title),
-        objectives: lessonLintBullets(job.md, '학습\\s*목표'), sectionTitle: plan.title, sectionText: plan.text,
+        // 섹션 끝 핵심 요약 상자는 보내지 않는다(새 소주제에 상자를 따라 쓰지 않게, lesson-summary.js)
+        objectives: lessonLintBullets(job.md, '학습\\s*목표'), sectionTitle: plan.title, sectionText: typeof withoutSummaryBoxes === 'function' ? withoutSummaryBoxes(plan.text) : plan.text,
         requestChars: plan.requestChars, subtopics: plan.subtopics, codeSection: plan.codeSection, needCode: plan.needCode, fromUpload: job.fromUpload
     });
     const level = typeof lessonGenOptions === 'function' ? lessonGenOptions(job.mod).level : '';
@@ -408,7 +414,12 @@ function volumeFinalText(job) {
             console.warn('[분량 채우기] (⏱) 시간을 다시 매기지 못해 그대로 둡니다:', err);
         }
     }
-    return checklistLast(restoreLockedSections(md, job.lockedBlocks), job.tabId);
+    return volumeSummaryLast(checklistLast(restoreLockedSections(md, job.lockedBlocks), job.tabId), job.tabId, job.lockedBlocks);
+}
+
+// 핵심 요약 상자는 섹션마다 하나·맨 끝이다(lesson-summary.js). 탭 생성·'분량 채우기'·채우는 동안 바뀐 글에 다시 붙인 글이 모두 이 모양으로 끝난다
+function volumeSummaryLast(md, tabId, lockedBlocks = []) {
+    return typeof summaryBoxesLast === 'function' ? summaryBoxesLast(md, tabId, lockedBlocks) : md;
 }
 
 function volumeResult(job) {
@@ -576,7 +587,7 @@ async function fillVolumeJob({ mod, subj, before, snapshot, tabId = 'basicLearn'
     // 고쳐 받은 체크리스트에도 다시 보기의 옛 시간이 남지 않게 뗀다
     const fixable = volume.added > 0 && !volume.stopped && !isVolumeHalt(volume.error);
     const fixed = fixable
-        ? volumeChecklistText(await autoFixGeneratedTab({ tabId, md: volume.md, lockedBlocks, onStatus: window.setPipelineStatus, rounds: VOLUME_FIX_ROUNDS, minSpokenChars: volume.targetChars, isStopped }), lockedBlocks)
+        ? volumeSummaryLast(volumeChecklistText(await autoFixGeneratedTab({ tabId, md: volume.md, lockedBlocks, onStatus: window.setPipelineStatus, rounds: VOLUME_FIX_ROUNDS, minSpokenChars: volume.targetChars, isStopped }), lockedBlocks), tabId, lockedBlocks)
         : volume.md;
     if (!isLive()) return window.showAlert(`${gone} 반영하지 못했습니다. ${await keep(fixed)}`);
     // 주석 보강은 자동 수정과 같은 때만 하고(fixable), 결과는 미리보기 안내와 반영한 뒤의 끝 알림에 적는다

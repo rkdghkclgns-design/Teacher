@@ -1921,15 +1921,19 @@ function tabContinueVolumeRule(tabId, { targetMinutes = 0, practiceMinutes = 0 }
 }
 
 // 탭별 규칙 필터링 — 학습탭에 실습/평가/강사가이드 혼입 방지. 문제은행 탭(학습이해도·심화이해도)은 코드제출 문항 형식을 따로 쓰므로 코드 예제 규칙을 뺀다
-const ASSESSMENT_RULE_EXCLUSIONS = ['time_allocation', 'image_tags', 'mermaid_rules', 'learning_checklist', 'code_examples'];
+// 섹션 끝 핵심 요약(section_summary)은 학습 탭(기본학습·심화학습)에만 준다
+const ASSESSMENT_RULE_EXCLUSIONS = ['time_allocation', 'image_tags', 'mermaid_rules', 'learning_checklist', 'section_summary', 'code_examples'];
 const TAB_RULE_EXCLUSIONS = {
     basicLearn: ['rubric_100', 'quiz_format', 'assessment_design'],
     advLearn: ['rubric_100', 'quiz_format', 'assessment_design'],
-    basicPrac: ['rubric_100', 'quiz_format', 'assessment_design', 'learning_checklist'],
-    advPrac: ['rubric_100', 'quiz_format', 'assessment_design', 'learning_checklist'],
+    basicPrac: ['rubric_100', 'quiz_format', 'assessment_design', 'learning_checklist', 'section_summary'],
+    advPrac: ['rubric_100', 'quiz_format', 'assessment_design', 'learning_checklist', 'section_summary'],
     assessment: ASSESSMENT_RULE_EXCLUSIONS,
     advAssessment: ASSESSMENT_RULE_EXCLUSIONS
 };
+
+// 최종 평가(mainQuest)의 탭을 만들 때 뺄 규칙: 핵심 요약 상자는 학습 탭에만 쓴다(lesson-summary.js). 다른 차시는 옵션 없이(예전 그대로)
+const questRuleOptions = context => (context && context.isMainQuest ? { exclude: ['section_summary'] } : undefined);
 
 // 탭 전용 규칙 빌더 (buildFullRules 변형). 탭 생성과 탭 이어쓰기가 같은 규칙을 쓴다
 // exclude: 이 작업에서 더 뺄 규칙(분량 보강은 문서 구조·시간·체크리스트·그림·mermaid 규칙을 뺀다) / fewshot: 서식 예시를 넣을지
@@ -1960,6 +1964,7 @@ function buildTabRules(tabId, keyConcepts, { exclude = [], fewshot = true } = {}
         ['time_allocation', r.time_allocation],
         ['content_design', r.content_design],
         ['learning_checklist', r.learning_checklist],
+        ['section_summary', r.section_summary],
         ['assessment_design', r.assessment_design],
         ['mermaid_rules', r.mermaid_rules],
         ['rubric_100', r.rubric_100],
@@ -2036,6 +2041,8 @@ function buildTaskContext(taskScope, additionalContext = "") {
             r.time_allocation,
             r.content_design,
             learning && r.learning_checklist,
+            // 핵심 요약 상자는 학습 탭에만. 최종 평가 본문(교안 전체 생성의 mainQuest)에는 주지 않는다
+            learning && !additionalContext?.isMainQuest && r.section_summary,
             r.mermaid_rules,
             r.rubric_100,
             r.korean_period,
@@ -2215,7 +2222,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
         case 'tab_content': {
             const learnMinutes = additionalContext.targetMinutes || LEARN_TARGET_MINUTES; // 학습 탭(기본학습·심화학습)의 낭독 목표(분)
             const practiceMinutes = additionalContext.practiceMinutes || 0; // 강사가 정한 실습 시간(분, 정하지 않았으면 0)
-            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildTabRules(additionalContext.tabId, additionalContext.keyConcepts)}`;
+            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildTabRules(additionalContext.tabId, additionalContext.keyConcepts, questRuleOptions(additionalContext))}`;
 
             // 분할 생성 지시 — 긴 탭(특히 기본 학습 480분)이 중간에 잘리는 것을 방지
             systemInstruction += '\n\n[분량 관리]\n' +
@@ -2263,7 +2270,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
         case 'tab_content_continue': {
             // 1청크와 같은 탭 규칙을 준다. 규칙 없이 이어 쓰면 체크리스트가 본문 중간에 들어가는 등 구조가 흐트러진다
             const learningTab = additionalContext.tabId === 'basicLearn' || additionalContext.tabId === 'advLearn';
-            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildTabRules(additionalContext.tabId, additionalContext.keyConcepts)}`;
+            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildTabRules(additionalContext.tabId, additionalContext.keyConcepts, questRuleOptions(additionalContext))}`;
             systemInstruction += '\n\n[이어쓰기 규칙]\n' +
                 '- 반드시 한국어로 작성하세요. 영어로 작성하지 마세요.\n' +
                 '- 마크다운 구조(##, ###, 표, mermaid, 불릿)와 이전 청크의 문체·깊이를 그대로 유지하세요. ## 제목은 "##"와 제목을 같은 줄에 씁니다.\n' +
@@ -2291,7 +2298,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
             const a = additionalContext;
             const minutes = a.targetMinutes || LEARN_TARGET_MINUTES;
             const advanced = a.tabId === 'advLearn'; // 심화학습은 심화 역할과 흐름(고급 이론 → 업계 사례 → 실무 분석)을 준다. 기본학습 지시는 예전 그대로다
-            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildTabRules(a.tabId, [], { exclude: ['markdown_structure', 'time_allocation', 'learning_checklist', 'image_tags', 'mermaid_rules'], fewshot: false })}` +
+            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildTabRules(a.tabId, [], { exclude: ['markdown_structure', 'time_allocation', 'learning_checklist', 'section_summary', 'image_tags', 'mermaid_rules'], fewshot: false })}` +
                 '\n\n[분량 보강 규칙 — 절대 준수]\n' +
                 '- 이미 작성한 교안 섹션 하나를 더 깊고 길게 만드는 작업입니다. [보강할 섹션] 끝에 이어 붙일 새 ### 소주제만 출력합니다.\n' +
                 '- ## 제목, 학습 목표, 개요, 학습 후 체크리스트는 출력하지 않습니다. 다른 섹션의 내용도 쓰지 않습니다.\n' +

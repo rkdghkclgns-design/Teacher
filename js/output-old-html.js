@@ -232,6 +232,8 @@ function oldHtmlTidy(section) {
     all(EXPORT_CONTROLS).forEach(el => el.parentNode && el.parentNode.removeChild(el));
     // 체크리스트 다시 보기 링크(checklist-links.js)는 그릴 때만 다는 것이라 글자로 되돌린다(마크다운 링크로 저장하지 않는다)
     all('a.lesson-check-link').forEach(link => link.parentNode && link.parentNode.replaceChild(link.ownerDocument.createTextNode(link.textContent || ''), link));
+    // 핵심 요약·💡·⚠️·✅ 상자 class(lesson-summary.js)도 그릴 때만 다는 것이라 뗀다(문단이 HTML 그대로 남지 않고 마크다운으로 돌아오게)
+    all('.lesson-summary, .lesson-summary-head, .lesson-callout').forEach(el => el.removeAttribute('class'));
     all('.hidden').forEach(el => el.classList.remove('hidden'));
     all('*').forEach(el => Array.from(el.attributes).forEach(({ name, value }) => {
         if (/^on/i.test(name) || (OLD_HTML_URL_ATTRS.test(name) && OLD_HTML_SCRIPT_URL.test(String(value).replace(/[\u0000- ]+/g, '')))) el.removeAttribute(name);

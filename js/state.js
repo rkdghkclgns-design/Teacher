@@ -1379,7 +1379,7 @@ window.exportSelectedHistoryPDF = async function () {
 
             // 교안 렌더 단일 파이프라인 사용 (기존엔 callout 재파싱·후처리 없이 marked만 호출해 강사 박스가 깨져 보였음)
             htmlContent += (typeof renderLessonHTML === 'function')
-                ? renderLessonHTML(resolveMarkdownImages(h.content, h.images))
+                ? renderLessonHTML(resolveMarkdownImages(h.content, h.images), historyRenderOpts(h))
                 : (typeof marked !== 'undefined' ? sanitizeLessonHtml(marked.parse(resolveMarkdownImages(h.content, h.images))) : `<pre>${escapeHtml(resolveMarkdownImages(h.content, h.images))}</pre>`);
 
         } catch (e) {
@@ -1490,6 +1490,14 @@ function extractImagesToZip(markdownContent, images, attachFolder) {
     return content;
 }
 
+// 작업 기록 글을 그리는 옵션. 탭 하나의 기록은 그 탭 규칙으로(문제은행 탭·최종 평가는 핵심 요약·💡·⚠️·✅ 상자 없이, lesson-summary.js lessonCalloutsFor),
+// 탭을 모르는 기록(여러 탭을 합친 차시 본문)은 문항이 섞여 있을 수 있어 상자 없이 그린다. 탭 글이 없는 옛 차시 본문은 기본학습이다
+function historyRenderOpts(item) {
+    if (typeof lessonCalloutsFor !== 'function') return undefined;
+    const tabId = item?.tabId || (item?.tabContents ? '' : 'basicLearn');
+    return lessonCalloutsFor({ id: item?.lessonId }, tabId) ? undefined : { callouts: false };
+}
+
 window.viewHistoryItem = function (id) {
     const item = contentHistory.find(h => h.id === id);
     if (!item) { window.showAlert("해당 작업 기록을 찾을 수 없습니다."); return; }
@@ -1511,7 +1519,7 @@ window.viewHistoryItem = function (id) {
             try {
                 // 교안 렌더 단일 파이프라인 (편집기와 동일: collapse→marked→reParse→마침표줄바꿈→postprocess)
                 // 기존 이력 보기 경로는 postprocessHtml이 누락되어 화면과 다르게 렌더되던 것을 통합으로 수정
-                htmlContent = (typeof renderLessonHTML === 'function') ? renderLessonHTML(resolved) : marked.parse(resolved);
+                htmlContent = (typeof renderLessonHTML === 'function') ? renderLessonHTML(resolved, historyRenderOpts(item)) : marked.parse(resolved);
             } catch (parseErr) {
                 console.warn("marked.parse 파싱 경고:", parseErr);
                 htmlContent = `<pre style="white-space:pre-wrap;word-break:break-word;">${resolved.replace(/</g, '&lt;')}</pre>`;

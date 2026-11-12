@@ -70,6 +70,8 @@ function reviewSystemPrompt(tabId, quiz = false) {
     return [
         personas.instructor, '[작성 규칙]', rules.content_design,
         LESSON_STRUCTURED_TABS.includes(tabId) && rules.learning_checklist,
+        // 섹션 끝 핵심 요약 상자를 고쳐 쓰면서도 지키게 한다(문항 모드인 최종 평가는 빼고, lesson-summary.js keepSectionSummary가 받은 글도 맞춘다)
+        LESSON_STRUCTURED_TABS.includes(tabId) && !quiz && rules.section_summary,
         isQuestionBankTab(tabId) && rules.assessment_design,
         !isQuestionBankTab(tabId) && rules.code_examples,
         quiz && !isQuestionBankTab(tabId) && `- ${QUIZ_CODE_COMMENT_RULE}`,
@@ -231,7 +233,9 @@ const sectionCodeLeeway = (target, quiz) => ({
 function settleFixText(target, answer, quiz) {
     const codes = target.codes || [];
     const state = codes.length ? fixCodeState(answer, codes, target.token) : null;
-    const text = codes.length ? restoreFixCode(answer, codes) : answer;
+    const restored = codes.length ? restoreFixCode(answer, codes) : answer;
+    // 원래 섹션(조각)에 있던 핵심 요약 상자는 맨 끝에 하나만 두고(빠뜨리면 되붙인다), 없던 상자는 더하지 않는다(lesson-summary.js)
+    const text = typeof keepSectionSummary === 'function' ? keepSectionSummary(target.text, restored) : restored;
     const stray = !!target.token && fixCodeLeftover(text, target.text, target.token);
     const keepsCode = keepsSectionCode(target.text, text, sectionCodeLeeway(target, quiz)) && !opensCodeFence(target.text, text);
     const wrote = !!state && state.problem === 'missing' && !stray && keepsCode;

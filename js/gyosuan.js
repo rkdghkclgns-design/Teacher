@@ -339,8 +339,17 @@ function parseOpenClose(text) {
 }
 
 /* ---------- 전개 섹션 ---------- */
+// 원고 섹션 끝의 핵심 요약 상자(lesson-summary.js): 항목은 [핵심 요약]으로 따로 주고 원고에서는 뺀다(긴 섹션에서도 잘리지 않고, 슬라이드에 두 번 쓰지 않게)
+const GYOSUAN_SUMMARY_RULE = '- [핵심 요약]이 있으면 슬라이드의 핵심 메시지는 그 요약에서 고르거나 줄여 쓰고, 같은 문장을 슬라이드 문구에 되풀이하지 않습니다.';
+
+function gyosuanSectionSummary(text) {
+    const items = typeof summaryItemsOf === 'function' ? summaryItemsOf(text) : [];
+    return { items, text: items.length && typeof withoutSummaryBoxes === 'function' ? withoutSummaryBoxes(text) : text };
+}
+
 function buildSectionPrompt(section, style) {
     const slides = GYOSUAN_SLIDE_SPECS[style];
+    const summary = gyosuanSectionSummary(section.text);
     return [
         `아래 [원고]는 강의의 한 부분입니다. 완전 초보 수강생 대상으로 (1) 강사용 교수안 블록과 (2) ${slides.ask}을 작성하세요.`,
         '아래 형식만 출력합니다.',
@@ -358,9 +367,11 @@ function buildSectionPrompt(section, style) {
         '[슬라이드 규칙]',
         slides.deck,
         GYOSUAN_DECK_EMPTY_RULE, ...(typeof DECK_KEY_RULE === 'string' ? [DECK_KEY_RULE] : []),
+        ...(summary.items.length ? [GYOSUAN_SUMMARY_RULE] : []),
         '',
         `[섹션 제목] ${section.title}${section.minutes ? ` (${section.minutes}분 수업)` : ''}`,
-        `[원고]\n${section.text.trim().slice(0, GYOSUAN_SECTION_CHARS)}`
+        ...(summary.items.length ? [`[핵심 요약]\n${summary.items.map(item => `- ${item}`).join('\n')}`] : []),
+        `[원고]\n${summary.text.trim().slice(0, GYOSUAN_SECTION_CHARS)}`
     ].join('\n');
 }
 

@@ -39,6 +39,16 @@ p.lesson-term { margin: 0 0 0 1.25rem; padding: .35rem 0 .35rem 1rem; border-lef
 ul + p.lesson-term, ol + p.lesson-term, p:not(.lesson-term) + p.lesson-term { margin-top: -.5rem; }
 p.lesson-term + :not(.lesson-term) { margin-top: 1rem; }
 li > p.lesson-term { margin-left: 0; }
+blockquote.lesson-summary { margin: 1.75rem 0 1rem; padding: .9rem 1.25rem .7rem; border: 1px solid #d6ccfb; border-left: 6px solid #7c5bf5; border-radius: 10px; background: #f5f2ff; color: #2a2540; font-style: normal; }
+blockquote.lesson-summary > p.lesson-summary-head { margin: 0 0 .45rem; font-size: .95rem; font-weight: 800; color: #4c2fc9; }
+blockquote.lesson-summary > ul { margin: 0; padding-left: 1.25rem; }
+blockquote.lesson-summary li { margin-bottom: .3rem; line-height: 1.7; }
+p.lesson-callout { padding: .55rem .9rem; border-left-width: 4px; border-left-style: solid; border-radius: 0 8px 8px 0; color: #2f2f3d; }
+p.lesson-callout:has(+ ul, + ol) { margin-bottom: 0; border-bottom-right-radius: 0; }
+p.lesson-callout + ul, p.lesson-callout + ol { margin-top: 0; padding: .15rem .9rem .6rem 2.4rem; border-left-width: 4px; border-left-style: solid; border-radius: 0 0 8px 0; color: #2f2f3d; }
+p.lesson-callout-key, p.lesson-callout-key + ul, p.lesson-callout-key + ol { border-left-color: #f59e0b; background: #fffaeb; }
+p.lesson-callout-warn, p.lesson-callout-warn + ul, p.lesson-callout-warn + ol { border-left-color: #ef4444; background: #fff4f4; }
+p.lesson-callout-check, p.lesson-callout-check + ul, p.lesson-callout-check + ol { border-left-color: #10b981; background: #effcf6; }
 table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
 th, td { border: 1px solid #d9d9e3; padding: 8px 12px; text-align: left; vertical-align: top; }
 th { background: #f3f2f8; font-weight: 700; }
@@ -59,6 +69,8 @@ hr { border: 0; border-top: 1px solid #e5e5ee; margin: 2rem 0; }
     .lesson-tab + .lesson-tab, .lesson-break + .lesson-break { break-before: page; margin-top: 0; padding-top: 0; border-top: 0; }
     h1, h2, h3, h4 { break-after: avoid; }
     img, video, table, pre, blockquote, .image-wrapper, .mermaid, .lesson-code { break-inside: avoid; }
+    p.lesson-callout { break-inside: avoid; }
+    p.lesson-callout:has(+ ul, + ol) { break-after: avoid; }
     pre { white-space: pre-wrap; }
 }`;
 
@@ -233,7 +245,9 @@ async function lessonTabHtml(mod, tab, opts) {
         const localVideos = exportLessonVideos(shownBox, mod, exportVideoMode(opts));
         return { html: mark(shownBox).innerHTML, videos: exported.videos, localVideos };
     }
-    const box = scopeExportLinks(exportStrip(renderLessonHTML(preprocessMarkdown(inlineLessonImages(tab.md, mod.images)))), mod, tab);
+    // 화면과 같은 규칙: 문제은행 탭·최종 평가는 핵심 요약·💡·⚠️·✅ 상자 없이 그린다(lesson-summary.js lessonCalloutsFor)
+    const callouts = typeof lessonCalloutsFor === 'function' ? lessonCalloutsFor(mod, tab.id) : true;
+    const box = scopeExportLinks(exportStrip(renderLessonHTML(preprocessMarkdown(inlineLessonImages(tab.md, mod.images)), callouts ? undefined : { callouts: false })), mod, tab);
     await renderExportMermaid(box);
     const localVideos = exportLessonVideos(box, mod, exportVideoMode(opts));
     return { html: mark(box).innerHTML, videos: 0, localVideos };
