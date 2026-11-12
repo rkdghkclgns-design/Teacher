@@ -167,6 +167,8 @@ function renderLessonHTML(md, opts) {
     // 항목에 딸린 '용어: 설명'은 왼쪽 막대로. 후처리가 라벨 끝 콜론을 지우기 전에 찾는다
     if (typeof markTermParagraphs === 'function') html = markTermParagraphs(html);
     if (postprocess && typeof postprocessHtml === 'function') html = postprocessHtml(html);
+    // 핵심 요약 상자와 💡·⚠️·✅ 문단에 상자 class만 붙인다(lesson-summary.js). 감싸지 않아 블록 수가 그대로이고 코드 블록은 건드리지 않는다
+    if (postprocess && typeof markLessonCallouts === 'function') html = markLessonCallouts(html);
     const clean = sanitizeLessonHtml(html); // 후처리가 글자를 지워 태그가 이어 붙을 수 있으므로 맨 끝에서 거른다
     // 체크리스트의 '(다시 보기: 섹션 제목)'을 그 ## 제목으로 가는 링크로 그린다(checklist-links.js). 저장한 글은 그대로다
     return typeof linkChecklistReviews === 'function' ? linkChecklistReviews(clean) : clean;
@@ -239,6 +241,7 @@ function lessonScreenInput(md, images) {
         typeof markTermParagraphs === 'function' ? markTermParagraphs : null,
         typeof postprocessHtml === 'function' ? postprocessHtml : null,
         typeof keepChosenNumbering === 'function' ? keepChosenNumbering : null,
+        typeof markLessonCallouts === 'function' ? markLessonCallouts : null, // 핵심 요약·💡·⚠️·✅ 상자 class(lesson-summary.js)
         typeof sanitizeLessonHtml === 'function' ? sanitizeLessonHtml : null,
         typeof cleanLessonElement === 'function' ? cleanLessonElement : null,
         typeof legacyRegenerateArgs === 'function' ? legacyRegenerateArgs : null,
@@ -1087,6 +1090,9 @@ async function generateModuleContent(moduleId, keyConcepts) {
 
         fullContent = cleanLessonOpening(restoreLockedSections(fullContent, lockedBlocks));
         if (typeof checklistLast === 'function') fullContent = checklistLast(fullContent, 'basicLearn');
+        // 내용 섹션마다 핵심 요약 상자를 하나만 맨 끝에 둔다(lesson-summary.js). 최종 평가는 바꾸지 않는다
+        const summaryLast = md => (moduleId !== 'mainQuest' && typeof summaryBoxesLast === 'function' ? summaryBoxesLast(md, 'basicLearn', lockedBlocks) : md);
+        fullContent = summaryLast(fullContent);
 
         // 기본 학습은 모자란 섹션마다 새 소주제를 이어 붙여 낭독 목표 분량까지 채운다. 그림 자리는 초안에만 미리 넣는다(붙인 소주제에는 넣지 않는다)
         const isStopped = () => !!window.isTabGenerationStopped?.();
@@ -1130,6 +1136,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
             fullContent = restoreLockedSections(await processImageTags(mod, fullContent, { onStatus: setLoadingStatus, inject: !volume }), lockedBlocks);
         }
         // 기본학습 첫머리를 개요 → 학습 정보 → 학습 목표 차례로 두고 학습 정보를 차시 메타데이터로 쓴다(lesson-info.js). 최종 평가는 바꾸지 않는다
+        fullContent = summaryLast(fullContent); // 분량 채우기·고치기 뒤에도 핵심 요약 상자는 섹션 끝에 하나다
         if (typeof applyLessonInfoFrame === 'function') fullContent = applyLessonInfoFrame(fullContent, { mod, tabId: 'basicLearn', lockedBlocks });
         if (volume && subj && !lessonStillLive(subj, mod)) return lessonGone(fullContent);
 

@@ -51,6 +51,12 @@ function unwrapWholeFence(text, { bare = false } = {}) {
     return inner.reduce(fenceStateAfter, 0) ? source : inner.join('\n');
 }
 
+// 인용 줄(> …)의 인용 표시(겹 인용 포함, 끝은 빈칸 하나). 받은 글의 줄을 나눌 때 다음 줄에도 붙인다. 인용 줄이 아니면 ''
+function quoteLead(line) {
+    const lead = (String(line).match(/^\s*(?:>[ \t]?)+/) || [''])[0];
+    return lead ? `${lead.trimEnd()} ` : '';
+}
+
 // unwrap: 응답 전체를 감싼 언어 없는 펜스도 벗긴다(교안 본문을 받을 때). ```markdown·```md로 감싼 응답은 늘 벗긴다.
 // 아래 정리 규칙은 코드 블록 밖의 글에만 적용하고, 코드 블록은 받은 그대로 돌려 놓는다
 function extractText(data, { unwrap = false } = {}) {
@@ -199,8 +205,10 @@ function extractText(data, { unwrap = false } = {}) {
                 'g'
             );
             // 간단하게: 한글/영문/숫자/구두점 뒤에 공백+이모지 → 줄바꿈
+            // 인용 줄(> …)은 인용 표시 바로 뒤를 줄 맨 앞으로 보고, 나눈 줄에도 인용 표시를 붙여 인용 밖으로 나가지 않게 한다(> 📌 **핵심 요약**, lesson-summary.js)
             text = text.split('\n').map(line => {
                 if (/^\s*\|/.test(line) || /^\s*```/.test(line) || /<\/?(?:td|th|tr|table)\b/i.test(line)) return line;
+                const quote = quoteLead(line);
                 // 줄 중간에 이모지가 있으면 앞에서 줄바꿈
                 for (const ch of EMOJI_CHARS) {
                     if (!ch.trim()) continue;
@@ -209,9 +217,9 @@ function extractText(data, { unwrap = false } = {}) {
                     if (idx > 1) {
                         const before = line.substring(0, idx).trimEnd();
                         const after = line.substring(idx);
-                        // 불릿/헤딩 뒤가 아니라 실제 텍스트 뒤인 경우만
-                        if (before && !/^[-*+#]\s*$/.test(before) && !/^\s*$/.test(before)) {
-                            line = before + '\n' + after;
+                        // 불릿/헤딩/인용 표시 뒤가 아니라 실제 텍스트 뒤인 경우만
+                        if (before && !/^[-*+#]\s*$/.test(before) && !/^\s*$/.test(before) && !/^\s*(?:>\s*)+$/.test(before)) {
+                            line = before + '\n' + quote + after;
                         }
                     }
                 }
@@ -226,7 +234,8 @@ function extractText(data, { unwrap = false } = {}) {
             if (/^\s*\|/.test(line) || /<\/?(?:td|th|tr|table)\b/i.test(line)) return line;
             // 코드블록 펜스는 건너뜀
             if (/^\s*```/.test(line)) return line;
-            return line.replace(/([가-힣])\.\s+(?=[가-힣])/g, '$1.\n');
+            // 인용 줄을 나누면 다음 줄에도 인용 표시를 붙인다(핵심 요약 상자 줄이 상자 밖으로 나가지 않게)
+            return line.replace(/([가-힣])\.\s+(?=[가-힣])/g, `$1.\n${quoteLead(line)}`);
         });
 
         return fences.restore(text);
@@ -305,7 +314,8 @@ function convertPipeTableToHtml(pipeText) {
 }
 if (typeof window !== 'undefined') window.convertPipeTableToHtml = convertPipeTableToHtml;
 
-const SANITIZE_ICON_LEAD = /^[\s\p{Extended_Pictographic}️‍]+$/u; // 줄 머리에 아이콘만 있다(💡·🎮·⚠️·ℹ️ 등)
+// 줄 머리에 아이콘만 있다(💡·🎮·⚠️·ℹ️ 등). 인용 표시(>)도 머리로 본다(> 📌 **핵심 요약:** 같은 인용 줄이 둘로 갈라져 인용 밖으로 나가지 않게, lesson-summary.js)
+const SANITIZE_ICON_LEAD = /^[\s>\p{Extended_Pictographic}️‍]+$/u;
 
 // promptLabels: AI 지시의 대괄호 라벨 줄([문서 구조]·[보강 분량] 등)도 지운다. 막 받은 AI 답만 켠다(기본).
 // 저장된 교안을 정리할 때(콘텐츠 정리)는 끈다(강사가 쓴 **[문서 구조]** 같은 줄을 지우지 않게)
@@ -866,6 +876,10 @@ const CONTEXT_CORE = {
         // ── 컨벤션: 학습 후 체크리스트 (학습 탭) ──
         learning_checklist:
             '탭 마지막에 "## ✅ 학습 후 체크리스트" 섹션을 둡니다. 학습 목표마다 학습자가 스스로 확인할 항목을 하나씩, 학습 목표와 같은 순서로 불릿으로 쓰고, 각 항목 끝에 이해가 부족할 때 다시 볼 섹션을 "(다시 보기: 섹션 제목)"으로 적습니다. 섹션 제목은 그 학습 목표에 대응하는 ## 제목을 그대로 쓰고, 항목마다 다른 섹션을 가리킵니다.',
+
+        // ── 컨벤션: 섹션 끝 핵심 요약 상자 (학습 탭). 화면·내보내기는 상자로 그린다(lesson-summary.js) ──
+        section_summary:
+            '학습 탭의 내용 ## 섹션은 끝(다음 ## 제목 바로 앞)에 핵심 요약을 하나 둡니다. "> 📌 **핵심 요약**" 줄 다음에 "> - "로 시작하는 줄 2~3개를 쓰고, 그 섹션의 핵심을 짧은 문장으로 다시 말합니다. 새 사실, 예시, 코드, 표, 그림은 넣지 않고 📌 말고 다른 이모지는 쓰지 않습니다(이 줄의 📌만 인용 표시 > 뒤에 둡니다). 개요, 학습 정보, 학습 목표, 학습 후 체크리스트에는 두지 않습니다.',
 
         // ── 컨벤션: 문제은행 규칙 (학습 이해도 탭) ──
         assessment_design:

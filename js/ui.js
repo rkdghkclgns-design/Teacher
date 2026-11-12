@@ -1921,12 +1921,13 @@ function tabContinueVolumeRule(tabId, { targetMinutes = 0, practiceMinutes = 0 }
 }
 
 // 탭별 규칙 필터링 — 학습탭에 실습/평가/강사가이드 혼입 방지. 문제은행 탭(학습이해도·심화이해도)은 코드제출 문항 형식을 따로 쓰므로 코드 예제 규칙을 뺀다
-const ASSESSMENT_RULE_EXCLUSIONS = ['time_allocation', 'image_tags', 'mermaid_rules', 'learning_checklist', 'code_examples'];
+// 섹션 끝 핵심 요약(section_summary)은 학습 탭(기본학습·심화학습)에만 준다
+const ASSESSMENT_RULE_EXCLUSIONS = ['time_allocation', 'image_tags', 'mermaid_rules', 'learning_checklist', 'section_summary', 'code_examples'];
 const TAB_RULE_EXCLUSIONS = {
     basicLearn: ['rubric_100', 'quiz_format', 'assessment_design'],
     advLearn: ['rubric_100', 'quiz_format', 'assessment_design'],
-    basicPrac: ['rubric_100', 'quiz_format', 'assessment_design', 'learning_checklist'],
-    advPrac: ['rubric_100', 'quiz_format', 'assessment_design', 'learning_checklist'],
+    basicPrac: ['rubric_100', 'quiz_format', 'assessment_design', 'learning_checklist', 'section_summary'],
+    advPrac: ['rubric_100', 'quiz_format', 'assessment_design', 'learning_checklist', 'section_summary'],
     assessment: ASSESSMENT_RULE_EXCLUSIONS,
     advAssessment: ASSESSMENT_RULE_EXCLUSIONS
 };
@@ -1960,6 +1961,7 @@ function buildTabRules(tabId, keyConcepts, { exclude = [], fewshot = true } = {}
         ['time_allocation', r.time_allocation],
         ['content_design', r.content_design],
         ['learning_checklist', r.learning_checklist],
+        ['section_summary', r.section_summary],
         ['assessment_design', r.assessment_design],
         ['mermaid_rules', r.mermaid_rules],
         ['rubric_100', r.rubric_100],
@@ -2036,6 +2038,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
             r.time_allocation,
             r.content_design,
             learning && r.learning_checklist,
+            learning && r.section_summary,
             r.mermaid_rules,
             r.rubric_100,
             r.korean_period,
@@ -2291,7 +2294,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
             const a = additionalContext;
             const minutes = a.targetMinutes || LEARN_TARGET_MINUTES;
             const advanced = a.tabId === 'advLearn'; // 심화학습은 심화 역할과 흐름(고급 이론 → 업계 사례 → 실무 분석)을 준다. 기본학습 지시는 예전 그대로다
-            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildTabRules(a.tabId, [], { exclude: ['markdown_structure', 'time_allocation', 'learning_checklist', 'image_tags', 'mermaid_rules'], fewshot: false })}` +
+            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildTabRules(a.tabId, [], { exclude: ['markdown_structure', 'time_allocation', 'learning_checklist', 'section_summary', 'image_tags', 'mermaid_rules'], fewshot: false })}` +
                 '\n\n[분량 보강 규칙 — 절대 준수]\n' +
                 '- 이미 작성한 교안 섹션 하나를 더 깊고 길게 만드는 작업입니다. [보강할 섹션] 끝에 이어 붙일 새 ### 소주제만 출력합니다.\n' +
                 '- ## 제목, 학습 목표, 개요, 학습 후 체크리스트는 출력하지 않습니다. 다른 섹션의 내용도 쓰지 않습니다.\n' +

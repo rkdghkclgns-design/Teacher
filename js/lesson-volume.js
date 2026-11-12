@@ -175,6 +175,8 @@ function cleanVolumeAddition(data, { sectionText = '', truncated = data?.candida
     if (truncated) text = cutAtLastBreak(text);
     text = closeOpenFence(text.trim());
     if (typeof sanitizeMarkdownContent === 'function') text = sanitizeMarkdownContent(text) || '';
+    // 핵심 요약 상자는 섹션에 하나만 둔다(lesson-summary.js). AI가 소주제에 상자를 써 넣었으면 뗀다
+    if (typeof withoutSummaryBoxes === 'function') text = withoutSummaryBoxes(text);
     const seen = new Set(subtopicTitles(sectionText));
     const own = volumeBareKey(mdSections(sectionText)[0]?.title);
     const kept = volumeSplitBlocks(text).filter(block => {
@@ -190,14 +192,17 @@ function cleanVolumeAddition(data, { sectionText = '', truncated = data?.candida
 }
 
 /* ---------- 이어 붙이기 ---------- */
-// 섹션 끝(끝의 <br> 간격 줄 앞)에 덧붙인다. 섹션 사이는 빈 줄 하나로 잇는다(checklistLast와 같다). 다른 섹션은 그대로다
+// 섹션 끝(끝의 <br> 간격 줄 앞)에 덧붙인다. 섹션 끝에 핵심 요약 상자가 있으면 그 상자 앞에 넣고 상자는 맨 끝에 둔다(lesson-summary.js summaryTailStart).
+// 섹션 사이는 빈 줄 하나로 잇는다(checklistLast와 같다). 다른 섹션은 그대로다
 function appendToSection(md, index, addition) {
     const sections = mdSections(md);
     if (!sections[index] || !String(addition || '').trim()) return md;
     const lines = sections[index].text.split('\n');
-    let end = lines.length;
+    const boxAt = typeof summaryTailStart === 'function' ? summaryTailStart(lines) : -1;
+    let end = boxAt >= 0 ? boxAt : lines.length;
     while (end > 1 && /^\s*(?:<br\s*\/?>\s*)*$/i.test(lines[end - 1])) end -= 1;
-    const text = [lines.slice(0, end).join('\n').trimEnd(), '<br>', String(addition).trim(), lines.slice(end).join('\n').trim()].filter(Boolean).join('\n\n');
+    const rest = boxAt >= 0 ? ['<br>', lines.slice(boxAt).join('\n').trim()] : [lines.slice(end).join('\n').trim()];
+    const text = [lines.slice(0, end).join('\n').trimEnd(), '<br>', String(addition).trim(), ...rest].filter(Boolean).join('\n\n');
     return sections.map((section, i) => (i === index ? text : section.text)).join('\n\n');
 }
 
@@ -310,7 +315,8 @@ function requestVolumeAddition(job, plan) {
     const { systemInstruction, userPrompt } = buildTaskContext('volume_expand', {
         tabId: job.tabId, tabLabel: reviewTabLabel(job.tabId), title: job.mod.title, description: job.mod.description, targetMinutes: job.targetMinutes,
         outline: mdSections(job.md).filter(section => section.title).map(section => section.title),
-        objectives: lessonLintBullets(job.md, '학습\\s*목표'), sectionTitle: plan.title, sectionText: plan.text,
+        // 섹션 끝 핵심 요약 상자는 보내지 않는다(새 소주제에 상자를 따라 쓰지 않게, lesson-summary.js)
+        objectives: lessonLintBullets(job.md, '학습\\s*목표'), sectionTitle: plan.title, sectionText: typeof withoutSummaryBoxes === 'function' ? withoutSummaryBoxes(plan.text) : plan.text,
         requestChars: plan.requestChars, subtopics: plan.subtopics, codeSection: plan.codeSection, needCode: plan.needCode, fromUpload: job.fromUpload
     });
     const level = typeof lessonGenOptions === 'function' ? lessonGenOptions(job.mod).level : '';
