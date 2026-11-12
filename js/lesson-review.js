@@ -479,11 +479,11 @@ function reviewVolumeStat(mod, tabId, md) {
     return ` · 낭독 약 ${readAloudMinutes(storedTabMarkdown(mod, tabId) || md)}분(목표 ${learnTargetMinutes(mod, tabId)}분)`;
 }
 
-// 실습 탭은 실습 시간을 보인다(차시 값 → 과정 기본값 → 기본 90~120분). 정한 시간이 있으면 ## 제목 (⏱ N분) 합계와 견주고 10%보다 벗어나면 알린다(lesson-lint.js)
+// 실습 탭은 실습 시간을 보인다(차시 값 → 과정 기본값 → 기본 120분). 정한 시간이 있으면 ## 제목 (⏱ N분) 합계와 견주고 10%보다 벗어나면 알린다(lesson-lint.js)
 function reviewPracticeStat(mod, tabId, md) {
     if (!mod || mod.id === 'mainQuest' || !practiceKeyOf(tabId)) return '';
     const { minutes, from } = lessonPracticeTime(mod, tabId);
-    if (!minutes) return '<p class="text-xs text-textMuted">실습 시간: 정하지 않음(기본 90~120분)</p>';
+    if (!minutes) return `<p class="text-xs text-textMuted">실습 시간: 정하지 않음(기본 ${PRACTICE_DEFAULT_MINUTES}분)</p>`;
     const check = practiceTimeCheck(md, minutes);
     const sum = check.labelled ? `(⏱) 합계 ${check.sum}분` : '(⏱) 시간 표시 없음';
     const note = check.ok ? '' : check.labelled ? ' · 정한 시간과 10% 넘게 차이 납니다. ## 제목의 시간을 확인해 주세요.' : ' · ## 제목마다 (⏱ N분)을 적어 주세요.';

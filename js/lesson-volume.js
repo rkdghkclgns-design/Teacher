@@ -1,4 +1,4 @@
-// lesson-volume.js - 학습 탭(기본학습·심화학습)을 강사가 소리 내어 읽어도 목표 시간(480분)이 차는 분량까지 섹션마다 나눠 채운다
+// lesson-volume.js - 학습 탭(기본학습·심화학습)을 강사가 소리 내어 읽어도 목표 시간(480분 − 같은 트랙 실습 시간, 기본 360분)이 차는 분량까지 섹션마다 나눠 채운다
 // 초안을 받은 뒤 목표에 못 미친 내용 섹션 끝에 새 ### 소주제를 이어 붙인다. 있던 글·고정 섹션·학습 목표·개요·체크리스트·그림 자리는 그대로 둔다.
 // 분량은 lesson-lint.js spokenChars로 센다(공백 포함 1분에 250자, 코드·표·그림·서식 기호 제외). 목표는 lesson-lint.js learnTargetMinutes.
 // 탭 생성(tabs.js generateTabContent)·교안 전체 생성(api.js generateModuleContent)·탭 위 '분량 채우기'가 쓴다. 테스트: tests/lesson-volume.test.js, tests/tab-time.test.js
@@ -9,7 +9,7 @@ const VOLUME_REQUEST_STEP = 500;
 const VOLUME_START_RATIO = 0.7;       // 부탁한 글자 가운데 실제로 늘어난 비율. 모르는 처음에는 70%로 본다
 const VOLUME_RATIO_MIN = 0.4;
 const VOLUME_RATIO_MAX = 1;
-const VOLUME_CHARS_PER_CALL = 5000;   // 호출 상한 = 목표 글자 ÷ 이 값(480분이면 24번)
+const VOLUME_CHARS_PER_CALL = 5000;   // 호출 상한 = 목표 글자 ÷ 이 값(기본 360분이면 18번, 480분이면 24번)
 const VOLUME_CALL_LIMIT = 48;
 const VOLUME_STALL_CHARS = 800;       // 이보다 적게 늘면 늘지 않은 것으로 본다
 const VOLUME_STALL_LIMIT = 2;         // 잇달아 늘지 않으면 멈춘다
@@ -479,7 +479,7 @@ function volumeShownText(mod, tabId = 'basicLearn') {
     return typeof cleanLessonOpening === 'function' ? cleanLessonOpening(stored) : stored;
 }
 
-// 탭 위 '낭독 약 N분 / 목표 480분'. 학습 탭(기본학습·심화학습)을 볼 때만 보이고(최종 평가와 교수안·슬라이드·문제은행 화면에서는 숨긴다) 모자라면 '분량 채우기'를 붙인다.
+// 탭 위 '낭독 약 N분 / 목표 M분'(M = 480 − 같은 트랙 실습 시간). 학습 탭(기본학습·심화학습)을 볼 때만 보이고(최종 평가와 교수안·슬라이드·문제은행 화면에서는 숨긴다) 모자라면 '분량 채우기'를 붙인다.
 // 분은 내림이라 모자란 글이 목표 시간으로 보이지 않는다(lesson-lint.js readAloudMinutes)
 window.syncVolumeChip = function (mod = getEditingModule()) {
     const chip = document.getElementById('lesson-volume-chip');

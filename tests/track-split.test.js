@@ -820,7 +820,7 @@ const bankLesson = () => ({
     });
 
     await run('교안 생성 미리 보기(차시 카드): 탭을 모두 다시 만들어 빠진 갈래의 교수안과 두 문제은행을 센다', () => {
-        const ctx = { console, lessonWork: work => work, estimateBoxHtml: work => work, lessonVolumeMinutes: () => 480, currentEstimateSettings: () => ({ imageAmount: 'normal' }), lessonPracticeWork: () => ({}) };
+        const ctx = { console, lessonWork: work => work, estimateBoxHtml: work => work, lessonVolumeTargets: () => ({ basicLearn: 360, advLearn: 360 }), currentEstimateSettings: () => ({ imageAmount: 'normal' }), lessonPracticeWork: () => ({}) };
         vm.createContext(ctx);
         loadLessonTracks(ctx, { tabs: true });
         vm.runInContext(slice('api.js', 'function moduleGenerationEstimate('), ctx);

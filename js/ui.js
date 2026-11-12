@@ -1350,18 +1350,6 @@ window.exportAllToZip = async function () {
     }
 };
 
-// 사이드바 차시 수 +/- 조절 (AI 차시 목차 생성에 쓴다)
-window.adjustBatchCount = function (delta) {
-    const input = document.getElementById('sidebar-batch-count');
-    if (!input) return;
-    input.value = Math.max(1, Math.min(30, (parseInt(input.value) || 5) + delta));
-};
-
-window.syncBatchCount = function (val) {
-    const input = document.getElementById('sidebar-batch-count');
-    if (input) input.value = Math.max(1, Math.min(30, parseInt(val) || 5));
-};
-
 // 참고 파일의 글자를 뽑는다: 차시 첨부(lesson-attachments.js)와 참고자료 탭(api.js importReferenceFiles)이 쓴다
 // maxChars: 쓸 글자 수. 글 파일은 그만큼 앞부분만 읽고, PDF·PPTX는 그만큼 모이면 멈춘다(큰 파일도 다 읽지 않는다)
 async function extractTextFromFile(file, { maxChars = Infinity } = {}) {
@@ -1819,15 +1807,14 @@ function advLearnTabPrompt(minutes) {
         '- 출력 한도에 도달하면 자연스러운 문단/섹션 끝에서 멈추고 <!-- CONTINUE -->를 붙이세요. 문장 중간이나 코드 블록 안에서 끊지 마세요.';
 }
 
-// 실습 탭(기본실습·심화실습) 지시의 시간·분량 값. 강사가 실습 시간을 정했으면 그 시간에 맞춘 최소치(lesson-lint.js practiceVolumeSpec),
-// 정하지 않았으면 예전 지시와 한 글자도 다르지 않은 값(90~120분, 8,000자·250줄, 파트 3개, 과제 3개·프로젝트 2개)
+// 실습 탭(기본실습·심화실습) 지시의 시간·분량 값. 강사가 정한 실습 시간, 정하지 않았으면 기본 120분(lesson-lint.js PRACTICE_DEFAULT_MINUTES)에 맞춘 최소치(practiceVolumeSpec).
+// 하루 8시간 가운데 학습 탭이 나머지를 쓴다(learnTargetMinutes)
 function practicePromptValues(tabId, minutes) {
-    const spec = typeof practiceVolumeSpec === 'function' ? practiceVolumeSpec(tabId, minutes) : null;
-    if (!spec) return { time: '90~120분', total: '90~120분', chars: '8,000', lines: '250', parts: '3', tasks: tabId === 'advPrac' ? '2' : '3' };
+    const spec = practiceVolumeSpec(tabId, practicePromptMinutes(minutes));
     return { time: `${spec.minutes}분`, total: `정확히 ${spec.minutes}분`, chars: spec.chars.toLocaleString('ko-KR'), lines: spec.lines.toLocaleString('ko-KR'), parts: String(spec.parts), tasks: String(spec.tasks) };
 }
 
-// 기본 실습 탭 작성 지시. minutes: 강사가 정한 실습 시간(정하지 않았으면 0)
+// 기본 실습 탭 작성 지시. minutes: 강사가 정한 실습 시간(정하지 않았으면 0 → 기본 120분)
 function basicPracTabPrompt(minutes) {
     const v = practicePromptValues('basicPrac', minutes);
     return '이 교안의 "기본 실습" 영역을 작성하세요. 학생이 핵심 내용을 직접 체험하는 실습 과제를 설계하세요.\n' +
@@ -1850,7 +1837,7 @@ function basicPracTabPrompt(minutes) {
         '- 실습 중 자주 하는 실수 및 해결 가이드';
 }
 
-// 심화 실습 탭 작성 지시. minutes: 강사가 정한 실습 시간(정하지 않았으면 0)
+// 심화 실습 탭 작성 지시. minutes: 강사가 정한 실습 시간(정하지 않았으면 0 → 기본 120분)
 function advPracTabPrompt(minutes) {
     const v = practicePromptValues('advPrac', minutes);
     return '이 교안의 "심화 실습" 영역을 작성하세요. 도전적이고 창의적인 프로젝트형 과제를 설계하세요.\n' +
@@ -1911,12 +1898,12 @@ function assessmentTabPrompt(tabId) {
         ASSESSMENT_FORMAT_RULE;
 }
 
-// 탭 이어쓰기의 분량·시간 지시. 학습 탭은 첫 청크와 같은 낭독 기준(심화학습은 역할도 함께), 실습 시간을 정한 실습 탭은 그 시간. 그 밖에는 ''(예전과 같다)
+// 탭 이어쓰기의 분량·시간 지시. 학습 탭은 첫 청크와 같은 낭독 기준(심화학습은 역할도 함께), 실습 탭은 정한 실습 시간(정하지 않았으면 기본 120분). 그 밖에는 ''
 function tabContinueVolumeRule(tabId, { targetMinutes = 0, practiceMinutes = 0 } = {}) {
     if (tabId === 'basicLearn' || tabId === 'advLearn') {
         return '- 분량 기준은 첫 청크와 같습니다. 남은 섹션을 요약하지 않습니다.\n' + basicLearnVolumeRule(targetMinutes || LEARN_TARGET_MINUTES) + '\n' + (tabId === 'advLearn' ? `- ${ADV_LEARN_ROLE}\n` : '');
     }
-    const spec = typeof practiceVolumeSpec === 'function' ? practiceVolumeSpec(tabId, practiceMinutes) : null;
+    const spec = practiceVolumeSpec(tabId, practicePromptMinutes(practiceMinutes));
     return spec ? `- 이 탭은 ${spec.minutes}분 실습입니다. 이어 쓰는 ## 제목에도 (⏱ N분)을 적고, 앞 청크까지 모든 (⏱ N분)의 합계가 정확히 ${spec.minutes}분이 되게 합니다.\n` : '';
 }
 
@@ -2091,15 +2078,14 @@ function buildTaskContext(taskScope, additionalContext = "") {
 
     switch (taskScope) {
 
-        case 'blueprint':
+        case 'blueprint': {
+            // 교과(단원) 하나는 정확히 5차시, 차시 하나는 하루 8시간(실습 포함)이다(course-design.js). 답의 차시 수가 달라도 api.js handleGenerate가 5차시로 맞춘다
+            systemInstruction = `${CONTEXT_CORE.personas.orchestrator}\n[규칙]\n- ${CONTEXT_CORE.rules.json_only}\n${tocPromptRules()}`;
 
-            const sidebarLessonCount = parseInt(document.getElementById('sidebar-batch-count')?.value) || 5;
-            const totalLessons = sidebarLessonCount; // 사용자가 설정한 차시 수를 그대로 사용
-            systemInstruction = `${CONTEXT_CORE.personas.orchestrator}\n[규칙]\n- ${CONTEXT_CORE.rules.json_only}\n- 차시 수는 반드시 정확히 ${totalLessons}개로 구성하세요. (사용자가 ${totalLessons}차시를 요청했습니다. 더 적게 생성하지 마세요.)`;
-
-            userPrompt = `[현재 작업: 목차 설계]\n주제: ${additionalContext}\n- 생성할 차시 수: ${totalLessons}개 (반드시 이 수만큼 생성)${getReferenceContext(4000)}`;
+            userPrompt = `[현재 작업: 목차 설계]\n주제: ${additionalContext}\n- 생성할 차시 수: ${DESIGN_LESSONS_PER_UNIT}개 (반드시 이 수만큼 생성, 차시마다 하루 ${DESIGN_LESSON_HOURS}시간·실습 포함)${getReferenceContext(4000)}`;
 
             break;
+        }
 
         case 'module':
 
@@ -2214,10 +2200,10 @@ function buildTaskContext(taskScope, additionalContext = "") {
         // ─── 탭별 교안 생성 ───
         case 'tab_content': {
             const learnMinutes = additionalContext.targetMinutes || LEARN_TARGET_MINUTES; // 학습 탭(기본학습·심화학습)의 낭독 목표(분)
-            const practiceMinutes = additionalContext.practiceMinutes || 0; // 강사가 정한 실습 시간(분, 정하지 않았으면 0)
+            const practiceMinutes = additionalContext.practiceMinutes || 0; // 강사가 정한 실습 시간(분, 정하지 않았으면 0 → 실습 탭 지시는 기본 120분)
             systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildTabRules(additionalContext.tabId, additionalContext.keyConcepts)}`;
 
-            // 분할 생성 지시 — 긴 탭(특히 기본 학습 480분)이 중간에 잘리는 것을 방지
+            // 분할 생성 지시 — 긴 탭(특히 낭독 수백 분인 학습 탭)이 중간에 잘리는 것을 방지
             systemInstruction += '\n\n[분량 관리]\n' +
                 '- 탭 내용을 한 번에 작성하세요. 단, 출력이 길어져 중간에 잘릴 경우를 대비하여 다음 규칙을 따르세요.\n' +
                 '- 모든 섹션을 완전히 작성한 경우: 문서의 맨 마지막에 <!-- END -->를 붙이세요.\n' +
@@ -2237,9 +2223,9 @@ function buildTaskContext(taskScope, additionalContext = "") {
                     '- 내용이 매우 길어 한 번에 다 출력하지 못할 수 있습니다.\n' +
                     '- 모든 섹션을 끝까지 완성했다면 문서 맨 끝에 <!-- END -->를 붙이세요.\n' +
                     '- 출력 한도에 도달하면 자연스러운 문단/섹션 끝에서 멈추고 <!-- CONTINUE -->를 붙이세요. 문장 중간이나 코드 블록 안에서 끊지 마세요.',
-                // 실습 탭은 강사가 실습 시간을 정하면 그 시간에 맞춘 시간·분량 기준을 쓰고, 정하지 않으면 예전 지시 그대로다
+                // 실습 탭은 강사가 정한 실습 시간(정하지 않으면 기본 120분)에 맞춘 시간·분량 기준을 쓴다
                 basicPrac: basicPracTabPrompt(practiceMinutes),
-                // 심화 학습은 기본 학습처럼 이 탭 하나가 낭독 480분이다(심화 역할은 그대로)
+                // 심화 학습도 기본 학습처럼 이 탭 하나가 낭독 목표 분량이다(480분에서 심화실습 시간을 뺀 값, 심화 역할은 그대로)
                 advLearn: advLearnTabPrompt(learnMinutes),
                 advPrac: advPracTabPrompt(practiceMinutes),
                 assessment: assessmentTabPrompt('assessment'),
@@ -2259,7 +2245,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
             break;
         }
 
-        // ─── 탭 분할 생성 이어쓰기 (긴 탭, 특히 기본 학습 480분이 잘리지 않도록) ───
+        // ─── 탭 분할 생성 이어쓰기 (긴 탭, 특히 낭독 수백 분인 학습 탭이 잘리지 않도록) ───
         case 'tab_content_continue': {
             // 1청크와 같은 탭 규칙을 준다. 규칙 없이 이어 쓰면 체크리스트가 본문 중간에 들어가는 등 구조가 흐트러진다
             const learningTab = additionalContext.tabId === 'basicLearn' || additionalContext.tabId === 'advLearn';

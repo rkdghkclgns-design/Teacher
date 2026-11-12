@@ -819,7 +819,9 @@ async function handleGenerate() {
 
 
 
-        if (!Array.isArray(parsed)) throw new Error('AI 답을 차시 목차로 읽지 못했습니다. 다시 눌러 주세요.');
+        // 교과 하나는 정확히 5차시 × 하루 8시간이다. 답의 차시 수가 달라도 묶거나 나눠 맞추고 학습 목표는 남긴다(course-design.js tocLessons)
+        const newLessons = Array.isArray(parsed) ? tocLessons(parsed, Date.now()) : [];
+        if (!newLessons.length) throw new Error('AI 답을 차시 목차로 읽지 못했습니다. 다시 눌러 주세요.');
 
         // 기다리는 동안 다른 교과를 열었을 수 있다. 새 목차는 시작한 교과에만 쓴다
         const startSubject = startSubjectId ? globalState.subjects.find(s => s.id === startSubjectId) : null;
@@ -832,30 +834,6 @@ async function handleGenerate() {
         if (replacingNow.length && busy()) throw new Error('목차를 만드는 동안 다른 생성이 시작되어 반영하지 않았습니다. 그 생성이 끝난 뒤 다시 눌러 주세요.');
         if (replacingNow.length && onStart) window.saveRawContent?.(); // 고치던 원문을 먼저 그 차시에 넣고 휴지통으로 보낸다
         if (replacingNow.length) moveLessonsToTrash(replacingNow, startSubjectId);
-
-        const newLessons = parsed.map((item, idx) => ({
-
-            id: Date.now() + idx,
-
-            title: item.title,
-
-            description: item.description,
-
-            hours: item.hours || 2,
-
-            status: 'waiting',
-
-            content: null,
-
-            images: {},
-
-            tabContents: { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null, advAssessment: null },
-
-            uploadedMdName: null,
-
-            uploadedMdContent: null
-
-        }));
 
         if (onStart) {
             courseData = newLessons;
@@ -904,7 +882,7 @@ async function generateModuleContent(moduleId, keyConcepts) {
     // 시작한 교과와 기본 학습 분량 채우기(lesson-volume.js)에 붙일 참고 자료는 기다리기 전에 잡아 둔다
     const subj = globalState.subjects.find(s => s.id === currentSubjectId);
     const volumeSnap = moduleId !== 'mainQuest' && typeof ensureSpokenVolume === 'function' ? volumeSnapshot(mod) : null;
-    const targetMinutes = learnTargetMinutes(mod, 'basicLearn'); // 기본 학습의 낭독 목표(분, 늘 480분)
+    const targetMinutes = learnTargetMinutes(mod, 'basicLearn'); // 기본 학습의 낭독 목표(분, 480분 − 기본실습 시간, 기본 360분)
 
     // [재생성 중복 방지] 재생성인 경우 기존 tabContents·images 초기화
     // 이전엔 status==='done'이면 tabContents가 남아있어 5탭 자동생성이 스킵되고
@@ -1237,7 +1215,7 @@ function moduleGenerationEstimate(mod) {
             art: typeof lessonWantsArt === 'function' && lessonWantsArt(mod),
             ncs: typeof needsElementAutoAssign === 'function' && needsElementAutoAssign(mod),
             fillsVolume: mod.id !== 'mainQuest', // 최종 평가는 학습 탭 분량을 채우지 않는다
-            volumeMinutes: lessonVolumeMinutes(mod),
+            volumeMinutes: lessonVolumeTargets(mod), // 학습 탭마다 480분 − 같은 트랙 실습 시간
             practiceMinutes: typeof lessonPracticeWork === 'function' ? lessonPracticeWork(mod) : {} // 실습 시간을 정한 실습 탭은 이어쓰기 호출이 늘어난다
         }, currentEstimateSettings().imageAmount));
     } catch (err) {
@@ -3251,7 +3229,7 @@ function emptyTabPromptHtml(mod, tabless) {
     // 차시의 학습 탭(기본학습·심화학습)은 낭독 목표 분량까지 채우느라 오래 걸린다(시작 전에 호출 수·시간을 보이고 묻는다, lesson-pipeline.js runTabJob)
     const fills = !tabless && typeof fillsLearnVolume === 'function' && fillsLearnVolume(mod, currentLessonTab);
     const wait = fills
-        ? `${tabLabel}은 강사가 소리 내어 읽어도 ${typeof lessonVolumeMinutes === 'function' ? lessonVolumeMinutes(mod, currentLessonTab) : 480}분이 걸리는 분량까지 채우느라 20분 넘게 걸릴 수 있습니다. 시작하기 전에 AI 호출 수와 걸리는 시간을 먼저 보여 드립니다.`
+        ? `${tabLabel}은 강사가 소리 내어 읽어도 ${typeof lessonVolumeMinutes === 'function' ? lessonVolumeMinutes(mod, currentLessonTab) : learnTargetMinutes(mod, currentLessonTab)}분이 걸리는 분량까지 채우느라 20분 넘게 걸릴 수 있습니다. 시작하기 전에 AI 호출 수와 걸리는 시간을 먼저 보여 드립니다.`
         : '생성에는 수십 초가 걸릴 수 있습니다.';
     // 실습 탭은 만들기 단추 아래에 실습 시간을 보이고 바꿀 수 있게 한다(course-design.js)
     const practice = !tabless && typeof practiceTimeButtonHtml === 'function' ? practiceTimeButtonHtml(mod, currentLessonTab, 'empty') : '';

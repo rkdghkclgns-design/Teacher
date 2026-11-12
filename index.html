@@ -1736,14 +1736,10 @@
                         </div>
                     </div>
 
-                    <!-- 차시 수(AI 차시 목차 생성에 쓴다) + 어투 선택 -->
+                    <!-- 차시 구성(교과 하나 = 5차시, 차시 하나 = 하루 8시간·실습 포함. AI 차시 목차 생성이 늘 이 구성으로 만든다) + 어투 선택 -->
                     <div class="flex items-center gap-2 mt-1">
-                        <label for="sidebar-batch-count" class="text-[0.6875rem] text-textMuted whitespace-nowrap">차시 수</label>
-                        <div id="sidebar-batch-count-box" class="flex items-center gap-0.5 bg-white/5 border border-white/10 rounded px-1 py-0.5" title="AI 차시 목차 생성으로 만들 차시 수 (1~30)">
-                            <button type="button" onclick="adjustBatchCount(-1)" aria-label="차시 수 줄이기" class="w-5 h-5 flex items-center justify-center text-textMuted hover:text-white hover:bg-white/10 rounded transition-colors text-xs font-bold">−</button>
-                            <input type="number" id="sidebar-batch-count" min="1" max="30" value="5" class="w-8 text-center text-xs font-bold text-accent bg-transparent border-none focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" onchange="syncBatchCount(this.value)">
-                            <button type="button" onclick="adjustBatchCount(1)" aria-label="차시 수 늘리기" class="w-5 h-5 flex items-center justify-center text-textMuted hover:text-white hover:bg-white/10 rounded transition-colors text-xs font-bold">+</button>
-                        </div>
+                        <span class="text-[0.6875rem] text-textMuted whitespace-nowrap">차시 구성</span>
+                        <div id="sidebar-batch-count-box" class="flex items-center bg-white/5 border border-white/10 rounded px-1.5 py-0.5 text-xs font-bold text-accent whitespace-nowrap" title="교과(단원) 하나는 5차시(40시간)이고, 차시 하나는 하루 8시간(실습 포함)입니다. AI 차시 목차 생성은 늘 이 구성으로 만듭니다.">5차시 × 8시간</div>
                         <div class="flex gap-1 ml-auto" id="tone-selector">
                             <button onclick="setInstructorTone('formal')" class="tone-btn px-1.5 py-0.5 text-[0.6875rem] font-bold rounded border transition-colors bg-accent/20 text-accent border-accent/40" data-tone="formal">합쇼체</button>
                             <button onclick="setInstructorTone('friendly')" class="tone-btn px-1.5 py-0.5 text-[0.6875rem] font-bold rounded border transition-colors bg-white/5 text-textMuted border-white/10" data-tone="friendly">해요체</button>

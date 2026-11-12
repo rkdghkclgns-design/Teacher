@@ -1,5 +1,5 @@
 // 차시 병합 재생성 테스트 (실행: node tests/merge.test.js)
-// 병합한 기본학습도 탭 생성과 같은 분량 채우기(lesson-volume.js ensureSpokenVolume)로 낭독 480분까지 채우는지 본다.
+// 병합한 기본학습도 탭 생성과 같은 분량 채우기(lesson-volume.js ensureSpokenVolume)로 낭독 목표(480분 − 기본실습 시간, 기본 360분)까지 채우는지 본다.
 // 실제 merge.js·lesson-lint.js·lesson-volume.js·cost-estimate.js를 vm에서 돌리고, AI 호출과 채우기·자동 수정만 바꿔 끼운다
 const fs = require('fs');
 const vm = require('vm');
@@ -59,23 +59,23 @@ function mergeContext({ volume = null } = {}) {
 }
 
 (async () => {
-    await run('차시 병합: 병합한 기본학습을 탭 생성과 같은 채우기로 낭독 480분까지 채우고 고쳐 받아 저장한다. 묻는 창에 분량 채우기 호출 수·시간을 보인다', async () => {
+    await run('차시 병합: 병합한 기본학습을 탭 생성과 같은 채우기로 낭독 목표(실습을 정하지 않으면 360분)까지 채우고 고쳐 받아 저장한다. 묻는 창에 분량 채우기 호출 수·시간을 보인다', async () => {
         const { ctx, subject, elements } = mergeContext();
         await ctx.executeMerge();
         assert.strictEqual(ctx.mergeCalls, 1, '병합 호출은 한 번');
         assert.strictEqual(ctx.fills.length, 1, '분량 채우기를 한 번 부른다');
         const fill = ctx.fills[0];
         const made = subject.lessons[2];
-        assert.deepStrictEqual([fill.tabId, fill.targetMinutes, fill.md, fill.mod === made, plain(fill.lockedBlocks)], ['basicLearn', 480, DRAFT, true, []]);
+        assert.deepStrictEqual([fill.tabId, fill.targetMinutes, fill.md, fill.mod === made, plain(fill.lockedBlocks)], ['basicLearn', 360, DRAFT, true, []]);
         assert.ok(typeof fill.isLive === 'function' && fill.isLive() === true && typeof fill.isStopped === 'function', '차시가 그대로인지·중지했는지 본다');
         assert.strictEqual(ctx.fixes.length, 1);
-        assert.deepStrictEqual([ctx.fixes[0].tabId, ctx.fixes[0].md === FILLED, ctx.fixes[0].rounds, ctx.fixes[0].minSpokenChars], ['basicLearn', true, 3, 120000], '채운 분량 아래로 줄이지 않게 고쳐 받는다');
+        assert.deepStrictEqual([ctx.fixes[0].tabId, ctx.fixes[0].md === FILLED, ctx.fixes[0].rounds, ctx.fixes[0].minSpokenChars], ['basicLearn', true, 3, 90000], '채운 분량 아래로 줄이지 않게 고쳐 받는다');
         assert.ok(made.tabContents.basicLearn === `${FILLED}${FIX_MARK}`, `채우고 고친 글을 기본학습에 넣는다: ${String(made.tabContents.basicLearn).slice(0, 80)} / ${ctx.alerts.at(-1)}`);
         assert.deepStrictEqual([made.content === `${FILLED}${FIX_MARK}`, made.status], [true, 'done']);
-        assert.ok(ctx.alerts.at(-1).startsWith('병합 재생성이 완료되었습니다. 기본학습은 낭독 약') && ctx.alerts.at(-1).includes('(목표 480분)'), ctx.alerts.at(-1));
+        assert.ok(ctx.alerts.at(-1).startsWith('병합 재생성이 완료되었습니다. 기본학습은 낭독 약') && ctx.alerts.at(-1).includes('(목표 360분)'), ctx.alerts.at(-1));
         const asked = ctx.asked[0];
-        assert.ok(asked.message.includes('반복문\n조건문') && asked.message.includes('480분이 걸리는 분량까지'), asked.message);
-        assert.ok(asked.message.includes('AI 호출 약') && asked.message.includes('걸리는 시간') && asked.message.includes('낭독 480분'), '분량 채우기 호출 수·시간을 함께 보인다');
+        assert.ok(asked.message.includes('반복문\n조건문') && asked.message.includes('360분이 걸리는 분량까지'), asked.message);
+        assert.ok(asked.message.includes('AI 호출 약') && asked.message.includes('걸리는 시간') && asked.message.includes('낭독 360분'), '분량 채우기 호출 수·시간을 함께 보인다');
         assert.deepStrictEqual([asked.opts.title, asked.opts.okLabel], ['차시 병합', '병합해 만들기']);
         assert.strictEqual(elements['editor-loading'].style.display, 'none');
         assert.strictEqual(elements['editor-loading-text'].textContent, 'AI가 상세 교안을 작성하고 있습니다...', '로딩 문구를 되돌린다');

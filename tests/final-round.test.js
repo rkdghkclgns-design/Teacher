@@ -625,23 +625,19 @@ const LESSON_MD = [
         Object.assign(ctx, { archiveContents: original.archive, fillMissingTabs: original.fill, lockedSectionBlocks: original.locked });
     });
 
+    // 19차: 단원은 늘 5차시 × 8시간이라 블록을 더하거나 지우지 않고(＋ 블록·✕ 단추가 없다), 차시 시간도 칸 대신 글로 보인다
     await run('과정 설계: 단원명과 블록을 초안에서 고친다', async () => {
         const draft = { units: [{ title: '단원', hours: 2, modules: [{ title: '블록', minutes: 120, objectives: [], flow: [], isDefault: true }] }] };
         const named = call('setDesignUnitTitle')(draft, 0, ' 새 단원 ');
         assert.strictEqual(named.units[0].title, '새 단원');
         assert.strictEqual(call('setDesignUnitTitle')(draft, 0, '  ').units[0].title, '단원', '빈 제목은 되돌린다');
         assert.strictEqual(draft.units[0].title, '단원', '초안을 바꾸지 않고 새로 돌려준다');
-        const added = call('designEditAction')(draft, 'add-block', { unit: '0' });
-        assert.strictEqual(added.units[0].modules.length, 2);
-        assert.strictEqual(call('designFlowMatches')(added.units[0].modules[1]), true);
-        assert.strictEqual(added.edited, true);
-        const kept = call('designEditAction')(added, 'del-block', { unit: '0', module: '1' });
-        assert.strictEqual(kept.units[0].modules[0].isDefault, false, '지운 블록이 시간 맞추기로 되살아나지 않는다');
-        const removed = call('designEditAction')(added, 'del-block', { unit: '0', module: '0' });
-        assert.deepStrictEqual(plain(removed.units[0].modules).map(block => block.title), ['새 블록']);
-        assert.strictEqual(call('designEditAction')(removed, 'del-block', { unit: '0', module: '0' }).units[0].modules.length, 1, '마지막 블록은 지우지 않는다');
+        assert.deepStrictEqual(['add-block', 'del-block'].map(action => call('designEditAction')(draft, action, { unit: '0', module: '0' })), [null, null], '차시를 더하거나 지우지 않는다');
+        const fitted = call('designEditAction')(draft, 'fit-unit', { unit: '0' });
+        assert.deepStrictEqual([fitted.units[0].modules.length, fitted.units[0].hours, fitted.edited], [5, 40, true], '예전 초안은 5차시로 맞춘다');
         const html = call('designUnitHtml')({ ...draft.units[0], title: '"><script>' }, 0);
-        assert.ok(!html.includes('"><script>') && html.includes('data-design-action="add-block"') && html.includes('data-design-action="del-block"'));
+        assert.ok(!html.includes('"><script>') && !html.includes('data-design-action="add-block"') && !html.includes('data-design-action="del-block"') && !html.includes('data-design-field="minutes"') && !html.includes('data-design-hours'));
+        assert.ok(html.includes('data-design-action="fit-unit"') && html.includes('1차시'), '차시 수가 다르면 5차시로 맞추기 단추');
     });
 
     await run('참고 파일: 그 차시의 프롬프트에만 붙는다', async () => {

@@ -392,13 +392,13 @@ window.startLessonGeneration = function (moduleId) {
         const work = lessonWork({
             tabs: needed.filter(step => LESSON_TABS.some(tab => tab.id === step.id)).map(step => step.id), // 탭마다 그림 자리 수가 달라 탭 id로 센다
             gyosuan: needed.filter(step => step.gyosuan).length, // 갈래마다 교수안을 하나씩 만든다
-            qbank: has('qbank') ? qbankFillCount(mod) : 0, art: has('art'), ncs: has('ncsElements'), fillsVolume: moduleId !== 'mainQuest', volumeMinutes: lessonVolumeMinutes(mod),
+            qbank: has('qbank') ? qbankFillCount(mod) : 0, art: has('art'), ncs: has('ncsElements'), fillsVolume: moduleId !== 'mainQuest', volumeMinutes: lessonVolumeTargets(mod), // 학습 탭마다 480분 − 같은 트랙 실습 시간
             practiceMinutes: lessonPracticeWork(mod) // 실습 시간을 정한 실습 탭은 이어쓰기 호출이 늘어난다
         }, currentEstimateSettings().imageAmount);
         return confirmWithEstimate(`빈 항목 ${needed.length}개(${needed.map(step => step.label).join(', ')})를 차례로 만듭니다.`, work, { title: '전체 생성', okLabel: '만들기' })
             .then(ok => ok && window.runLessonPipeline(moduleId));
     }
-    const rebuild = lessonWork({ tabs: LESSON_TABS.map(tab => tab.id), fillsVolume: moduleId !== 'mainQuest', volumeMinutes: lessonVolumeMinutes(mod), practiceMinutes: lessonPracticeWork(mod) }, currentEstimateSettings().imageAmount); // 최종 평가는 분량을 채우지 않는다
+    const rebuild = lessonWork({ tabs: LESSON_TABS.map(tab => tab.id), fillsVolume: moduleId !== 'mainQuest', volumeMinutes: lessonVolumeTargets(mod), practiceMinutes: lessonPracticeWork(mod) }, currentEstimateSettings().imageAmount); // 최종 평가는 분량을 채우지 않는다
     return confirmWithEstimate(`모든 항목이 있습니다. 교안 탭 ${LESSON_TABS.length}개를 모두 다시 만듭니다(지금 글은 작업 기록에 남습니다).`, rebuild, { title: '모두 다시 만들기', okLabel: '모두 다시 만들기' })
         .then(ok => ok && generateAllTabs(moduleId));
 };

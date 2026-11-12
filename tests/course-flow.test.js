@@ -487,8 +487,7 @@ async function run(name, fn) {
         assert.strictEqual(titled.edited, true);
         assert.strictEqual(JSON.stringify(draft), before, '원본 초안은 바뀌지 않는다');
         assert.strictEqual(plain(set(draft, 0, 0, 'title', '   ')).units[0].modules[0].title, draft.units[0].modules[0].title, '빈 제목은 무시');
-        assert.strictEqual(plain(set(draft, 0, 0, 'minutes', '93')).units[0].modules[0].minutes, 95, '5분 단위');
-        assert.strictEqual(plain(set(draft, 0, 0, 'minutes', '')).units[0].modules[0].minutes, 10, '최소 10분');
+        assert.strictEqual(set(draft, 0, 0, 'minutes', '93'), draft, '19차: 차시 시간(8시간)은 고치지 않는다');
         assert.deepStrictEqual(plain(set(draft, 0, 0, 'objectives', '1. 첫째\n\n- 둘째\n셋째 ')).units[0].modules[0].objectives, ['첫째', '둘째', '셋째']);
     });
 
@@ -496,7 +495,7 @@ async function run(name, fn) {
         const edited = call('setDesignModuleField')(draftOf(), 0, 0, 'title', '직접 고친 블록');
         const grown = plain(call('normalizeDesignUnit')({ ...edited.units[0], hours: 6 }));
         assert.strictEqual(grown.modules[0].title, '직접 고친 블록', '기본 블록으로 다시 만들지 않는다');
-        assert.strictEqual(grown.modules.reduce((sum, module) => sum + module.minutes, 0), 360);
+        assert.deepStrictEqual([grown.hours, grown.modules.reduce((sum, module) => sum + module.minutes, 0)], [40, 2400], '단원 시간을 바꿔도 5차시 × 8시간');
         const objectives = call('setDesignModuleField')(draftOf(), 0, 0, 'objectives', '제약 조건에 맞게 기획서를 작성할 수 있습니다.');
         assert.ok(plain(call('normalizeDesignUnit')({ ...objectives.units[0], hours: 2 })).modules[0].objectives.length === 1);
     });
@@ -533,16 +532,23 @@ async function run(name, fn) {
     await run('시간 불일치: 단원·블록을 세고 시간 맞추기로 해소', async () => {
         const draft = draftOf();
         assert.strictEqual(call('designTimeMismatches')(draft), 0);
-        const off = call('setDesignModuleField')(draft, 0, 0, 'minutes', '60');
-        assert.strictEqual(call('designTimeMismatches')(off), 2, '단원 합계와 그 블록의 단계 합계');
-        assert.ok(call('designUnitStatusHtml')(off.units[0], 0).includes('data-design-action="fit-unit"'));
+        // 19차: 단원은 5차시 × 8시간이어야 한다. 차시 수가 다른 예전 초안과 단계 합계가 다른 차시를 센다
+        const off = call('setDesignStepField')(draft, 0, 0, 0, 'minutes', '60');
+        assert.strictEqual(call('designTimeMismatches')(off), 1, '그 블록의 단계 합계');
+        const short = { ...draft, units: [{ ...draft.units[0], modules: draft.units[0].modules.slice(0, 4).map(module => ({ ...module, isDefault: false })) }] };
+        assert.strictEqual(call('designTimeMismatches')(short), 1, '4차시 단원');
+        assert.ok(call('designUnitStatusHtml')(short.units[0], 0).includes('data-design-action="fit-unit"') && call('designUnitStatusHtml')(short.units[0], 0).includes('차시 4개'));
+        assert.ok(call('designUnitStatusHtml')(draft.units[0], 0).includes('5차시 × 8시간 = 40시간 ✓'));
+        const refit = call('designEditAction')(short, 'fit-unit', { unit: '0' });
+        assert.deepStrictEqual([call('designTimeMismatches')(refit), refit.units[0].modules.length], [0, 5], '5차시로 맞추기');
         assert.strictEqual(call('designTimeMismatches')(call('designEditAction')(off, 'fit-unit', { unit: '0' })), 0);
         assert.strictEqual(call('designEditAction')(draft, 'draft', {}), null, '편집 동작이 아니면 null');
+        assert.strictEqual(call('designEditAction')(draft, 'add-block', { unit: '0' }), null, '차시를 더하거나 지우지 않는다');
     });
 
-    await run('블록 검사 표시: 3시간 초과·목표 수·문장 형식', async () => {
-        const notes = plain(call('designModuleNotes')({ minutes: 200, objectives: ['게임을 이해한다.', 'a', 'b', 'c'] }));
-        assert.ok(notes[0].includes('3시간') && notes[1].includes('3개 이하') && notes[2].startsWith('목표 1:'));
+    await run('블록 검사 표시: 목표 수·문장 형식', async () => {
+        const notes = plain(call('designModuleNotes')({ minutes: 480, objectives: ['게임을 이해한다.', 'a', 'b', 'c'] }));
+        assert.ok(notes[0].includes('3개 이하') && notes[1].startsWith('목표 1:'));
     });
 
     await run('화면: 사용자·AI 문자열은 이스케이프', async () => {
@@ -648,6 +654,8 @@ async function run(name, fn) {
     });
 
     const PLAN = { modules: [{ title: '새 블록1', minutes: 60, objectives: ['설명할 수 있습니다.'], flow: [{ phase: '전개', title: '본문', minutes: 60 }] }, { title: '새 블록2', minutes: 60, objectives: [], flow: [] }] };
+    // 19차: 교과는 늘 5차시 × 8시간이라 AI가 블록 2개만 보내도 5차시로 나눈다(앞 블록 3개, 뒤 블록 2개)
+    const PLANNED = ['새 블록1 — 핵심 개념', '새 블록1 — 적용 실습', '새 블록1 — 종합 정리', '새 블록2 — 핵심 개념', '새 블록2 — 종합 정리'];
 
     function replanContext(ai) {
         const local = makeContext(ai);
@@ -657,7 +665,6 @@ async function run(name, fn) {
         local.globalState.subjects = [subject];
         local.currentSubjectId = 's1';
         local.courseData = subject.lessons;
-        local.elements['replan-hours'] = { value: '2' };
         local.elements['replan-status'] = { textContent: '' };
         return { local, subject, filled, blank };
     }
@@ -672,7 +679,7 @@ async function run(name, fn) {
         failed.local.globalState.courseDesign = { title: '게임 과정', goal: '과정 목표', target: '입문자' };
         failed.local.autoAssignNcs = async () => { throw new Error('호출 한도'); };
         await vm.runInContext('runSubjectReplan', failed.local)({ disabled: false }, failed.subject);
-        assert.deepStrictEqual(plain(failed.subject.lessons).map(item => item.title), ['새 블록1', '새 블록2'], 'NCS 실패로 새 블록을 되돌리지 않는다');
+        assert.deepStrictEqual(plain(failed.subject.lessons).map(item => item.title), PLANNED, 'NCS 실패로 새 블록을 되돌리지 않는다');
         assert.deepStrictEqual(plain(failed.subject.ncs.units), [{ code: 'C1' }]);
     });
 
@@ -682,15 +689,17 @@ async function run(name, fn) {
         local.globalState.courseDesign = { title: '게임 과정', goal: '과정 목표', target: '입문자' };
         await vm.runInContext('runSubjectReplan', local)({ disabled: false }, subject);
         assert.deepStrictEqual(plain(subject.ncs.units), [{ code: 'C1' }], '고를 단위를 못 찾으면 이전 배정을 남긴다');
-        assert.deepStrictEqual(plain(subject.lessons).map(item => item.title), ['새 블록1', '새 블록2']);
+        assert.deepStrictEqual(plain(subject.lessons).map(item => item.title), PLANNED);
+        assert.deepStrictEqual([plain(subject.lessons).map(item => item.hours), subject.hours], [[8, 8, 8, 8, 8], 40], '차시마다 8시간, 교과 40시간');
+        assert.deepStrictEqual(plain(subject.lessons).map(item => item.objectives), [['설명할 수 있습니다.'], ['설명할 수 있습니다.'], ['설명할 수 있습니다.'], [], []], '나눈 차시도 목표를 지닌다');
         assert.strictEqual(local.courseData, subject.lessons, '현재 교과면 편집 중인 목록도 바꾼다');
         assert.strictEqual(subject.lessons[0].status, 'waiting');
-        assert.strictEqual(subject.lessonCount, 2);
+        assert.strictEqual(subject.lessonCount, 5);
         const trash = local.globalState.lessonTrash;
         assert.ok(trash[0].lesson === filled && trash[1].lesson === blank && trash.every(entry => entry.subjectId === 's1'));
         assert.strictEqual(filled.tabContents.basicLearn, '작성한 본문', '휴지통의 차시는 내용을 그대로 갖는다');
         assert.deepStrictEqual(plain(local.archived), ['차시 1'], '내용이 있는 차시만 보관함에 남긴다');
-        assert.ok(prompts[0].includes('[과정] 게임 과정') && prompts[0].includes('[과정 목표] 과정 목표') && prompts[0].includes('2시간'));
+        assert.ok(prompts[0].includes('[과정] 게임 과정') && prompts[0].includes('[과정 목표] 과정 목표') && prompts[0].includes('40시간(5차시 × 8시간)'));
         assert.ok(local.toasts[0].message.includes('이전 차시 2개'));
     });
 

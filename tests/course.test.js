@@ -59,34 +59,40 @@ async function run(name, fn) {
         assert.ok(allocate(3, 10, [1, 1, 2])[2] > allocate(3, 10, [1, 1, 2])[0]);
         assert.strictEqual(sum(allocate(4, 240, [3, 1, 1, 1], 30)), 240);
         assert.ok(plain(allocate(5, 5)).every(x => x === 1));
-        assert.deepStrictEqual(plain(call('createCourseDesign')({ title: '과정', units: ['가', '나'], hours: [30, 10] }, 40, '수강생')).units.map(u => u.hours), [30, 10], '(N시간)을 배분에 반영');
+        // 19차: 단원 시간은 고정(5차시 × 8시간 = 40시간)이라 (N시간) 표시와 적은 총 시간은 쓰지 않고, 과정 총 시간은 단원 수 × 40시간이다
+        const design = plain(call('createCourseDesign')({ title: '과정', units: ['가', '나'], hours: [30, 10] }, 40, '수강생'));
+        assert.deepStrictEqual([design.units.map(u => u.hours), design.totalHours, design.requestedHours], [[40, 40], 80, 40], '적은 40시간 대신 80시간(바꾼 까닭을 보이려고 적은 값을 남긴다)');
+        assert.strictEqual(plain(call('createCourseDesign')({ title: '과정', units: ['가'], hours: [0] }, 40, '수강생')).requestedHours, undefined, '같으면 남기지 않는다');
         assert.deepStrictEqual(plain(allocate(0, 10)), []);
     });
 
-    await run('기본 블록·진행 단계 합계', async () => {
-        const modules = plain(call('defaultModules')('LLM 원리', 7));
-        assert.strictEqual(modules.reduce((a, m) => a + m.minutes, 0), 420);
+    await run('기본 블록·진행 단계 합계: 단원마다 5차시 × 480분, 진행 단계는 도입·개념·실습(기본 120분)·정리로 480분', async () => {
+        const modules = plain(call('defaultModules')('LLM 원리'));
+        assert.deepStrictEqual(modules.map(m => m.minutes), [480, 480, 480, 480, 480]);
+        assert.deepStrictEqual(modules.map(m => m.title), ['LLM 원리 — 핵심 개념', 'LLM 원리 — 구조와 사례', 'LLM 원리 — 적용 실습', 'LLM 원리 — 심화 활용', 'LLM 원리 — 종합 정리']);
         modules.forEach(m => {
-            assert.ok(m.minutes <= 180);
-            assert.strictEqual(m.flow.reduce((a, s) => a + s.minutes, 0), m.minutes);
-            assert.strictEqual(m.flow[0].phase, '도입');
-            assert.strictEqual(m.flow.at(-1).phase, '정리');
+            assert.strictEqual(m.flow.reduce((a, s) => a + s.minutes, 0), 480);
+            assert.ok(m.flow.every(step => step.minutes % 5 === 0));
+            assert.deepStrictEqual(m.flow.map(step => step.phase), ['도입', '전개', '전개', '정리']);
+            assert.ok(m.flow[2].title.includes('실습') && m.flow[2].minutes === 120, '실습 단계는 실습 탭 기본 120분');
         });
     });
 
-    await run('단원 시간 변경 시 비례 조정', async () => {
-        const unit = { title: 'A', hours: 4, modules: call('defaultModules')('A', 6) };
+    await run('단원은 늘 5차시 × 8시간으로 맞춘다: 기본 블록은 다시 만들고, AI·고친 블록은 묶거나 나누며 목표를 남긴다', async () => {
+        const unit = { title: 'A', hours: 4, modules: call('defaultModules')('A') };
         const fixed = plain(call('normalizeDesignUnit')(unit));
-        assert.strictEqual(fixed.modules.reduce((a, m) => a + m.minutes, 0), 240);
+        assert.deepStrictEqual([fixed.hours, fixed.modules.length, fixed.modules.reduce((a, m) => a + m.minutes, 0)], [40, 5, 2400]);
         fixed.modules.forEach(m => assert.strictEqual(m.flow.reduce((a, s) => a + s.minutes, 0), m.minutes));
-        assert.strictEqual(unit.modules.reduce((a, m) => a + m.minutes, 0), 360, '원본은 바꾸지 않음');
+        assert.strictEqual(unit.hours, 4, '원본은 바꾸지 않음');
         assert.ok(plain(call('defaultFlow')(10, '짧은 블록')).every(step => step.minutes > 0), '짧은 블록도 음수·0분이 없다');
-        const grown = plain(call('normalizeDesignUnit')({ title: 'A', hours: 16, modules: call('defaultModules')('A', 8) }));
-        assert.ok(grown.modules.every(m => m.minutes <= 180), '기본 블록은 늘어난 시간에 맞게 다시 나눔');
         const designed = { title: 'A', hours: 2, modules: [{ title: '설계 블록', minutes: 60, objectives: [], flow: [] }] };
-        assert.strictEqual(plain(call('normalizeDesignUnit')(designed)).modules[0].title, '설계 블록', 'AI 설계 블록은 목표가 비어도 유지');
-        const tooMany = { title: 'A', hours: 1, modules: Array.from({ length: 4 }, (_, i) => ({ title: `블록${i}`, minutes: 90, objectives: ['목표'], flow: Array.from({ length: 5 }, () => ({ phase: '전개', title: '단계', minutes: 18 })) })) };
-        plain(call('normalizeDesignUnit')(tooMany)).modules.forEach(m => assert.strictEqual(m.flow.reduce((a, s) => a + s.minutes, 0), m.minutes));
+        const split = plain(call('normalizeDesignUnit')(designed));
+        assert.deepStrictEqual(split.modules.map(m => m.title), ['설계 블록 — 핵심 개념', '설계 블록 — 구조와 사례', '설계 블록 — 적용 실습', '설계 블록 — 심화 활용', '설계 블록 — 종합 정리'], 'AI 블록 하나는 5차시로 나눈다');
+        const tooMany = { title: 'A', hours: 1, modules: Array.from({ length: 7 }, (_, i) => ({ title: `블록${i}`, minutes: 90, objectives: [`목표${i}`], flow: Array.from({ length: 5 }, () => ({ phase: '전개', title: '단계', minutes: 18 })) })) };
+        const merged = plain(call('normalizeDesignUnit')(tooMany));
+        assert.deepStrictEqual(merged.modules.map(m => m.title), ['블록0 · 블록1', '블록2 · 블록3', '블록4', '블록5', '블록6'], '차례를 지켜 이웃한 블록을 묶는다');
+        assert.deepStrictEqual(merged.modules.flatMap(m => m.objectives), tooMany.modules.map(m => m.objectives[0]), '목표는 하나도 버리지 않는다');
+        merged.modules.forEach(m => assert.deepStrictEqual([m.minutes, m.flow.reduce((a, s) => a + s.minutes, 0)], [480, 480]));
     });
 
     await run('학습목표 검사', async () => {
@@ -188,12 +194,13 @@ async function run(name, fn) {
         const result = plain(planned);
         assert.strictEqual(failed, 1);
         assert.strictEqual(result.goal, '기획서를 작성할 수 있다.');
-        assert.deepStrictEqual(result.units.map(u => u.hours), [30, 10]);
-        assert.strictEqual(result.units[0].modules[0].minutes, 1800);
-        assert.strictEqual(result.units[0].modules[0].objectives.length, 3);
-        assert.deepStrictEqual(result.units[0].modules[0].flow.map(s => s.phase), ['도입', '전개', '정리']);
-        assert.strictEqual(result.units[0].modules[0].flow.reduce((a, s) => a + s.minutes, 0), 1800);
-        assert.strictEqual(result.units[1].modules.reduce((a, m) => a + m.minutes, 0), 600, '실패 단원은 기본 블록');
+        assert.deepStrictEqual([result.units.map(u => u.hours), result.totalHours], [[40, 40], 80], 'AI가 시간을 나눠 보내도 단원마다 40시간');
+        // AI가 200분 블록 하나만 보내도 480분 차시 5개로 나누고, 목표 3개(넷째는 버린다)를 다섯 차시에 나눠 담는다
+        const first = result.units[0].modules;
+        assert.deepStrictEqual(first.map(m => m.minutes), [480, 480, 480, 480, 480]);
+        assert.deepStrictEqual(first.map(m => m.objectives), [['a'], ['a'], ['b'], ['b'], ['c']]);
+        first.forEach(m => assert.strictEqual(m.flow.reduce((a, s) => a + s.minutes, 0), 480));
+        assert.strictEqual(result.units[1].modules.reduce((a, m) => a + m.minutes, 0), 2400, '실패 단원은 기본 5차시');
         let calls = 0;
         const cancelled = makeContext(async () => { calls += 1; return reply({ goal: '', hours: [] }); });
         await vm.runInContext('planCourseDesign', cancelled)(design, () => {}, () => true);

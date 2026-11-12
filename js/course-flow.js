@@ -266,7 +266,7 @@ function lessonRunQueueHtml(queue, uploaded, legacy = []) {
 
 function lessonRunIntroHtml(queue, uploaded, withGyosuan = false) {
     return `
-        <p class="text-xs text-textLight">내용이 비어 있는 탭만 차례로 생성합니다. 이미 있는 탭은 그대로 둡니다. 차시마다 몇 분 걸릴 수 있습니다. 교안을 만든 차시에는 NCS 능력단위요소도 확정 전 상태로 배정합니다. 기본학습과 심화학습은 각각 낭독 480분 분량을 채우느라 차시마다 40분 넘게 걸릴 수 있습니다. 실습 탭은 정한 실습 시간(정하지 않으면 90~120분) 분량으로 만듭니다.</p>
+        <p class="text-xs text-textLight">내용이 비어 있는 탭만 차례로 생성합니다. 이미 있는 탭은 그대로 둡니다. 차시마다 몇 분 걸릴 수 있습니다. 교안을 만든 차시에는 NCS 능력단위요소도 확정 전 상태로 배정합니다. 차시는 하루 ${DESIGN_LESSON_HOURS}시간이라 기본(기본학습+기본실습)과 심화(심화학습+심화실습)가 각각 실습을 포함해 ${DESIGN_LESSON_MINUTES}분입니다. 실습 탭은 정한 실습 시간(정하지 않으면 ${designPracticeMinutes()}분), 학습 탭은 ${DESIGN_LESSON_MINUTES}분에서 그 실습 시간을 뺀 낭독 분량(기본 ${DESIGN_LESSON_MINUTES - designPracticeMinutes()}분)으로 만들며, 분량을 채우느라 차시마다 40분 넘게 걸릴 수 있습니다.</p>
         <div id="lesson-run-queue" class="space-y-2">${lessonRunQueueHtml(queue, uploaded, withGyosuan ? legacyGyosuanItems(queue) : [])}</div>
         <div id="lesson-run-estimate"></div>
         <label class="flex items-start gap-2 text-xs text-textLight">
@@ -381,7 +381,7 @@ function lessonRunWork(queue, { withGyosuan, overwrite, art, genOptions }) {
             gyosuan: withGyosuan ? (overwrite ? LESSON_TRACKS.length : gyosuanBuildCount(lesson)) : 0, // 갈래마다 교수안을 하나씩 만든다
             qbank: withGyosuan ? qbankFillCount(lesson, overwrite) : 0,
             art: art && tabs.length > 0,
-            volumeMinutes: lessonVolumeMinutes(lesson), // 학습 탭의 낭독 목표(차시 시간과 관계없이 480분)
+            volumeMinutes: lessonVolumeTargets(lesson, genOptions), // 학습 탭마다의 낭독 목표(480분 − 같은 트랙 실습 시간, 창에 적은 과정 기본값으로 센다)
             practiceMinutes: lessonPracticeWork(lesson, genOptions)
         }, imageAmount);
     }));
@@ -456,7 +456,9 @@ async function startLessonRun(scope, button = null) {
         if (generationBusy()) return window.showAlert('진행 중인 생성이 끝난 뒤 다시 시도해주세요.');
     }
     if (_lessonRun) return;
-    saveCourseDesignField({ genOptions: readLessonGenFields('run'), runGyosuan: withGyosuan, autoArt: art });
+    const genOptions = readLessonGenFields('run');
+    saveCourseDesignField({ genOptions, runGyosuan: withGyosuan, autoArt: art });
+    if (typeof warnLongPractice === 'function') warnLongPractice(genOptions); // 실습을 420분 이상으로 정했으면 학습 탭이 짧아진다고 알린다(막지 않는다)
     // 이 실행이 휴지통에 넣는 사본에 붙이는 이름(휴지통의 '모두 복원'). 앱 밖(테스트 등)에서는 시각과 난수로 만든다
     const batch = typeof generateUniqueId === 'function' ? generateUniqueId('run_') : `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const run = { stopped: false, withGyosuan, overwrite, cleared: new Map(), trashed: 0, restored: new Set(), batch };
@@ -491,14 +493,16 @@ function lessonHasContent(lesson) {
     return LESSON_TABS.some(tab => lesson.tabContents?.[tab.id]) || !!lesson.content || LESSON_TRACKS.some(track => !!lesson[track.field]?.docMd) || !!lesson.uploadedMdContent;
 }
 
+// 지금 교과의 시간(차시 시간 합계, 없으면 교과 시간). 다시 설계하면 늘 40시간(5차시 × 8시간)이 된다
 function subjectPlanHours(subject) {
     return Math.max(1, Math.round(subjectMinutes(subject) / 60) || Number(subject.hours) || 1);
 }
 
-async function planSubjectBlocks(subject, hours) {
+// 교과 하나를 정확히 5차시 × 8시간(40시간)으로 다시 나눈다. 답의 블록 수가 달라도 parseUnitPlan이 맞춘다
+async function planSubjectBlocks(subject) {
     const saved = globalState.courseDesign || {};
     const design = { title: saved.title || globalState.courseTitle, goal: saved.goal || '', target: saved.target || '직업훈련 수강생' };
-    const unit = { title: subject.title, hours, modules: [] };
+    const unit = { title: subject.title, hours: DESIGN_UNIT_TOTAL_HOURS, modules: [] };
     return parseUnitPlan(await askDesignJson(buildUnitPrompt(design, unit)), unit);
 }
 
@@ -540,9 +544,7 @@ window.openSubjectReplan = function () {
             <div class="p-4 border-b border-white/10"><h2 class="text-sm font-bold text-textLight">블록 다시 설계 · ${escapeHtml(subject.title)}</h2></div>
             <div class="p-4 space-y-3">
                 ${replanNoticeHtml(subject)}
-                <label class="block text-[0.6875rem] font-bold text-textMuted">교과 시간
-                    <input id="replan-hours" type="number" min="1" value="${subjectPlanHours(subject)}" class="block w-24 mt-1 px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white">
-                </label>
+                <p id="replan-hours" class="text-[0.6875rem] text-textMuted"><b class="text-textLight">교과 시간 ${DESIGN_UNIT_TOTAL_HOURS}시간</b> · ${DESIGN_LESSONS_PER_UNIT}차시 × 하루 ${DESIGN_LESSON_HOURS}시간(실습 포함)으로 나눕니다. 지금은 ${subjectPlanHours(subject)}시간입니다.</p>
                 <p id="replan-status" class="text-xs text-accent min-h-[1em]"></p>
             </div>
             <div class="p-3 border-t border-white/10 flex justify-end gap-2">
@@ -584,19 +586,18 @@ async function reassignReplannedNcs(subject) {
 }
 
 async function runSubjectReplan(button, subject) {
-    const hours = Math.max(1, Math.round(Number(document.getElementById('replan-hours').value)) || 1);
     const status = document.getElementById('replan-status');
     const run = ++_replanRun;
     button.disabled = true;
-    status.textContent = '블록을 설계하고 있습니다...';
+    status.textContent = `블록을 ${DESIGN_LESSONS_PER_UNIT}차시 × ${DESIGN_LESSON_HOURS}시간으로 설계하고 있습니다...`;
     try {
-        const planned = await planSubjectBlocks(subject, hours);
+        const planned = await planSubjectBlocks(subject);
         if (run !== _replanRun) return;
-        const moved = await replaceSubjectLessons(subject, planned.modules, hours);
+        const moved = await replaceSubjectLessons(subject, planned.modules, planned.hours);
         closeSubjectReplan();
         if (subject.id === currentSubjectId) openEditor(subject.id);
         renderOverviewLNB();
-        window.showToast?.(`새 블록 ${planned.modules.length}개로 바꿨습니다.${moved ? ` 이전 차시 ${moved}개는 휴지통에 있습니다.` : ''}`, 'success');
+        window.showToast?.(`새 블록 ${planned.modules.length}개(차시마다 ${DESIGN_LESSON_HOURS}시간, 교과 ${planned.hours}시간)로 바꿨습니다.${moved ? ` 이전 차시 ${moved}개는 휴지통에 있습니다.` : ''}`, 'success');
         await reassignReplannedNcs(subject);
     } catch (err) {
         console.error('[블록 다시 설계] 실패:', err);

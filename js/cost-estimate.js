@@ -21,7 +21,7 @@ const ESTIMATE_RULES = {
     qbankCalls: 2,                                  // 문제은행 하나(갈래마다 하나) 채우기. 코드가 든 문항은 주석 보강이 가끔 더해짐
     artCalls: 4,                                    // SVG 삽화(후보 1회 + 그림 최대 3장)
     ocrMaxCallsPerPdf: 8,                           // 스캔 PDF: 30쪽까지 4쪽마다 1회
-    // 학습 탭(기본학습·심화학습) 분량 보강(lesson-volume.js): 호출 하나가 낭독 글자 약 5,000자를 늘린다고 보고, 탭마다 호출 상한(목표 글자 ÷ 5,000, 480분이면 24번, 최대 48번)까지 센다.
+    // 학습 탭(기본학습·심화학습) 분량 보강(lesson-volume.js): 호출 하나가 낭독 글자 약 5,000자를 늘린다고 보고, 탭마다 호출 상한(목표 글자 ÷ 5,000, 기본 360분이면 18번, 최대 48번)까지 센다.
     // 실제 답은 부탁한 글자의 절반쯤만 써 초안이 짧으면 상한 가까이 쓴다. 채운 뒤 컨벤션 필수 지적 자동 수정이 3번까지 이어진다
     volumeCharsPerCall: 5000,
     volumeCallLimit: 48,
@@ -34,8 +34,8 @@ const ESTIMATE_RULES = {
 const CALL_SECONDS = { low: 20, mid: 45, high: 90 };       // 잰 기록이 없을 때 본문 호출 하나(초)
 const SHORT_CALL_FACTOR = 0.3;                             // 잰 기록이 없을 때 짧은 호출은 본문 호출의 이만큼
 const LONG_CALL_FACTOR = 3;                                // 잰 기록이 없을 때 분량 보강(긴 글) 호출은 본문 호출의 이만큼
-// lesson-lint.js LEARN_TARGET_MINUTES·READ_CHARS_PER_MINUTE·LEARN_VOLUME_TABS·PRACTICE_MINUTE_KEYS와 같다(테스트는 lesson-lint.js 없이 돈다)
-const ESTIMATE_VOLUME = { minutes: 480, charsPerMinute: 250, tabs: ['basicLearn', 'advLearn'], practiceTabs: ['basicPrac', 'advPrac'] };
+// lesson-lint.js LEARN_TARGET_MINUTES(실습 시간을 정하지 않은 학습 탭: 480 − 120 = 360분)·READ_CHARS_PER_MINUTE·LEARN_VOLUME_TABS·PRACTICE_MINUTE_KEYS와 같다(테스트는 lesson-lint.js 없이 돈다)
+const ESTIMATE_VOLUME = { minutes: 360, charsPerMinute: 250, tabs: ['basicLearn', 'advLearn'], practiceTabs: ['basicPrac', 'advPrac'] };
 const IMAGE_CALL_SECONDS = { gemini: 25, higgsfield: 60 }; // 잰 기록이 없을 때 그림 한 장(초)
 const ESTIMATE_GAPS = { image: 7, tab: 4 };                // 교안 그림 사이 간격(api.js IMAGE_TAG_GAP_MS), 탭·단계 사이 쉬는 시간(초)
 const ESTIMATE_GAME_SECONDS = 5;                           // 예시 게임 그림 한 장: 위키백과 검색·라이선스·그림 받기(AI 호출 없음, 사이 간격 없음)
@@ -67,8 +67,12 @@ function tabImageCount(tabs, imageAmount = 'section') {
     return counts.length ? Math.round((Number(tabs) || 0) * counts.reduce((sum, n) => sum + n, 0) / counts.length) : 0;
 }
 
-// 차시 학습 탭의 낭독 목표(분). lesson-lint.js learnTargetMinutes(차시 시간과 관계없이 480분)를 따르고, 없으면(테스트) 480분
-const lessonVolumeMinutes = (mod, tabId = 'basicLearn') => (typeof learnTargetMinutes === 'function' ? learnTargetMinutes(mod, tabId) : ESTIMATE_VOLUME.minutes);
+// 차시 학습 탭의 낭독 목표(분). lesson-lint.js learnTargetMinutes(480분 − 같은 트랙 실습 시간)를 따르고, 없으면(테스트) 기본 360분.
+// courseOptions: 과정 기본값 대신 볼 값(저장 전 일괄 생성 창의 실습 시간)
+const lessonVolumeMinutes = (mod, tabId = 'basicLearn', courseOptions) => (typeof learnTargetMinutes === 'function' ? learnTargetMinutes(mod, tabId, courseOptions) : ESTIMATE_VOLUME.minutes);
+
+// 차시 학습 탭마다의 낭독 목표 { basicLearn, advLearn }. 두 트랙의 실습 시간이 다르면 목표도 다르다(lessonWork가 탭마다 센다)
+const lessonVolumeTargets = (mod, courseOptions) => Object.fromEntries(ESTIMATE_VOLUME.tabs.map(tabId => [tabId, lessonVolumeMinutes(mod, tabId, courseOptions)]));
 
 // 차시 실습 탭마다 강사가 정한 실습 시간(분, lesson-lint.js lessonPracticeMinutes). 그 파일이 없으면(테스트) 빈 값. courseOptions: 저장 전 과정 기본값
 const lessonPracticeWork = (mod, courseOptions) => (typeof lessonPracticeMinutes === 'function'
@@ -96,33 +100,53 @@ const workCount = value => (value === true ? 1 : Math.max(0, Math.floor(Number(v
 // 차시 하나에서 할 일. tabs: 만들 탭 id 목록(또는 탭 수) / imageAmount: 설정의 교안 이미지 양(all·section·none) / slideImages: 교수안 하나를 만들면 슬라이드에 넣는 그림 수
 // gyosuan·qbank: 만들 교수안 수와 채울 문제은행 수(true면 하나). 갈래(기본학습·심화학습)마다 따로 만든다
 // 학습 탭(기본학습·심화학습)을 만들면 탭마다 낭독 분량 채우기(volume: 탭 수, volumeAdv: 그 가운데 심화학습 수, volumeCalls: 긴 호출 수, volumeMinutes: 낭독 목표 분)도 센다.
-// 탭 수만 알면 어느 탭인지 몰라 세지 않는다. 분량을 채우지 않는 최종 평가는 fillsVolume: false. volumeMinutes: 학습 탭의 낭독 목표(480분)
+// 탭 수만 알면 어느 탭인지 몰라 세지 않는다. 분량을 채우지 않는 최종 평가는 fillsVolume: false.
+// volumeMinutes: 학습 탭의 낭독 목표(분, 기본 360분). 숫자면 모든 학습 탭에, { basicLearn, advLearn }이면 탭마다 쓴다(lessonVolumeTargets)
 // practiceMinutes: 실습 탭마다 강사가 정한 실습 시간({ basicPrac, advPrac }). 정한 실습 탭은 이어쓰기 호출(practiceCalls)을 더 센다
 function lessonWork({ tabs = 0, gyosuan = false, qbank = false, art = false, ncs, fillsVolume = true, volumeMinutes = ESTIMATE_VOLUME.minutes, practiceMinutes = {} } = {}, imageAmount = 'section', slideImages = defaultSlideImageCount()) {
     const tabCount = Array.isArray(tabs) ? tabs.length : (Number(tabs) || 0);
     const plans = workCount(gyosuan);
     const banks = workCount(qbank);
     const withNcs = ncs === undefined ? tabCount > 0 : ncs;
-    const minutes = Number(volumeMinutes) > 0 ? Number(volumeMinutes) : ESTIMATE_VOLUME.minutes;
     const learnTabs = fillsVolume && Array.isArray(tabs) ? tabs.filter(id => ESTIMATE_VOLUME.tabs.includes(id)) : [];
-    const adv = learnTabs.filter(id => id === 'advLearn').length;
-    const volume = learnTabs.length ? { volume: learnTabs.length, volumeCalls: learnTabs.length * volumeCallsFor(minutes), volumeMinutes: minutes, ...(adv ? { volumeAdv: adv } : {}) } : {};
+    const volume = learnTabs.length ? learnVolumeWork(learnTabs, volumeMinutes) : {};
     const practiceCalls = Array.isArray(tabs) && practiceMinutes && typeof practiceMinutes === 'object'
         ? tabs.filter(id => ESTIMATE_VOLUME.practiceTabs.includes(id)).reduce((sum, id) => sum + practiceExtraCalls(practiceMinutes[id]), 0) : 0;
     return { tabs: tabCount, images: tabImageCount(tabs, imageAmount), slideImages: plans * slideImages, ncs: withNcs ? 1 : 0, gyosuan: plans, qbank: banks, art: art ? 1 : 0, ...volume, ...(practiceCalls ? { practiceCalls } : {}) };
 }
 
-// 차시마다 할 일을 더한다. 낭독 목표(volumeMinutes)는 더하지 않고 가장 긴 것을 쓴다(안내 글에 보인다)
-const sumWork = list => list.reduce((total, work) => {
-    Object.entries(work).forEach(([key, value]) => { total[key] = key === 'volumeMinutes' ? Math.max(total[key] || 0, value) : (total[key] || 0) + value; });
-    return total;
-}, {});
+// 학습 탭들의 분량 채우기: 탭 수(volume), 그 가운데 심화학습 수(volumeAdv), 탭마다의 목표로 센 긴 호출 수(volumeCalls),
+// 가장 긴 목표(volumeMinutes)와, 탭마다 목표가 다르면 가장 짧은 목표(volumeMinutesLow)
+function learnVolumeWork(learnTabs, volumeMinutes) {
+    const pick = value => (Number(value) > 0 ? Number(value) : ESTIMATE_VOLUME.minutes);
+    const minutesOf = id => pick(volumeMinutes && typeof volumeMinutes === 'object' ? volumeMinutes[id] : volumeMinutes);
+    const targets = learnTabs.map(minutesOf);
+    const high = Math.max(...targets);
+    const low = Math.min(...targets);
+    const adv = learnTabs.filter(id => id === 'advLearn').length;
+    return {
+        volume: learnTabs.length, volumeCalls: targets.reduce((sum, minutes) => sum + volumeCallsFor(minutes), 0), volumeMinutes: high,
+        ...(low < high ? { volumeMinutesLow: low } : {}), ...(adv ? { volumeAdv: adv } : {})
+    };
+}
+
+// 차시마다 할 일을 더한다. 낭독 목표(volumeMinutes)는 더하지 않고 가장 긴 것을, volumeMinutesLow는 차시들 가운데 가장 짧은 목표를 쓴다(안내 글에 보인다)
+const sumWork = list => {
+    const total = list.reduce((sum, work) => {
+        Object.entries(work).forEach(([key, value]) => {
+            if (key !== 'volumeMinutesLow') sum[key] = key === 'volumeMinutes' ? Math.max(sum[key] || 0, value) : (sum[key] || 0) + value;
+        });
+        return sum;
+    }, {});
+    const lows = list.filter(work => work.volumeMinutes).map(work => work.volumeMinutesLow || work.volumeMinutes);
+    return lows.length && Math.min(...lows) < total.volumeMinutes ? { ...total, volumeMinutesLow: Math.min(...lows) } : total;
+};
 
 // work: { tabs, images(교안 그림), slideImages(슬라이드 그림), ncs, gyosuan(교수안마다 간이 교수안 호출도 센다), brief(간이 교수안만 만드는 수), qbank, art, ocr, volume(분량을 채우는 학습 탭 수), volumeCalls(그 긴 호출 수),
 // practiceCalls(실습 시간을 정한 실습 탭의 더 드는 이어쓰기 호출), codeComments(코드 주석 넣기 호출 수, 다시 받기 제외),
 // motionPlans(움직이는 GIF로 만들 그림 속 관계를 읽는 호출 수, image-motion.js) } 개수 →
 // 본문 호출(body), 기다리는 시간으로 센 본문 호출(bodyWait), 짧은 호출(short), 그림 장수(images), 분량 보강·자동 수정의 긴 호출(long, 있을 때만).
-// volumeCalls가 없으면 탭마다 480분 상한으로 센다. 예시 게임 그림(work.gameImages)은 위키백과에서 찾아 호출로 세지 않는다(estimateSummary가 시간만 더한다)
+// volumeCalls가 없으면 탭마다 기본 360분 상한으로 센다. 예시 게임 그림(work.gameImages)은 위키백과에서 찾아 호출로 세지 않는다(estimateSummary가 시간만 더한다)
 function estimateCallSplit(work = {}) {
     const rule = ESTIMATE_RULES;
     const tabs = (work.tabs || 0) * rule.tabCalls + (work.practiceCalls || 0);
@@ -211,6 +235,7 @@ function estimateSummary(work, { model = '', effort = 'medium', timings = readAi
     return {
         calls: estimateCalls(work, imageSource), images: split.images, slideImages: work.slideImages || 0, gameImages,
         volume: work.volume || 0, volumeAdv: work.volumeAdv || 0, volumeCalls: split.long || 0, volumeMinutes: work.volumeMinutes || ESTIMATE_VOLUME.minutes,
+        ...(work.volumeMinutesLow ? { volumeMinutesLow: work.volumeMinutesLow } : {}),
         imageSource, exactImages, routed, imageAmount, imageSearch,
         minutesLow, minutesHigh, tier, costLabel: COST_LABEL[tier], measured: body.measured
     };
@@ -266,7 +291,12 @@ function estimateVolumeNote(summary) {
         return `${name}은 낭독 ${minutes}분(공백 포함 약 ${chars}자)이 될 때까지 섹션마다 나눠 보강하고 자동 수정해 긴 호출이 약 ${calls}번 늘어납니다.`;
     }
     const total = Math.max(summary.volume, Math.round(summary.volumeCalls || 0)).toLocaleString('ko-KR');
-    return `${name}은 탭마다 낭독 ${minutes}분(공백 포함 약 ${chars}자)이 될 때까지 섹션마다 나눠 보강하고 자동 수정해 탭 ${summary.volume}개에 긴 호출이 약 ${total}번 늘어납니다.`;
+    const low = Number(summary.volumeMinutesLow) || 0;
+    // 트랙마다 실습 시간이 달라 목표가 다르면 가장 짧은 목표부터 가장 긴 목표까지 보인다
+    const target = low && low < minutes
+        ? `낭독 ${low}~${minutes}분(공백 포함 약 ${(low * ESTIMATE_VOLUME.charsPerMinute).toLocaleString('ko-KR')}~${chars}자)`
+        : `낭독 ${minutes}분(공백 포함 약 ${chars}자)`;
+    return `${name}은 탭마다 ${target}이 될 때까지 섹션마다 나눠 보강하고 자동 수정해 탭 ${summary.volume}개에 긴 호출이 약 ${total}번 늘어납니다.`;
 }
 
 function estimateNote(summary, model = '') {

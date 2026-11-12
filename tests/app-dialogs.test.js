@@ -388,6 +388,7 @@ const tabs = extra => ({ basicLearn: '기본 글', basicPrac: '실습 글', advL
 
         // 새 차시 목차(handleGenerate)
         const gen = apiContext(lessons[0]);
+        vm.runInContext(read('course-design.js'), gen); // 차시 목차를 5차시 × 8시간으로 맞추는 tocLessons
         Object.assign(gen, { courseData: lessons, globalState: { subjects: [{ id: 's1', title: '교과', lessons }], lessonTrash: [] }, currentSubjectId: 's1', currentTopic: '' });
         ['sidebar-loading', 'generate-btn'].forEach(id => { gen.elements[id] = fakeElement(); });
         gen.elements['topic-input'] = { ...fakeElement(), value: '게임 기획' };
@@ -409,7 +410,7 @@ const tabs = extra => ({ basicLearn: '기본 글', basicPrac: '실습 글', advL
         genBusy = false;
         gen.startJobDuringCall = false;
         await gen.handleGenerate();
-        assert.deepStrictEqual([gen.courseData[0].title, gen.globalState.lessonTrash.length, gen.closed], ['새 차시', 1, 1], '바꾼 뒤 옛 차시의 편집기를 닫는다');
+        assert.deepStrictEqual([gen.courseData.length, gen.courseData[0].title, gen.globalState.lessonTrash.length, gen.closed], [5, '새 차시 — 핵심 개념', 1, 1], '바꾼 뒤 옛 차시의 편집기를 닫는다(차시 하나만 받아도 5차시로 나눈다)');
     });
 
     console.log('ALL PASSED');
