@@ -1702,8 +1702,9 @@ function autoInjectImageTags(markdown) {
     // - 개요·Overview: 차시 시작 안내문 (이미지 불필요, 사용자 요청)
     // - 요약·정리·마무리·Summary: 마무리 섹션도 보통 이미지 불요
     // - 학습 후 체크리스트: 확인 목록이라 그림이 필요 없다(그림 한 장에 검색어·판정·그림 호출이 든다)
-    // - 학습 정보: 수업 시간·선행·툴을 적는 차시 메타데이터 칸이다(lesson-info.js)
-    const SKIP_RE = /학습\s*목표|Objectives?|교강사\s*가이드|강사\s*전용|개요|Overview|요약|정리|마무리|Summary|체크리스트|학습\s*정보/i;
+    // - 학습 정보: 수업 시간·선행·툴을 적는 차시 메타데이터 칸이다(lesson-info.js). 제목이 꼭 '학습 정보'일 때만(lesson-lint.js isLessonInfoTitle)
+    const SKIP_RE = /학습\s*목표|Objectives?|교강사\s*가이드|강사\s*전용|개요|Overview|요약|정리|마무리|Summary|체크리스트/i;
+    const skipped = title => SKIP_RE.test(title) || (typeof isLessonInfoTitle === 'function' && isLessonInfoTitle(title));
 
     // 섹션을 헤딩 단위로 분리하여 각 섹션의 길이·이미지 보유 여부 점검
     // 코드 블록 안의 # 줄과 이미지 태그는 제목·그림으로 보지 않는다
@@ -1735,7 +1736,7 @@ function autoInjectImageTags(markdown) {
     for (let s = sections.length - 1; s >= 0; s--) {
         const sec = sections[s];
         if (sec.hasImage) continue;
-        if (SKIP_RE.test(sec.title)) continue;
+        if (skipped(sec.title)) continue;
         if (!sec.title) continue;
         // ## 섹션은 항상 주입, ### 섹션은 본문이 충분히 길어야 주입(200자 이상)
         const contentLength = sec.content.replace(/\s+/g, '').length;
@@ -1773,7 +1774,8 @@ function pickImageTags(markdown, tags, amount) {
 }
 
 const IMAGE_TAG_RE = /<!--\s*\[IMG:\s*"?([^"]+)"?\]\s*-->/g;
-const IMAGE_SKIP_SECTIONS = /학습\s*목표|objectives?|개요|overview|요약|정리|마무리|summary|체크리스트|학습\s*정보/i;
+// 학습 정보는 제목이 꼭 '학습 정보'인 제목 줄만 본다(lesson-lint.js LESSON_INFO_TITLE과 같은 규칙. 이 파일이 먼저 실려 그대로 적는다). '학습 정보 시스템' 같은 내용 섹션은 그림을 넣는다
+const IMAGE_SKIP_SECTIONS = /학습\s*목표|objectives?|개요|overview|요약|정리|마무리|summary|체크리스트|^#{1,6}[ \t]*(?:[^\s\w가-힣]+[ \t]*)?(?:\d+[.)][ \t]*)?학습[ \t]*정보[ \t]*(?:[(（][ \t]*⏱[^)）\n]*[)）])?\s*$/im;
 const IMAGE_TIME_LABEL = /\(\s*⏱[^()]*\)/g; // 섹션 제목의 (⏱ N분). 그림 자리 검색어에는 넣지 않는다
 
 // 예시 게임 그림 태그: <!-- [IMG: "game: 공식 영어 제목"] -->. AI 그림 모델 대신 인터넷(위키백과)에서 그 게임의 실제 그림을 찾는다(game-images.js)

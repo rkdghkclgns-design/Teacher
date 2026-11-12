@@ -11,8 +11,10 @@ const GYOSUAN_SECTION_CHARS = 8000;
 const GYOSUAN_INTRO_CHARS = 2000;
 const GYOSUAN_REFERENCE_CHARS = 4000;
 const GYOSUAN_CONCURRENCY = 3;
-// 전개가 아닌 교안 머리말·강사 전용 섹션 (머리말은 교수안 머리말 작성 근거로만 쓴다). 학습 정보(수업 시간·선행·툴, lesson-info.js)도 머리말이다
-const GYOSUAN_INTRO_TITLE = /학습\s*목표|^개요|^학습\s*정보|들어가며/;
+// 전개가 아닌 교안 머리말·강사 전용 섹션 (머리말은 교수안 머리말 작성 근거로만 쓴다)
+const GYOSUAN_INTRO_TITLE = /학습\s*목표|^개요|들어가며/;
+// 학습 정보(수업 시간·선행·툴, lesson-info.js)도 머리말이다. 제목이 꼭 '학습 정보'일 때만이다(lesson-lint.js isLessonInfoTitle, '학습 정보 시스템'은 전개)
+const isGyosuanIntroTitle = title => GYOSUAN_INTRO_TITLE.test(title) || (typeof isLessonInfoTitle === 'function' && isLessonInfoTitle(title));
 const GYOSUAN_SKIP_TITLE = /교강사 가이드|학습 후 체크리스트/;
 const GYOSUAN_BLOCK_FORMAT =
     '**강사 활동**: (강사가 수업에서 실제로 할 행동 1~2문장)\n' +
@@ -164,16 +166,16 @@ function lessonPartUnits(part) {
         }
     });
     const [first] = units;
-    if (first?.top && units.length > 1 && !GYOSUAN_INTRO_TITLE.test(first.title)) first.opening = true;
+    if (first?.top && units.length > 1 && !isGyosuanIntroTitle(first.title)) first.opening = true;
     return units;
 }
 
 // 첫머리는 머리말 근거의 끝에 둔다(학습 목표·개요가 머리말 길이 상한 안에 먼저 들어가게)
 function splitLessonSections(parts) {
     const units = parts.flatMap(lessonPartUnits);
-    const introUnits = [...units.filter(u => !u.opening && GYOSUAN_INTRO_TITLE.test(u.title)), ...units.filter(u => u.opening && u.text.trim())];
+    const introUnits = [...units.filter(u => !u.opening && isGyosuanIntroTitle(u.title)), ...units.filter(u => u.opening && u.text.trim())];
     const intro = introUnits.map(u => `${u.title}\n${u.text.trim()}`).join('\n\n');
-    const sections = units.filter(u => !u.opening && u.text.trim().length > 30 && !GYOSUAN_INTRO_TITLE.test(u.title) && !GYOSUAN_SKIP_TITLE.test(u.title));
+    const sections = units.filter(u => !u.opening && u.text.trim().length > 30 && !isGyosuanIntroTitle(u.title) && !GYOSUAN_SKIP_TITLE.test(u.title));
     return { intro, sections };
 }
 

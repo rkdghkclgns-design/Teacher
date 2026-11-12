@@ -58,9 +58,16 @@ const LESSON_STRUCTURED_TABS = ['basicLearn', 'advLearn'];
 const LESSON_BANK_TABS = ['assessment', 'advAssessment'];
 const LESSON_HEADING_PREFIX = '^(?:[^\\s\\w가-힣]+\\s*)?(?:\\d+[.)]\\s*)?';
 const LESSON_OVERVIEW_TITLE = new RegExp(`${LESSON_HEADING_PREFIX}(?:차시\\s*|수업\\s*|학습\\s*)?개요(?!서)`);
-// 학습 정보: 새로 만든 학습 탭에 코드가 넣는 차시 메타데이터 섹션(lesson-info.js). 학습 목표·체크리스트처럼 내용 섹션이 아니다(시간·그림·낭독 분량에 넣지 않는다)
-const LESSON_INFO_TITLE = new RegExp(`${LESSON_HEADING_PREFIX}학습\\s*정보(?![가-힣])`);
-const LESSON_FRAME_TITLE = new RegExp(`${LESSON_HEADING_PREFIX}(?:학습\\s*목표|학습\\s*후\\s*체크리스트|학습\\s*정보(?![가-힣]))`);
+// 학습 정보: 새로 만든 학습 탭에 코드가 넣는 차시 메타데이터 섹션(lesson-info.js). 학습 목표·체크리스트처럼 내용 섹션이 아니다(시간·그림·낭독 분량에 넣지 않는다).
+// 제목이 꼭 '학습 정보'인 섹션만이다(앞 이모지·번호와 뒤 (⏱ N분)은 된다). '학습 정보 시스템' 같은 내용 섹션은 아니다. 첫머리 정리·검수·분량 채우기·자동 수정·교수안·학습 목표 세트가 이 규칙 하나를 쓴다
+const LESSON_INFO_TITLE_TEXT = '학습\\s*정보\\s*(?:[(（]\\s*⏱[^)）]*[)）]\\s*)?$';
+const LESSON_INFO_TITLE = new RegExp(`${LESSON_HEADING_PREFIX}${LESSON_INFO_TITLE_TEXT}`);
+const LESSON_FRAME_TITLE = new RegExp(`${LESSON_HEADING_PREFIX}(?:학습\\s*목표|학습\\s*후\\s*체크리스트|${LESSON_INFO_TITLE_TEXT})`);
+
+// 섹션 제목이 학습 정보인가(앞뒤 빈칸은 뺀다). 이 파일보다 먼저 싣는 파일(gyosuan.js)은 부를 때 이 함수를 쓴다
+function isLessonInfoTitle(title) {
+    return LESSON_INFO_TITLE.test(String(title ?? '').trim());
+}
 const LESSON_CHECK_REF = /다시\s*보기\s*:\s*([^)）]+)/;
 const LESSON_RULE_NOTE = '개요, 목표와 내용의 대응은 기본학습·심화학습 탭에만 적용합니다. 코드 블록 안의 글과 이미지 태그는 어구 검사에서 뺍니다. 코드 예제 규칙은 코드를 다루는 차시에만 검사합니다. 코드 블록 주석은 모든 탭에서 검사하고(실행 결과·json·mermaid 블록은 빼고), AI 수정 제안과 도구의 \'코드 주석 넣기\'가 코드는 그대로 두고 주석만 더합니다.';
 // 앞 17줄은 원본 규칙표(course-rules.js)와 같은 차례다(convention-parity.test.js는 영역·종류로 못 찾은 줄을 같은 차례의 줄과 견준다).

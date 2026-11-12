@@ -41,10 +41,12 @@ function withoutBullet(text, index) {
 }
 
 /* ---------- 세트 추가·삭제 ---------- */
-// 없는 학습 목표 섹션을 넣을 자리: 내용 앞에 있는 개요·학습 정보 바로 뒤(첫머리는 개요 → 학습 정보 → 학습 목표 차례다). 둘 다 없으면 제목만 있는 머리말 뒤
-function objectiveHeadIndex(sections, contentAt) {
-    const frame = sections.reduce((at, item, index) => (index < contentAt && (LESSON_OVERVIEW_TITLE.test(item.title) || LESSON_INFO_TITLE.test(item.title)) ? index + 1 : at), -1);
-    return frame >= 0 ? frame : sections[0]?.title ? 0 : 1;
+// 없는 학습 목표 섹션을 넣을 자리: 맨 앞(제목만 있는 머리말 뒤)에 이어진 개요·학습 정보 바로 뒤(첫머리는 개요 → 학습 정보 → 학습 목표 차례다).
+// 맨 앞에서 이어진 것만 본다. 본문 뒤쪽의 '개요' 섹션이 새 학습 목표를 끌어내리지 않는다
+function objectiveHeadIndex(sections) {
+    let at = sections[0]?.title ? 0 : 1;
+    while (at < sections.length && (LESSON_OVERVIEW_TITLE.test(sections[at].title) || isLessonInfoTitle(sections[at].title))) at += 1;
+    return at;
 }
 
 function insertObjectiveSet(md, { objective, section, checklist }) {
@@ -57,7 +59,7 @@ function insertObjectiveSet(md, { objective, section, checklist }) {
     });
     const contentAt = checks < 0 ? body.length : checks;
     const filled = [...body.slice(0, contentAt), section, ...body.slice(contentAt)];
-    const headAt = objectiveHeadIndex(sections, contentAt);
+    const headAt = objectiveHeadIndex(sections);
     const head = goals < 0 ? [`## 학습 목표\n\n- ${objective}`] : [];
     const tail = checks < 0 ? [`## 학습 후 체크리스트\n\n- ${checklist}`] : [];
     return `${[...filled.slice(0, headAt), ...head, ...filled.slice(headAt), ...tail].join('\n\n')}\n`;

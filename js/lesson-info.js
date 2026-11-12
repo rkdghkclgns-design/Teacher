@@ -125,42 +125,68 @@ function lessonInfoSiblings(mod) {
 }
 
 /* ---------- 첫머리 차례 ---------- */
-// 파트(openingSections: # · ## 제목 단위)의 글. 끝의 빈 줄은 뺀다(파트 사이는 빈 줄 하나로 잇는다)
-const openingPartText = part => part.lines.join('\n').replace(/\s+$/, '');
+// 파트(openingSections: # · ## 제목 단위)를 견줄 글(끝의 빈 줄은 빼고 본다). 글로 쓸 때는 파트의 줄을 그대로 쓴다(joinOpeningParts)
+const openingPartBody = part => part.lines.join('\n').replace(/\s+$/, '');
+const isBlankLine = line => !String(line).trim();
 
-// 학습 정보 파트: 쓸 글(info)이 없거나 고정한 섹션이거나 같은 글이면 있던 파트, 아니면 새 글로 바꾼 파트(처음 넣으면 새 파트)
+// 학습 정보 파트: 쓸 글(info)이 없거나 고정한 섹션이거나 같은 글이면 있던 파트, 아니면 새 글로 바꾼 파트(처음 넣으면 새 파트, 끝에 빈 줄 하나).
+// 바꾸는 파트는 제목이 꼭 '학습 정보'인 섹션뿐이다(isInfoSection, lesson-lint.js LESSON_INFO_TITLE)
 function lessonInfoPart(parts, at, info, keepInfo) {
     const current = at >= 0 ? parts[at] : null;
-    if (!info || (current && (keepInfo(current) || openingPartText(current) === info))) return current;
-    return { level: 2, title: '학습 정보', lines: info.split('\n'), index: -1 };
+    if (!info || (current && (keepInfo(current) || openingPartBody(current) === info))) return current;
+    return { level: 2, title: '학습 정보', lines: [...info.split('\n'), ''], index: -1 };
 }
 
-// 틀 섹션을 넣을 자리(틀을 뺀 파트 목록 기준): 차시 제목(# 📝) 바로 뒤. 제목이 없으면 틀 섹션이 처음 있던 자리, 새로 넣는 학습 정보뿐이면 맨 앞(제목 없는 머리 글 뒤)
-function openingInsertAt(rest, frame) {
-    const title = rest.findIndex(part => part.level === 1 && OPENING_LESSON_TITLE.test(part.title));
-    if (title >= 0) return title + 1;
+// 이 차시 글이 차지하는 파트 범위 [start, end)와 차시 제목이 있는지. 차시 제목(# 📝, 또는 앞에 ## 섹션이 없는 첫 # 제목) 다음부터 그다음 # 제목 앞까지다.
+// 첫 # 제목 앞에 ## 섹션이 있으면(제목 없이 쓴 탭 뒤에 # 일일 퀘스트가 붙은 경우) 맨 앞부터 그 # 제목 앞까지. # 제목을 넘어 섹션을 옮기지 않는다
+function lessonOpeningRegion(parts) {
+    const first = parts.findIndex(part => part.level === 1);
+    if (first < 0) return { start: 0, end: parts.length, titled: false };
+    const titled = OPENING_LESSON_TITLE.test(parts[first].title) || parts.slice(0, first).every(part => part.level === 0);
+    if (!titled) return { start: 0, end: first, titled: false };
+    const next = parts.findIndex((part, index) => index > first && part.level === 1);
+    return { start: first + 1, end: next < 0 ? parts.length : next, titled: true };
+}
+
+// 틀 섹션을 넣을 자리(범위 안에서 틀을 뺀 파트 목록 기준): 차시 제목 바로 뒤. 제목이 없으면 틀 섹션이 처음 있던 자리, 새로 넣는 학습 정보뿐이면 맨 앞(제목 없는 머리 글 뒤)
+function openingInsertAt(inside, frame, titled) {
+    if (titled) return 0;
     const first = Math.min(...frame.map(part => part.index).filter(index => index >= 0));
-    if (Number.isFinite(first)) return rest.filter(part => part.index < first).length;
-    return rest[0]?.level === 0 ? 1 : 0;
+    if (Number.isFinite(first)) return inside.filter(part => part.index < first).length;
+    return inside[0]?.level === 0 ? 1 : 0;
+}
+
+// 파트를 이어 글로 쓴다. 파트의 줄은 한 글자도 바꾸지 않고(줄 끝 빈칸 두 개의 줄바꿈·빈 줄도 그대로), 원래 이웃이 아니던 두 파트 사이에 빈 줄이 없을 때만 빈 줄 하나를 넣는다
+function joinOpeningParts(parts) {
+    const lines = [];
+    parts.forEach((part, i) => {
+        const prev = parts[i - 1];
+        const fresh = !!prev && (prev.index < 0 || part.index !== prev.index + 1);
+        if (fresh && lines.length && !isBlankLine(lines[lines.length - 1])) lines.push('');
+        lines.push(...part.lines);
+    });
+    return lines.join('\n');
 }
 
 const sameParts = (before, after) => before.length === after.length && before.every((part, i) => part === after[i]);
 
-// 틀 섹션(개요 → 학습 정보 → 학습 목표, 각각 첫 섹션)을 빼서 차례대로 모아 둔다. 다른 섹션의 차례와 글은 그대로다.
+// 틀 섹션(개요 → 학습 정보 → 학습 목표, 이 차시 범위 안의 각 첫 섹션)을 빼서 차례대로 모아 둔다. 다른 섹션의 차례와 글은 그대로다.
 // info: 학습 정보 섹션으로 쓸 글(주지 않으면 있는 섹션을 옮기기만 하고 새로 넣지 않는다) · keepInfo(part): 그대로 둘 학습 정보인가(고정 섹션)
-// 바꿀 것이 없으면 받은 글 그대로다
+// 바꿀 것이 없으면 받은 글 그대로다. 글 끝의 줄바꿈은 받은 글과 같게 둔다
 function arrangeLessonOpening(md, { info = '', keepInfo = () => false } = {}) {
     const text = String(md ?? '').replace(/\r\n/g, '\n');
     const parts = openingSections(text).map((part, index) => ({ ...part, index }));
-    const [overview, infoAt, goals] = [isOverviewSection, isInfoSection, isGoalSection].map(test => parts.findIndex(test));
+    const { start, end, titled } = lessonOpeningRegion(parts);
+    const region = parts.slice(start, end);
+    const [overview, infoAt, goals] = [isOverviewSection, isInfoSection, isGoalSection].map(test => region.find(test)?.index ?? -1);
     const frame = [parts[overview], lessonInfoPart(parts, infoAt, info, keepInfo), parts[goals]].filter(Boolean);
     if (!frame.length) return md;
     const moved = new Set([overview, infoAt, goals].filter(at => at >= 0));
-    const rest = parts.filter(part => !moved.has(part.index));
-    const at = openingInsertAt(rest, frame);
-    const next = [...rest.slice(0, at), ...frame, ...rest.slice(at)];
+    const inside = region.filter(part => !moved.has(part.index));
+    const at = openingInsertAt(inside, frame, titled);
+    const next = [...parts.slice(0, start), ...inside.slice(0, at), ...frame, ...inside.slice(at), ...parts.slice(end)];
     if (sameParts(parts, next)) return md;
-    return `${next.map(openingPartText).filter(Boolean).join('\n\n')}${text.endsWith('\n') ? '\n' : ''}`;
+    return `${joinOpeningParts(next).replace(/\n*$/, '')}${text.match(/\n*$/)[0]}`;
 }
 
 // 첫머리 차례만 맞춘다(학습 정보를 새로 넣거나 고쳐 쓰지 않는다). mod를 주면 학습 탭(lessonInfoApplies)일 때만 바꾼다

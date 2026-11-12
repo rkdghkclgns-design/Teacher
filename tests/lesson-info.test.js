@@ -118,8 +118,8 @@ function renderContext() {
 
     await run('차례: 제목 앞 머리말의 목표, 제목 없는 글, 학습 목표가 내용 뒤에 있는 글, 코드 블록 안의 ## 제목', () => {
         const head = '## 학습 목표\n\n- 목표를 쓸 수 있습니다.\n\n# 📝 제목\n\n## 개요\n\n- 문제입니다.\n\n## 본문\n\n글입니다.';
-        assert.deepStrictEqual(titlesOf(ctx, frame(head)), ['', '개요', '학습 정보', '학습 목표', '본문'], '제목은 맨 앞, 틀은 제목 바로 뒤');
-        assert.ok(frame(head).startsWith('# 📝 제목'));
+        assert.ok(frame(head).startsWith('## 학습 목표\n\n- 목표를 쓸 수 있습니다.\n\n# 📝 제목\n\n## 개요\n\n- 문제입니다.\n\n## 학습 정보\n'), '제목 앞 머리말의 목표는 # 제목을 넘어 옮기지 않는다(첫머리 정리가 남긴 그대로)');
+        assert.deepStrictEqual(titlesOf(ctx, frame(head)), ['학습 목표', '개요', '학습 정보', '본문']);
         const bare = '## 학습 목표\n\n- 목표\n\n## 개요\n\n- 문제\n\n## 본문\n\n글';
         assert.deepStrictEqual(titlesOf(ctx, frame(bare)), ['개요', '학습 정보', '학습 목표', '본문']);
         assert.deepStrictEqual(titlesOf(ctx, frame('## 본문\n\n글')), ['학습 정보', '본문'], '틀이 없으면 맨 앞에 학습 정보만');
@@ -137,6 +137,71 @@ function renderContext() {
         assert.strictEqual(frame('  '), '  ');
         assert.deepStrictEqual(titlesOf(ctx, frame(OLD_ORDER, { tabId: 'advLearn' })), FRAME_TITLES, '심화학습도 같다');
         assert.strictEqual(call(ctx, 'orderLessonOpening')(OLD_ORDER, { mod, tabId: 'basicPrac' }), OLD_ORDER);
+    });
+
+    /* ---------- 독립 검토 지적(18차 후속) ---------- */
+    await run('검토 1: 제목이 꼭 \'학습 정보\'인 섹션만 학습 정보다. \'학습 정보 시스템\' 같은 내용 섹션은 본문을 지우지 않고 내용으로 본다', () => {
+        const is = call(ctx, 'isLessonInfoTitle');
+        ['학습 정보', '학습정보', '📌 학습 정보', '1. 학습 정보', '학습 정보 (⏱ 5분)', ' 학습 정보 ', '학습 정보（⏱ 5분）'].forEach(title => assert.strictEqual(is(title), true, title));
+        ['학습 정보 시스템', '학습 정보 시스템 (⏱ 10분)', '학습 정보처리', '학습 정보 (⏱ 10분) 정리', '학습 정보와 보안', '개인 학습 정보'].forEach(title => assert.strictEqual(is(title), false, title));
+        const body = '## 학습 정보 시스템 (⏱ 10분)\n\n학습 정보 시스템은 수강 기록을 모아 둡니다.';
+        const md = OLD_ORDER.replace('## 1. 합계 구하기', `${body}\n\n## 1. 합계 구하기`);
+        const out = frame(md);
+        assert.ok(out.includes(body), '내용 섹션의 본문이 남는다');
+        assert.deepStrictEqual(titlesOf(ctx, out), ['', '개요', '학습 정보', '학습 목표', '학습 정보 시스템 (⏱ 10분)', ...FRAME_TITLES.slice(4)], '학습 정보는 따로 넣고 내용 섹션은 제자리');
+        assert.strictEqual(call(ctx, 'lessonContentTitles')(['학습 정보 시스템 (⏱ 10분)', '학습 정보']).length, 1, '검수: 내용 섹션');
+        assert.strictEqual(call(ctx, 'isVolumeContentSection')({ title: '학습 정보 시스템 (⏱ 10분)', text: body }), true, '분량 채우기: 늘릴 수 있는 섹션');
+        assert.ok(call(ctx, 'spokenChars')(body) > 20, '낭독 분량에 든다');
+        assert.ok(plain(call(ctx, 'lintLessonMarkdown')(`${body} 버전 3입니다.`, 'basicLearn')).some(issue => issue.msg === '버전 의존 정보를 본문에 쓰지 않습니다.'), '어구 검사도 한다');
+        const { sections } = plain(call(ctx, 'splitLessonSections')([{ text: `# 📝 제목\n\n${body}${' 설명 문장입니다.'.repeat(4)}\n\n## 학습 정보\n\n- 선행: 없음`, practice: false }]));
+        assert.deepStrictEqual(sections.map(section => section.title), ['학습 정보 시스템'], '교수안: 내용 섹션은 전개, 학습 정보는 머리말');
+        const image = call(ctx, 'IMAGE_SKIP_SECTIONS');
+        assert.deepStrictEqual(['## 학습 정보', '## 📌 1. 학습 정보 (⏱ 5분)\r', '# 학습 정보\n\n본문', '## 학습 정보 시스템', '## 학습 정보 시스템 (⏱ 10분)'].map(text => image.test(text)), [true, true, true, false, false], '그림: 학습 정보 제목 줄만 건너뛴다');
+        assert.ok(/## 학습 정보 시스템 \(⏱ 10분\)\n\n<!-- \[IMG/.test(call(ctx, 'autoInjectImageTags')(out)), '내용 섹션에는 그림 자리를 넣는다');
+        const sectionsOf = text => plain(call(ctx, 'mdSections')(text));
+        const noGoals = sectionsOf('# 제목\n\n## 학습 정보 시스템\n\n글\n\n## ✅ 학습 후 체크리스트\n\n- 항목');
+        assert.strictEqual(call(ctx, 'newSectionIndex')(noGoals, '학습 목표'), 1, '자동 수정: 내용 섹션 뒤로 학습 목표를 넣지 않는다');
+        const set = { objective: '표로 정리할 수 있습니다.', section: '## 3. 결과\n\n- 결과', checklist: '정리합니다. (다시 보기: 3. 결과)' };
+        assert.deepStrictEqual(titlesOf(ctx, call(ctx, 'insertObjectiveSet')('# 제목\n\n## 학습 정보 시스템\n\n글', set)).slice(0, 3), ['', '학습 목표', '학습 정보 시스템'], '학습 목표 세트도 같다');
+    });
+
+    await run('검토 2: # 제목을 넘어 섹션을 옮기지 않는다. 뒤에 붙은 # 일일 퀘스트의 개요·학습 목표·학습 정보는 그대로다', () => {
+        const quest = '# ⚔️ 일일 퀘스트 (실습 과제)\n\n## 개요\n\n- 퀘스트의 상황입니다.\n\n## 학습 목표\n\n- 퀘스트를 마칠 수 있습니다.\n\n## 학습 정보\n\n- 퀘스트 메모입니다.\n';
+        const noOverview = OLD_ORDER.replace(/## 개요\n\n- [^\n]+\n- [^\n]+\n\n/, '');
+        const out = frame(`${noOverview}\n\n${quest}`);
+        assert.ok(out.endsWith(quest), `퀘스트 글이 한 글자도 바뀌지 않는다:\n${out.slice(out.indexOf('# ⚔️'))}`);
+        assert.ok(out.startsWith(`# 📝 반복문\n\n${META_INFO}\n\n## 학습 목표\n`), '이 차시의 학습 목표만 옮기고 학습 정보는 이 차시에 넣는다');
+        assert.strictEqual((out.match(/^## 개요$/gm) || []).length, 1, '퀘스트의 개요를 위로 옮기지 않는다');
+        const bare = '## 학습 목표\n\n- 목표\n\n## 본문\n\n글\n\n# ⚔️ 일일 퀘스트\n\n## 개요\n\n- 퀘스트\n\n## 학습 정보\n\n- 퀘스트 메모';
+        const bareOut = frame(bare);
+        assert.ok(bareOut.endsWith('# ⚔️ 일일 퀘스트\n\n## 개요\n\n- 퀘스트\n\n## 학습 정보\n\n- 퀘스트 메모'), bareOut);
+        assert.ok(bareOut.startsWith(`${META_INFO}\n\n## 학습 목표`), '제목 없는 탭은 맨 앞부터 첫 # 제목 앞까지가 이 차시다');
+        assert.strictEqual(order(`${noOverview}\n\n${quest}`), `${noOverview}\n\n${quest}`, '차례만 맞출 때도 퀘스트의 섹션을 끌어오지 않는다');
+    });
+
+    await run('검토 3: 없는 학습 목표는 맨 앞에서 이어진 개요·학습 정보 뒤에 넣는다(본문 뒤쪽의 개요 섹션은 보지 않는다)', () => {
+        const set = { objective: '표로 결과를 정리할 수 있습니다.', section: '## 4. 결과 정리\n\n- 표를 다룹니다.', checklist: '결과를 정리합니다. (다시 보기: 4. 결과 정리)' };
+        const noGoals = frame(OLD_ORDER).replace(/## 학습 목표\n\n- [^\n]+\n- [^\n]+\n\n/, '').replace('## ✅ 학습 후 체크리스트', '## 3. 개요\n\n- 본문 뒤쪽의 개요 섹션입니다.\n\n## ✅ 학습 후 체크리스트');
+        assert.deepStrictEqual(titlesOf(ctx, call(ctx, 'insertObjectiveSet')(noGoals, set)).slice(0, 5), ['', '개요', '학습 정보', '학습 목표', '1. 합계 구하기 (⏱ 240분)']);
+        const noFrame = '# 제목\n\n## 1. 본문\n\n글\n\n## 개요\n\n- 뒤쪽 개요';
+        assert.deepStrictEqual(titlesOf(ctx, call(ctx, 'insertObjectiveSet')(noFrame, set)).slice(0, 2), ['', '학습 목표'], '맨 앞에 틀이 없으면 머리말 바로 뒤');
+        const sections = plain(call(ctx, 'mdSections')(noGoals));
+        assert.strictEqual(call(ctx, 'newSectionIndex')(sections, '학습 목표'), 3, '자동 수정의 새 섹션 자리도 맨 앞에서 이어진 틀만 본다');
+    });
+
+    await run('검토 4: 차례를 바꿔도 파트의 글은 그대로다(줄 끝 빈칸 두 개의 줄바꿈, 파트 끝 빈 줄·<br>, 글 끝 줄바꿈)', () => {
+        const goals = '## 학습 목표\n\n- 반복문으로 합계를 구하는 코드를 작성할 수 있습니다.  \n  이어지는 줄입니다.  \n\n<br>\n\n\n';
+        const overview = '## 개요\n\n- 같은 계산을 손으로 되풀이하면 실수가 늘어납니다.  \n- 자동으로 처리합니다.\n\n';
+        const content = '## 1. 합계 구하기 (⏱ 240분)\n\n첫 줄입니다.  \n둘째 줄입니다.  ';
+        const md = `# 📝 반복문\n\n${goals}${overview}${content}\n\n`;
+        const out = order(md);
+        assert.ok(out.includes(goals) && out.includes(overview) && out.includes(content), out);
+        assert.ok(out.startsWith(`# 📝 반복문\n\n${overview}${goals}${content}`), JSON.stringify(out));
+        assert.ok(out.endsWith('둘째 줄입니다.  \n\n'), '글 끝 줄바꿈은 받은 글과 같다');
+        const tight = '# 📝 제목\n## 학습 목표\n- 목표\n## 개요\n- 문제';
+        assert.strictEqual(order(tight), '# 📝 제목\n\n## 개요\n- 문제\n\n## 학습 목표\n- 목표', '새로 이웃이 된 파트 사이에만 빈 줄을 넣는다');
+        const framed = frame(md);
+        assert.ok(framed.includes(`${overview}${META_INFO}\n\n${goals}`), '학습 정보 뒤에는 빈 줄 하나');
     });
 
     await run('학습 정보: AI가 쓴 학습 정보는 메타데이터로 바꿔 쓰고, 고정한 학습 정보는 그대로 둔다', () => {
@@ -435,6 +500,17 @@ function renderContext() {
         assert.strictEqual(drawn, expected, '예전 식과 글자 하나까지 같다');
         assert.ok(drawn.includes(picture) && drawn.includes('<a href="#lesson-sec-4" class="lesson-check-link">1. 합계 구하기</a>'));
         assert.strictEqual(call(view, 'renderLessonScreen')(md, images), drawn, '기억해 둔 결과도 같다');
+    });
+
+    await run('검토 5: 다시 보기에 (⏱ N분)까지 옮겨 적어도 링크 글자는 섹션 제목만이고 괄호가 짝을 잃지 않는다', () => {
+        const md = '# 📝 제목\n\n## 핵심 개념 (⏱ 10분)\n\n글\n\n## 묶음 (A) 정리\n\n글\n\n## ✅ 학습 후 체크리스트\n\n- 항목 (다시 보기: 핵심 개념 (⏱ 10분))\n- 항목 (다시 보기: 묶음 (A) 정리)\n- 항목 (다시 보기: 닫지 않은 (괄호';
+        const html = render(md);
+        assert.ok(html.includes('(다시 보기: <a href="#lesson-sec-1" class="lesson-check-link">핵심 개념</a> (⏱ 10분))'), html);
+        assert.ok(html.includes('(다시 보기: <a href="#lesson-sec-2" class="lesson-check-link">묶음 (A) 정리</a>)'), '제목 안의 짝 맞는 괄호는 제목이다');
+        assert.ok(html.includes('(다시 보기: 닫지 않은 (괄호'), '맞는 제목이 없으면 글자로');
+        const range = call(view, 'checklistTitleRange');
+        assert.deepStrictEqual(plain(range('다시 보기: 핵심 개념 (⏱ 10분))', 7)), { start: 7, end: 12, title: '핵심 개념' });
+        assert.deepStrictEqual(plain(range('다시 보기: 핵심 개념（⏱ 10분）)', 7)).title, '핵심 개념', '전각 괄호도 같다');
     });
 
     await run('링크: 맞는 제목이 없거나 체크리스트가 아니면 글자로 둔다. 체크리스트가 없는 글은 그린 결과를 그대로 돌려준다', () => {

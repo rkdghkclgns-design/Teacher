@@ -9,7 +9,9 @@ const CHECK_LINK_ID = 'lesson-sec-'; // 제목에 다는 id 앞말. 내보내기
 const CHECK_LINK_ID_RE = /^[\w-]{1,120}$/;
 const CHECK_LINK_HEADING = /학습\s*후\s*체크리스트/;
 const CHECK_LINK_REF = /다시\s*보기\s*[:：]\s*/;
+const CHECK_LINK_OPEN = /[(（]/;
 const CHECK_LINK_END = /[)）]/;
+const CHECK_LINK_TIME = /\s*[(（]\s*⏱[^()（）]*[)）]\s*$/; // 제목 끝의 (⏱ N분). 링크 글자에 넣지 않는다
 const CHECK_LINK_SKIP = /^(?:A|CODE|PRE|SCRIPT|STYLE|TEXTAREA)$/; // 이 요소 안의 글은 링크로 바꾸지 않는다
 
 /* ---------- 링크 달기 ---------- */
@@ -38,11 +40,23 @@ function checklistRefNodes(block) {
     return found;
 }
 
-// value의 from부터 닫는 괄호(없으면 끝) 앞까지에서 앞뒤 빈칸을 뺀 제목 자리. 제목이 비면 null
+// value의 from부터 다시 보기를 닫는 괄호의 자리. 제목 안의 짝 맞는 괄호('핵심 개념 (⏱ 10분)')는 넘는다. 닫는 괄호가 없으면 끝
+function checklistTitleEnd(value, from) {
+    let depth = 0;
+    for (let at = from; at < value.length; at++) {
+        if (CHECK_LINK_OPEN.test(value[at])) depth += 1;
+        else if (CHECK_LINK_END.test(value[at])) {
+            if (!depth) return at;
+            depth -= 1;
+        }
+    }
+    return value.length;
+}
+
+// value의 from부터 닫는 괄호 앞까지에서 앞뒤 빈칸과 끝의 (⏱ N분)을 뺀 제목 자리. 링크 글자는 제목만이고 시간 표시는 글자로 남는다. 제목이 비면 null
 function checklistTitleRange(value, from) {
-    const close = value.slice(from).search(CHECK_LINK_END);
-    const raw = value.slice(from, close < 0 ? value.length : from + close);
-    const title = raw.trim();
+    const raw = value.slice(from, checklistTitleEnd(value, from));
+    const title = raw.replace(CHECK_LINK_TIME, '').trim();
     if (!title) return null;
     const start = from + raw.length - raw.trimStart().length;
     return { start, end: start + title.length, title };

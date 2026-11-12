@@ -148,17 +148,19 @@ const fixTextShape = text => fixAnswerText({ candidates: [{ content: { parts: [{
 
 // 새 섹션의 자리: 첫머리는 개요 → 학습 정보 → 학습 목표 차례다. 개요는 맨 앞, 학습 정보는 개요 다음(없으면 맨 앞),
 // 학습 목표는 학습 정보나 개요 다음(둘 다 없으면 맨 앞), 체크리스트는 맨 끝, 나머지는 체크리스트 앞.
-// 예전 차례(학습 목표 → 개요)의 탭에 빠진 개요를 넣어도 맨 앞에 둔다(새 차례가 된다)
+// 예전 차례(학습 목표 → 개요)의 탭에 빠진 개요를 넣어도 맨 앞에 둔다(새 차례가 된다). 개요·학습 정보는 맨 앞에서 이어진 것만 본다(본문 뒤쪽의 '개요' 섹션은 보지 않는다)
 function newSectionIndex(sections, title) {
     const start = sections[0] && !sections[0].title ? 1 : 0;
-    const after = test => {
-        const at = sections.findIndex(section => test(section.title));
-        return at < 0 ? -1 : at + 1;
+    const isOverview = text => LESSON_OVERVIEW_TITLE.test(text);
+    const runEnd = test => {
+        let at = start;
+        while (at < sections.length && test(sections[at].title)) at += 1;
+        return at;
     };
     const checklist = sections.findIndex(section => /체크리스트/.test(section.title));
-    if (LESSON_OVERVIEW_TITLE.test(title)) return start;
-    if (LESSON_INFO_TITLE.test(title)) return Math.max(start, after(text => LESSON_OVERVIEW_TITLE.test(text)));
-    if (/학습\s*목표/.test(title)) return Math.max(start, after(text => LESSON_INFO_TITLE.test(text)), after(text => LESSON_OVERVIEW_TITLE.test(text)));
+    if (isOverview(title)) return start;
+    if (isLessonInfoTitle(title)) return runEnd(isOverview);
+    if (/학습\s*목표/.test(title)) return runEnd(text => isOverview(text) || isLessonInfoTitle(text));
     return /체크리스트/.test(title) || checklist < 0 ? sections.length : checklist;
 }
 
