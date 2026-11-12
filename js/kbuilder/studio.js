@@ -1,7 +1,7 @@
 /* studio.js — boot script for slide-studio.html: the ported KBuilder deck pane, wired to the parent page.
    Parent contract (window.parent): getSlideStudioPayload(moduleId, session) · saveSlideStudioHtml(moduleId, html, {rev, session}) ·
    importGyosuanHtml · getSlideStudioSample · generateImageAPI · callGemini · extractText · TEXT_MODEL.
-   주소: ?module=id (전체 덱) · &session=n (한 차시) · ?sample=1 (저장하지 않는 샘플)
+   주소: ?module=id (전체 덱) · &session=n (한 교시) · ?sample=1 (저장하지 않는 샘플)
    Ported from develocket-slide@3a7303f: logo/theme/mount wiring and html import from assets/main.js, pdf from assets/print.js. */
 (function () {
   "use strict";
@@ -373,7 +373,7 @@
     return { doc: payload.docMd || "", deck: payload.deckMd || "", source: "", refs: payload.refs || [], session: payload.session };
   };
 
-  /* ---------- 차시 선택 — 한 차시를 따로 연 덱. 저장도 차시별로 한다 ---------- */
+  /* ---------- 교시 선택 — 한 교시(1시간)를 따로 연 덱. 저장도 교시별로 한다 ---------- */
   function addSessionOption(sel, value, label) {
     var option = document.createElement("option");
     option.value = value;
@@ -384,7 +384,7 @@
     var sel = $("session-sel");
     if (!sessions || sessions.length < 2) return;
     addSessionOption(sel, "", "전체 슬라이드");
-    sessions.forEach(function (item) { addSessionOption(sel, String(item.index), (item.index + 1) + "차시. " + item.title); });
+    sessions.forEach(function (item) { addSessionOption(sel, String(item.index), (item.index + 1) + "교시. " + item.title); });
     sel.value = session === null ? "" : String(session);
     sel.hidden = false;
   }
