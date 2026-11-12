@@ -218,10 +218,12 @@ const LESSON_ACTIONS = {
     'copy-code': copyLessonCode
 };
 
+// 교안 화면(#render-view)에서는 모든 단추가 돈다. 강사 대본 화면(#lesson-script-view, lesson-script-view.js)의 교안 칸에서는 코드 복사만 돈다(그림 다시 찾기·지우기는 고치는 일이다)
 function onLessonActionClick(event) {
     const button = event.target.closest?.('[data-lesson-action]');
     const action = button && LESSON_ACTIONS[button.dataset.lessonAction];
-    if (action && button.closest('#render-view')) action(button);
+    if (!action) return;
+    if (button.closest('#render-view') || (button.dataset.lessonAction === 'copy-code' && button.closest('#lesson-script-view'))) action(button);
 }
 
 document.addEventListener('click', onLessonActionClick);

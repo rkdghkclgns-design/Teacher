@@ -34,10 +34,11 @@ const ESTIMATE_RULES = {
 const CALL_SECONDS = { low: 20, mid: 45, high: 90 };       // 잰 기록이 없을 때 본문 호출 하나(초)
 const SHORT_CALL_FACTOR = 0.3;                             // 잰 기록이 없을 때 짧은 호출은 본문 호출의 이만큼
 const LONG_CALL_FACTOR = 3;                                // 잰 기록이 없을 때 분량 보강(긴 글) 호출은 본문 호출의 이만큼
+const SCRIPT_CALL_FACTOR = 1.5;                            // 잰 기록이 없을 때 강사 대본 호출(말 최대 약 3,000자를 쓴다)은 본문 호출의 이만큼
 // lesson-lint.js LEARN_TARGET_MINUTES·READ_CHARS_PER_MINUTE·LEARN_VOLUME_TABS·PRACTICE_MINUTE_KEYS와 같다(테스트는 lesson-lint.js 없이 돈다)
 const ESTIMATE_VOLUME = { minutes: 480, charsPerMinute: 250, tabs: ['basicLearn', 'advLearn'], practiceTabs: ['basicPrac', 'advPrac'] };
 const IMAGE_CALL_SECONDS = { gemini: 25, higgsfield: 60 }; // 잰 기록이 없을 때 그림 한 장(초)
-const ESTIMATE_GAPS = { image: 7, tab: 4 };                // 교안 그림 사이 간격(api.js IMAGE_TAG_GAP_MS), 탭·단계 사이 쉬는 시간(초)
+const ESTIMATE_GAPS = { image: 7, tab: 4, script: 2 };     // 교안 그림 사이 간격(api.js IMAGE_TAG_GAP_MS), 탭·단계 사이 쉬는 시간, 강사 대본 호출 사이(lesson-script-view.js SCRIPT_CALL_GAP_MS)(초)
 const ESTIMATE_GAME_SECONDS = 5;                           // 예시 게임 그림 한 장: 위키백과 검색·라이선스·그림 받기(AI 호출 없음, 사이 간격 없음)
 const EFFORT_FACTOR = { low: 0.7, medium: 1, high: 1.5, xhigh: 1.75, max: 2 };
 const COST_LABEL = { low: '낮음', mid: '보통', high: '높음' };
@@ -120,8 +121,8 @@ const sumWork = list => list.reduce((total, work) => {
 
 // work: { tabs, images(교안 그림), slideImages(슬라이드 그림), ncs, gyosuan(교수안마다 간이 교수안 호출도 센다), brief(간이 교수안만 만드는 수), qbank, art, ocr, volume(분량을 채우는 학습 탭 수), volumeCalls(그 긴 호출 수),
 // practiceCalls(실습 시간을 정한 실습 탭의 더 드는 이어쓰기 호출), codeComments(코드 주석 넣기 호출 수, 다시 받기 제외),
-// motionPlans(움직이는 GIF로 만들 그림 속 관계를 읽는 호출 수, image-motion.js) } 개수 →
-// 본문 호출(body), 기다리는 시간으로 센 본문 호출(bodyWait), 짧은 호출(short), 그림 장수(images), 분량 보강·자동 수정의 긴 호출(long, 있을 때만).
+// motionPlans(움직이는 GIF로 만들 그림 속 관계를 읽는 호출 수, image-motion.js), lessonScripts(강사 대본 호출 수: 섹션·소주제 조각마다 하나, 다시 받기 제외, lesson-script-view.js) } 개수 →
+// 본문 호출(body), 기다리는 시간으로 센 본문 호출(bodyWait), 짧은 호출(short), 그림 장수(images), 분량 보강·자동 수정의 긴 호출(long, 있을 때만), 강사 대본 호출(scripts, 있을 때만).
 // volumeCalls가 없으면 탭마다 480분 상한으로 센다. 예시 게임 그림(work.gameImages)은 위키백과에서 찾아 호출로 세지 않는다(estimateSummary가 시간만 더한다)
 function estimateCallSplit(work = {}) {
     const rule = ESTIMATE_RULES;
@@ -130,19 +131,21 @@ function estimateCallSplit(work = {}) {
     const long = work.volumeCalls ?? (work.volume || 0) * volumeCallsFor();
     const plans = work.gyosuan || 0;
     const briefs = (plans + (work.brief || 0)) * rule.gyosuanBriefCalls; // 간이 교수안은 교수안 뒤에 차례로 부르므로 기다리는 시간에도 그대로 더한다
+    const scripts = workCount(work.lessonScripts);
     return {
         body: tabs + others + plans * rule.gyosuanCalls + briefs,
         bodyWait: tabs + others + plans * rule.gyosuanWaitCalls + briefs,
         short: (work.images || 0) * rule.shortCallsPerImage + (work.slideImages || 0) * rule.shortCallsPerSlideImage,
         images: (work.images || 0) + (work.slideImages || 0),
-        ...(long > 0 ? { long } : {})
+        ...(long > 0 ? { long } : {}),
+        ...(scripts > 0 ? { scripts } : {})
     };
 }
 
 // 글 모델 호출 수. SVG 삽화는 글 모델이 그리므로 그림 장수도 더한다
 function estimateCalls(work = {}, imageSource = 'gemini') {
     const split = estimateCallSplit(work);
-    return Math.ceil(split.body + split.short + (split.long || 0) + (imageSource === 'svg' ? split.images : 0));
+    return Math.ceil(split.body + split.short + (split.long || 0) + (split.scripts || 0) + (imageSource === 'svg' ? split.images : 0));
 }
 
 /* ---------- 걸린 시간 기록 ---------- */
@@ -155,9 +158,10 @@ function readAiTimings() {
     }
 }
 
-// 'short'는 그림 검색어·판정처럼 짧은 호출, 'long'은 기본 학습 분량 보강처럼 긴 글을 받는 호출. 본문 호출과 섞으면 평균이 흐려져 따로 모은다
+// 'short'는 그림 검색어·판정처럼 짧은 호출, 'long'은 기본 학습 분량 보강처럼 긴 글을 받는 호출, 'script'는 강사 대본 호출. 본문 호출과 섞으면 평균이 흐려져 따로 모은다
 // (예전 기록은 모델 이름 그대로라 본문 시간으로 읽힌다)
-const aiTimingKey = (model, kind = '') => (kind === 'short' || kind === 'long' ? `${model}#${kind}` : model);
+const AI_TIMING_KINDS = ['short', 'long', 'script'];
+const aiTimingKey = (model, kind = '') => (AI_TIMING_KINDS.includes(kind) ? `${model}#${kind}` : model);
 
 // 성공한 호출만 넣는다(대기·재시도 시간 포함이라 실제 체감에 가깝다). kind: 'short'면 짧은 호출
 function recordAiTiming(model, ms, kind = '') {
@@ -178,7 +182,7 @@ function secondsPerCall(model, effort, timings = readAiTimings(), kind = '') {
     const seen = timings[aiTimingKey(model, kind)];
     if (seen && seen.count >= AI_TIMING_MIN_SAMPLES && seen.avg > 0) return { seconds: seen.avg / 1000, measured: true };
     const seconds = CALL_SECONDS[modelCostTier(model)] * (EFFORT_FACTOR[effort] || 1);
-    const factor = { short: SHORT_CALL_FACTOR, long: LONG_CALL_FACTOR }[kind] || 1;
+    const factor = { short: SHORT_CALL_FACTOR, long: LONG_CALL_FACTOR, script: SCRIPT_CALL_FACTOR }[kind] || 1;
     return { seconds: seconds * factor, measured: false };
 }
 
@@ -202,15 +206,17 @@ function estimateSummary(work, { model = '', effort = 'medium', timings = readAi
     const long = secondsPerCall(model, effort, timings, 'long');
     const longSeconds = long.measured ? long.seconds : body.seconds * LONG_CALL_FACTOR; // 잰 긴 호출이 없으면 본문 호출 시간(잰 값이면 그 값)의 3배
     const imageSeconds = imageSource === 'svg' ? body.seconds : secondsPerImage(imageModel, imageSource, timings);
-    const seconds = split.bodyWait * body.seconds + split.short * shortSeconds + (split.long || 0) * longSeconds + split.images * imageSeconds
-        + (work.images || 0) * ESTIMATE_GAPS.image + (work.tabs || 0) * ESTIMATE_GAPS.tab + gameImages * ESTIMATE_GAME_SECONDS;
+    const script = secondsPerCall(model, effort, timings, 'script');
+    const scriptSeconds = script.measured ? script.seconds : body.seconds * SCRIPT_CALL_FACTOR; // 잰 대본 호출이 없으면 본문 호출 시간(잰 값이면 그 값)의 1.5배
+    const seconds = split.bodyWait * body.seconds + split.short * shortSeconds + (split.long || 0) * longSeconds + (split.scripts || 0) * (scriptSeconds + ESTIMATE_GAPS.script)
+        + split.images * imageSeconds + (work.images || 0) * ESTIMATE_GAPS.image + (work.tabs || 0) * ESTIMATE_GAPS.tab + gameImages * ESTIMATE_GAME_SECONDS;
     const minutes = seconds / 60;
     const minutesLow = Math.max(1, Math.round(minutes * 0.7));
     const minutesHigh = Math.max(minutesLow, Math.ceil(minutes * 1.5));
     const tier = modelCostTier(model);
     return {
         calls: estimateCalls(work, imageSource), images: split.images, slideImages: work.slideImages || 0, gameImages,
-        volume: work.volume || 0, volumeAdv: work.volumeAdv || 0, volumeCalls: split.long || 0, volumeMinutes: work.volumeMinutes || ESTIMATE_VOLUME.minutes,
+        volume: work.volume || 0, volumeAdv: work.volumeAdv || 0, volumeCalls: split.long || 0, volumeMinutes: work.volumeMinutes || ESTIMATE_VOLUME.minutes, scriptCalls: split.scripts || 0,
         imageSource, exactImages, routed, imageAmount, imageSearch,
         minutesLow, minutesHigh, tier, costLabel: COST_LABEL[tier], measured: body.measured
     };
@@ -273,6 +279,7 @@ function estimateNote(summary, model = '') {
     return [
         summary.measured ? '시간은 이 브라우저에서 잰 최근 호출 평균으로 셌습니다.' : '시간은 모델과 추론 강도로 어림했습니다.',
         estimateVolumeNote(summary),
+        summary.scriptCalls ? `강사 대본은 형식이 맞지 않는 답을 한 번 더 받으므로 호출과 시간이 최대 두 배(호출 약 ${summary.scriptCalls * 2}회)까지 늘 수 있습니다.` : '',
         summary.tier === 'low' && /gemini/i.test(model) ? '무료 키는 분당 호출 한도가 있어 더 걸릴 수 있습니다.' : '',
         imageBlockNote(summary),
         summary.images > summary.slideImages && !summary.exactImages && summary.imageAmount === 'all' ? "교안 이미지 양이 '모두'라 글이 길면 그림이 더 늘어납니다." : '',

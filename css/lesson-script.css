@@ -1,0 +1,240 @@
+/* lesson-script.css — 강사 대본 세로 2분할(js/lesson-script-view.js)
+   줄(섹션)마다 grid 두 칸이라 왼쪽 교안과 오른쪽 대본이 같은 높이에서 시작한다. 대본 칸은 그 줄 안에서 따라 내려오고(sticky) 넘치면 칸 안에서 굴린다.
+   칸이 좁으면(노트북 창을 반으로 줄였을 때 등) 대본을 그 섹션 아래에 둔다. */
+
+/* 교안 칸(max-w-[800px])을 대본 화면일 때만 넓힌다 */
+.lesson-script-wide {
+    max-width: 1680px !important;
+    padding-left: 20px !important;
+    padding-right: 20px !important;
+}
+
+.lesson-script {
+    container-type: inline-size;
+    color: #1f2937;
+}
+
+/* 위 막대 */
+.lesson-script-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 12px;
+    padding: 10px 14px;
+    margin-bottom: 12px;
+    background: #f0fdfa;
+    border: 1px solid #99f6e4;
+    border-radius: 12px;
+}
+.ls-bar-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    font-size: 0.875rem;
+    color: #115e59;
+}
+.ls-bar-count {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #0f766e;
+}
+.ls-bar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.ls-bar-note {
+    flex-basis: 100%;
+    margin: 0;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: #4b5563;
+}
+
+.ls-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 10px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1.2;
+    white-space: nowrap;
+    color: #374151;
+    background: #fff;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.ls-btn:hover { background: #f3f4f6; }
+.ls-btn:focus-visible { outline: 2px solid #0d9488; outline-offset: 1px; }
+.ls-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.ls-btn-main { color: #fff; background: #0d9488; border-color: #0d9488; }
+.ls-btn-main:hover { background: #0f766e; }
+.ls-btn-warn { color: #92400e; background: #fffbeb; border-color: #fcd34d; }
+.ls-btn-warn:hover { background: #fef3c7; }
+
+/* 두 칸 */
+.lesson-script-cols,
+.lesson-script-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    column-gap: 24px;
+}
+.lesson-script-cols {
+    padding: 0 2px 6px;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: #9ca3af;
+    border-bottom: 1px solid #e5e7eb;
+}
+.lesson-script-row {
+    align-items: start;
+    padding: 18px 0;
+    border-bottom: 1px dashed #e5e7eb;
+}
+.lesson-script-lesson { min-width: 0; }
+.lesson-script-lesson > :first-child { margin-top: 0; }
+.lesson-script-side {
+    min-width: 0;
+    align-self: stretch;
+}
+/* 교안 칸의 편집 단추(그림 다시 찾기·지우기)는 대본 화면에서 쓰지 않는다. 코드 복사는 보기 화면과 같게 둔다(js/lesson-sanitize.js) */
+.lesson-script-lesson [data-lesson-action]:not([data-lesson-action="copy-code"]),
+.lesson-script-lesson .image-regenerate-btn { display: none !important; }
+#lesson-script-view .lesson-code-copy {
+    display: inline-flex;
+    align-items: center;
+    position: absolute;
+    top: 0.35rem;
+    right: 0.5rem;
+    padding: 0.2rem 0.45rem;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.08);
+    color: #e2e0f0;
+    opacity: 0.75;
+}
+#lesson-script-view .lesson-code-copy:hover { background: rgba(255, 255, 255, 0.18); opacity: 1; }
+#lesson-script-view .lesson-code-copy:focus-visible { opacity: 1; outline: 2px solid #7c5bf5; outline-offset: 1px; }
+
+/* 제목이 바뀐 대본(지금 섹션과 짝짓지 못한 대본) */
+.lesson-script-orphans {
+    margin: 0 0 12px;
+    padding: 8px 12px;
+    font-size: 0.8125rem;
+    color: #4b5563;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+}
+.lesson-script-orphans > summary { cursor: pointer; font-weight: 700; color: #6b7280; }
+.ls-orphan-note { margin: 6px 0; font-size: 0.75rem; color: #6b7280; }
+.ls-orphan { margin-top: 10px; padding-top: 8px; border-top: 1px dashed #e5e7eb; line-height: 1.7; }
+.ls-orphan-title { margin: 0 0 4px; font-weight: 700; color: #374151; }
+
+/* 대본 칸 */
+.lesson-script-card {
+    position: sticky;
+    top: 120px;
+    max-height: calc(100vh - 160px);
+    overflow-y: auto;
+    padding: 12px 14px;
+    font-size: 0.9rem;
+    line-height: 1.75;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+    background: #fffdf7;
+    border: 1px solid #fde68a;
+    border-left: 4px solid #f59e0b;
+    border-radius: 10px;
+}
+.ls-opening .lesson-script-card,
+.ls-closing .lesson-script-card {
+    background: #f0fdfa;
+    border-color: #99f6e4;
+    border-left-color: #14b8a6;
+}
+.ls-frame .lesson-script-card {
+    position: static;
+    color: #6b7280;
+    background: #f9fafb;
+    border-color: #e5e7eb;
+    border-left-color: #d1d5db;
+}
+.ls-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+.ls-time {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #b45309;
+}
+.ls-label {
+    margin: 12px 0 4px;
+    font-size: 0.75rem;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    color: #92400e;
+}
+.ls-label:first-child { margin-top: 0; }
+.ls-say { margin: 0 0 6px; color: #111827; }
+.ls-cue {
+    display: inline-block;
+    margin: 4px 0 8px;
+    padding: 3px 8px;
+    font-size: 0.8125rem;
+    color: #1e40af;
+    background: #eff6ff;
+    border-radius: 6px;
+}
+.ls-cue-inline {
+    padding: 0 3px;
+    font-size: 0.85em;
+    color: #1d4ed8;
+    background: #eff6ff;
+    border-radius: 4px;
+}
+.ls-q { margin: 6px 0 0; font-weight: 600; color: #111827; }
+.ls-a { margin: 0 0 6px; color: #374151; }
+.ls-list { margin: 0 0 6px; padding-left: 18px; list-style: disc; }
+.ls-list li { margin: 2px 0; }
+.ls-stale {
+    margin: 0 0 8px;
+    padding: 6px 8px;
+    font-size: 0.8125rem;
+    color: #92400e;
+    background: #fef3c7;
+    border-radius: 6px;
+}
+.ls-old { opacity: 0.6; }
+.ls-wait,
+.ls-empty,
+.ls-none { margin: 0; font-size: 0.85rem; color: #6b7280; }
+.ls-fail { margin: 0 0 8px; font-size: 0.85rem; color: #b91c1c; }
+
+/* 좁은 칸: 대본을 섹션 아래에 둔다 */
+@container (max-width: 760px) {
+    .lesson-script-cols,
+    .lesson-script-row { grid-template-columns: minmax(0, 1fr); }
+    .lesson-script-cols { display: none; }
+    .lesson-script-card { position: static; max-height: none; margin-top: 12px; }
+}
+@media (max-width: 900px) {
+    .lesson-script-cols,
+    .lesson-script-row { grid-template-columns: minmax(0, 1fr); }
+    .lesson-script-cols { display: none; }
+    .lesson-script-card { position: static; max-height: none; margin-top: 12px; }
+}
+
+@media print {
+    .lesson-script-card { position: static; max-height: none; overflow: visible; }
+}
