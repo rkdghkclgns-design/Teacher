@@ -103,9 +103,38 @@
     min-width: 0;
     align-self: stretch;
 }
-/* 교안 칸의 편집 단추(그림 다시 찾기·지우기·코드 복사)는 대본 화면에서 쓰지 않는다 */
-.lesson-script-lesson [data-lesson-action],
+/* 교안 칸의 편집 단추(그림 다시 찾기·지우기)는 대본 화면에서 쓰지 않는다. 코드 복사는 보기 화면과 같게 둔다(js/lesson-sanitize.js) */
+.lesson-script-lesson [data-lesson-action]:not([data-lesson-action="copy-code"]),
 .lesson-script-lesson .image-regenerate-btn { display: none !important; }
+#lesson-script-view .lesson-code-copy {
+    display: inline-flex;
+    align-items: center;
+    position: absolute;
+    top: 0.35rem;
+    right: 0.5rem;
+    padding: 0.2rem 0.45rem;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.08);
+    color: #e2e0f0;
+    opacity: 0.75;
+}
+#lesson-script-view .lesson-code-copy:hover { background: rgba(255, 255, 255, 0.18); opacity: 1; }
+#lesson-script-view .lesson-code-copy:focus-visible { opacity: 1; outline: 2px solid #7c5bf5; outline-offset: 1px; }
+
+/* 제목이 바뀐 대본(지금 섹션과 짝짓지 못한 대본) */
+.lesson-script-orphans {
+    margin: 0 0 12px;
+    padding: 8px 12px;
+    font-size: 0.8125rem;
+    color: #4b5563;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+}
+.lesson-script-orphans > summary { cursor: pointer; font-weight: 700; color: #6b7280; }
+.ls-orphan-note { margin: 6px 0; font-size: 0.75rem; color: #6b7280; }
+.ls-orphan { margin-top: 10px; padding-top: 8px; border-top: 1px dashed #e5e7eb; line-height: 1.7; }
+.ls-orphan-title { margin: 0 0 4px; font-weight: 700; color: #374151; }
 
 /* 대본 칸 */
 .lesson-script-card {

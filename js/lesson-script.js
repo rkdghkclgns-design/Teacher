@@ -2,7 +2,8 @@
 // 이 파일은 계산만 맡는다: 섹션 나누기·열쇠·지문, 프롬프트, 답 읽기·검사, 저장 모양, 내려받을 MD. 화면(세로 2분할)과 만들기 실행은 lesson-script-view.js
 // 나누기: 내용 ## 섹션마다 대본 하나. 첫머리(차시 제목·개요·학습 정보·학습 목표)는 '수업 시작' 대본 하나로, 학습 후 체크리스트는 '마무리' 대본으로 쓴다.
 //  첫 내용 섹션 뒤에 나온 개요·학습 정보·학습 목표는 대본을 쓰지 않는다. 보낼 글이 길면(SCRIPT_CHUNK_CHARS) ### 소주제로 나눠(lesson-fix-run.js splitFixChunks) 조각마다 부르고 이어 붙인다.
-// 저장: mod.lessonScripts = { basicLearn: { sections: [{ key, title, sourceHash, text }], updatedAt } }. 탭 글(tabContents)에는 넣지 않는다.
+// 저장: mod.lessonScripts = { basicLearn: { sections: [{ key, title, sourceHash, text, at, partial? }], updatedAt } }. 탭 글(tabContents)에는 넣지 않는다.
+//  at: 쓴 시각. partial: 긴 섹션을 쓰다 멈춰 조각 일부만 쓴 대본 { done, parts }(다시 쓰면 남은 조각부터). 지금 글에 없는 열쇠의 대본(제목이 바뀐 대본)도 지우지 않는다.
 //  key: 'opening'(수업 시작) · 'closing'(마무리) · 'c:' + 제목 키(내용 섹션, 같은 제목이 또 있으면 #2…). sourceHash: 대본을 쓸 때 그 섹션 글의 지문(그림·주석·간격은 보지 않는다).
 //  지문이 지금 글과 다르면 화면이 그 섹션만 '교안이 바뀜'으로 보인다. 불러온 값은 data-safety.js safeLessonScripts가 탭·모양·크기를 맞춘다
 // 기대는 것: lesson-editor-tools.js(mdSections), lesson-lint.js(LESSON_OVERVIEW_TITLE·LESSON_FRAME_TITLE·isLessonInfoTitle·lessonSectionKey·nextCodeFence),
@@ -30,7 +31,10 @@ const SCRIPT_TITLES = { opening: '수업 시작', closing: '마무리' };
 const SCRIPT_NOTE = '이 대본은 교안을 바탕으로 AI가 쓴 초안입니다. 수업 전에 한 번 소리 내어 읽어 보고 말투와 예시를 다듬어 쓰세요.';
 const SCRIPT_CUE_NOTE = '[대괄호] 안은 소리 내어 읽지 않고 하는 행동입니다.';
 const SCRIPT_TIME_LABEL = /⏱\S*\s*(?:약\s*)?(\d+)\s*분/;
-const SCRIPT_HTML_TAG = /<\/?[a-zA-Z][^<>]*>/g;
+const SCRIPT_TAB_LIMIT = 80;              // 탭마다 남기는 대본 수(data-safety.js SCRIPT_SECTION_LIMIT와 같다). 넘으면 제목이 바뀐 대본의 오래된 것부터 버린다
+const SCRIPT_PART_LIMIT = 50;             // 조각을 일부 써 둔 대본에 적는 조각 수 상한(data-safety.js와 같다)
+// 마크다운이 HTML 블록으로 그리는 줄(줄 앞 빈칸 3칸까지 뒤의 <태그·<!--·</). 내려받는 MD에서는 이 줄의 < 앞에 \를 붙여 글자로 둔다
+const SCRIPT_MD_HTML_LINE = /^( {0,3})<(?=[A-Za-z!/?])/gm;
 
 /* ---------- 섹션 나누기 ---------- */
 const scriptMinutesOf = title => Number((String(title || '').match(SCRIPT_TIME_LABEL) || [])[1] || 0);
@@ -290,10 +294,11 @@ function scriptBlock(text, mark) {
     return rest.slice(0, ends.length ? Math.min(...ends) : rest.length);
 }
 
-// 말 줄 정리: HTML 태그·남은 표시·제목 기호를 떼고, 표 줄과 형식 설명 '(…)' 줄은 뺀다
+// 말 줄 정리: 남은 표시·제목 기호를 떼고, 표 줄과 형식 설명 '(…)' 줄은 뺀다.
+// 글은 AI가 쓴 그대로 둔다(<div>·vector<int> 같은 글도 지우지 않는다). 화면은 이스케이프해 그리고(scriptTextHtml), 내려받는 MD는 HTML 블록 줄만 글자로 바꾼다
 function cleanScriptLines(block) {
     const lines = String(block ?? '').split('\n')
-        .map(line => line.replace(SCRIPT_HTML_TAG, '').replace(/@@[^@\n]*@@/g, '').replace(/^\s*#{1,6}\s+/, '').replace(/[ \t]+$/, ''))
+        .map(line => line.replace(/@@[^@\n]*@@/g, '').replace(/^\s*#{1,6}\s+/, '').replace(/[ \t]+$/, ''))
         .filter(line => !/^\s*\|/.test(line) && !/^\s*\(.*\)\s*$/.test(line));
     return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
@@ -396,8 +401,25 @@ function scriptTextFrom(script) {
     ].join('\n').trim();
 }
 
+// 저장한 대본 글을 다시 읽는다(### 이름 아래 글) → { intro, body, outro, questions, tips }. 조각을 일부 써 둔 대본을 이어 쓸 때 앞 조각들을 한 조각으로 다시 잇는다
+// (말 줄은 cleanScriptLines가 # 기호를 떼어 ### 이름 줄과 섞이지 않는다)
+function scriptPartFromText(text) {
+    const names = Object.keys(SCRIPT_LABELS);
+    const blocks = String(text ?? '').replace(/\r\n/g, '\n').split('\n').reduce((acc, line) => {
+        const head = line.match(/^###\s+(.+?)\s*$/);
+        const name = head ? names.find(item => SCRIPT_LABELS[item] === head[1]) : '';
+        if (name) return { ...acc, current: name, [name]: [] };
+        return acc.current ? { ...acc, [acc.current]: [...acc[acc.current], line] } : acc;
+    }, { current: '' });
+    const block = name => (blocks[name] || []).join('\n').trim();
+    return { intro: block('intro'), body: block('body'), outro: block('outro'), questions: scriptQuestions(block('questions')), tips: scriptTips(block('tips')) };
+}
+
 /* ---------- 저장 ---------- */
-const isScriptEntry = item => !!item && typeof item === 'object' && typeof item.key === 'string' && typeof item.text === 'string' && typeof item.sourceHash === 'string';
+// 조각을 일부 써 둔 대본의 표시 { done(쓴 조각 수), parts(모든 조각 수) }
+const isScriptPartial = value => !!value && typeof value === 'object' && Number.isInteger(value.done) && Number.isInteger(value.parts) && value.done >= 1 && value.done < value.parts && value.parts <= SCRIPT_PART_LIMIT;
+const isScriptEntry = item => !!item && typeof item === 'object' && typeof item.key === 'string' && typeof item.text === 'string' && typeof item.sourceHash === 'string'
+    && (item.partial === undefined || isScriptPartial(item.partial));
 
 // 그 탭의 대본 { sections, updatedAt }. 없거나 모양이 틀리면 빈 목록
 function lessonScriptTab(mod, tabId) {
@@ -406,34 +428,64 @@ function lessonScriptTab(mod, tabId) {
     return { sections, updatedAt: typeof tab?.updatedAt === 'string' ? tab.updatedAt : '' };
 }
 
-// 줄의 상태: none(대본을 쓰지 않는 줄) · missing(대본 없음) · current · outdated(대본을 쓴 뒤 교안이 바뀌었다)
+// 줄의 상태: none(대본을 쓰지 않는 줄) · missing(대본 없음) · partial(조각을 일부만 썼다. 이어 쓴다) · current · outdated(대본을 쓴 뒤 교안이 바뀌었다)
 function scriptRowState(row, entry) {
     if (!row.scripted) return 'none';
     if (!entry) return 'missing';
-    return entry.sourceHash === row.hash ? 'current' : 'outdated';
+    if (entry.sourceHash !== row.hash) return 'outdated';
+    return entry.partial ? 'partial' : 'current';
 }
 
-// 지금 글의 줄과 저장된 대본을 짝지은 계획 → { rows, entries(줄 열쇠 → 대본), states, missing(대본이 없는 줄), outdated, scripted }
+// 이어 쓸 조각. 같은 글로 조각을 일부 써 둔 대본이면 남은 조각만, 아니면 모든 조각
+function scriptRemainingUnits(row, entry) {
+    const units = scriptRowUnits(row);
+    const resume = !!entry?.partial && entry.sourceHash === row.hash && entry.partial.parts === units.length;
+    return resume ? units.slice(entry.partial.done) : units;
+}
+
+// 지금 글의 줄과 저장된 대본을 짝지은 계획 → { rows, entries(줄 열쇠 → 대본), states, missing(대본이 없거나 조각을 일부만 쓴 줄), partial, outdated, written(다 쓴 줄 수),
+// scripted, orphans(지금 글에 그 열쇠의 줄이 없는 대본: 섹션 제목이 바뀌었거나 섹션을 지웠다) }
 function lessonScriptPlan(mod, tabId) {
     const rows = lessonScriptRows(typeof tabSourceFor === 'function' ? tabSourceFor(mod, tabId) : mod?.tabContents?.[tabId] || '');
-    const stored = new Map(lessonScriptTab(mod, tabId).sections.map(entry => [entry.key, entry]));
-    const entries = new Map(rows.filter(row => stored.has(row.key)).map(row => [row.key, stored.get(row.key)]));
+    const sections = lessonScriptTab(mod, tabId).sections;
+    const stored = new Map(sections.map(entry => [entry.key, entry]));
+    const live = new Set(rows.map(row => row.key));
+    const entries = new Map(rows.filter(row => row.scripted && stored.has(row.key)).map(row => [row.key, stored.get(row.key)]));
     const states = new Map(rows.map(row => [row.key, scriptRowState(row, entries.get(row.key))]));
-    const pick = state => rows.filter(row => states.get(row.key) === state);
-    return { rows, entries, states, missing: pick('missing'), outdated: pick('outdated'), scripted: rows.filter(row => row.scripted) };
+    const pick = (...wanted) => rows.filter(row => wanted.includes(states.get(row.key)));
+    return {
+        rows, entries, states, missing: pick('missing', 'partial'), partial: pick('partial'), outdated: pick('outdated'), written: pick('current', 'outdated').length,
+        scripted: rows.filter(row => row.scripted), orphans: sections.filter(entry => !live.has(entry.key))
+    };
 }
 
-// 대본 하나를 넣은 새 lessonScripts(차시 객체는 바꾸지 않는다). 그 탭은 지금 글의 줄 차례로 두고, 지금 글에 없는 줄의 대본은 버린다
+// 대본 하나를 넣은 새 lessonScripts(차시 객체는 바꾸지 않는다). 지금 글의 줄 차례로 두고, 지금 글에 없는 줄의 대본(제목이 바뀐 대본)은 버리지 않고 뒤에 둔다.
+// 탭마다 SCRIPT_TAB_LIMIT개를 넘으면 제목이 바뀐 대본 가운데 오래된 것(시각이 없으면 가장 오래된 것으로 본다)부터 뺀다.
+// entry.partial: 조각을 일부만 쓴 대본 { done, parts }
 function withLessonScript(mod, tabId, entry, rows, at = new Date().toISOString()) {
     const all = mod?.lessonScripts && typeof mod.lessonScripts === 'object' ? mod.lessonScripts : {};
-    const stored = new Map(lessonScriptTab(mod, tabId).sections.map(item => [item.key, item]));
-    stored.set(entry.key, { key: entry.key, title: String(entry.title ?? '').slice(0, SCRIPT_TITLE_CHARS), sourceHash: entry.sourceHash, text: entry.text });
-    const sections = rows.filter(row => stored.has(row.key)).map(row => stored.get(row.key));
-    return { ...all, [tabId]: { sections, updatedAt: at } };
+    const stored = lessonScriptTab(mod, tabId).sections.filter(item => item.key !== entry.key);
+    const fresh = {
+        key: entry.key, title: String(entry.title ?? '').slice(0, SCRIPT_TITLE_CHARS), sourceHash: entry.sourceHash, text: entry.text, at,
+        ...(isScriptPartial(entry.partial) ? { partial: { done: entry.partial.done, parts: entry.partial.parts } } : {})
+    };
+    const byKey = new Map([...stored, fresh].map(item => [item.key, item]));
+    const live = new Set(rows.map(row => row.key));
+    const matched = rows.filter(row => byKey.has(row.key)).map(row => byKey.get(row.key));
+    const orphans = [...byKey.values()].filter(item => !live.has(item.key))
+        .map((item, order) => ({ item, order }))
+        .sort((a, b) => String(a.item.at || '').localeCompare(String(b.item.at || '')) || a.order - b.order)
+        .map(({ item }) => item);
+    const room = Math.max(0, SCRIPT_TAB_LIMIT - matched.length);
+    const kept = orphans.slice(Math.max(0, orphans.length - room)); // 오래된 것부터 뺀다
+    return { ...all, [tabId]: { sections: [...matched, ...kept].slice(0, SCRIPT_TAB_LIMIT), updatedAt: at } };
 }
 
 /* ---------- 내려받기 ---------- */
-// 내려받을 MD: 차시 제목, 안내, 줄마다 이름·시간·대본(대본이 없으면 그렇다고 적는다). 대본 글의 HTML 태그는 뗀다
+// 내려받는 MD에 넣는 대본 글. 글은 그대로 두고, 마크다운이 HTML 블록으로 그릴 줄만 < 앞에 \를 붙여 글자로 둔다(줄 가운데의 vector<int> 같은 글은 그대로)
+const scriptMarkdownText = text => String(text ?? '').trim().replace(SCRIPT_MD_HTML_LINE, '$1\\<');
+
+// 내려받을 MD: 차시 제목, 안내, 줄마다 이름·시간·대본(대본이 없으면 그렇다고, 바뀌었거나 일부만 썼으면 알린다). 끝에 제목이 바뀐 대본을 붙인다
 function lessonScriptMarkdown(mod, tabId) {
     const plan = lessonScriptPlan(mod, tabId);
     const times = scriptTimeline(plan.rows);
@@ -445,7 +497,11 @@ function lessonScriptMarkdown(mod, tabId) {
         lines.push(`## ${scriptRowName(row)}`, '', `- 시간: ${scriptTimeText(row, times[i])}`);
         if (row.kind === 'opening' && row.titles.length) lines.push(`- 교안: ${row.titles.map(scriptCleanTitle).join(' · ')}`);
         if (state === 'outdated') lines.push('- ⚠ 이 대본을 쓴 뒤 교안이 바뀌었습니다. 앱의 대본보기에서 이 섹션만 다시 만들 수 있습니다.');
-        lines.push('', entry ? entry.text.replace(SCRIPT_HTML_TAG, '').trim() : '_아직 대본이 없습니다. 앱의 대본보기에서 만들 수 있습니다._', '', '---', '');
+        if (state === 'partial') lines.push(`- ⚠ 조각 ${entry.partial.done}/${entry.partial.parts}까지만 쓴 대본입니다. 앱의 대본보기에서 남은 조각을 이어 쓸 수 있습니다.`);
+        lines.push('', entry ? scriptMarkdownText(entry.text) : '_아직 대본이 없습니다. 앱의 대본보기에서 만들 수 있습니다._', '', '---', '');
+    });
+    plan.orphans.forEach(entry => {
+        lines.push(`## 제목이 바뀐 대본 · ${entry.title || entry.key}`, '', '- 교안에서 이 섹션의 제목이 바뀌었거나 섹션이 지워져 지금 섹션과 짝짓지 못한 대본입니다.', '', scriptMarkdownText(entry.text), '', '---', '');
     });
     return `${lines.join('\n').trimEnd()}\n`;
 }

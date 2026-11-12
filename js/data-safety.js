@@ -1352,23 +1352,31 @@ function safeFoldedBlocks(value) {
     return unchanged ? value : Object.fromEntries(entries);
 }
 
-// 강사 대본(lesson-script.js lessonScripts: { 탭 id: { sections: [{ key, title, sourceHash, text }], updatedAt } }). 탭은 기본학습·심화학습만 받는다.
+// 강사 대본(lesson-script.js lessonScripts: { 탭 id: { sections: [{ key, title, sourceHash, text, at?, partial? }], updatedAt } }). 탭은 기본학습·심화학습만 받는다.
 // 섹션은 열쇠(200자까지)·제목(300자까지)·지문('해시-길이' 36진수)·대본 글(비지 않고 40,000자까지)이 모두 글인 것만, 같은 열쇠는 앞의 것만, 탭마다 80개까지 남긴다.
-// 모르는 칸은 버리고, 시각(updatedAt)은 40자까지의 글일 때만 둔다. 남길 것이 없으면 null(칸을 지운다). 고칠 것이 없으면 같은 객체.
+// 섹션의 쓴 시각(at)은 40자까지의 글일 때만, 조각을 일부만 쓴 표시(partial: { done, parts }, 1 ≤ done < parts ≤ 50인 정수)는 바를 때만 둔다.
+// 표시가 틀린 일부 대본은 다 쓴 대본으로 잘못 보이지 않게 뺀다. 모르는 칸은 버리고, 탭의 시각(updatedAt)도 40자까지의 글일 때만 둔다.
+// 남길 것이 없으면 null(칸을 지운다). 고칠 것이 없으면 같은 객체.
 // 작업 기록(historyEntry)은 대본을 담지 않는다. 되돌린 탭 글과 지문이 다르면 대본 화면이 '교안이 바뀜'으로 보인다
 const SCRIPT_TAB_IDS = ['basicLearn', 'advLearn'];
 const SCRIPT_SECTION_LIMIT = 80;
 const SCRIPT_FIELD_CHARS = { key: 200, title: 300, text: 40000, at: 40 };
 const SCRIPT_HASH_RE = /^[0-9a-z]{1,8}-[0-9a-z]{1,8}$/;
+const SCRIPT_PARTS_MAX = 50;
+const isScriptPartialMark = value => isObject(value) && Object.keys(value).length === 2 && Number.isInteger(value.done) && Number.isInteger(value.parts)
+    && value.done >= 1 && value.done < value.parts && value.parts <= SCRIPT_PARTS_MAX;
 function safeScriptSection(item) {
     if (!isObject(item)) return null;
-    const { key, title, sourceHash, text } = item;
+    const { key, title, sourceHash, text, at, partial } = item;
     const ok = typeof key === 'string' && key.length > 0 && key.length <= SCRIPT_FIELD_CHARS.key
         && typeof title === 'string' && title.length <= SCRIPT_FIELD_CHARS.title
         && typeof sourceHash === 'string' && SCRIPT_HASH_RE.test(sourceHash)
-        && typeof text === 'string' && !!text.trim() && text.length <= SCRIPT_FIELD_CHARS.text;
+        && typeof text === 'string' && !!text.trim() && text.length <= SCRIPT_FIELD_CHARS.text
+        && (partial === undefined || isScriptPartialMark(partial));
     if (!ok) return null;
-    return Object.keys(item).length === 4 ? item : { key, title, sourceHash, text };
+    const goodAt = typeof at === 'string' && at.length <= SCRIPT_FIELD_CHARS.at;
+    const next = { key, title, sourceHash, text, ...(goodAt ? { at } : {}), ...(partial !== undefined ? { partial } : {}) };
+    return sameFields(next, item) ? item : next;
 }
 function safeScriptTab(tab) {
     if (!isObject(tab) || !Array.isArray(tab.sections)) return null;

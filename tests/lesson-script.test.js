@@ -293,10 +293,10 @@ test('프롬프트: 형식 표시, 합쇼체, 행동 지시 예, 시간·분량,
     assert.ok(call(ctx, 'scriptSystemInstruction')().includes('합쇼체'));
 });
 
-test('답 읽기: 바른 답은 들어가며·강의·넘어가며·질문(2개까지)·막힐 때(3개까지)로 읽고 HTML 태그와 굵게 표시는 뗀다', () => {
+test('답 읽기: 바른 답은 들어가며·강의·넘어가며·질문(2개까지)·막힐 때(3개까지)로 읽고 굵게 표시는 떼되, <div>·vector<int> 같은 글은 쓴 그대로 둔다', () => {
     const ctx = scriptContext(lesson());
     const answer = [
-        '**@@시작@@**', '시작하겠습니다.', '@@본문@@', '<b>오늘은</b> 게임 루프를 함께 보겠습니다. [화면: 그림을 띄운다]', '<script>alert(1)</script>입력부터 차례로 짚겠습니다.',
+        '**@@시작@@**', '시작하겠습니다.', '@@본문@@', '<div> 태그와 vector<int> 자료형을 함께 보겠습니다. [화면: 그림을 띄운다]', '<script>alert(1)</script>입력부터 차례로 짚겠습니다.',
         '| 표 | 줄 |', '(강사가 소리 내어 읽을 말)', '이 순서를 기억해 두시기 바랍니다. 다음 그림을 보시겠습니까?', '이제 갱신을 설명하겠습니다. 그리기는 마지막입니다.',
         '@@마무리@@', '다음으로 넘어가겠습니다.', '@@질문@@', 'Q1: 첫 질문입니까?', 'A1: 네, 맞습니다.', '질문: 둘째 질문입니까?', '답: 둘째 답입니다.', 'Q: 셋째입니까?', 'A: 셋째 답입니다.',
         '@@막힐 때@@', '- 하나', '- 둘', '- 셋', '- 넷', '@@끝@@'
@@ -304,8 +304,8 @@ test('답 읽기: 바른 답은 들어가며·강의·넘어가며·질문(2개�
     const read = call(ctx, 'parseScriptAnswer')(answer, { target: 400 });
     assert.ok(!read.error, read.error);
     assert.strictEqual(read.intro, '시작하겠습니다.');
-    assert.ok(read.body.startsWith('오늘은 게임 루프를') && !/<|표 \||강사가 소리/.test(read.body), read.body);
-    assert.ok(read.body.includes('alert(1)입력부터'), '태그만 떼고 글은 남긴다');
+    assert.ok(read.body.startsWith('<div> 태그와 vector<int> 자료형을') && !/표 \||강사가 소리/.test(read.body), read.body);
+    assert.ok(read.body.includes('<script>alert(1)</script>입력부터'), '글은 AI가 쓴 그대로(화면은 이스케이프해 그린다)');
     assert.deepStrictEqual(plain(read.questions), [{ q: '첫 질문입니까?', a: '네, 맞습니다.' }, { q: '둘째 질문입니까?', a: '둘째 답입니다.' }]);
     assert.deepStrictEqual(plain(read.tips), ['하나', '둘', '셋']);
     const text = call(ctx, 'scriptTextFrom')(read);
@@ -355,14 +355,14 @@ test('쓰기: 처음 누르면 섹션 수·호출 수를 보이고 묻고, 진�
     await settle();
     assert.strictEqual(ctx.confirms.length, 1);
     assert.strictEqual(ctx.confirms[0].work.lessonScripts, 4, '줄 4개, 조각 4개');
-    assert.ok(ctx.confirms[0].message.includes('«기본학습» 탭의 섹션 4개') && ctx.confirms[0].message.includes('AI 호출은 섹션마다 한 번씩 4번') && ctx.confirms[0].message.includes('멈춰도 다 쓴 섹션은 남습니다'), ctx.confirms[0].message);
+    assert.ok(ctx.confirms[0].message.includes('«기본학습» 탭의 섹션 4개') && ctx.confirms[0].message.includes('AI 호출은 섹션마다 한 번씩 4번') && ctx.confirms[0].message.includes('멈춰도 다 쓴 섹션과 긴 섹션의 다 쓴 조각은 남습니다'), ctx.confirms[0].message);
     assert.deepStrictEqual(ctx.calls.map(item => item.part), ['«수업 시작» · 5분', '«1. 게임 루프의 구조» · 30분', '«2. 프레임과 시간» · 20분', '«마무리 · ✅ 학습 후 체크리스트» · 5분']);
     assert.ok(ctx.calls.every(item => item.system.includes('합쇼체')));
     assert.deepStrictEqual(ctx.statuses.filter(text => text.startsWith('대본 작성 중')).map(text => text.split(' · ')[0]), ['대본 작성 중 (1/4)', '대본 작성 중 (2/4)', '대본 작성 중 (3/4)', '대본 작성 중 (4/4)']);
     assert.strictEqual(ctx.saves, 4, '섹션마다 저장');
     const stored = mod.lessonScripts.basicLearn;
     assert.deepStrictEqual(plain(stored.sections.map(item => item.key)), ['opening', 'c:1게임루프의구조', 'c:2프레임과시간', 'closing']);
-    assert.ok(stored.sections.every(item => Object.keys(item).join() === 'key,title,sourceHash,text') && stored.updatedAt);
+    assert.ok(stored.sections.every(item => Object.keys(item).join() === 'key,title,sourceHash,text,at' && typeof item.at === 'string') && stored.updatedAt);
     assert.ok(stored.sections[1].text.startsWith('### 들어가며\n'), stored.sections[1].text);
     assert.strictEqual(mod.tabContents.basicLearn, LESSON, '탭 글에는 넣지 않는다');
     assert.ok(splitOf(ctx), '대본 화면이 열렸다');
@@ -563,12 +563,13 @@ test('이스케이프: AI가 쓴 HTML·스크립트는 글자로만 보이고, [
 });
 
 /* ======================= 내려받기 ======================= */
-test('내려받기: {차시 파일 이름}_기본학습_대본.md에 차시 제목, 섹션마다 이름·시간·대본(없으면 없다고, 바뀌었으면 알림)을 담고 HTML 태그는 뗀다', async () => {
+test('내려받기: {차시 파일 이름}_기본학습_대본.md에 차시 제목, 섹션마다 이름·시간·대본(없으면 없다고, 바뀌었으면 알림)을 담는다. 글은 그대로, HTML 블록 줄만 글자로', async () => {
     const mod = lesson();
     const ctx = scriptContext(mod);
     const rows = plan(ctx, mod).rows;
     [rows[0], rows[1]].forEach(row => {
-        mod.lessonScripts = call(ctx, 'withLessonScript')(mod, 'basicLearn', { key: row.key, title: row.title, sourceHash: row.key === 'c:1게임루프의구조' ? '0-0' : row.hash, text: `### 강의\n${row.key} 대본입니다.<script>x</script>` }, rows);
+        const text = `### 강의\n${row.key} 대본입니다. vector<int>와 <b>굵게</b>를 봅니다.\n<div class="x">블록</div>\n   <!-- 주석 -->`;
+        mod.lessonScripts = call(ctx, 'withLessonScript')(mod, 'basicLearn', { key: row.key, title: row.title, sourceHash: row.key === 'c:1게임루프의구조' ? '0-0' : row.hash, text }, rows);
     });
     call(ctx, 'downloadLessonScript')(7, 'basicLearn');
     assert.strictEqual(ctx.downloads.length, 1);
@@ -576,42 +577,91 @@ test('내려받기: {차시 파일 이름}_기본학습_대본.md에 차시 제�
     assert.strictEqual(name, '교과_01차시_게임 루프_기본학습_대본', 'lessonFileBase + 탭 + 대본(downloadMd가 .md를 붙인다)');
     assert.strictEqual(name, `${call(ctx, 'lessonFileBase')(mod)}_기본학습_대본`);
     assert.ok(md.startsWith('# 게임 루프 — 기본학습 강사 대본\n\n> 이 대본은 교안을 바탕으로 AI가 쓴 초안입니다.'), md);
-    assert.ok(md.includes('## 수업 시작\n\n- 시간: ⏱ 약 5분 · 수업 시작 후 0분~5분\n- 교안: 개요 · 학습 정보 · 학습 목표\n\n### 강의\nopening 대본입니다.x'), md);
+    assert.ok(md.includes('## 수업 시작\n\n- 시간: ⏱ 약 5분 · 수업 시작 후 0분~5분\n- 교안: 개요 · 학습 정보 · 학습 목표\n\n### 강의\nopening 대본입니다. vector<int>와 <b>굵게</b>를 봅니다.\n\\<div class="x">블록</div>\n   \\<!-- 주석 -->'), md);
     assert.ok(md.includes('## 1. 게임 루프의 구조\n\n- 시간: ⏱ 30분 · 수업 시작 후 5분~35분\n- ⚠ 이 대본을 쓴 뒤 교안이 바뀌었습니다.'), md);
     assert.ok(md.includes('## 2. 프레임과 시간\n\n- 시간: ⏱ 20분 · 수업 시작 후 35분~55분\n\n_아직 대본이 없습니다.'), md);
-    assert.ok(md.includes('## 마무리 · ✅ 학습 후 체크리스트') && !md.includes('<script>'), md);
+    assert.ok(md.includes('## 마무리 · ✅ 학습 후 체크리스트') && !/^ {0,3}<[A-Za-z!/]/m.test(md), 'HTML 블록으로 그려질 줄은 없다');
     const empty = scriptContext(lesson());
     call(empty, 'downloadLessonScript')(7, 'basicLearn');
     assert.deepStrictEqual([empty.downloads.length, empty.alerts[0]], [0, '아직 쓴 대본이 없습니다. 대본보기를 눌러 대본을 먼저 만들어 주세요.']);
 });
 
 /* ======================= 저장 모양 ======================= */
-test('저장: 대본을 넣으면 지금 글의 줄 차례로 두고, 지금 글에 없는 줄의 대본은 버리며 차시 객체의 다른 칸은 그대로다', () => {
+test('저장: 대본을 넣으면 지금 글의 줄 차례로 두고, 지금 글에 없는 줄의 대본(제목이 바뀐 대본)도 뒤에 남기며 차시 객체의 다른 칸은 그대로다', () => {
     const mod = lesson();
     const ctx = scriptContext(mod);
     const rows = plan(ctx, mod).rows;
     mod.lessonScripts = { advLearn: { sections: [{ key: 'opening', title: 't', sourceHash: '1-1', text: 'x' }], updatedAt: 'a' }, basicLearn: { sections: [{ key: 'c:옛제목', title: '옛', sourceHash: '1-1', text: '옛 대본' }, { key: 'closing', title: 'c', sourceHash: '1-1', text: '마무리' }] } };
     const before = mod.lessonScripts;
-    const next = call(ctx, 'withLessonScript')(mod, 'basicLearn', { key: 'opening', title: '수업 시작', sourceHash: rows[0].hash, text: '새 대본', extra: 1 }, rows, '2026-11-12T00:00:00.000Z');
-    assert.deepStrictEqual(plain(next.basicLearn), { sections: [{ key: 'opening', title: '수업 시작', sourceHash: rows[0].hash, text: '새 대본' }, { key: 'closing', title: 'c', sourceHash: '1-1', text: '마무리' }], updatedAt: '2026-11-12T00:00:00.000Z' });
+    const at = '2026-11-12T00:00:00.000Z';
+    const next = call(ctx, 'withLessonScript')(mod, 'basicLearn', { key: 'opening', title: '수업 시작', sourceHash: rows[0].hash, text: '새 대본', extra: 1 }, rows, at);
+    assert.deepStrictEqual(plain(next.basicLearn), { sections: [
+        { key: 'opening', title: '수업 시작', sourceHash: rows[0].hash, text: '새 대본', at }, { key: 'closing', title: 'c', sourceHash: '1-1', text: '마무리' },
+        { key: 'c:옛제목', title: '옛', sourceHash: '1-1', text: '옛 대본' }
+    ], updatedAt: at });
     assert.strictEqual(next.advLearn, before.advLearn, '다른 탭은 그대로');
     assert.strictEqual(mod.lessonScripts, before, '차시는 바꾸지 않고 새 값을 돌려준다');
 });
 
-test('저장 고르기(data-safety.js): 기본학습·심화학습만, 바른 섹션만(열쇠·지문·글·크기), 같은 열쇠는 하나, 80개까지. 바르면 같은 객체, 남길 것이 없으면 칸을 지운다', () => {
+test('저장: 탭마다 80개를 넘으면 제목이 바뀐 대본 가운데 오래된 것부터 뺀다(지금 섹션의 대본은 빼지 않는다)', () => {
+    const mod = lesson();
+    const ctx = scriptContext(mod);
+    const rows = plan(ctx, mod).rows;
+    const old = Array.from({ length: 80 }, (_, i) => ({ key: `c:옛${i}`, title: `옛${i}`, sourceHash: '1-1', text: 'x', at: `2026-11-${String(10 + (i % 2)).padStart(2, '0')}T00:00:${String(i % 60).padStart(2, '0')}.000Z` }));
+    mod.lessonScripts = { basicLearn: { sections: [{ key: 'closing', title: 'c', sourceHash: '1-1', text: '마무리' }, ...old] } };
+    const next = call(ctx, 'withLessonScript')(mod, 'basicLearn', { key: 'opening', title: '수업 시작', sourceHash: rows[0].hash, text: '새 대본' }, rows, '2026-11-12T00:00:00.000Z');
+    const keys = plain(next.basicLearn.sections.map(item => item.key));
+    assert.strictEqual(keys.length, 80);
+    assert.deepStrictEqual(keys.slice(0, 2), ['opening', 'closing'], '지금 섹션의 대본이 앞');
+    const dropped = old.filter(item => !keys.includes(item.key));
+    assert.strictEqual(dropped.length, 2);
+    assert.ok(dropped.every(item => item.at.startsWith('2026-11-10')), '가장 오래된 것부터 뺀다');
+});
+
+test('제목이 바뀜: 섹션 제목을 고친 뒤 다른 섹션을 다시 만들어도 옛 대본은 지우지 않고 "제목이 바뀐 대본 N개"로 보이며 내려받는 MD 끝에도 붙인다', async () => {
+    const mod = lesson();
+    const ctx = scriptContext(mod);
+    withAllScripts(ctx, mod, 'basicLearn', row => `### 강의\n${row.key} 원래 대본입니다.`);
+    vm.runInContext('setTabMarkdown', ctx)(mod, 'basicLearn', LESSON.replace('## 2. 프레임과 시간 (⏱ 20분)', '## 2. 프레임과 시간 관리 (⏱ 20분)'));
+    await call(ctx, 'toggleLessonScript')(7, 'basicLearn');
+    await settle();
+    assert.ok(ctx.confirms[0].message.includes('아직 대본이 없는 섹션 1개(2. 프레임과 시간 관리)'), ctx.confirms[0].message);
+    assert.deepStrictEqual(ctx.calls.map(item => item.part), ['«2. 프레임과 시간 관리» · 20분']);
+    const keys = plain(mod.lessonScripts.basicLearn.sections.map(item => item.key));
+    assert.deepStrictEqual(keys, ['opening', 'c:1게임루프의구조', 'c:2프레임과시간관리', 'closing', 'c:2프레임과시간'], '옛 대본은 뒤에 남는다');
+    const cell = splitOf(ctx).querySelector('[data-script-cell="c:1게임루프의구조"]');
+    fire(ctx, cell.querySelector('[data-script-action="regen"]'), 'click'); // 다른 섹션 다시 만들기
+    await settle();
+    assert.ok(mod.lessonScripts.basicLearn.sections.some(item => item.key === 'c:2프레임과시간' && item.text.includes('원래 대본')), '다시 만들어도 지우지 않는다');
+    const orphans = splitOf(ctx).querySelector('.lesson-script-orphans');
+    assert.ok(orphans && orphans.querySelector('summary').textContent === '제목이 바뀐 대본 1개' && orphans.textContent.includes('c:2프레임과시간 원래 대본입니다.'), orphans && orphans.textContent);
+    call(ctx, 'downloadLessonScript')(7, 'basicLearn');
+    const { md } = ctx.downloads[0];
+    assert.ok(md.includes('## 제목이 바뀐 대본 · 2. 프레임과 시간 (⏱ 20분)\n\n- 교안에서 이 섹션의 제목이 바뀌었거나') && md.includes('c:2프레임과시간 원래 대본입니다.'), md);
+    // 대본이 제목이 바뀐 것뿐이어도 내려받을 수 있다
+    const only = lesson();
+    const octx = scriptContext(only);
+    only.lessonScripts = { basicLearn: { sections: [{ key: 'c:사라진섹션', title: '사라진 섹션', sourceHash: '1-1', text: '### 강의\n남은 대본' }] } };
+    call(octx, 'downloadLessonScript')(7, 'basicLearn');
+    assert.ok(octx.downloads.length === 1 && octx.downloads[0].md.includes('남은 대본'));
+});
+
+test('저장 고르기(data-safety.js): 기본학습·심화학습만, 바른 섹션만(열쇠·지문·글·크기·시각·일부 표시), 같은 열쇠는 하나, 80개까지. 바르면 같은 객체, 남길 것이 없으면 칸을 지운다', () => {
     const sctx = { console: quiet, window: {}, JSON, Date, Map, Set, Promise };
     vm.createContext(sctx);
     vm.runInContext(read('data-safety.js'), sctx);
     const { safeLessonScripts, cleanLessonFields, historyEntry } = sctx;
     const entry = (key, extra = {}) => ({ key, title: '제목', sourceHash: 'abc-1z', text: '### 강의\n말입니다.', ...extra });
-    const good = { basicLearn: { sections: [entry('opening'), entry('c:a')], updatedAt: '2026-11-12T00:00:00.000Z' }, advLearn: { sections: [entry('closing')] } };
+    const good = { basicLearn: { sections: [entry('opening', { at: '2026-11-12T00:00:00.000Z' }), entry('c:a', { partial: { done: 1, parts: 3 } })], updatedAt: '2026-11-12T00:00:00.000Z' }, advLearn: { sections: [entry('closing')] } };
     assert.strictEqual(safeLessonScripts(good), good, '바르면 같은 객체');
     const odd = safeLessonScripts({
         basicLearn: { sections: [entry('opening'), entry('opening', { text: '겹침' }), entry('c:b', { sourceHash: 'BAD hash' }), entry('c:c', { text: '   ' }), entry('c:d', { text: 'x'.repeat(40001) }),
-            entry('k'.repeat(201)), entry('c:e', { title: 5 }), 'not an object', entry('c:f', { extra: 'drop' })], updatedAt: 'x'.repeat(41), other: 1 },
+            entry('k'.repeat(201)), entry('c:e', { title: 5 }), 'not an object', entry('c:f', { extra: 'drop', at: 'x'.repeat(41) }),
+            entry('c:g', { partial: { done: 3, parts: 3 } }), entry('c:h', { partial: { done: 0, parts: 2 } }), entry('c:i', { partial: { done: 1, parts: 2, x: 1 } }), entry('c:j', { partial: { done: 1, parts: 2 } })],
+        updatedAt: 'x'.repeat(41), other: 1 },
         basicPrac: { sections: [entry('opening')] }, ['__proto__']: { sections: [entry('p')] }, advLearn: 'not a tab', assessment: null
     });
-    assert.deepStrictEqual(plain(odd), { basicLearn: { sections: [entry('opening'), entry('c:f')] } });
+    assert.deepStrictEqual(plain(odd), { basicLearn: { sections: [entry('opening'), entry('c:f'), entry('c:j', { partial: { done: 1, parts: 2 } })] } }, '틀린 일부 표시는 섹션째 뺀다');
     const many = safeLessonScripts({ advLearn: { sections: Array.from({ length: 90 }, (_, i) => entry(`c:${i}`)) } });
     assert.strictEqual(many.advLearn.sections.length, 80);
     const lessonA = cleanLessonFields({ images: {}, lessonScripts: good });
@@ -624,12 +674,132 @@ test('저장 고르기(data-safety.js): 기본학습·심화학습만, 바른 �
     assert.ok(!('lessonScripts' in record), '작업 기록은 대본을 담지 않는다(되돌린 글과 지문이 다르면 화면이 바뀜으로 보인다)');
 });
 
-test('비용 미리 보기: 대본 호출 수를 본문 호출로 세고 호출 사이 쉬는 시간을 더한다', () => {
+test('비용 미리 보기: 대본 호출은 따로 세고(말 최대 약 3,000자라 본문의 1.5배로 어림, 잰 기록은 대본 호출로 따로), 형식이 틀린 답을 한 번 더 받아 최대 두 배까지 는다고 알린다', () => {
     const ctx = scriptContext(lesson());
     const split = call(ctx, 'estimateCallSplit')({ lessonScripts: 6 });
-    assert.deepStrictEqual([split.body, split.bodyWait, split.short], [6, 6, 0]);
-    const base = call(ctx, 'estimateSummary')({ lessonScripts: 6 }, { model: 'gemini-2.5-pro', timings: {} });
-    assert.strictEqual(base.calls, 6);
+    assert.deepStrictEqual(plain(split), { body: 0, bodyWait: 0, short: 0, images: 0, scripts: 6 });
+    assert.ok(!('scripts' in plain(call(ctx, 'estimateCallSplit')({ tabs: 1 }))), '대본이 없으면 칸도 없다(다른 기능의 셈은 그대로)');
+    const opts = { model: 'gemini-2.5-pro', effort: 'medium', timings: {} };
+    const summary = call(ctx, 'estimateSummary')({ lessonScripts: 6 }, opts);
+    const body = call(ctx, 'secondsPerCall')('gemini-2.5-pro', 'medium', {}).seconds;
+    assert.deepStrictEqual([summary.calls, summary.scriptCalls], [6, 6]);
+    const minutes = 6 * (body * 1.5 + 2) / 60;
+    assert.deepStrictEqual([summary.minutesLow, summary.minutesHigh], [Math.max(1, Math.round(minutes * 0.7)), Math.ceil(minutes * 1.5)]);
+    const note = call(ctx, 'estimateNote')(summary, 'gemini-2.5-pro');
+    assert.ok(note.includes('강사 대본은 형식이 맞지 않는 답을 한 번 더 받으므로 호출과 시간이 최대 두 배(호출 약 12회)까지 늘 수 있습니다.'), note);
+    assert.strictEqual(call(ctx, 'aiTimingKey')('m', 'script'), 'm#script');
+    const measured = call(ctx, 'estimateSummary')({ lessonScripts: 6 }, { ...opts, timings: { 'gemini-2.5-pro#script': { count: 5, avg: 60000 } } });
+    assert.deepStrictEqual([measured.minutesLow, measured.minutesHigh], [Math.round(6.2 * 0.7), Math.ceil(6.2 * 1.5)], '잰 대본 호출 60초 + 사이 2초');
+    assert.ok(read('lesson-script-view.js').includes("timing: 'script'"), '대본 호출은 대본 호출로 잰다');
+});
+
+/* ======================= 긴 섹션 조각 ======================= */
+const longText = text => `${text} `.repeat(Math.ceil(3500 / (text.length + 1)));
+const LONG_LESSON = LESSON.replace('## 2. 프레임과 시간 (⏱ 20분)', [
+    '## 2. 긴 섹션 (⏱ 60분)', '', '머리 문단입니다.', '', '### 가. 첫 소주제', '', longText('첫 소주제 설명입니다.'), '', '### 나. 둘째 소주제', '', longText('둘째 소주제 설명입니다.'), '',
+    '## 3. 프레임과 시간 (⏱ 20분)'
+].join('\n'));
+const pieceTag = prompt => (prompt.includes('2조각 가운데 1번째 조각') ? '첫조각' : prompt.includes('2조각 가운데 2번째 조각') ? '둘째조각' : '');
+const taggedAnswer = prompt => goodAnswer(prompt).replace('이어서 새 부분을 시작하겠습니다.', `${pieceTag(prompt) || '새'} 부분을 시작하겠습니다.`);
+
+test('조각: 긴 섹션을 쓰다 중지하면 받은 조각을 "일부만 쓴 대본"으로 남기고, 다시 누르면 남은 조각부터 이어 쓴다', async () => {
+    const mod = lesson(LONG_LESSON);
+    const ctx = scriptContext(mod);
+    assert.strictEqual(plan(ctx, mod).rows.find(row => row.key === 'c:2긴섹션') && call(ctx, 'scriptRowUnits')(plan(ctx, mod).rows[2]).length, 2);
+    ctx.reply = prompt => {
+        if (pieceTag(prompt) === '첫조각') ctx.requestLessonPipelineStop();
+        return taggedAnswer(prompt);
+    };
+    await call(ctx, 'toggleLessonScript')(7, 'basicLearn');
+    await settle();
+    assert.strictEqual(ctx.confirms[0].work.lessonScripts, 6, '줄 5개, 긴 섹션은 조각 2개');
+    assert.deepStrictEqual(ctx.calls.map(item => pieceTag(item.prompt) || item.part.split(' · ')[0]), ['«수업 시작»', '«1. 게임 루프의 구조»', '첫조각']);
+    const partial = mod.lessonScripts.basicLearn.sections.find(item => item.key === 'c:2긴섹션');
+    assert.deepStrictEqual(plain(partial.partial), { done: 1, parts: 2 }, '받은 조각은 버리지 않는다');
+    assert.ok(partial.text.includes('첫조각 부분을 시작하겠습니다.'));
+    const toast = ctx.toasts.find(([text]) => text.includes('대본 쓰기를 멈췄습니다'));
+    assert.ok(toast && toast[0].includes('섹션 2개의 대본을 썼습니다. «2. 긴 섹션»은 조각 1/2까지 써 두었습니다. 2개는 아직 쓰지 않았습니다. 대본보기를 다시 누르면 남은 조각과 남은 섹션만 이어서 씁니다.'), JSON.stringify(ctx.toasts));
+    const p = plan(ctx, mod);
+    assert.deepStrictEqual([p.states.get('c:2긴섹션'), p.written, p.missing.length], ['partial', 2, 3]);
+    const cell = splitOf(ctx).querySelector('[data-script-cell="c:2긴섹션"]');
+    assert.ok(cell.textContent.includes('조각 1/2까지만 썼습니다') && cell.querySelector('[data-script-action="regen"]').textContent === '남은 조각 쓰기', cell.textContent);
+    // 다시 누르면 남은 조각과 남은 섹션만
+    await call(ctx, 'toggleLessonScript')(7, 'basicLearn');
+    ctx.reply = prompt => taggedAnswer(prompt);
+    await call(ctx, 'toggleLessonScript')(7, 'basicLearn');
+    await settle();
+    assert.ok(ctx.confirms[1].message.includes('조각을 일부 써 둔 섹션 1개는 남은 조각만 씁니다') && ctx.confirms[1].work.lessonScripts === 3, ctx.confirms[1].message);
+    assert.deepStrictEqual(ctx.calls.slice(3).map(item => pieceTag(item.prompt) || item.part.split(' · ')[0]), ['둘째조각', '«3. 프레임과 시간»', '«마무리']);
+    const done = mod.lessonScripts.basicLearn.sections.find(item => item.key === 'c:2긴섹션');
+    assert.ok(!('partial' in done), '다 쓰면 일부 표시를 지운다');
+    assert.ok(done.text.startsWith('### 들어가며\n첫조각 부분을 시작하겠습니다.') && done.text.includes('둘째조각 부분을 시작하겠습니다.'), done.text);
+    assert.strictEqual(plan(ctx, mod).missing.length, 0);
+});
+
+test('조각: 조각이 올 때마다 대본 크기를 보고, 40,000자를 넘으면 남은 조각을 부르지 않고 그 섹션만 멈춘다', async () => {
+    const mod = lesson(LONG_LESSON);
+    const ctx = scriptContext(mod);
+    const huge = Array.from({ length: 2200 }, (_, i) => `${i}. 긴 설명을 이어서 하겠습니다.`).join('\n');
+    ctx.reply = prompt => (pieceTag(prompt) === '첫조각' ? goodAnswer(prompt, { body: huge }) : goodAnswer(prompt));
+    await call(ctx, 'toggleLessonScript')(7, 'basicLearn');
+    await settle();
+    assert.deepStrictEqual(ctx.calls.filter(item => pieceTag(item.prompt)).map(item => pieceTag(item.prompt)), ['첫조각'], '둘째 조각은 부르지 않는다');
+    assert.ok(!mod.lessonScripts.basicLearn.sections.some(item => item.key === 'c:2긴섹션'));
+    const cell = splitOf(ctx).querySelector('[data-script-cell="c:2긴섹션"]');
+    assert.ok(cell.textContent.includes('대본이 너무 깁니다(조각 1/2까지') && cell.textContent.includes('40,000자까지 저장'), cell.textContent);
+    assert.strictEqual(mod.lessonScripts.basicLearn.sections.length, 4, '다른 섹션은 쓴다');
+});
+
+/* ======================= 교과 ======================= */
+test('교과: 다른 교과의 같은 번호 차시와 쓰는 중 표시·쓰지 못한 까닭이 섞이지 않는다(차시 객체로 가린다)', async () => {
+    const modA = lesson();
+    const ctx = scriptContext(modA);
+    ctx.reply = prompt => (prompt.includes('«1. 게임 루프의 구조»') ? '대본입니다.' : goodAnswer(prompt));
+    await call(ctx, 'toggleLessonScript')(7, 'basicLearn');
+    await settle();
+    assert.ok(splitOf(ctx).querySelector('[data-script-cell="c:1게임루프의구조"]').textContent.includes('쓰지 못했습니다'));
+    const modB = lesson();
+    Object.assign(ctx, { modA, modB });
+    vm.runInContext("globalState.subjects.push({ id: 's2', title: '다른 교과', lessons: [window.modB] }); currentSubjectId = 's2'; courseData = globalState.subjects[1].lessons; window.currentMod = window.modB;", ctx);
+    call(ctx, 'renderEditor')(modB);
+    assert.ok(!splitOf(ctx), '다른 교과로 옮기면 대본 화면을 닫는다');
+    withAllScripts(ctx, modB);
+    vm.runInContext("_scriptJob = { mod: window.modA, tabId: 'basicLearn', current: 'c:2프레임과시간', pending: new Set(['closing']) }", ctx);
+    assert.strictEqual(call(ctx, 'scriptJobFor')(modB, 'basicLearn'), null);
+    assert.ok(call(ctx, 'scriptJobFor')(modA, 'basicLearn'));
+    await call(ctx, 'toggleLessonScript')(7, 'basicLearn');
+    const box = splitOf(ctx);
+    assert.ok(box, 'B 교과 차시의 대본 화면');
+    assert.ok(!box.textContent.includes('쓰지 못했습니다'), 'A 교과 차시의 실패가 보이지 않는다');
+    assert.ok(!box.textContent.includes('대본을 쓰고 있습니다') && !box.textContent.includes('차례를 기다리고'), 'A 교과 차시의 쓰는 중 표시가 보이지 않는다');
+    assert.strictEqual(call(ctx, 'scriptFailureOf')(modB, 'basicLearn', 'c:1게임루프의구조'), '');
+    assert.ok(call(ctx, 'scriptFailureOf')(modA, 'basicLearn', 'c:1게임루프의구조').includes('@@본문@@'));
+    vm.runInContext('_scriptJob = null', ctx);
+});
+
+/* ======================= 코드 복사 ======================= */
+test('코드 복사: 대본 화면의 교안 칸에서도 코드 블록 복사 단추가 돈다. 그림 다시 찾기 같은 고치는 단추는 돌지 않는다', async () => {
+    const mod = lesson();
+    const ctx = scriptContext(mod);
+    ctx.copied = [];
+    ctx.regenerated = 0;
+    ctx.promptRegenerateImage = () => { ctx.regenerated += 1; };
+    vm.runInContext('copyPlainText = async text => { window.copied.push(text); };', ctx);
+    withAllScripts(ctx, mod);
+    await call(ctx, 'toggleLessonScript')(7, 'basicLearn');
+    const copy = splitOf(ctx).querySelector('.lesson-script-lesson [data-lesson-action="copy-code"]');
+    assert.ok(copy, '코드 블록에 복사 단추가 있다');
+    fire(ctx, copy, 'click');
+    await settle();
+    assert.deepStrictEqual(ctx.copied, ['// 매 프레임 부르는 함수\nfunction update() {}']);
+    assert.ok(ctx.toasts.some(([text]) => text === '코드를 복사했습니다.'));
+    const regen = ctx.document.createElement('button');
+    regen.setAttribute('data-lesson-action', 'regenerate-image');
+    splitOf(ctx).querySelector('.lesson-script-lesson').appendChild(regen);
+    fire(ctx, regen, 'click');
+    assert.strictEqual(ctx.regenerated, 0, '대본 화면에서는 그림을 다시 찾지 않는다');
+    const css = fs.readFileSync(path.join(rootDir, 'css', 'lesson-script.css'), 'utf8');
+    assert.ok(css.includes('#lesson-script-view .lesson-code-copy {') && css.includes('[data-lesson-action]:not([data-lesson-action="copy-code"])'), '복사 단추는 보이고 다른 단추는 숨긴다');
 });
 
 test('연결: index.html이 lesson-script.js·lesson-script-view.js를 course-refs.js 뒤에, CSS를 교수안 CSS 뒤에 이웃과 같은 ?v=로 싣는다. README에 적는다', () => {
