@@ -176,7 +176,7 @@ async function fillRunGyosuan(lessonId, run) {
         if (!mod || !lessonNeedsGyosuan(mod, track.id)) continue;
         const result = await runGyosuanGeneration(lessonId, { track: track.id, onStatus: setLessonRunStatus });
         partial = partial || !!result.partial;
-        if (result.brief && !result.brief.ok && !result.brief.stopped) briefMissed = [...briefMissed, track.label];
+        if (result.brief && !result.brief.ok && !result.brief.stopped) briefMissed = [...briefMissed, `${track.label}${result.brief.skipped ? '(빈 전개가 있어 건너뜀)' : ''}`];
         if (!result.ok) return { ...result, partial };
     }
     return { ok: true, partial, ...(briefMissed.length ? { briefMissed } : {}) };

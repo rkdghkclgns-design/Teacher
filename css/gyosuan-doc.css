@@ -670,3 +670,4 @@
 .gyosuan-brief-view li > ol,
 .gyosuan-brief-view li > ul { margin: 2px 0 4px; }
 .gyosuan-brief-view p { margin: 0 0 12px; color: #4b5563; }
+.gyosuan-brief-view .gyosuan-brief-stale { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: #b45309; }

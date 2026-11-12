@@ -560,8 +560,8 @@ function nextGyosuan(mod, parts, draft, style, keepDoc, trackId = 'basic') {
         images: { ...(keepDoc ? base.images : {}), ...draft.images },
         slideStyle: style,
         sourceKey: keepDoc ? base.sourceKey : hashSource(parts),
-        // 교수안을 두고 편성안만 바꾸면 그 교수안의 간이 교수안도 둔다(새 교수안의 간이 교수안은 저장한 뒤 gyosuan-brief.js가 만든다)
-        ...(keepDoc && typeof base.briefMd === 'string' && base.briefMd ? { briefMd: base.briefMd } : {}),
+        // 교수안을 두고 편성안만 바꾸면 그 교수안의 간이 교수안과 그 지문도 둔다(새 교수안의 간이 교수안은 저장한 뒤 gyosuan-brief.js가 만든다)
+        ...(keepDoc && typeof base.briefMd === 'string' && base.briefMd ? { briefMd: base.briefMd, ...(base.briefDocKey ? { briefDocKey: base.briefDocKey } : {}) } : {}),
         updatedAt: new Date().toISOString()
     };
     // 바뀐 섹션 안내에 쓰는 원고 지문과 되돌릴 수 있게 바꾸기 전 교수안(gyosuan-regen.js)
@@ -616,8 +616,8 @@ async function runGyosuanGeneration(moduleId, opts = {}) {
             if (opts.background) window.refreshAfterGyosuan(mod);
             else renderEditor(mod);
         }
-        // 저장한 교수안으로 간이 교수안을 만든다(호출 한 번, gyosuan-brief.js). 실패하거나 멈춰도 교수안은 그대로이고 그 결과만 함께 돌려준다
-        const brief = !keepDoc && typeof runGyosuanBriefStep === 'function' ? await runGyosuanBriefStep(mod, track.id, { background: !!opts.background }) : null;
+        // 저장한 교수안으로 간이 교수안을 만든다(호출 한 번, gyosuan-brief.js). 빈칸으로 둔 전개가 있으면 만들지 않는다. 실패하거나 멈춰도 교수안은 그대로이고 그 결과만 함께 돌려준다
+        const brief = !keepDoc && typeof runGyosuanBriefStep === 'function' ? await runGyosuanBriefStep(mod, track.id, { background: !!opts.background, failedCount: built.failedCount }) : null;
         return { ok: true, built, draft, track: track.id, partial: built.failedCount > 0, ...(brief ? { brief } : {}) };
     } catch (err) {
         if (window.isTabGenerationStopped?.()) return { ok: false, stopped: true };

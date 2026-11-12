@@ -1,5 +1,6 @@
 // gyosuan-brief.js - 간이 교수안: 교수안 옆에 두는 한 장짜리 참고 교수안(교과·일차, 교안 순서와 권장 수업 시간, 필수·과제, 시간이 되면 권장)
-// 갈래마다 교수안 칸(mod.gyosuan · mod.gyosuanAdv)의 briefMd에 마크다운으로 둔다. 머리(제목·안내·교과·일차·교안 순서)는 차시 시간으로 코드가 정하고,
+// 갈래마다 교수안 칸(mod.gyosuan · mod.gyosuanAdv)의 briefMd에 마크다운으로, briefDocKey에 그때 교수안의 지문을 둔다(교수안을 고치거나 바꾸면 화면이 다시 만들기를 권한다).
+// 머리(제목·안내·교과·일차·교안 순서)는 차시 시간으로 코드가 정하고,
 // 필수·과제·권장은 다 만든 교수안(docMd)과 그 갈래 탭 제목을 근거로 AI 호출 한 번(갈래마다 하나)으로 받는다.
 // 응답 형식이 맞지 않거나 호출이 실패하면 briefMd를 두지 않고 교수안은 그대로 둔다(교수안은 이 호출 전에 이미 저장했다).
 // 교수안을 만들 때(처음 만들기·재생성·일괄 생성) gyosuan.js runGyosuanGeneration이 교수안을 저장한 뒤 runGyosuanBriefStep을 부른다.
@@ -14,6 +15,7 @@ const BRIEF_DEADLINE = '제출 기한은 수업 중에 반드시 고지한다.';
 const BRIEF_MARKS = { must: '@@필수@@', task: '@@과제@@', extra: '@@권장@@' };
 const BRIEF_STOP_LABELS = { idle: '간이 교수안 만들기 중지', pending: '멈추고 있습니다...' };
 const BRIEF_RETRY_HINT = "교수안 화면의 '간이 교수안 만들기'로 다시 만들 수 있습니다.";
+const BRIEF_SKIP_HINT = "빈 전개를 채운 뒤 교수안 화면의 '간이 교수안 만들기'로 만들 수 있습니다.";
 const BRIEF_STOPPED = '간이 교수안 만들기를 중지했습니다.';
 
 /* ---------- 머리: 교과·일차·교안 순서(코드가 정한다) ---------- */
@@ -31,29 +33,52 @@ function briefDurationText(minutes) {
     return hours ? `${hours}시간` : `${rest}분`;
 }
 
-// 교과 안에서 그 차시의 일차와 같은 날 차시들 { day, items: [{ title, minutes }] }.
-// 일차 = (앞 차시 시간의 합 ÷ 8시간)의 몫 + 1, 같은 날은 시작 시각이 [8(d-1), 8d)시간 안인 차시다. 시간이 없는 차시는 0시간으로 더하고 어느 날에도 넣지 않는다.
-// 그 차시에 시간이 없거나 교과에서 찾지 못하면 일차 없이 그 차시만 둔다
+// 그 시각(분)이 든 날(1부터)
+const briefDayOf = minute => Math.floor(minute / BRIEF_DAY_MINUTES) + 1;
+
+// 그날 밖으로 걸친 날: 앞날에서 이어지면 from(시작한 날), 다음 날로 넘어가면 to(끝나는 날). span: { start, end } 분, 끝은 들지 않는다
+function briefSpanDays(span, day) {
+    const first = briefDayOf(span.start);
+    const last = briefDayOf(span.end - 1);
+    return { ...(first < day ? { from: first } : {}), ...(last > day ? { to: last } : {}) };
+}
+
+// 교과 안에서 그 차시의 일차와 그날 수업하는 차시들 { day, items: [{ title, minutes, from?, to? }] }.
+// 차시는 교과 순서대로 시간을 이어 붙여 [시작, 끝) 시각을 갖는다. 그 차시의 일차는 시작 시각이 든 날((앞 차시 시간의 합 ÷ 8시간)의 몫 + 1)이고,
+// 그날 차시는 시간이 그날 [8(d-1), 8d)시간에 걸친 차시다(앞날에서 이어지거나 다음 날로 넘어가는 차시도 넣고 from·to에 그 날을 적는다).
+// 시간이 없는 차시는 0시간으로 더하고 어느 날에도 넣지 않는다. 그 차시에 시간이 없거나 교과에서 찾지 못하면 일차 없이 그 차시만 둔다
 function briefDayPlan(lessons, mod) {
     const list = Array.isArray(lessons) ? lessons : [];
     const own = briefLessonMinutes(mod);
     const same = list.indexOf(mod);
     const index = same >= 0 ? same : list.findIndex(lesson => lesson && mod && String(lesson.id) === String(mod.id));
     if (!own || index < 0) return { day: null, items: [{ title: String(mod?.title || ''), minutes: own }] };
-    const { starts } = list.reduce((acc, lesson) => ({ sum: acc.sum + briefLessonMinutes(lesson), starts: acc.starts.concat(acc.sum) }), { sum: 0, starts: [] });
-    const day = Math.floor(starts[index] / BRIEF_DAY_MINUTES) + 1;
+    const { spans } = list.reduce((acc, lesson) => {
+        const minutes = briefLessonMinutes(lesson);
+        return { sum: acc.sum + minutes, spans: acc.spans.concat({ title: String(lesson?.title || ''), minutes, start: acc.sum, end: acc.sum + minutes }) };
+    }, { sum: 0, spans: [] });
+    const day = briefDayOf(spans[index].start);
     const from = (day - 1) * BRIEF_DAY_MINUTES;
-    const items = list
-        .map((lesson, i) => ({ title: String(lesson?.title || ''), minutes: briefLessonMinutes(lesson), start: starts[i] }))
-        .filter(item => item.minutes > 0 && item.start >= from && item.start < from + BRIEF_DAY_MINUTES)
-        .map(({ title, minutes }) => ({ title, minutes }));
+    const items = spans
+        .filter(span => span.minutes > 0 && span.start < from + BRIEF_DAY_MINUTES && span.end > from)
+        .map(span => ({ title: span.title, minutes: span.minutes, ...briefSpanDays(span, day) }));
     return { day, items };
 }
 
-// 교과 줄: '{교과 번호} {교과 이름}'. 번호는 교과 목록에서의 차례(1부터)다. 이름이 이미 숫자로 시작하면 번호를 붙이지 않는다
+// 그날 밖으로 걸친 차시의 꼬리: (1일차부터 이어짐) · (2일차까지 이어짐) · (1일차부터 3일차까지 이어짐)
+function briefSpanText(item) {
+    const parts = [item.from ? `${item.from}일차부터` : '', item.to ? `${item.to}일차까지` : ''].filter(Boolean);
+    return parts.length ? ` (${parts.join(' ')} 이어짐)` : '';
+}
+
+// 이름 앞의 차례 번호: '1 C++…', '1. 게임 기획', '03) …'처럼 두 자리까지의 숫자 뒤에 빈칸이나 . ) · : - 가 오고 숫자가 아닌 글이 이어질 때만.
+// '3D 모델링'(숫자에 글자가 붙음)이나 '2024 신규 과정'(세 자리 넘는 숫자, 연도)은 번호가 아니다
+const BRIEF_SUBJECT_NUMBER = /^\d{1,2}(?:\s*[.)·:-]|\s)\s*(?=\D)/;
+
+// 교과 줄: '{교과 번호} {교과 이름}'. 번호는 교과 목록에서의 차례(1부터)다. 이름이 이미 차례 번호로 시작하면 번호를 붙이지 않는다
 function briefSubjectLabel(subjects, subject) {
     const title = String(subject?.title || '').trim();
-    if (!title || /^\d/.test(title)) return title;
+    if (!title || BRIEF_SUBJECT_NUMBER.test(title)) return title;
     const index = (Array.isArray(subjects) ? subjects : []).findIndex(item => item === subject || (item?.id != null && item.id === subject.id));
     return index >= 0 ? `${index + 1} ${title}` : title;
 }
@@ -71,7 +96,7 @@ function briefSubjectOf(mod) {
 // 간이 교수안 머리(제목·안내·교과·교안 순서). topic: 교수안 주제(gyosuan.js gyosuanTopic) / plan: briefDayPlan
 function briefHeaderMd({ topic, subjectLabel = '', plan }) {
     const subjectLine = [subjectLabel, plan.day ? `${plan.day}일차` : ''].filter(Boolean).join(' · ');
-    const order = plan.items.map((item, i) => `  ${i + 1}. ${item.title}${item.minutes ? ` — ${briefDurationText(item.minutes)}` : ''}`);
+    const order = plan.items.map((item, i) => `  ${i + 1}. ${item.title}${item.minutes ? ` — ${briefDurationText(item.minutes)}${briefSpanText(item)}` : ''}`);
     return [`# ${topic} 교수안`, '', BRIEF_NOTE, '', ...(subjectLine ? [`- 교과: ${subjectLine}`] : []), '- 교안 순서와 권장 수업 시간:', ...order].join('\n');
 }
 
@@ -137,10 +162,14 @@ function briefSystemInstruction() {
 
 /* ---------- 응답 읽기·검사 ---------- */
 const BRIEF_BULLET = /^\s*(?:[-*•]|\d+[.)])\s+/;
+const BRIEF_TOP_BULLET = /^ ?(?:[-*•]|\d+[.)])\s+/; // 들여쓰지 않은(한 칸까지) 글머리. 더 들여쓴 글머리는 앞 항목의 하위 글머리다
+const BRIEF_NONE = /^(?:과제\s*)?(?:해당\s*)?없(?:음|다|습니다)/;
 // 항목 한 줄: 글머리(-, *, •, 1.)와 굵게 표시, 앞 이름표(필수:, 과제:, 권장:)를 떼고 빈칸을 줄인다
 const briefItemText = line => String(line).replace(BRIEF_BULLET, '').replace(/\*\*/g, '').replace(/^(?:필수|과제|권장)\s*[:：]\s*/, '').replace(/\s+/g, ' ').trim();
 // 형식 설명을 그대로 옮긴 줄 '(…)'은 항목이 아니다
 const isBriefPlaceholder = text => /^\(.*\)$/.test(text);
+// 견줄 때 쓰는 항목 글: 빈칸·문장부호·기호를 빼고 소문자로(같은 말을 마침표만 달리 쓴 항목을 하나로 본다)
+const briefItemKey = text => String(text).replace(/[\s\p{P}\p{S}]+/gu, '').toLowerCase();
 
 // 표시 뒤부터 다음 표시 앞까지의 글. 표시가 없으면 null
 function briefBlock(text, mark) {
@@ -151,32 +180,40 @@ function briefBlock(text, mark) {
     return rest.slice(0, ends.length ? Math.min(...ends) : rest.length);
 }
 
-// 글머리 항목들(겹친 항목은 하나만)
+// 글머리 항목들. 들여쓴 하위 글머리와 글머리 없이 이어지는 줄은 앞 항목에 한 줄로 붙인다(첫 항목 앞의 줄은 버린다).
+// 형식 설명 줄 '(…)'과 문장부호뿐인 줄은 빼고, 빈칸·문장부호만 다른 항목은 앞의 것 하나만 둔다
 function briefItems(block) {
-    const items = String(block || '').split('\n').filter(line => BRIEF_BULLET.test(line)).map(briefItemText)
-        .filter(text => text && !isBriefPlaceholder(text));
-    return items.filter((item, i) => items.indexOf(item) === i);
+    const items = String(block || '').split('\n').reduce((list, line) => {
+        const text = briefItemText(line);
+        if (!briefItemKey(text) || isBriefPlaceholder(text)) return list;
+        if (BRIEF_TOP_BULLET.test(line)) return [...list, text];
+        return list.length ? [...list.slice(0, -1), `${list[list.length - 1]} ${text}`] : list;
+    }, []);
+    return items.filter((item, i) => items.findIndex(other => briefItemKey(other) === briefItemKey(item)) === i);
 }
 
-// 과제 한 줄. '없음'이거나 비면 ''. 제출 기한 고지가 빠졌으면 붙인다
+// 과제 한 줄(이어지는 줄은 붙인다). '없음'이거나 비면 ''. 수업 중에 제출 기한을 고지한다는 말이 없으면 그 문장을 붙인다
 function briefTask(block) {
-    const first = String(block || '').split('\n').map(briefItemText).find(line => line && !isBriefPlaceholder(line)) || '';
-    if (!first || /^(?:해당\s*)?없(?:음|다|습니다)/.test(first)) return '';
-    if (/기한/.test(first)) return first;
+    const lines = String(block || '').split('\n').map(briefItemText).filter(line => briefItemKey(line) && !isBriefPlaceholder(line));
+    const first = briefItems(block)[0] || lines.join(' ');
+    if (!first || BRIEF_NONE.test(first)) return '';
+    if (/수업\s*중에?/.test(first) && /고지/.test(first)) return first;
     return `${/[.!?。]$/.test(first) ? first : `${first}.`} ${BRIEF_DEADLINE}`;
 }
 
-// AI 답 → { must, task, extra } 또는 { error }. 필수·권장 표시가 없거나 항목이 모자라면 오류, 넘치면 앞에서부터 상한까지. 과제 표시가 없으면 과제가 없는 것으로 본다
+// AI 답 → { must, task, extra } 또는 { error }. 필수·권장 표시가 없거나 항목이 모자라면 오류, 넘치면 앞에서부터 상한까지(하위 글머리를 붙이고 겹친 항목을 뺀 뒤에 센다).
+// 필수와 같은 말인 권장 항목은 뺀다. 과제 표시가 없으면 과제가 없는 것으로 본다
 function parseBriefAnswer(text) {
     const source = String(text || '').replace(/\r\n/g, '\n');
     const must = briefBlock(source, BRIEF_MARKS.must);
     const extra = briefBlock(source, BRIEF_MARKS.extra);
     if (must === null || extra === null) return { error: '간이 교수안 응답에 필수·권장 표시가 없습니다.' };
-    const mustItems = briefItems(must);
-    const extraItems = briefItems(extra);
+    const mustItems = briefItems(must).slice(0, BRIEF_COUNTS.must[1]);
+    const mustKeys = new Set(mustItems.map(briefItemKey));
+    const extraItems = briefItems(extra).filter(item => !mustKeys.has(briefItemKey(item))).slice(0, BRIEF_COUNTS.extra[1]);
     if (mustItems.length < BRIEF_COUNTS.must[0]) return { error: `간이 교수안 응답의 필수 항목이 ${BRIEF_COUNTS.must[0]}개보다 적습니다.` };
     if (extraItems.length < BRIEF_COUNTS.extra[0]) return { error: '간이 교수안 응답에 시간이 되면 권장할 항목이 없습니다.' };
-    return { must: mustItems.slice(0, BRIEF_COUNTS.must[1]), task: briefTask(briefBlock(source, BRIEF_MARKS.task)), extra: extraItems.slice(0, BRIEF_COUNTS.extra[1]) };
+    return { must: mustItems, task: briefTask(briefBlock(source, BRIEF_MARKS.task)), extra: extraItems };
 }
 
 function assembleBriefMd(header, answer) {
@@ -214,7 +251,7 @@ async function fillGyosuanBrief(mod, trackId = 'basic', { note = '' } = {}) {
         const briefMd = await buildGyosuanBrief(mod, track.id, docMd);
         // 기다리는 동안 교수안을 다시 만들었거나 고쳤으면 그 교수안과 맞지 않으므로 넣지 않는다
         if (mod[track.field]?.docMd !== docMd) return { ok: false, error: '만드는 동안 교수안이 바뀌어 간이 교수안을 넣지 않았습니다.' };
-        mod[track.field] = { ...mod[track.field], briefMd, updatedAt: new Date().toISOString() };
+        mod[track.field] = { ...mod[track.field], briefMd, briefDocKey: gyosuanBriefDocKey(docMd), updatedAt: new Date().toISOString() };
         if (note && typeof withHistoryNote === 'function') Object.assign(mod, withHistoryNote(mod, note));
         await saveGyosuan(mod);
         return { ok: true, briefMd };
@@ -232,8 +269,10 @@ function refreshBriefView(mod) {
 }
 
 // 교수안을 만들어 저장한 뒤(gyosuan.js runGyosuanGeneration) 이어서 부른다. 로딩 화면을 띄운 생성은 이 단계에도 중지 단추를 보이고,
-// 전체 생성의 교수안 단계(background)는 그 작업의 중지를 따른다. 이미 중지를 눌렀으면 부르지 않는다
-async function runGyosuanBriefStep(mod, trackId = 'basic', { background = false } = {}) {
+// 전체 생성의 교수안 단계(background)는 그 작업의 중지를 따른다. 이미 중지를 눌렀으면 부르지 않는다.
+// failedCount: 만들지 못해 빈칸으로 둔 전개 수. 빈칸이 있는 교수안으로는 만들지 않는다(빈 전개를 채운 뒤 '간이 교수안 만들기'로 만든다)
+async function runGyosuanBriefStep(mod, trackId = 'basic', { background = false, failedCount = 0 } = {}) {
+    if (failedCount > 0) return { ok: false, skipped: true, error: `전개 ${failedCount}개를 만들지 못한 교수안이라 간이 교수안을 만들지 않았습니다.` };
     if (window.isTabGenerationStopped?.()) return { ok: false, stopped: true, error: BRIEF_STOPPED };
     if (!background) window.beginGenerationStop?.(BRIEF_STOP_LABELS);
     try {
@@ -249,16 +288,31 @@ async function runGyosuanBriefStep(mod, trackId = 'basic', { background = false 
 function gyosuanBriefNote(brief) {
     if (!brief || brief.ok) return '';
     const reason = String(brief.stopped ? BRIEF_STOPPED : brief.error || '간이 교수안을 만들지 못했습니다.');
-    return `${/[.!?。]$/.test(reason) ? reason : `${reason}.`} ${BRIEF_RETRY_HINT}`;
+    return `${/[.!?。]$/.test(reason) ? reason : `${reason}.`} ${brief.skipped ? BRIEF_SKIP_HINT : BRIEF_RETRY_HINT}`;
+}
+
+/* ---------- 교수안이 바뀌었는가 ---------- */
+// 간이 교수안을 어느 교수안으로 만들었는지 가리는 지문. 그림 줄(내려받으면 data URL로, 다시 불러오면 다른 키로 바뀐다)·줄바꿈 모양·줄 끝 빈칸은 보지 않는다
+function gyosuanBriefDocKey(docMd) {
+    const text = String(docMd || '').replace(/^﻿/, '').replace(/\r\n/g, '\n').replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+        .replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n').trim();
+    return hashSource([{ text }]);
+}
+
+// 간이 교수안을 만든 뒤 교수안을 고치거나 바꿨는가. 지문이 없는 간이 교수안(예전에 만든 것)은 알 수 없어 그대로라고 본다
+function isGyosuanBriefStale(gyosuan) {
+    const key = gyosuan?.briefDocKey;
+    return !!gyosuan?.briefMd && typeof key === 'string' && !!key && key !== gyosuanBriefDocKey(gyosuan.docMd);
 }
 
 /* ---------- 교수안 화면의 '간이 교수안 만들기' ---------- */
 const gyosuanBriefBusy = () => !!_gyosuanRunning || document.getElementById('editor-loading')?.style.display === 'flex'
     || !!window.isLessonPipelineRunning?.() || !!window.isVolumeFilling?.();
 
-// 비용·시간 미리 보기(cost-estimate.js)를 보이고 묻는다. 그 파일이 없으면(테스트) 앱의 확인 창만 쓴다
-function confirmGyosuanBrief(track) {
-    const message = `${track.label} 교수안을 바탕으로 간이 교수안(필수·과제·시간이 되면 권장)을 만듭니다. 교과·일차와 교안 순서·권장 수업 시간은 차시 시간으로 채웁니다.`;
+// 비용·시간 미리 보기(cost-estimate.js)를 보이고 묻는다. 그 파일이 없으면(테스트) 앱의 확인 창만 쓴다. replacing: 지금 간이 교수안을 바꾸는가
+function confirmGyosuanBrief(track, replacing = false) {
+    const message = `${track.label} 교수안을 바탕으로 간이 교수안(필수·과제·시간이 되면 권장)을 만듭니다. 교과·일차와 교안 순서·권장 수업 시간은 차시 시간으로 채웁니다.`
+        + (replacing ? ' 지금 간이 교수안(직접 고친 내용 포함)은 새 간이 교수안으로 바뀝니다.' : '');
     const opts = { title: `${track.label} 간이 교수안 만들기`, okLabel: '만들기' };
     return typeof confirmWithEstimate === 'function' ? confirmWithEstimate(message, { brief: 1 }, opts) : confirmAsync(message, opts);
 }
@@ -294,7 +348,7 @@ window.generateGyosuanBrief = async function (moduleId, trackId = currentGyosuan
     if (!gyosuanOf(mod, track.id)?.docMd) return refuseGyosuanBrief(`먼저 ${track.label} 교수안을 만들어 주세요.`);
     if (gyosuanBriefBusy()) return refuseGyosuanBrief(BRIEF_BUSY_TEXT);
     await window.saveGyosuanRaw?.(); // 원문 칸에 넣지 않은 교수안 글도 담아 만든다
-    if (!(await confirmGyosuanBrief(track)) || gyosuanTargetMoved(moduleId, mod)) return false;
+    if (!(await confirmGyosuanBrief(track, !!gyosuanOf(mod, track.id)?.briefMd)) || gyosuanTargetMoved(moduleId, mod)) return false;
     if (gyosuanBriefBusy()) return refuseGyosuanBrief(BRIEF_BUSY_TEXT); // 묻는 동안 다른 생성이 시작됐을 수 있다
     const result = await runStandaloneBrief(mod, track);
     if (result.ok) {

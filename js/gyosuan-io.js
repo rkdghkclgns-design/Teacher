@@ -70,10 +70,9 @@ function gyosuanFileKind(name, text) {
     return /교수안/.test(name) ? 'docMd' : null;
 }
 
-// 간이 교수안: 올렸으면 그것, 다른 교수안만 올렸으면 옛 교수안의 간이 교수안이라 뺀다(undefined), 아니면 지금 것
-function convertedBrief(base, sorted) {
-    if (sorted.briefMd !== undefined) return sorted.briefMd;
-    return sorted.docMd !== undefined && sorted.docMd !== base?.docMd ? undefined : base?.briefMd;
+// 올린 간이 교수안은 함께 넣는 교수안(docMd)으로 만든 것으로 보고 그 지문을 단다(gyosuan-brief.js gyosuanBriefDocKey)
+function importedBriefFields(briefMd, docMd) {
+    return { briefMd, ...(typeof gyosuanBriefDocKey === 'function' ? { briefDocKey: gyosuanBriefDocKey(docMd) } : {}) };
 }
 
 // files = [{ name, text }] → { docMd?, deckMd?, briefMd? } 또는 { error }
@@ -89,15 +88,14 @@ function sortGyosuanFiles(files) {
     return sorted;
 }
 
-// 올리지 않은 쪽은 지금 내용을 유지한다. AI 없이 만들어 교안과 비교할 기준이 없으므로 sourceKey는 비운다
+// 올리지 않은 쪽은 지금 내용을 유지한다. AI 없이 만들어 교안과 비교할 기준이 없으므로 sourceKey는 비운다.
+// 교수안만 바꾸면 간이 교수안은 그대로 두고, 다른 교수안이면 화면이 다시 만들기를 권한다(gyosuan-brief.js isGyosuanBriefStale. 같은 교수안을 다시 불러오면 그림 키가 달라도 그대로다)
 function convertedGyosuan(base, sorted) {
     const doc = adoptInlineImages(sorted.docMd ?? base?.docMd ?? '', base?.images);
     const deck = adoptInlineImages(sorted.deckMd ?? base?.deckMd ?? '', doc.images);
-    const { briefMd: _oldBrief, ...rest } = base || {};
-    const briefMd = convertedBrief(base, sorted);
     return {
-        ...rest,
-        ...(typeof briefMd === 'string' && briefMd ? { briefMd } : {}),
+        ...base,
+        ...(sorted.briefMd !== undefined ? importedBriefFields(sorted.briefMd, doc.md) : {}),
         docMd: doc.md,
         deckMd: deck.md,
         images: usedGyosuanImages({ docMd: doc.md, deckMd: deck.md, images: deck.images }),
@@ -155,10 +153,9 @@ function importedGyosuan(base, imported, session) {
     const source = imported.source;
     const doc = adoptInlineImages(source?.doc || base?.docMd || '', base?.images);
     const deck = adoptInlineImages(source?.deck || base?.deckMd || '', doc.images);
-    // 파일의 다른 교수안으로 바꾸면 옛 교수안의 간이 교수안은 뺀다(교수안 화면의 '간이 교수안 만들기'로 다시 만든다)
-    const { briefMd: _oldBrief, ...rest } = base || {};
+    // 간이 교수안은 그대로 둔다. 파일의 교수안이 다른 교수안이면 화면이 다시 만들기를 권한다(gyosuan-brief.js isGyosuanBriefStale)
     return {
-        ...(source?.doc && source.doc !== base?.docMd ? rest : base),
+        ...base,
         docMd: doc.md,
         deckMd: deck.md,
         images: usedGyosuanImages({ docMd: doc.md, deckMd: deck.md, images: deck.images }),

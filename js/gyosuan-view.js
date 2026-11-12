@@ -73,9 +73,13 @@ function gyosuanDeckHtml(mod, trackId = 'basic') {
     return `<div class="gyosuan-deck-view">${sanitizeLessonHtml(marked.parse(md))}</div>`;
 }
 
-// 간이 교수안은 그림 없는 짧은 글이라 편성안 보기와 같은 서식으로 그린다
+// 간이 교수안은 그림 없는 짧은 글이라 편성안 보기와 같은 서식으로 그린다. 만든 뒤 교수안을 고쳤거나 바꿨으면 맨 위에 한 줄 알리고 다시 만들기 단추를 둔다
 function gyosuanBriefHtml(mod, trackId = 'basic') {
-    return `<div class="gyosuan-deck-view gyosuan-brief-view">${sanitizeLessonHtml(marked.parse(String(gyosuanOf(mod, trackId).briefMd || '')))}</div>`;
+    const track = lessonTrack(trackId).id;
+    const gyosuan = gyosuanOf(mod, track);
+    const stale = typeof isGyosuanBriefStale === 'function' && isGyosuanBriefStale(gyosuan)
+        ? `<p class="gyosuan-brief-stale">⚠️ 간이 교수안을 만든 뒤 교수안이 바뀌었습니다. <button onclick="generateGyosuanBrief('${mod.id}', '${track}')" class="gyosuan-tool"><i class="ph-bold ph-arrows-clockwise"></i> 다시 만들기</button></p>` : '';
+    return `<div class="gyosuan-deck-view gyosuan-brief-view">${stale}${sanitizeLessonHtml(marked.parse(String(gyosuan.briefMd || '')))}</div>`;
 }
 
 // 차시가 하나면 차시별 내려받기와 같으므로 보여 주지 않는다
