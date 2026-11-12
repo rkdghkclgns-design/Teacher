@@ -165,8 +165,8 @@ const ALL_TABS = ['basicLearn', 'basicPrac', 'advLearn', 'advPrac', 'assessment'
         assert.deepStrictEqual(split({ codeComments: 3 }), { body: 3, bodyWait: 3, short: 0, images: 0 });
         assert.strictEqual(vm.runInContext('estimateCalls', ectx)({ codeComments: 3 }), 3);
         const FULL = { tabs: 5, images: 15, slideImages: 4, ncs: 1, gyosuan: 1, qbank: 1, art: 0 };
-        assert.deepStrictEqual(split(FULL), { body: 25, bodyWait: 19, short: 23, images: 19 }, '주석 호출이 없으면 예전과 같다');
-        assert.deepStrictEqual(split({ ...FULL, codeComments: 2 }), { body: 27, bodyWait: 21, short: 23, images: 19 });
+        assert.deepStrictEqual(split(FULL), { body: 26, bodyWait: 20, short: 23, images: 19 }, '주석 호출이 없으면 예전과 같다(교수안 하나는 간이 교수안 호출 1을 더 센다)');
+        assert.deepStrictEqual(split({ ...FULL, codeComments: 2 }), { body: 28, bodyWait: 22, short: 23, images: 19 });
         assert.deepStrictEqual(plain(vm.runInContext('sumWork', ectx)([{ codeComments: 1 }, { codeComments: 2, tabs: 1 }])), { codeComments: 3, tabs: 1 });
         const rules = plain(vm.runInContext('ESTIMATE_RULES', ectx));
         assert.deepStrictEqual([rules.tabCalls, rules.qbankCalls], [2, 2], '숫자는 그대로');

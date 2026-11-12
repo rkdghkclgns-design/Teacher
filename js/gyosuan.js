@@ -2,7 +2,7 @@
 // 문서 양식과 조립은 develocket-slide(assets/generate.js @3a7303f)의 컨벤션을 따르고,
 // 생성 프롬프트는 이 앱의 교안 생성 방식(페르소나·어투·참고 자료·멀티턴 few-shot)을 쓴다.
 // 교수안은 갈래(data.js LESSON_TRACKS)마다 따로 만든다. 기본학습 갈래는 기본학습·기본실습 탭으로 mod.gyosuan에, 심화학습 갈래는 심화학습·심화실습 탭으로 mod.gyosuanAdv에
-// { docMd, deckMd, deckHtml, sessionDecks, deckRev, deckDirty, images, slideStyle, sourceKey, sourceMap, previous, citedVideos, updatedAt } 으로 저장한다(sourceMap·previous는 gyosuan-regen.js, citedVideos는 gyosuan-videos.js).
+// { docMd, deckMd, deckHtml, sessionDecks, deckRev, deckDirty, images, slideStyle, sourceKey, sourceMap, previous, citedVideos, briefMd, updatedAt } 으로 저장한다(sourceMap·previous는 gyosuan-regen.js, citedVideos는 gyosuan-videos.js, briefMd(간이 교수안)는 gyosuan-brief.js).
 // images는 교수안·편성안의 ![설명](local:id)가 가리키는 래스터 data URL이고, sessionDecks는 차시별로 연 덱의 편집본이다.
 // 예전에 네 탭을 함께 담아 만든 mod.gyosuan은 그대로 기본학습 교수안으로 둔다(gyosuan-view.js가 그렇다고 알린다).
 
@@ -560,6 +560,8 @@ function nextGyosuan(mod, parts, draft, style, keepDoc, trackId = 'basic') {
         images: { ...(keepDoc ? base.images : {}), ...draft.images },
         slideStyle: style,
         sourceKey: keepDoc ? base.sourceKey : hashSource(parts),
+        // 교수안을 두고 편성안만 바꾸면 그 교수안의 간이 교수안과 그 지문도 둔다(새 교수안의 간이 교수안은 저장한 뒤 gyosuan-brief.js가 만든다)
+        ...(keepDoc && typeof base.briefMd === 'string' && base.briefMd ? { briefMd: base.briefMd, ...(base.briefDocKey ? { briefDocKey: base.briefDocKey } : {}) } : {}),
         updatedAt: new Date().toISOString()
     };
     // 바뀐 섹션 안내에 쓰는 원고 지문과 되돌릴 수 있게 바꾸기 전 교수안(gyosuan-regen.js)
@@ -570,10 +572,12 @@ function nextGyosuan(mod, parts, draft, style, keepDoc, trackId = 'basic') {
 // 갈래의 학습·실습 탭 이름(예: 심화학습·심화실습)
 const trackTabsLabel = track => [track.learn, track.practice].map(id => LESSON_TABS.find(tab => tab.id === id)?.label || id).join('·');
 
-function reportGyosuanBuilt(built, draft, trackId = 'basic') {
+// brief: 이어서 만든 간이 교수안의 결과(gyosuan-brief.js). 만들지 못했으면 그 까닭을 함께 알린다
+function reportGyosuanBuilt(built, draft, trackId = 'basic', brief = null) {
     const label = lessonTrack(trackId).label;
-    if (built.failedCount) window.showAlert(`${label} 교수안의 전개 ${built.failedCount}개를 생성하지 못해 빈칸으로 두었습니다. 다시 생성하거나 직접 작성해 주세요.`);
-    else if (window.showToast) window.showToast(`${label} 교수안과 슬라이드 편성안을 만들었습니다.${draft.note ? ` ${draft.note}` : ''}`, 'success');
+    const briefNote = typeof gyosuanBriefNote === 'function' ? gyosuanBriefNote(brief) : '';
+    if (built.failedCount) window.showAlert(`${label} 교수안의 전개 ${built.failedCount}개를 생성하지 못해 빈칸으로 두었습니다. 다시 생성하거나 직접 작성해 주세요.${briefNote ? `\n${briefNote}` : ''}`);
+    else if (window.showToast) window.showToast(`${label} 교수안과 슬라이드 편성안을 만들었습니다.${draft.note ? ` ${draft.note}` : ''}${briefNote ? ` ${briefNote}` : ''}`, briefNote ? 'warning' : 'success');
 }
 
 // 실패를 던지지 않고 결과로 돌려준다. 일괄 생성은 차시별로 모으고, 버튼에서 부르면 generateGyosuan이 알린다
@@ -612,7 +616,9 @@ async function runGyosuanGeneration(moduleId, opts = {}) {
             if (opts.background) window.refreshAfterGyosuan(mod);
             else renderEditor(mod);
         }
-        return { ok: true, built, draft, track: track.id, partial: built.failedCount > 0 };
+        // 저장한 교수안으로 간이 교수안을 만든다(호출 한 번, gyosuan-brief.js). 빈칸으로 둔 전개가 있으면 만들지 않는다. 실패하거나 멈춰도 교수안은 그대로이고 그 결과만 함께 돌려준다
+        const brief = !keepDoc && typeof runGyosuanBriefStep === 'function' ? await runGyosuanBriefStep(mod, track.id, { background: !!opts.background, failedCount: built.failedCount }) : null;
+        return { ok: true, built, draft, track: track.id, partial: built.failedCount > 0, ...(brief ? { brief } : {}) };
     } catch (err) {
         if (window.isTabGenerationStopped?.()) return { ok: false, stopped: true };
         console.error('[교수안] 생성 실패:', err);
@@ -635,7 +641,7 @@ window.generateGyosuan = async function (moduleId, opts = {}) {
     const label = lessonTrack(opts.track).label;
     if (result.error) window.showAlert(result.error);
     else if (result.stopped) window.showToast?.(`${label} 교수안 생성을 중지했습니다. 기존 교수안은 그대로입니다.`, 'warning');
-    else reportGyosuanBuilt(result.built, result.draft, result.track);
+    else reportGyosuanBuilt(result.built, result.draft, result.track, result.brief);
     return result.ok;
 };
 

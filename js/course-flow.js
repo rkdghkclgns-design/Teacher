@@ -63,10 +63,13 @@ const withShortLesson = (list, item, result) => (result.short ? [...(list || [])
 // 일괄 생성 보고에 보일 모자란 학습 탭과 낭독 시간
 const shortLessonText = item => (item.shortTabs?.length ? item.shortTabs.map(tab => `${tab.label} 낭독 약 ${tab.readMinutes}분`).join(' · ') : `낭독 약 ${item.readMinutes}분`);
 
+// 간이 교수안을 만들지 못한 차시는 따로 모은다(교수안 화면의 '간이 교수안 만들기'로 만든다). briefTracks: 그 갈래 이름
+const withBriefMissed = (report, item, result) => (result.briefMissed?.length ? { ...report, brief: [...(report.brief || []), { ...item, briefTracks: result.briefMissed }] } : report);
+
 function recordLessonResult(report, item, result) {
     const partial = result.partial ? [...report.partial, item] : report.partial;
     const short = withShortLesson(report.short, item, result);
-    const next = short ? { ...report, partial, short } : { ...report, partial };
+    const next = withBriefMissed(short ? { ...report, partial, short } : { ...report, partial }, item, result);
     if (result.ok) return { ...next, done: [...report.done, item] };
     return { ...next, failed: [...report.failed, { ...item, error: result.error || '원인을 알 수 없습니다.' }] };
 }
@@ -163,17 +166,20 @@ async function attemptLesson(item, run) {
 }
 
 // 갈래마다(기본학습 → 심화학습) 빠진 교수안·슬라이드를 만든다. 실패하거나 멈추면 그 결과를 돌려주고 남은 갈래는 만들지 않는다
+// briefMissed: 교수안은 만들었지만 간이 교수안(gyosuan-brief.js)을 만들지 못한 갈래 이름(멈춘 것은 빼고, 없으면 칸이 없다)
 async function fillRunGyosuan(lessonId, run) {
     let partial = false;
+    let briefMissed = [];
     for (const track of LESSON_TRACKS) {
         if (run.stopped) return { ok: false, stopped: true, partial };
         const mod = getEditingModule(lessonId);
         if (!mod || !lessonNeedsGyosuan(mod, track.id)) continue;
         const result = await runGyosuanGeneration(lessonId, { track: track.id, onStatus: setLessonRunStatus });
         partial = partial || !!result.partial;
+        if (result.brief && !result.brief.ok && !result.brief.stopped) briefMissed = [...briefMissed, `${track.label}${result.brief.skipped ? '(빈 전개가 있어 건너뜀)' : ''}`];
         if (!result.ok) return { ...result, partial };
     }
-    return { ok: true, partial };
+    return { ok: true, partial, ...(briefMissed.length ? { briefMissed } : {}) };
 }
 
 // 차시 하나의 빈 탭, 보강(삽화·NCS), 갈래마다 교수안·슬라이드와 두 문제은행을 차례로 만든다(attemptLesson)
@@ -193,7 +199,8 @@ async function fillRunLesson(item, run, key) {
     const partial = !!(tabs.partial || gyosuan.partial);
     const short = tabs.short ? { short: true, readMinutes: tabs.readMinutes, ...(tabs.shortTabs ? { shortTabs: tabs.shortTabs } : {}) } : {}; // 학습 탭이 낭독 목표에 못 미쳤으면 보고에 남긴다
     if (!gyosuan.ok) return { ok: false, stopped: gyosuan.stopped, error: gyosuan.error, partial, ...short };
-    return { ...(await fillQuestionBank(item.lessonId, { isStopped: () => run.stopped, onStatus: setLessonRunStatus })), partial, ...short };
+    const brief = gyosuan.briefMissed ? { briefMissed: gyosuan.briefMissed } : {}; // 간이 교수안을 만들지 못한 갈래는 보고에 남긴다
+    return { ...(await fillQuestionBank(item.lessonId, { isStopped: () => run.stopped, onStatus: setLessonRunStatus })), partial, ...short, ...brief };
 }
 
 /* ---------- 일괄 생성 화면 ---------- */
@@ -307,6 +314,8 @@ function lessonRunReportHtml(report, { trashed = 0, imageNote = '', restored = 0
         ${lessonRunListHtml('일부 단락이 누락되었을 수 있는 차시', report.partial)}
         ${lessonRunListHtml('낭독 분량이 목표에 못 미친 차시', report.short || [], shortLessonText)}
         ${(report.short || []).length ? "<p class=\"text-xs text-textMuted\">그 차시의 모자란 탭(기본학습·심화학습) 위 '분량 채우기'로 이어서 늘릴 수 있습니다.</p>" : ''}
+        ${lessonRunListHtml('간이 교수안을 만들지 못한 차시', report.brief || [], item => (item.briefTracks || []).join('·'))}
+        ${(report.brief || []).length ? "<p class=\"text-xs text-textMuted\">교수안은 저장했습니다. 그 차시 교수안 화면의 '간이 교수안 만들기'로 만들 수 있습니다.</p>" : ''}
         ${restored > 0 ? `<p class="text-xs text-textMuted">탭을 하나도 만들지 못한 차시 ${restored}개는 지우기 전 내용으로 되돌렸습니다.</p>` : ''}
         ${unfinished ? '<p class="text-xs text-textMuted">만든 내용은 저장했습니다. 다시 실행하면 남은 탭부터 이어서 생성합니다.</p>' : ''}
         ${report.commentLeft && typeof commentStopNote === 'function' ? `<p class="text-xs text-amber-300">${escapeHtml(commentStopNote(report.commentLeft))}</p>` : ''}
