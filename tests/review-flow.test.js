@@ -210,7 +210,8 @@ function generationContext(callGemini, mod) {
         assert.ok(plain(issues).some(issue => issue.where === '개요' && issue.missing));
         const merged = call(ctx, 'mergeFixedSections')(md, '## 개요\n\n- 문제 상황입니다.', call(ctx, 'pickFixSections')(md, issues, []).targets, true);
         assert.ok(merged.includes('앞에서 다룬 내용을 정리합니다.'), '대상 섹션의 본문이 남는다');
-        assert.ok(merged.indexOf('## 개요') < merged.indexOf('## 본문') && merged.indexOf('## 학습 목표') < merged.indexOf('## 개요'), '개요는 정해진 자리에 들어간다');
+        // 18차부터 첫머리는 개요 → 학습 정보 → 학습 목표 차례다. 빠진 개요는 맨 앞에 들어간다(lesson-review.js newSectionIndex)
+        assert.ok(merged.indexOf('## 개요') < merged.indexOf('## 본문') && merged.indexOf('## 개요') < merged.indexOf('## 학습 목표'), '개요는 정해진 자리에 들어간다');
     });
 
     await run('AI 수정: 내용을 나누거나 줄인 응답은 쓰지 않는다', async () => {
@@ -243,7 +244,7 @@ function generationContext(callGemini, mod) {
         const base = '# 제목\n\n## 학습 목표\n\n- 목표\n\n## 본문\n\n내용\n\n## ✅ 학습 후 체크리스트\n\n- 항목';
         const titles = md => plain(call(ctx, 'mdSections')(md)).map(section => section.title);
         const merged = call(ctx, 'mergeFixedSections')(base, '## 개요\n\n- 문제 상황입니다.\n\n## 새 내용\n\n설명입니다.', [], true);
-        assert.deepStrictEqual(titles(merged), ['', '학습 목표', '개요', '본문', '새 내용', '✅ 학습 후 체크리스트']);
+        assert.deepStrictEqual(titles(merged), ['', '개요', '학습 목표', '본문', '새 내용', '✅ 학습 후 체크리스트'], '빠진 개요는 첫머리 맨 앞(18차: 개요 → 학습 정보 → 학습 목표)');
         const noChecklist = call(ctx, 'mergeFixedSections')('## 학습 목표\n\n- 목표', '## ✅ 학습 후 체크리스트\n\n- 항목', [], true);
         assert.deepStrictEqual(titles(noChecklist), ['학습 목표', '✅ 학습 후 체크리스트']);
         assert.strictEqual(call(ctx, 'mergeFixedSections')(base, '## 다른 섹션\n\n글', []), base, '새 섹션을 허용하지 않으면 버린다');

@@ -58,7 +58,16 @@ const LESSON_STRUCTURED_TABS = ['basicLearn', 'advLearn'];
 const LESSON_BANK_TABS = ['assessment', 'advAssessment'];
 const LESSON_HEADING_PREFIX = '^(?:[^\\s\\w가-힣]+\\s*)?(?:\\d+[.)]\\s*)?';
 const LESSON_OVERVIEW_TITLE = new RegExp(`${LESSON_HEADING_PREFIX}(?:차시\\s*|수업\\s*|학습\\s*)?개요(?!서)`);
-const LESSON_FRAME_TITLE = new RegExp(`${LESSON_HEADING_PREFIX}(?:학습\\s*목표|학습\\s*후\\s*체크리스트)`);
+// 학습 정보: 새로 만든 학습 탭에 코드가 넣는 차시 메타데이터 섹션(lesson-info.js). 학습 목표·체크리스트처럼 내용 섹션이 아니다(시간·그림·낭독 분량에 넣지 않는다).
+// 제목이 꼭 '학습 정보'인 섹션만이다(앞 이모지·번호와 뒤 (⏱ N분)은 된다). '학습 정보 시스템' 같은 내용 섹션은 아니다. 첫머리 정리·검수·분량 채우기·자동 수정·교수안·학습 목표 세트가 이 규칙 하나를 쓴다
+const LESSON_INFO_TITLE_TEXT = '학습\\s*정보\\s*(?:[(（]\\s*⏱[^)）]*[)）]\\s*)?$';
+const LESSON_INFO_TITLE = new RegExp(`${LESSON_HEADING_PREFIX}${LESSON_INFO_TITLE_TEXT}`);
+const LESSON_FRAME_TITLE = new RegExp(`${LESSON_HEADING_PREFIX}(?:학습\\s*목표|학습\\s*후\\s*체크리스트|${LESSON_INFO_TITLE_TEXT})`);
+
+// 섹션 제목이 학습 정보인가(앞뒤 빈칸은 뺀다). 이 파일보다 먼저 싣는 파일(gyosuan.js)은 부를 때 이 함수를 쓴다
+function isLessonInfoTitle(title) {
+    return LESSON_INFO_TITLE.test(String(title ?? '').trim());
+}
 const LESSON_CHECK_REF = /다시\s*보기\s*:\s*([^)）]+)/;
 const LESSON_RULE_NOTE = '개요, 목표와 내용의 대응은 기본학습·심화학습 탭에만 적용합니다. 코드 블록 안의 글과 이미지 태그는 어구 검사에서 뺍니다. 코드 예제 규칙은 코드를 다루는 차시에만 검사합니다. 코드 블록 주석은 모든 탭에서 검사하고(실행 결과·json·mermaid 블록은 빼고), AI 수정 제안과 도구의 \'코드 주석 넣기\'가 코드는 그대로 두고 주석만 더합니다.';
 // 앞 17줄은 원본 규칙표(course-rules.js)와 같은 차례다(convention-parity.test.js는 영역·종류로 못 찾은 줄을 같은 차례의 줄과 견준다).
@@ -279,15 +288,23 @@ function spokenWithoutSpans(text, open, close) {
     return out + text.slice(from);
 }
 
-// 강사가 소리 내어 읽는 글만 남긴다. 코드 블록(mermaid·실행 결과 포함, 닫지 않은 블록은 끝까지)·표·그림·HTML·서식 기호·(⏱ N분)은 빼고,
+// 이 줄부터 학습 정보 섹션(## 학습 정보) 안인가. # · ## 제목에서만 바뀐다(### 소제목은 그 섹션 안이다)
+function spokenInfoState(line, inside) {
+    const heading = line.match(/^(#{1,2})\s+(.*)$/);
+    return heading ? heading[1] === '##' && LESSON_INFO_TITLE.test(heading[2].trim()) : inside;
+}
+
+// 강사가 소리 내어 읽는 글만 남긴다. 코드 블록(mermaid·실행 결과 포함, 닫지 않은 블록은 끝까지)·표·그림·HTML·서식 기호·(⏱ N분)·학습 정보 섹션은 빼고,
 // 제목·학습 목표·개요·체크리스트의 글과 인라인 코드의 글(문장 안에서 읽는다)은 남긴다.
 // 그림·링크·태그 모양은 다음 여는 글자([·(·<)에서 멈춰, 닫지 않은 기호가 아주 많은 글도 길이에 비례해 센다
 function spokenText(md) {
     let fence = 0;
+    let info = false;
     const prose = String(md ?? '').replace(/\r\n/g, '\n').split('\n').filter(line => {
         const wasFenced = fence;
         fence = nextCodeFence(fence, line);
-        return !wasFenced && !fence && !SPOKEN_SKIP_LINE.test(line);
+        if (!wasFenced && !fence) info = spokenInfoState(line, info);
+        return !wasFenced && !fence && !info && !SPOKEN_SKIP_LINE.test(line);
     }).join('\n');
     return spokenWithoutSpans(spokenWithoutSpans(prose, /<!--/g, /-->/g), /<table\b/gi, /<\/table>/gi)
         .replace(/!\[[^\[\]]*\]\([^()]*\)/g, ' ')
@@ -313,12 +330,23 @@ function readAloudMinutes(md) {
     return Math.floor(spokenChars(md) / READ_CHARS_PER_MINUTE);
 }
 
+// 섹션 제목을 견줄 키: (⏱ N분)과 앞 이모지·번호 기호·빈칸을 뺀 글자. 체크리스트의 다시 보기와 ## 제목을 이 키로 잇는다
+const lessonSectionKey = text => String(text ?? '').replace(/\(⏱[^)]*\)|[^\w가-힣]/g, '');
+
+// 다시 보기 글(ref)이 가리키는 제목 키의 자리. 키가 같은 제목을 먼저, 없으면 한쪽이 다른 쪽을 품는 제목을 고른다. 없으면 -1
+function findLessonSection(keys, ref) {
+    const want = lessonSectionKey(ref);
+    if (!want) return -1;
+    const exact = keys.findIndex(title => title && title === want);
+    return exact >= 0 ? exact : keys.findIndex(title => title && (title.includes(want) || want.includes(title)));
+}
+
 // 체크리스트의 "다시 보기"로 목표와 내용 섹션의 대응을 확인한다. 제목 앞 이모지나 시간 표기는 달라도 같은 섹션으로 본다.
 function lintChecklistRefs(titles, checks) {
     const where = '학습 후 체크리스트';
-    const key = text => String(text).replace(/\(⏱[^)]*\)|[^\w가-힣]/g, '');
+    const key = lessonSectionKey;
     const keys = titles.map(key).filter(Boolean);
-    const resolve = ref => keys.find(title => title === key(ref)) || keys.find(title => title.includes(key(ref)) || key(ref).includes(title));
+    const resolve = ref => keys[findLessonSection(keys, ref)];
     const refs = checks.map(check => (check.match(LESSON_CHECK_REF) || [])[1]).filter(ref => ref && key(ref));
     const unknown = refs.filter(ref => !resolve(ref)).map(ref => ({ sev: 'warn', where, msg: '체크리스트의 다시 볼 섹션이 교안에 없습니다.', snip: ref }));
     const found = refs.map(resolve).filter(Boolean);
@@ -701,7 +729,8 @@ function lintLessonMarkdown(md, tabId, { objectiveCount = 0, codeTopic = false, 
         ...lintChecklistBullets(goals, checks),
         ...lessonLintQuestions(source).flatMap(block => lintQuestionBlock(block, checks, objectiveCount || Infinity)),
         ...(LESSON_BANK_TABS.includes(tabId) ? lintObjectiveCoverage(source, objectiveCount) : []),
-        ...lessonLintSections(source).flatMap(section => lintLessonPhrases(section.text, section.title)),
+        // 학습 정보는 버전·툴 이름을 적는 메타데이터 칸이라(lesson-info.js) 본문 어구 규칙(버전 의존 정보 등)을 보지 않는다
+        ...lessonLintSections(source).filter(section => !LESSON_INFO_TITLE.test(section.title)).flatMap(section => lintLessonPhrases(section.text, section.title)),
         ...lintCodeExamples(source, tabId, codeTopic),
         ...(codeComments ? lintCodeComments(source) : [])
     ];

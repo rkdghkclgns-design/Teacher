@@ -197,6 +197,12 @@ function exportStrip(html) {
     return exportImageSources(box);
 }
 
+// 체크리스트 다시 보기 링크(checklist-links.js)의 id 앞말: 차시와 탭마다 다르다(교과 문서에 차시·탭이 여럿 들어간다). 영문·숫자·-·_만
+const exportAnchorPrefix = (mod, tab) => `ls-${String(mod?.id ?? '').replace(/[^\w-]/g, '')}-${String(tab?.id ?? '').replace(/[^\w-]/g, '')}`;
+
+// 그린 탭의 다시 보기 링크와 제목 id에 앞말을 붙인다. 링크는 문서 안 #id로 가므로 파일 하나로 열어도 그 제목으로 간다
+const scopeExportLinks = (box, mod, tab) => (typeof scopeChecklistLinks === 'function' ? scopeChecklistLinks(box, exportAnchorPrefix(mod, tab)) : box);
+
 async function renderExportMermaid(box) {
     if (!window.mermaid) return;
     let count = 0;
@@ -223,11 +229,11 @@ async function lessonTabHtml(mod, tab, opts) {
     if (onScreen) {
         const drawnView = window.lessonViewForExport ? await window.lessonViewForExport(view) : view;
         const exported = opts.videos && window.whiteboardHtmlForExport ? await window.whiteboardHtmlForExport(drawnView) : { html: drawnView.innerHTML, videos: 0 };
-        const shownBox = exportStrip(exported.html);
+        const shownBox = scopeExportLinks(exportStrip(exported.html), mod, tab);
         const localVideos = exportLessonVideos(shownBox, mod, exportVideoMode(opts));
         return { html: mark(shownBox).innerHTML, videos: exported.videos, localVideos };
     }
-    const box = exportStrip(renderLessonHTML(preprocessMarkdown(inlineLessonImages(tab.md, mod.images))));
+    const box = scopeExportLinks(exportStrip(renderLessonHTML(preprocessMarkdown(inlineLessonImages(tab.md, mod.images)))), mod, tab);
     await renderExportMermaid(box);
     const localVideos = exportLessonVideos(box, mod, exportVideoMode(opts));
     return { html: mark(box).innerHTML, videos: 0, localVideos };

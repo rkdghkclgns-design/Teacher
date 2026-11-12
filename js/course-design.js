@@ -569,7 +569,7 @@ function designDialogHtml() {
                         <input id="design-target" value="직업훈련 수강생" class="block w-full mt-1 px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white">
                     </label>
                 </div>
-                <label class="block text-[0.6875rem] text-textMuted">과정 공통 사용 툴 (이름 | 버전, 한 줄에 하나. 바로 저장되며, 차시에 따로 적지 않으면 이 값을 씁니다)
+                <label class="block text-[0.6875rem] text-textMuted">과정 공통 사용 툴 (이름 | 버전 | 공식 페이지 주소, 한 줄에 하나. 주소는 https만이며 빼도 됩니다. 바로 저장되며, 차시에 따로 적지 않으면 이 값을 씁니다)
                     <textarea id="design-tools" data-design-tools rows="2" class="block w-full mt-1 px-2 py-1 text-xs bg-black/30 border border-white/10 rounded text-white" placeholder="ChatGPT 웹 | 2026-10 기준">${escapeHtml(designToolLines(globalState.courseDesign?.tools))}</textarea>
                 </label>
                 <div class="flex gap-2">
@@ -607,8 +607,9 @@ window.openCourseDesign = function () {
     renderDesignPreview();
 };
 
+// 과정 공통 툴 칸의 글(course-meta.js toolLineText: 이름 | 버전 | 주소)
 function designToolLines(tools) {
-    return (tools || []).map(tool => `${tool.name}${tool.version ? ` | ${tool.version}` : ''}`).join('\n');
+    return (tools || []).map(toolLineText).join('\n');
 }
 
 // 과정 전체에 걸린 값은 초안과 달리 바로 저장한다

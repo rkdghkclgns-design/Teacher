@@ -158,8 +158,10 @@ async function executeMerge() {
             const kept = filled.md && typeof keepVolumeText === 'function' ? ` ${await keepVolumeText(newLesson, filled.md, 'basicLearn')}` : '';
             return window.showAlert(`${MERGE_GONE_TEXT}${kept}`);
         }
-        newLesson.content = filled.md;
-        newLesson.tabContents = { ...(newLesson.tabContents || {}), basicLearn: filled.md };
+        // 첫머리를 개요 → 학습 정보 → 학습 목표 차례로 두고 학습 정보를 새 차시의 메타데이터로 쓴다(lesson-info.js)
+        const md = typeof applyLessonInfoFrame === 'function' ? applyLessonInfoFrame(filled.md, { mod: newLesson, tabId: 'basicLearn', lessons: subj.lessons }) : filled.md;
+        newLesson.content = md;
+        newLesson.tabContents = { ...(newLesson.tabContents || {}), basicLearn: md };
         newLesson.status = 'done';
 
         await saveState();
