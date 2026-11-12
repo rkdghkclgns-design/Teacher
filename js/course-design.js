@@ -195,6 +195,9 @@ function enforceUnitShape(unit) {
 // 과정 전체 시간 = 단원 수 × 40시간
 const designCourseHours = unitCount => Math.max(0, Number(unitCount) || 0) * DESIGN_UNIT_TOTAL_HOURS;
 
+// 지금 과정의 단원 수: 차시(최종 평가 제외)가 하나라도 있는 교과. 과정 목표 시간(course-overview.js)과 교과로 추가한 뒤의 과정 총 시간이 이 수로 센다
+const courseUnitCount = () => (globalState.subjects || []).filter(subject => (subject.lessons || []).some(lesson => lesson && lesson.id !== 'mainQuest')).length;
+
 // 단원마다 40시간·5차시. requestedHours: 총 시간 칸에 적힌 값(단원 수로 정한 시간과 다르면 화면에 바꾼 까닭을 보인다).
 // parsed.hours의 "(N시간)" 표시는 단원 시간이 고정이라 쓰지 않는다
 function createCourseDesign(parsed, requestedHours, target) {
@@ -877,19 +880,21 @@ async function applyCourseDesign(button) {
     if (!(await designConfirmed(confirmDesignMismatch)) || !_designDraft) return;
     _designBusy = true;
     button.disabled = true;
-    // 단원은 늘 5차시 × 8시간으로 넣고, 과정 총 시간은 단원 수 × 40시간이다(고친 진행 단계는 그대로 둔다)
+    // 단원은 늘 5차시 × 8시간으로 넣는다(고친 진행 단계는 그대로 둔다)
     const units = _designDraft.units.map(enforceUnitShape);
     const design = { ..._designDraft, units, totalHours: designCourseHours(units.length) };
     const subjects = designSubjects(design);
     const hasContent = globalState.subjects.some(s => (s.lessons || []).some(l => l.content));
     if (!hasContent) globalState.courseTitle = design.title;
     globalState.subjects.push(...subjects);
-    globalState.courseDesign = { ...globalState.courseDesign, title: design.title, goal: design.goal, target: design.target, totalHours: design.totalHours };
+    // 과정 총 시간은 이번에 추가한 단원만이 아니라 과정의 모든 단원 × 40시간이다(먼저 추가한 단원의 8시간 차시를 줄이지 않게)
+    const courseHours = designCourseHours(courseUnitCount());
+    globalState.courseDesign = { ...globalState.courseDesign, title: design.title, goal: design.goal, target: design.target, totalHours: courseHours };
     const failed = await assignSubjectsNcs(subjects);
     await saveState();
     closeCourseDesign();
     renderOverview();
-    const added = `교과 ${subjects.length}개(차시 ${subjects.length * DESIGN_LESSONS_PER_UNIT}개, 과정 총 ${design.totalHours}시간)를 추가했습니다.`;
+    const added = `교과 ${subjects.length}개(차시 ${subjects.length * DESIGN_LESSONS_PER_UNIT}개)를 추가했습니다. 과정 총 ${courseHours}시간(단원 ${courseUnitCount()}개 × ${DESIGN_UNIT_TOTAL_HOURS}시간)입니다.`;
     if (failed) window.showToast?.(`${added} NCS 자동 배정에 실패한 교과 ${failed}개는 NCS 관리에서 다시 시도해주세요.`, 'warning');
     else window.showToast?.(textModelHasKey() ? added : `${added} NCS는 교과의 NCS 관리에서 선택해주세요.`, 'success');
 }

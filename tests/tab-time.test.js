@@ -226,7 +226,7 @@ async function run(name, fn) {
         assert.ok(!call(pure, 'lessonGenBrief')(lesson, 'advLearn').includes('섹션 하나당 분량') && call(pure, 'lessonGenBrief')(lesson, 'advPrac').includes('섹션 하나당 분량'));
     });
 
-    await run('심화학습 탭 생성: 초안 뒤 분량 보강으로 낭독 목표(기본 360분)를 넘기고 (⏱) 합계는 360분이다. \'심화\'로 시작하는 섹션도 늘리고 기본학습은 건드리지 않는다', async () => {
+    await run('심화학습 탭 생성: 초안 뒤 분량 보강으로 낭독 목표(기본 360분)를 넘기고 (⏱) 합계는 목표 이상이며 초안에 적힌 시간(460분)을 깎지 않는다. \'심화\'로 시작하는 섹션도 늘리고 기본학습은 건드리지 않는다', async () => {
         const mod = lessonOf();
         const ctx = genContext();
         ctx.currentMod = mod;
@@ -236,7 +236,7 @@ async function run(name, fn) {
         assert.deepStrictEqual(result, { ok: true, partial: false });
         const saved = mod.tabContents.advLearn;
         assert.ok(call(ctx, 'spokenChars')(saved) >= TARGET_CHARS, String(call(ctx, 'spokenChars')(saved)));
-        assert.strictEqual(call(ctx, 'volumeLabelSum')(saved), LEARN);
+        assert.ok(call(ctx, 'volumeLabelSum')(saved) >= call(ctx, 'volumeLabelSum')(advDraft()), '적힌 시간 아래로 줄이지 않는다(19차 검토)');
         assert.ok(volumePrompts(ctx).length > 5 && volumePrompts(ctx).every(text => text.startsWith('volume_expand|advLearn|') && text.split('|')[2].includes('심화 이론')), volumePrompts(ctx)[0]);
         assert.ok(statuses.some(text => text.includes('심화학습 분량 채우는 중') && text.includes(`/${LEARN}분`)), statuses.find(text => text.includes('낭독')));
         assert.ok(ctx.alerts.at(-1).includes('심화학습 탭이 생성되었습니다. 낭독 약') && ctx.alerts.at(-1).includes(`(목표 ${LEARN}분)`), ctx.alerts.at(-1));

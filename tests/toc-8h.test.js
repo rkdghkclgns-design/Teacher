@@ -55,7 +55,7 @@ function pureContext() {
 }
 
 // 과정 설계·블록 다시 설계(course-flow.test.js와 같은 파일). AI 답은 ai(프롬프트)로 정한다
-const FLOW_FILES = ['kbuilder/ncs-catalog.js', 'ai-errors.js', 'lesson-lint.js', 'lesson-opening.js', 'course-qbank.js', 'lesson-pipeline.js', 'ai-routing.js', 'course-ncs.js', 'course-design.js', 'course-design-edit.js', 'course-sessions.js', 'course-meta.js', 'lesson-editor-tools.js', 'lesson-attachments.js', 'tabs.js', 'course-flow.js'];
+const FLOW_FILES = ['kbuilder/ncs-catalog.js', 'ai-errors.js', 'lesson-lint.js', 'lesson-opening.js', 'course-qbank.js', 'lesson-pipeline.js', 'ai-routing.js', 'course-ncs.js', 'course-design.js', 'course-design-edit.js', 'course-sessions.js', 'course-meta.js', 'lesson-editor-tools.js', 'lesson-attachments.js', 'tabs.js', 'course-flow.js', 'course-overview.js'];
 function flowContext(ai = async () => { throw new Error('호출되면 안 됨'); }) {
     const ctx = {
         console: { log() {}, warn() {}, error() {} },
@@ -143,14 +143,15 @@ function genContext() {
     return ctx;
 }
 
-const LABELS = [60, 60, 45, 60, 60, 45, 60, 60];
-// 학습 목표·개요(⏱ 10분)·내용 섹션 8개·체크리스트로 된 약 2만 자 초안
-function draftMd() {
+const LABELS = [60, 60, 45, 60, 60, 45, 60, 60]; // 예전 480분 목표로 쓴 초안의 시간(개요 포함 460분)
+const SHORT_LABELS = [20, 20, 15, 20, 20, 15, 20, 20]; // 목표보다 짧게 적은 시간(개요 포함 160분)
+// 학습 목표·개요(⏱ 10분)·내용 섹션 8개·체크리스트로 된 초안(섹션마다 body자, 기본 약 2만 자)
+function draftMd(labels = LABELS, body = 2400) {
     return [
         '# 📝 반복과 합계',
         '## 학습 목표\n\n- 반복문으로 합계를 구하는 코드를 작성할 수 있습니다.\n- 조건에 맞는 값을 골라 세는 코드를 작성할 수 있습니다.',
         '## 개요 (⏱ 10분)\n\n- 값을 하나씩 더해야 하는 상황입니다.\n- 반복 구조로 해결합니다.',
-        ...LABELS.map((minutes, i) => `## ${i + 1}. 내용 ${i + 1} (⏱ ${minutes}분)\n\n${filler(2400)}\n\n<br>`),
+        ...labels.map((minutes, i) => `## ${i + 1}. 내용 ${i + 1} (⏱ ${minutes}분)\n\n${filler(body)}\n\n<br>`),
         '## ✅ 학습 후 체크리스트\n\n- 합계를 구했습니다. (다시 보기: 1. 내용 1)\n- 값을 골라 셌습니다. (다시 보기: 2. 내용 2)'
     ].join('\n\n');
 }
@@ -160,6 +161,8 @@ const aiModules = n => Array.from({ length: n }, (_, i) => ({
     title: `블록${i + 1}`, minutes: i % 2 ? 600 : 90, objectives: [`목표 ${i + 1}을 작성할 수 있습니다.`],
     flow: [{ phase: '도입', title: '시작', minutes: 10 }, { phase: '전개', title: `본문 ${i + 1}`, minutes: 70 }, { phase: '정리', title: '끝', minutes: 10 }]
 }));
+// 섹션마다 (⏱) 분(제목 키 → 분)
+const labelMap = (ctx, md) => new Map(call(ctx, 'mdSections')(md).map(section => [call(ctx, 'lockTitleKey')(section.title), call(ctx, 'volumeTitleMinutes')(section.title)]));
 const shapeOf = modules => modules.map(module => [module.minutes, sum((module.flow || []).map(step => step.minutes))]);
 const FIVE_DAYS = Array.from({ length: 5 }, () => [480, 480]);
 
@@ -205,7 +208,8 @@ const FIVE_DAYS = Array.from({ length: 5 }, () => [480, 480]);
         assert.ok(hint.includes('정하지 않으면 120분으로 만듭니다') && hint.includes('기본 360분') && hint.includes('420분 이상이면 학습은 60분'), hint);
         const fields = call(pure, 'lessonGenFieldsHtml')('run', {});
         assert.ok(fields.includes('placeholder="120"') && !fields.includes('90~120'));
-        ['course-design.js', 'course-flow.js', 'lesson-review.js', 'lesson-lint.js', 'convention.js', 'ui.js', 'tutorial.js'].forEach(file => assert.ok(!source(file).includes('90~120'), `${file}에 90~120분이 남았다`));
+        // ui.js는 lesson-lint.js를 싣지 않은 화면의 대체 지시에만 예전 90~120분을 남긴다(아래 '대체 값' 테스트)
+        ['course-design.js', 'course-flow.js', 'lesson-review.js', 'lesson-lint.js', 'convention.js', 'tutorial.js'].forEach(file => assert.ok(!source(file).includes('90~120'), `${file}에 90~120분이 남았다`));
     });
 
     /* ---------- 단원 = 5차시 × 480분 ---------- */
@@ -277,7 +281,7 @@ const FIVE_DAYS = Array.from({ length: 5 }, () => [480, 480]);
         assert.ok(subjects[0].lessons.every(lesson => lesson.objectives[0] === '옛 목표를 설명할 수 있습니다.' && sum(lesson.flow.map(step => step.minutes)) === 480), '옛 블록을 나눠도 목표를 지닌다');
         assert.ok(subjects[0].description.includes('40시간(5차시 × 하루 8시간)'));
         assert.strictEqual(ctx.globalState.courseDesign.totalHours, 80);
-        assert.ok(ctx.toasts.at(-1).message.startsWith('교과 2개(차시 10개, 과정 총 80시간)를 추가했습니다.'), ctx.toasts.at(-1).message);
+        assert.ok(ctx.toasts.at(-1).message.startsWith('교과 2개(차시 10개)를 추가했습니다. 과정 총 80시간(단원 2개 × 40시간)입니다.'), ctx.toasts.at(-1).message);
         assert.ok(call(ctx, 'lessonHoursChip')(subjects[0].lessons[0]).includes('value="8"'), '차시 시간 칸에 8시간');
         assert.ok(call(ctx, 'courseDesignMd')().includes('총 시간: 80시간') && call(ctx, 'courseDesignMd')().includes('### 시간표 (1교시 = 1시간)'), '과정 설계서');
     });
@@ -340,17 +344,17 @@ const FIVE_DAYS = Array.from({ length: 5 }, () => [480, 480]);
     });
 
     /* ---------- 분량 채우기·(⏱)·탭 위 표시·예고 ---------- */
-    await run('분량 채우기: 기본실습 180분인 차시의 기본학습은 300분까지 채우고 (⏱) 합계를 300분으로 다시 매긴다. 정하지 않으면 360분', async () => {
+    await run('분량 채우기: 기본실습 180분인 차시의 기본학습은 300분까지 채우고 목표보다 짧게 적은 (⏱)는 300분까지 올린다. 정하지 않으면 360분', async () => {
         const ctx = genContext();
         const mod = { id: 1, title: '반복과 합계', description: '합계', gen: { basicPracMinutes: 180 } };
-        const result = plain(await call(ctx, 'ensureSpokenVolume')({ mod, tabId: 'basicLearn', md: draftMd() }));
+        const result = plain(await call(ctx, 'ensureSpokenVolume')({ mod, tabId: 'basicLearn', md: draftMd(SHORT_LABELS) }));
         assert.deepStrictEqual([result.targetMinutes, result.targetChars, result.reason, result.short], [300, 75000, 'target', false]);
         assert.strictEqual(call(ctx, 'volumeLabelSum')(result.md), 300, '(⏱) 합계는 새 목표');
         assert.ok(ctx.prompts.every(text => text.endsWith('|300')) && ctx.prompts.length <= 15, `호출 상한은 75,000자 ÷ 5,000 = 15번: ${ctx.prompts.length}`);
         const plainCtx = genContext();
-        const fallback = plain(await call(plainCtx, 'ensureSpokenVolume')({ mod: { id: 2, title: '반복' }, tabId: 'advLearn', md: draftMd() }));
+        const fallback = plain(await call(plainCtx, 'ensureSpokenVolume')({ mod: { id: 2, title: '반복' }, tabId: 'advLearn', md: draftMd(SHORT_LABELS) }));
         assert.deepStrictEqual([fallback.targetMinutes, call(plainCtx, 'volumeLabelSum')(fallback.md)], [360, 360]);
-        assert.strictEqual(call(ctx, 'volumeLabelSum')(call(ctx, 'retimeVolumeChoice')(draftMd(), { targetMinutes: call(ctx, 'learnTargetMinutes')(mod, 'basicLearn') })), 300, '미리 보기에서 고른 글도 새 목표로 다시 매긴다');
+        assert.strictEqual(call(ctx, 'volumeLabelSum')(call(ctx, 'retimeVolumeChoice')(draftMd(SHORT_LABELS), { targetMinutes: call(ctx, 'learnTargetMinutes')(mod, 'basicLearn') })), 300, '미리 보기에서 고른 글도 목표보다 짧으면 새 목표까지 올린다');
     });
 
     await run('탭 생성·탭 위 표시·검수 패널: 학습 탭 목표가 그 트랙 실습 시간을 따른다', async () => {
@@ -368,10 +372,94 @@ const FIVE_DAYS = Array.from({ length: 5 }, () => [480, 480]);
         // 탭 생성은 그 목표를 지시에 넘긴다(스텁 프롬프트 끝 칸)
         const gen = genContext();
         gen.currentMod = { id: 1, title: '반복', description: '반복', gen: { basicPracMinutes: 180 }, tabContents: {} };
-        gen.draft = `${draftMd()}\n<!-- END -->`;
+        gen.draft = `${draftMd(SHORT_LABELS)}\n<!-- END -->`;
         await call(gen, 'generateTabContent')(1, 'basicLearn', { quiet: true });
         assert.ok(gen.prompts[0].startsWith('tab_content|basicLearn|') && gen.prompts[0].includes('|300'), gen.prompts[0].slice(0, 80));
         assert.strictEqual(call(gen, 'volumeLabelSum')(gen.currentMod.tabContents.basicLearn), 300);
+    });
+
+    /* ---------- 검토 반영: 예전 480분 탭의 (⏱)는 깎지 않는다 ---------- */
+    await run('예전 480분 탭: 이미 목표(360분)를 넘는 탭은 분량 채우기·미리 보기 반영·다시 붙이기에서 (⏱)를 그대로 둔다', async () => {
+        const ctx = genContext();
+        const full = draftMd(LABELS, 12000); // 낭독 약 384분, 시간은 예전 480분 기준(460분)
+        const result = plain(await call(ctx, 'ensureSpokenVolume')({ mod: { id: 1, title: '반복' }, tabId: 'basicLearn', md: full }));
+        assert.deepStrictEqual([result.targetMinutes, result.added, result.reason, ctx.prompts.length], [360, 0, 'target', 0], '채울 것이 없다');
+        assert.deepStrictEqual([...labelMap(ctx, result.md)], [...labelMap(ctx, full)], '(⏱)를 360분으로 다시 매기지 않는다');
+        assert.strictEqual(call(ctx, 'volumeLabelSum')(call(ctx, 'retimeVolumeChoice')(full, { targetMinutes: 360 })), 460, '미리 보기에서 고른 글도 목표 이상이면 그대로');
+        assert.strictEqual(call(ctx, 'rebaseVolumeParts')(full, [], { targetMinutes: 360 }), full, '붙일 소주제가 없으면 그대로');
+        const chip = ctx.elements['lesson-volume-chip'];
+        vm.runInContext("currentLessonTab = 'basicLearn'; _lessonPanel = null;", ctx);
+        call(ctx, 'syncVolumeChip')({ id: 1, title: '반복', tabContents: { basicLearn: full } });
+        assert.ok(chip.className.includes('emerald') && chip.innerHTML.includes('/ 목표 360분') && !chip.innerHTML.includes('<button'), `탭 위 표시는 목표를 넘어도 모자라다고 하지 않는다: ${chip.innerHTML}`);
+        assert.ok(plain(call(ctx, 'lintLessonMarkdown')(full, 'basicLearn')).every(issue => !/⏱|낭독|분량/.test(`${issue.msg}`)), '검수도 목표를 넘는 시간을 지적하지 않는다');
+    });
+
+    await run('분량 채우기로 글을 붙여도 섹션마다 적힌 (⏱) 아래로는 줄이지 않는다(합계는 목표 이상). 줄이지 않기는 분량 채우기에서만 켠다', async () => {
+        const ctx = genContext();
+        const short = draftMd(); // 시간은 460분인데 글은 낭독 약 77분
+        const result = plain(await call(ctx, 'ensureSpokenVolume')({ mod: { id: 1, title: '반복' }, tabId: 'basicLearn', md: short }));
+        assert.ok(result.added > 0 && result.spoken >= 360 * 250, '목표까지 채웠다');
+        const before = labelMap(ctx, short);
+        const after = labelMap(ctx, result.md);
+        [...before].forEach(([key, minutes]) => assert.ok(after.get(key) >= minutes, `${key}: ${after.get(key)} < ${minutes}`));
+        assert.ok(call(ctx, 'volumeLabelSum')(result.md) >= 460);
+        const rebased = call(ctx, 'rebaseVolumeParts')(short, result.parts, { targetMinutes: 360 });
+        [...labelMap(ctx, short)].forEach(([key, minutes]) => assert.ok(labelMap(ctx, rebased).get(key) >= minutes, `다시 붙인 글 ${key}`));
+        const retime = (keepWritten) => labelMap(ctx, call(ctx, 'retimeSections')(short, 360, new Set(), 'basicLearn', { keepWritten }));
+        assert.ok([...before].every(([key, minutes]) => retime(true).get(key) >= minutes) && [...before].some(([key, minutes]) => retime(false).get(key) < minutes), '직접 부르는 retimeSections는 예전처럼 목표에 맞춰 줄일 수 있다');
+    });
+
+    /* ---------- 검토 반영: 과정 총 시간과 시간 맞추기 ---------- */
+    const fiveDays = (id, title = `교과 ${id}`) => ({ id, title, lessons: Array.from({ length: 5 }, (_, i) => ({ id: `${id}_${i}`, title: `${title} ${i + 1}`, hours: 8, minutes: 480 })) });
+
+    await run('교과로 추가를 다시 해도 과정 총 시간은 모든 단원 × 40시간이고, 과정 시간 막대는 맞추기 단추 없이 규칙을 보인다', async () => {
+        const ctx = flowContext();
+        ctx.globalState.subjects = [fiveDays('a'), fiveDays('b'), fiveDays('c')];
+        ctx.globalState.courseDesign = { title: '과정', totalHours: 120 };
+        vm.runInContext("_designDraft = createCourseDesign({ title: '과정', units: ['새 단원'] }, 40, '수강생')", ctx);
+        await call(ctx, 'applyCourseDesign')({ disabled: false });
+        assert.deepStrictEqual([ctx.globalState.subjects.length, ctx.globalState.courseDesign.totalHours], [4, 160], '이번에 더한 40시간만이 아니다');
+        assert.ok(ctx.toasts.at(-1).message.startsWith('교과 1개(차시 5개)를 추가했습니다. 과정 총 160시간(단원 4개 × 40시간)입니다.'), ctx.toasts.at(-1).message);
+        const bar = call(ctx, 'renderCourseTimeBar')();
+        assert.ok(bar.includes('합계 160시간 / 목표 160시간') && bar.includes('목표 = 단원 4개 × 40시간(1단원 = 5차시 × 하루 8시간)') && !bar.includes('fitSubjectHours'), bar);
+    });
+
+    await run('과정 목표는 저장된 옛 총 시간이 아니라 단원 수 × 40시간이고, 맞추기는 확인 뒤 40시간이 아닌 교과만 맞추며 5차시 × 8시간 교과는 그대로 둔다', async () => {
+        const ctx = flowContext();
+        const shaped = fiveDays('a', '설계');
+        const shapedLessons = shaped.lessons;
+        const old = { id: 'b', title: '예전', lessons: [{ id: 'mainQuest', title: '퀘스트' }, { id: 1, title: '가', hours: 3, flow: [{ phase: '전개', title: '본문', minutes: 180 }] }, { id: 2, title: '나', hours: 1 }] };
+        ctx.globalState.subjects = [shaped, old];
+        ctx.globalState.courseDesign = { totalHours: 44 }; // 저장된 옛 총 시간(지금 합계와 같다)
+        assert.strictEqual(call(ctx, 'courseTargetMinutes')(), 80 * 60, '단원 2개 × 40시간');
+        assert.ok(call(ctx, 'renderCourseTimeBar')().includes('합계 44시간 / 목표 80시간') && call(ctx, 'renderCourseTimeBar')().includes('fitSubjectHours'));
+        const confirms = [];
+        ctx.showConfirm = (message, onConfirm) => confirms.push({ message, onConfirm });
+        call(ctx, 'fitSubjectHours')();
+        assert.ok(confirms.length === 1 && confirms[0].message.includes('40시간이 아닌 교과 1개') && confirms[0].message.includes('5차시 × 8시간 교과는 그대로 둡니다'), confirms[0]?.message);
+        assert.strictEqual(call(ctx, 'courseLessonMinutes')(old), 240, '확인하기 전에는 바꾸지 않는다');
+        await confirms[0].onConfirm();
+        assert.ok(shaped.lessons === shapedLessons && shapedLessons.every(lesson => lesson.hours === 8 && lesson.minutes === 480), '5차시 × 8시간 교과는 손대지 않는다');
+        assert.deepStrictEqual([call(ctx, 'courseLessonMinutes')(old), old.lessons[0].id, sum(old.lessons[1].flow.map(step => step.minutes))], [2400, 'mainQuest', call(ctx, 'lessonMinutes')(old.lessons[1])], '예전 교과만 40시간으로(진행 단계도 따라간다)');
+        assert.ok(!call(ctx, 'renderCourseTimeBar')().includes('fitSubjectHours'), '맞춘 뒤에는 단추가 없다');
+        call(ctx, 'fitSubjectHours')();
+        assert.strictEqual(confirms.length, 1, '맞출 교과가 없으면 묻지 않는다');
+    });
+
+    /* ---------- 검토 반영: lesson-lint.js 없이도 실습 지시를 만든다 ---------- */
+    await run('실습 지시 대체 값: lesson-lint.js를 싣지 않은 화면에서도 멈추지 않고 예전 지시(90~120분)를 쓰며, 싣으면 기본 120분이다', () => {
+        const bare = { console: { log() {}, warn() {}, error() {} }, JSON, Map, Set, Promise, Date, localStorage: { getItem: () => null, setItem() {} }, addEventListener() {}, location: { hash: '' },
+            document: { addEventListener() {}, getElementById: () => null, querySelector: () => null, querySelectorAll: () => [], createElement: () => fakeElement(), body: { appendChild() {} } } };
+        bare.window = bare;
+        vm.createContext(bare);
+        ['data.js', 'ui.js'].forEach(file => vm.runInContext(source(file), bare));
+        assert.strictEqual(vm.runInContext("typeof practiceVolumeSpec", bare), 'undefined');
+        assert.deepStrictEqual(plain(call(bare, 'practicePromptValues')('advPrac', 0)), { time: '90~120분', total: '90~120분', chars: '8,000', lines: '250', parts: '3', tasks: '2' });
+        assert.ok(call(bare, 'basicPracTabPrompt')(180).includes('[시간 배분 — 이 탭: 90~120분]'));
+        assert.strictEqual(call(bare, 'tabContinueVolumeRule')('basicPrac', { practiceMinutes: 180 }), '');
+        const promptCtx = promptContext();
+        assert.strictEqual(plain(call(promptCtx, 'practicePromptValues')('advPrac', 0)).time, '120분');
+        assert.ok(call(promptCtx, 'tabContinueVolumeRule')('basicPrac', {}).includes('이 탭은 120분 실습입니다.'));
     });
 
     await run('예고: 학습 탭마다 그 트랙의 목표로 긴 호출을 세고, 목표가 다르면 범위를 보인다', () => {

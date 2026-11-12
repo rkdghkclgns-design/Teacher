@@ -127,6 +127,12 @@ function draftMd({ body = 2400, extra = [], sectionBody = null } = {}) {
 
 const MOD = { id: 1, title: '반복과 합계', description: '합계를 구합니다.' };
 const ensure = ctx => options => call(ctx, 'ensureSpokenVolume')({ mod: MOD, tabId: 'basicLearn', ...options });
+// 19차 검토: 분량 채우기는 (⏱)을 적힌 시간 아래로 줄이지 않는다. 합계는 목표 이상이고, 섹션마다 처음 적힌 시간 이상이다
+function labelsKept(ctx, before, after, target = LEARN) {
+    const minutesOf = md => new Map(call(ctx, 'mdSections')(md).map(section => [call(ctx, 'lockTitleKey')(section.title), call(ctx, 'volumeTitleMinutes')(section.title)]));
+    const now = minutesOf(after);
+    return call(ctx, 'volumeLabelSum')(after) >= target && [...minutesOf(before)].every(([key, minutes]) => !now.has(key) || now.get(key) >= minutes);
+}
 const titleKeys = (ctx, md) => plain(call(ctx, 'mdSections')(md).map(section => call(ctx, 'lockTitleKey')(section.title)));
 const sectionOf = (ctx, md, test) => call(ctx, 'mdSections')(md).find(section => test(section.title));
 const volumePrompts = ctx => ctx.prompts.filter(text => text.startsWith('volume_expand'));
@@ -316,7 +322,7 @@ async function run(name, fn) {
     });
 
     /* ---------- 분량 채우기 ---------- */
-    await run('분량 채우기: 부탁의 75%만 쓰는 모델로도 18번 안에 목표에 닿고, 학습 틀과 고정 섹션은 그대로, 라벨 합계는 360분', async () => {
+    await run('분량 채우기: 부탁의 75%만 쓰는 모델로도 18번 안에 목표에 닿고, 학습 틀과 고정 섹션은 그대로, 라벨은 적힌 시간 아래로 줄이지 않는다', async () => {
         const ctx = genContext();
         const lockedText = `## 9. 고정 섹션 (⏱ 30분)\n\n${filler(1200)}`;
         const md = draftMd({ extra: [lockedText] });
@@ -337,7 +343,7 @@ async function run(name, fn) {
             const home = after.find(section => section.text.includes(`### ■ 보강 ${k}\n`));
             assert.ok(home && call(ctx, 'lockTitleKey')(home.title) === call(ctx, 'lockTitleKey')(sectionTitle), `보강 ${k}는 ${sectionTitle} 안에`);
         });
-        assert.strictEqual(call(ctx, 'volumeLabelSum')(result.md), LEARN, '개요 10분과 고정 30분을 포함해 360분');
+        assert.ok(labelsKept(ctx, md, result.md), '초안(개요 10분·고정 30분 포함 490분)의 시간을 목표 360분으로 깎지 않는다');
         const asked = ctx.payloads.filter(payload => payload.contents[0].parts[0].text.startsWith('volume_expand'));
         assert.ok(asked.length === result.calls && asked.every(payload => payload.waitSignal === controller.signal && !('signal' in payload) && payload.generationConfig.maxOutputTokens === 65536 && payload.timing === 'long'));
         assert.ok(ctx.sections.every(item => item.filling), '채우는 동안은 창을 닫기 전에 묻는다');
@@ -384,7 +390,7 @@ async function run(name, fn) {
         assert.strictEqual(result.reason, 'target');
         const sections = call(ctx, 'mdSections')(result.md);
         assert.ok(sections.at(-1).title.includes('학습 후 체크리스트') && !sections.at(-1).text.includes('### ■'), '체크리스트는 맨 끝이고 소주제가 붙지 않는다');
-        assert.strictEqual(call(ctx, 'volumeLabelSum')(result.md), LEARN);
+        assert.ok(labelsKept(ctx, md, result.md));
         assert.ok(new Set(ctx.sections.map(item => item.sectionTitle)).size >= 6, '여러 섹션을 고른다');
     });
 
@@ -466,7 +472,7 @@ async function run(name, fn) {
         assert.ok(saved.includes('<!-- [IMG: "1. 내용 1"] -->'), '초안의 ## 섹션에 그림 자리를 넣었다');
         assert.ok(!/\[IMG:[^\]]*⏱/.test(saved), '그림 자리 검색어에는 (⏱ N분)을 넣지 않는다(다시 매긴 뒤 낡은 시간이 남지 않게)');
         assert.ok(!saved.includes('[IMG: "학습 후 체크리스트'), '체크리스트에는 그림 자리를 넣지 않는다');
-        assert.strictEqual(call(ctx, 'volumeLabelSum')(saved), LEARN);
+        assert.ok(labelsKept(ctx, draftMd(), saved));
     });
 
     await run('탭 생성: 필수 지적이 있으면 분량을 채운 뒤에만 고치고, 기본학습이 아니거나 최종 평가·이어쓰기 실패면 분량을 채우지 않는다', async () => {
@@ -959,7 +965,7 @@ async function run(name, fn) {
         ['9. 심화 (⏱ 30분)', '🎯 퀘스트 목표', '📋 수행 단계'].forEach(title => {
             assert.strictEqual(after.find(section => section.title === title)?.text, call(ctx, 'mdSections')(md).find(section => section.title === title).text, `${title}은 그대로`);
         });
-        assert.strictEqual(call(ctx, 'volumeLabelSum')(result.md), LEARN, '개요 10분과 심화 30분을 포함해 360분');
+        assert.ok(labelsKept(ctx, md, result.md), '개요 10분과 심화 30분을 포함한 초안 시간을 깎지 않는다');
     });
 
     await run('(⏱ N분) 다시 매기기: 그대로 두는 라벨이 5분 단위가 아니어도 합계가 목표 시간 아래로 내려가지 않는다', () => {
@@ -1124,11 +1130,12 @@ async function run(name, fn) {
         const idle = genContext();
         idle.currentMod = lessonOf(bad);
         idle.callGemini = volumeModel(idle, { replyFor: k => reply(`### ■ 짧은 보강 ${k}\n\n${filler(300)}`) });
-        answerPreviewWith(idle, 'apply'); // 라벨 합계(460분)가 목표에서 벗어나 시간만 다시 매긴 글을 보인다
+        answerPreviewWith(idle, 'apply'); // 늘린 소주제가 없으면 라벨 합계(460분)가 목표(360분)보다 길어도 다시 매기지 않아 미리 보기 없이 알린다
         await call(idle, 'fillLessonVolume')(1);
         assert.strictEqual(idle.prompts.filter(text => text.includes('[작업]')).length, 0, '있던 글만 고치는 호출은 하지 않는다');
         assert.ok(idle.prompts.filter(text => text.startsWith('volume_expand')).length === 2, '잇달아 늘지 않아 두 번에 멈췄다');
-        assert.ok(idle.toasts.at(-1).message.includes(`목표 ${LEARN}분에 못 미칩니다`), JSON.stringify(idle.toasts.at(-1)));
+        assert.ok(idle.alerts.at(-1).includes(`목표 ${LEARN}분에 못 미칩니다`), String(idle.alerts.at(-1)));
+        assert.strictEqual(idle.currentMod.tabContents.basicLearn, bad, '(⏱) 시간도 글도 그대로');
     });
 
     await run('탭 생성: 채운 뒤(그림 단계)에 차시가 지워지거나 불러온 내용으로 바뀌면 그 차시에 쓰지 않고 채운 글을 작업 기록에 남기며, 만들었다고 하지 않는다', async () => {
@@ -1254,7 +1261,7 @@ async function run(name, fn) {
             const ctx = genContext();
             ctx.callGemini = volumeModel(ctx, { deliver: 0.75 });
             const result = await ensure(ctx)({ md: timedDraft(), tabId });
-            assert.ok(result.added > 0 && call(ctx, 'volumeLabelSum')(result.md) === LEARN, `${tabId}: 채우고 다시 매겼다`);
+            assert.ok(result.added > 0 && labelsKept(ctx, timedDraft(), result.md), `${tabId}: 채우고 다시 매겼다(적힌 시간은 깎지 않는다)`);
             assert.deepStrictEqual(refsOf(ctx, result.md), FRESH_REFS, `${tabId}: 채운 글`);
             assert.deepStrictEqual(checklistIssues(ctx, result.md, tabId), [], `${tabId}: 검수가 다시 볼 섹션을 찾는다`);
             const rebased = call(ctx, 'rebaseVolumeParts')(timedDraft(), result.parts, { targetMinutes: LEARN, tabId });
@@ -1262,7 +1269,7 @@ async function run(name, fn) {
             // 미리 보기에서 채운 섹션과 예전 체크리스트를 함께 고른 글: 라벨 합계가 맞아 다시 매기지 않아도 옛 시간을 뗀다
             const mixed = result.md.replace(checklistText(ctx, result.md), timedChecklist());
             const chosen = call(ctx, 'retimeVolumeChoice')(mixed, { targetMinutes: LEARN, tabId });
-            assert.deepStrictEqual([refsOf(ctx, chosen), call(ctx, 'volumeLabelSum')(chosen)], [FRESH_REFS, LEARN], `${tabId}: 고른 글`);
+            assert.deepStrictEqual([refsOf(ctx, chosen), call(ctx, 'volumeLabelSum')(chosen)], [FRESH_REFS, call(ctx, 'volumeLabelSum')(mixed)], `${tabId}: 고른 글(목표 이상이라 시간은 그대로, 다시 보기의 옛 시간만 뗀다)`);
         }
     });
 
@@ -1287,7 +1294,7 @@ async function run(name, fn) {
             await call(ctx, 'generateTabContent')(1, tabId, { quiet: true });
             const saved = mod.tabContents[tabId];
             assert.ok(ctx.prompts.some(text => text.startsWith('tab_content_continue')) && ctx.prompts.some(text => text.startsWith('[작업]')), `${tabId}: 이어 쓰고 고쳐 받았다`);
-            assert.ok(call(ctx, 'spokenChars')(saved) >= TARGET_CHARS && call(ctx, 'volumeLabelSum')(saved) === LEARN, `${tabId}: 채우고 다시 매겼다`);
+            assert.ok(call(ctx, 'spokenChars')(saved) >= TARGET_CHARS && call(ctx, 'volumeLabelSum')(saved) >= LEARN, `${tabId}: 채우고 다시 매겼다`);
             assert.deepStrictEqual(refsOf(ctx, saved), FRESH_REFS, `${tabId}: ${checklistText(ctx, saved)}`);
             assert.deepStrictEqual(checklistIssues(ctx, saved, tabId), [], `${tabId}: 검수가 다시 볼 섹션을 찾는다`);
         }
@@ -1303,7 +1310,7 @@ async function run(name, fn) {
             answerPreviewWith(ctx, 'apply');
             await call(ctx, 'fillLessonVolume')(1, tabId);
             const saved = mod.tabContents[tabId];
-            assert.ok(ctx.prompts.some(text => text.startsWith('[작업]')) && saved !== start && call(ctx, 'volumeLabelSum')(saved) === LEARN, `${tabId}: 고쳐 받아 반영했다`);
+            assert.ok(ctx.prompts.some(text => text.startsWith('[작업]')) && saved !== start && labelsKept(ctx, start, saved), `${tabId}: 고쳐 받아 반영했다`);
             assert.deepStrictEqual(refsOf(ctx, saved), FRESH_REFS, `${tabId}: ${checklistText(ctx, saved)}`);
             assert.deepStrictEqual(checklistIssues(ctx, saved, tabId), [], `${tabId}: 검수가 다시 볼 섹션을 찾는다`);
         }
@@ -1314,7 +1321,7 @@ async function run(name, fn) {
         ctx.callGemini = volumeModel(ctx, { draft: timedDraft({}, TIMED_CHECKS.slice(0, 1)), fixReply: () => reply(timedChecklist()) });
         await call(ctx, 'generateModuleContent')(9, []);
         const saved = mod.tabContents.basicLearn;
-        assert.ok(ctx.prompts.some(text => text.startsWith('[작업]')) && call(ctx, 'volumeLabelSum')(saved) === LEARN, '교안 전체 생성도 채운 뒤 고쳐 받았다');
+        assert.ok(ctx.prompts.some(text => text.startsWith('[작업]')) && call(ctx, 'volumeLabelSum')(saved) >= LEARN, '교안 전체 생성도 채운 뒤 고쳐 받았다');
         assert.deepStrictEqual(refsOf(ctx, saved), FRESH_REFS, checklistText(ctx, saved));
         assert.deepStrictEqual(checklistIssues(ctx, saved), []);
     });

@@ -1808,9 +1808,10 @@ function advLearnTabPrompt(minutes) {
 }
 
 // 실습 탭(기본실습·심화실습) 지시의 시간·분량 값. 강사가 정한 실습 시간, 정하지 않았으면 기본 120분(lesson-lint.js PRACTICE_DEFAULT_MINUTES)에 맞춘 최소치(practiceVolumeSpec).
-// 하루 8시간 가운데 학습 탭이 나머지를 쓴다(learnTargetMinutes)
+// 하루 8시간 가운데 학습 탭이 나머지를 쓴다(learnTargetMinutes). lesson-lint.js를 싣지 않은 화면에서는 멈추지 않고 예전 지시 값(90~120분, 8,000자·250줄, 파트 3개, 과제 3개·프로젝트 2개)을 쓴다
 function practicePromptValues(tabId, minutes) {
-    const spec = practiceVolumeSpec(tabId, practicePromptMinutes(minutes));
+    const spec = typeof practiceVolumeSpec === 'function' && typeof practicePromptMinutes === 'function' ? practiceVolumeSpec(tabId, practicePromptMinutes(minutes)) : null;
+    if (!spec) return { time: '90~120분', total: '90~120분', chars: '8,000', lines: '250', parts: '3', tasks: tabId === 'advPrac' ? '2' : '3' };
     return { time: `${spec.minutes}분`, total: `정확히 ${spec.minutes}분`, chars: spec.chars.toLocaleString('ko-KR'), lines: spec.lines.toLocaleString('ko-KR'), parts: String(spec.parts), tasks: String(spec.tasks) };
 }
 
@@ -1903,7 +1904,8 @@ function tabContinueVolumeRule(tabId, { targetMinutes = 0, practiceMinutes = 0 }
     if (tabId === 'basicLearn' || tabId === 'advLearn') {
         return '- 분량 기준은 첫 청크와 같습니다. 남은 섹션을 요약하지 않습니다.\n' + basicLearnVolumeRule(targetMinutes || LEARN_TARGET_MINUTES) + '\n' + (tabId === 'advLearn' ? `- ${ADV_LEARN_ROLE}\n` : '');
     }
-    const spec = practiceVolumeSpec(tabId, practicePromptMinutes(practiceMinutes));
+    // lesson-lint.js를 싣지 않은 화면에서는 멈추지 않고 실습 시간 지시를 넣지 않는다(예전과 같다)
+    const spec = typeof practiceVolumeSpec === 'function' && typeof practicePromptMinutes === 'function' ? practiceVolumeSpec(tabId, practicePromptMinutes(practiceMinutes)) : null;
     return spec ? `- 이 탭은 ${spec.minutes}분 실습입니다. 이어 쓰는 ## 제목에도 (⏱ N분)을 적고, 앞 청크까지 모든 (⏱ N분)의 합계가 정확히 ${spec.minutes}분이 되게 합니다.\n` : '';
 }
 
