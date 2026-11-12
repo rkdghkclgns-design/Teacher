@@ -414,7 +414,12 @@ function volumeFinalText(job) {
             console.warn('[분량 채우기] (⏱) 시간을 다시 매기지 못해 그대로 둡니다:', err);
         }
     }
-    return checklistLast(restoreLockedSections(md, job.lockedBlocks), job.tabId);
+    return volumeSummaryLast(checklistLast(restoreLockedSections(md, job.lockedBlocks), job.tabId), job.tabId, job.lockedBlocks);
+}
+
+// 핵심 요약 상자는 섹션마다 하나·맨 끝이다(lesson-summary.js). 탭 생성·'분량 채우기'·채우는 동안 바뀐 글에 다시 붙인 글이 모두 이 모양으로 끝난다
+function volumeSummaryLast(md, tabId, lockedBlocks = []) {
+    return typeof summaryBoxesLast === 'function' ? summaryBoxesLast(md, tabId, lockedBlocks) : md;
 }
 
 function volumeResult(job) {
@@ -582,7 +587,7 @@ async function fillVolumeJob({ mod, subj, before, snapshot, tabId = 'basicLearn'
     // 고쳐 받은 체크리스트에도 다시 보기의 옛 시간이 남지 않게 뗀다
     const fixable = volume.added > 0 && !volume.stopped && !isVolumeHalt(volume.error);
     const fixed = fixable
-        ? volumeChecklistText(await autoFixGeneratedTab({ tabId, md: volume.md, lockedBlocks, onStatus: window.setPipelineStatus, rounds: VOLUME_FIX_ROUNDS, minSpokenChars: volume.targetChars, isStopped }), lockedBlocks)
+        ? volumeSummaryLast(volumeChecklistText(await autoFixGeneratedTab({ tabId, md: volume.md, lockedBlocks, onStatus: window.setPipelineStatus, rounds: VOLUME_FIX_ROUNDS, minSpokenChars: volume.targetChars, isStopped }), lockedBlocks), tabId, lockedBlocks)
         : volume.md;
     if (!isLive()) return window.showAlert(`${gone} 반영하지 못했습니다. ${await keep(fixed)}`);
     // 주석 보강은 자동 수정과 같은 때만 하고(fixable), 결과는 미리보기 안내와 반영한 뒤의 끝 알림에 적는다

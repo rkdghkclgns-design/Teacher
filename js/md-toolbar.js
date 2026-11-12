@@ -136,8 +136,10 @@ function mdPreviewImages(md, images) {
 // 입력할 때마다 글이 바뀌므로 마지막 결과 하나만 따로 기억한다(탭 화면 기억을 밀어내지 않게). 그 함수나 그림 넣기(lesson-export.js)를 싣지 않았으면 그림을 넣은 글로 그린다
 function mdPreviewHtml(mod, text) {
     const shown = typeof cleanLessonOpening === 'function' ? cleanLessonOpening(text) : text; // 보기 화면과 같게 첫머리를 정리해 그린다
-    if (typeof renderLessonScreen === 'function' && typeof inlineLessonImages === 'function') return renderLessonScreen(shown, mod?.images, { preview: true });
-    return renderLessonHTML(preprocessMarkdown(mdPreviewImages(shown, mod?.images)));
+    // 문제은행 탭·최종 평가는 보기 화면처럼 핵심 요약·💡·⚠️·✅ 상자 없이 그린다(api.js lessonScreenCallouts)
+    const callouts = typeof lessonScreenCallouts === 'function' ? lessonScreenCallouts(mod) : true;
+    if (typeof renderLessonScreen === 'function' && typeof inlineLessonImages === 'function') return renderLessonScreen(shown, mod?.images, { preview: true, callouts });
+    return renderLessonHTML(preprocessMarkdown(mdPreviewImages(shown, mod?.images)), callouts ? undefined : { callouts: false });
 }
 
 // 미리 보기는 입력하는 동안 계속 그리므로, 붙여 넣은 글의 스크립트가 돌지 않게 비활성 template에서 걷어 낸 뒤 넣는다

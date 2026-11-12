@@ -245,7 +245,9 @@ async function lessonTabHtml(mod, tab, opts) {
         const localVideos = exportLessonVideos(shownBox, mod, exportVideoMode(opts));
         return { html: mark(shownBox).innerHTML, videos: exported.videos, localVideos };
     }
-    const box = scopeExportLinks(exportStrip(renderLessonHTML(preprocessMarkdown(inlineLessonImages(tab.md, mod.images)))), mod, tab);
+    // 화면과 같은 규칙: 문제은행 탭·최종 평가는 핵심 요약·💡·⚠️·✅ 상자 없이 그린다(lesson-summary.js lessonCalloutsFor)
+    const callouts = typeof lessonCalloutsFor === 'function' ? lessonCalloutsFor(mod, tab.id) : true;
+    const box = scopeExportLinks(exportStrip(renderLessonHTML(preprocessMarkdown(inlineLessonImages(tab.md, mod.images)), callouts ? undefined : { callouts: false })), mod, tab);
     await renderExportMermaid(box);
     const localVideos = exportLessonVideos(box, mod, exportVideoMode(opts));
     return { html: mark(box).innerHTML, videos: 0, localVideos };

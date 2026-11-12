@@ -1932,6 +1932,9 @@ const TAB_RULE_EXCLUSIONS = {
     advAssessment: ASSESSMENT_RULE_EXCLUSIONS
 };
 
+// 최종 평가(mainQuest)의 탭을 만들 때 뺄 규칙: 핵심 요약 상자는 학습 탭에만 쓴다(lesson-summary.js). 다른 차시는 옵션 없이(예전 그대로)
+const questRuleOptions = context => (context && context.isMainQuest ? { exclude: ['section_summary'] } : undefined);
+
 // 탭 전용 규칙 빌더 (buildFullRules 변형). 탭 생성과 탭 이어쓰기가 같은 규칙을 쓴다
 // exclude: 이 작업에서 더 뺄 규칙(분량 보강은 문서 구조·시간·체크리스트·그림·mermaid 규칙을 뺀다) / fewshot: 서식 예시를 넣을지
 function buildTabRules(tabId, keyConcepts, { exclude = [], fewshot = true } = {}) {
@@ -2038,7 +2041,8 @@ function buildTaskContext(taskScope, additionalContext = "") {
             r.time_allocation,
             r.content_design,
             learning && r.learning_checklist,
-            learning && r.section_summary,
+            // 핵심 요약 상자는 학습 탭에만. 최종 평가 본문(교안 전체 생성의 mainQuest)에는 주지 않는다
+            learning && !additionalContext?.isMainQuest && r.section_summary,
             r.mermaid_rules,
             r.rubric_100,
             r.korean_period,
@@ -2218,7 +2222,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
         case 'tab_content': {
             const learnMinutes = additionalContext.targetMinutes || LEARN_TARGET_MINUTES; // 학습 탭(기본학습·심화학습)의 낭독 목표(분)
             const practiceMinutes = additionalContext.practiceMinutes || 0; // 강사가 정한 실습 시간(분, 정하지 않았으면 0)
-            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildTabRules(additionalContext.tabId, additionalContext.keyConcepts)}`;
+            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildTabRules(additionalContext.tabId, additionalContext.keyConcepts, questRuleOptions(additionalContext))}`;
 
             // 분할 생성 지시 — 긴 탭(특히 기본 학습 480분)이 중간에 잘리는 것을 방지
             systemInstruction += '\n\n[분량 관리]\n' +
@@ -2266,7 +2270,7 @@ function buildTaskContext(taskScope, additionalContext = "") {
         case 'tab_content_continue': {
             // 1청크와 같은 탭 규칙을 준다. 규칙 없이 이어 쓰면 체크리스트가 본문 중간에 들어가는 등 구조가 흐트러진다
             const learningTab = additionalContext.tabId === 'basicLearn' || additionalContext.tabId === 'advLearn';
-            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildTabRules(additionalContext.tabId, additionalContext.keyConcepts)}`;
+            systemInstruction = `${CONTEXT_CORE.personas.instructor}\n[작성 규칙]\n${buildTabRules(additionalContext.tabId, additionalContext.keyConcepts, questRuleOptions(additionalContext))}`;
             systemInstruction += '\n\n[이어쓰기 규칙]\n' +
                 '- 반드시 한국어로 작성하세요. 영어로 작성하지 마세요.\n' +
                 '- 마크다운 구조(##, ###, 표, mermaid, 불릿)와 이전 청크의 문체·깊이를 그대로 유지하세요. ## 제목은 "##"와 제목을 같은 줄에 씁니다.\n' +

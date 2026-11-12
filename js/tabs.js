@@ -503,7 +503,8 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         mainQuestText: subj?.mainQuest?.description || '',
         codeTopic: lessonCodeTopic(mod), // 코드를 다루는 차시면 설명마다 예제 코드 블록을 쓰게 한다
         targetMinutes: learnTargetMinutes(mod, tabId), // 학습 탭의 낭독 목표(분, 다른 탭은 0)
-        practiceMinutes: lessonPracticeMinutes(mod, tabId) // 강사가 정한 실습 시간(분, 정하지 않았거나 실습 탭이 아니면 0)
+        practiceMinutes: lessonPracticeMinutes(mod, tabId), // 강사가 정한 실습 시간(분, 정하지 않았거나 실습 탭이 아니면 0)
+        isMainQuest: mod.id === 'mainQuest' // 최종 평가 탭에는 핵심 요약 상자 규칙을 주지 않는다(ui.js questRuleOptions)
     };
     const { systemInstruction, userPrompt } = buildTaskContext('tab_content', baseArgs);
 
@@ -624,8 +625,12 @@ async function generateTabContent(moduleId, tabId, opts = {}) {
         if (!mod.tabContents) mod.tabContents = { basicLearn: null, basicPrac: null, advLearn: null, advPrac: null, assessment: null, advAssessment: null };
         resultText = cleanLessonOpening(restoreLockedSections(resultText, lockedBlocks));
         if (typeof checklistLast === 'function') resultText = checklistLast(resultText, tabId);
-        // 학습 탭은 내용 섹션마다 핵심 요약 상자를 하나만 맨 끝에 둔다(lesson-summary.js). 다른 탭·최종 평가는 그대로다
-        const summaryLast = md => (mod.id !== 'mainQuest' && typeof summaryBoxesLast === 'function' ? summaryBoxesLast(md, tabId, lockedBlocks) : md);
+        // 학습 탭은 내용 섹션마다 핵심 요약 상자를 하나만 맨 끝에 둔다(lesson-summary.js). 다른 탭은 그대로다.
+        // 최종 평가에는 상자를 두지 않는다(규칙을 주지 않지만 AI가 써 넣었으면 뗀다)
+        const summaryLast = md => {
+            if (mod.id === 'mainQuest') return typeof withoutSummaryBoxes === 'function' ? withoutSummaryBoxes(md) : md;
+            return typeof summaryBoxesLast === 'function' ? summaryBoxesLast(md, tabId, lockedBlocks) : md;
+        };
         resultText = summaryLast(resultText);
         if (!resultText.trim()) throw new Error('AI 응답이 비어 있습니다.');
         // 학습 탭은 모자란 섹션마다 새 소주제를 이어 붙여 낭독 목표 분량까지 채운다. 그림 자리는 초안에만 미리 넣는다(붙인 소주제에는 넣지 않는다)

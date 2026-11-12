@@ -57,7 +57,8 @@ const LESSON = [
 // 정리한 섹션 1·2(상자는 섹션마다 하나, 맨 끝. 끝의 <br>·구분선은 상자 뒤에 남는다)
 const SECTION1 = ['## 1. 게임 루프의 구조 (⏱ 60분)', '', '게임 루프는 입력, 갱신, 그리기를 매 프레임 되풀이합니다.', '',
     '### ■ 순서의 의미', '', '입력을 먼저 읽어야 같은 프레임에 반영됩니다.', '', ...CODE, '', '<br>', '', ...BOX, '', '<br>'].join('\n');
-const SECTION2 = ['## 2. 프레임 시간 (⏱ 60분)', '', '프레임 시간은 한 번 도는 데 걸린 시간입니다.', '', '<br>', '', ...BOX2, '', '<br>', '', '---', '', '<br>'].join('\n');
+// 섹션 2는 상자가 둘이라 항목을 합친다(앞 상자 항목 → 마지막 상자 항목, 머리 줄은 마지막 상자)
+const SECTION2 = ['## 2. 프레임 시간 (⏱ 60분)', '', '프레임 시간은 한 번 도는 데 걸린 시간입니다.', '', '<br>', '', BOX2[0], STALE[1], BOX2[1], BOX2[2], '', '<br>', '', '---', '', '<br>'].join('\n');
 // 시험용 상자 떼기: 코드 블록 밖의 > 줄을 빼고 겹친 빈 줄과 <br> 간격을 하나로 줄인다(lesson-summary.js와 따로 센다)
 function WITHOUT_BOXES(md) {
     let fenced = false;
@@ -137,7 +138,7 @@ function genContext() {
         alerts: [], toasts: [], prompts: [], volumeSent: [], elements,
         document: {
             readyState: 'complete', hidden: false, title: '',
-            body: { appendChild: el => { if (el.id) elements[el.id] = el; } },
+            body: { appendChild: el => { if (el.id) elements[el.id] = el; ctx.onOverlay?.(el); } },
             createElement: fakeElement, getElementById: id => elements[id] || null,
             addEventListener() {}, removeEventListener() {}, querySelector: () => null, querySelectorAll: () => []
         }
@@ -215,7 +216,7 @@ test('정리: 섹션마다 상자를 하나(마지막 상자)만 맨 끝에 두�
     const out = call(ctx, 'summaryBoxesLast')(LESSON, 'basicLearn');
     const sections = plain(call(ctx, 'mdSections')(out));
     assert.strictEqual(sections.find(section => section.title.startsWith('1.')).text, SECTION1);
-    assert.strictEqual(sections.find(section => section.title.startsWith('2.')).text, SECTION2, '앞의 낡은 상자는 빼고 마지막 상자를 남긴다');
+    assert.strictEqual(sections.find(section => section.title.startsWith('2.')).text, SECTION2, '두 상자는 항목을 합쳐 하나로');
     assert.ok(!sections.find(section => section.title === '개요').text.includes('핵심 요약'), '개요에는 두지 않는다');
     assert.ok(out.includes('## ✅ 학습 후 체크리스트\n\n- 순서를 정했습니다.'), '체크리스트는 그대로');
     assert.strictEqual(WITHOUT_BOXES(out), WITHOUT_BOXES(LESSON), '상자 말고 다른 글은 그대로');
@@ -248,15 +249,44 @@ test('정리: 윈도 줄바꿈(CRLF) 글은 같은 줄바꿈으로 돌려주고,
     assert.ok(call(ctx, 'summaryBoxesLast')(LESSON, 'basicLearn').includes(CODE.join('\n')), '코드 블록은 한 글자도 그대로');
 });
 
-test('정리: 머리·항목 줄을 정해 둔 모양으로 맞추고(굵게·콜론·번호·아이콘), 그림·표 줄은 빼며, 항목이 없는 상자는 지운다', () => {
+// 그림·하위 목록·이어 쓴 줄이 든 상자(모양이 정해 둔 꼴과 다르다)
+const RICH_BOX = ['> **📌 핵심 요약:**', '> 1. 첫째 요약입니다.', '>    - 하위 항목입니다.', '>   이어 쓴 줄입니다.', '> • 💡 둘째 요약입니다.', '> <!-- [IMG: "그림"] -->', '> ![](local:img_1)'];
+
+test('정리(회귀): 맨 끝에 하나뿐인 상자는 한 글자도 바꾸지 않고, 옮기는 상자도 그림·하위 목록·이어 쓴 줄을 그대로 옮긴다', () => {
     const ctx = summaryContext();
-    const messy = ['## 1. 가 (⏱ 30분)', '', '본문입니다.', '', '> **📌 핵심 요약:**', '> 1. 첫째 요약입니다.', '>   이어 쓴 줄입니다.', '> • 💡 둘째 요약입니다.', '> <!-- [IMG: "그림"] -->', '> ![](local:img_1)'].join('\n');
-    assert.strictEqual(call(ctx, 'summaryBoxesLast')(messy, 'basicLearn'),
-        ['## 1. 가 (⏱ 30분)', '', '본문입니다.', '', '<br>', '', '> 📌 **핵심 요약**', '> - 첫째 요약입니다. 이어 쓴 줄입니다.', '> - 둘째 요약입니다.'].join('\n'));
-    const empty = ['## 1. 가 (⏱ 30분)', '', '본문입니다.', '', '> 📌 **핵심 요약**', '>', '> <img src="x">'].join('\n');
-    assert.strictEqual(call(ctx, 'summaryBoxesLast')(empty, 'basicLearn'), '## 1. 가 (⏱ 30분)\n\n본문입니다.\n');
-    const sentences = ['## 1. 가', '', '본문입니다.', '', '> 📌 **핵심 요약**', '> 첫 문장입니다.', '> 둘째 문장입니다.'].join('\n');
-    assert.ok(call(ctx, 'summaryBoxesLast')(sentences, 'basicLearn').endsWith('> - 첫 문장입니다.\n> - 둘째 문장입니다.'), '목록 기호가 없으면 줄마다 항목');
+    const last = call(ctx, 'summaryBoxesLast');
+    const atEnd = ['## 1. 가 (⏱ 30분)', '', '본문입니다.', '', ...RICH_BOX, '', '<br>', ''].join('\n');
+    assert.strictEqual(last(atEnd, 'basicLearn'), atEnd, '이미 맨 끝 상자는 그대로');
+    const noGap = ['## 1. 가 (⏱ 30분)', '', '본문입니다.', '', ...BOX].join('\n');
+    assert.strictEqual(last(noGap, 'basicLearn'), noGap, '앞 간격이 없어도 맨 끝 상자는 그대로');
+    const middle = ['## 1. 가 (⏱ 30분)', '', '본문입니다.', '', ...RICH_BOX, '', '### ■ 다음', '', '이어지는 글입니다.'].join('\n');
+    assert.strictEqual(last(middle, 'basicLearn'), ['## 1. 가 (⏱ 30분)', '', '본문입니다.', '', '### ■ 다음', '', '이어지는 글입니다.', '', '<br>', '', ...RICH_BOX].join('\n'));
+    assert.deepStrictEqual(plain(call(ctx, 'summaryItemsOf')(middle)), ['첫째 요약입니다. 하위 항목입니다. 이어 쓴 줄입니다.', '둘째 요약입니다.'], '교수안에 보낼 항목 글은 그림 줄을 빼고 잇는다');
+    const headOnly = ['## 1. 가 (⏱ 30분)', '', '본문입니다.', '', '> 📌 **핵심 요약**', '', '### ■ 다음', '', '글입니다.'].join('\n');
+    assert.ok(!last(headOnly, 'basicLearn').includes('핵심 요약'), '항목이 하나도 없는 머리 줄은 지운다');
+});
+
+test('정리(회귀): 상자는 상자가 아닌 첫 줄에서 끝난다. 빈 인용 줄(>) 뒤에 붙은 다른 인용은 따로 남고 항목에 섞이지 않는다', () => {
+    const ctx = summaryContext();
+    const quoteAfter = ['## 1. 가 (⏱ 30분)', '', '본문입니다.', '', ...BOX, '>', '> 다른 사람의 말을 옮긴 인용입니다.', '', '### ■ 다음', '', '글입니다.'];
+    const spans = plain(call(ctx, 'summaryBoxSpans')(quoteAfter));
+    assert.deepStrictEqual(spans, [{ start: 4, end: 7 }]);
+    const out = call(ctx, 'summaryBoxesLast')(quoteAfter.join('\n'), 'basicLearn');
+    assert.ok(out.includes('>\n> 다른 사람의 말을 옮긴 인용입니다.\n\n### ■ 다음') && out.endsWith(`<br>\n\n${BOX.join('\n')}`), out);
+    const spaced = ['> 📌 **핵심 요약**', '>', '> - 빈 인용 줄 뒤 항목입니다.', '>', '> - 둘째 항목입니다.'];
+    assert.deepStrictEqual(plain(call(ctx, 'summaryBoxSpans')(spaced)), [{ start: 0, end: 5 }], '빈 인용 줄 다음이 항목이면 상자가 이어진다');
+});
+
+test('정리(회귀): 상자가 둘이면 앞 상자의 항목도 잃지 않고 합친다(겹친 항목은 하나, 다섯 개까지, 마지막 상자 항목은 모두)', () => {
+    const ctx = summaryContext();
+    const first = ['> 📌 **핵심 요약**', '> - 앞 상자 첫째입니다.', '>   - 앞 상자 하위입니다.', '> - 게임 루프는 입력, 갱신, 그리기를 매 프레임 되풀이합니다.'];
+    const md = ['## 1. 가 (⏱ 30분)', '', '본문입니다.', '', ...first, '', '둘째 문단입니다.', '', ...BOX].join('\n');
+    const out = call(ctx, 'summaryBoxesLast')(md, 'basicLearn');
+    assert.ok(out.endsWith([BOX[0], first[1], first[2], BOX[1], BOX[2]].join('\n')), out);
+    assert.strictEqual(call(ctx, 'summaryBoxesLast')(out, 'basicLearn'), out, '합친 뒤 다시 돌려도 같다');
+    const many = n => ['> 📌 **핵심 요약**', ...Array.from({ length: n }, (_, i) => `> - 앞 항목 ${i + 1}입니다.`)];
+    const capped = call(ctx, 'summaryBoxesLast')(['## 1. 가', '', '본문입니다.', '', ...many(6), '', '글입니다.', '', ...BOX].join('\n'), 'basicLearn');
+    assert.ok(capped.endsWith([BOX[0], '> - 앞 항목 1입니다.', '> - 앞 항목 2입니다.', '> - 앞 항목 3입니다.', BOX[1], BOX[2]].join('\n')), capped.slice(-300));
 });
 
 test('정리: 섹션 고치기(keepSectionSummary)는 빠뜨린 상자를 되붙이고, 겹친 상자는 하나로, 없던 상자는 빼며 다시 돌려도 같다', () => {
@@ -283,7 +313,8 @@ test('받은 글 정리: AI 답 정리(extractText·sanitizeMarkdownContent)가 
     assert.strictEqual(call(ctx, 'extractText')(reply('설명입니다. 💡 팁입니다.')), '설명입니다.\n💡 팁입니다.', '인용이 아닌 줄은 예전과 같다');
     const colon = call(ctx, 'sanitizeMarkdownContent')('본문입니다.\n\n> 📌 **핵심 요약:**\n> - 첫째입니다.');
     assert.ok(colon.includes('> 📌 **핵심 요약:**\n> - 첫째입니다.'), colon);
-    assert.ok(call(ctx, 'summaryBoxesLast')(`## 1. 가\n\n${colon}`, 'basicLearn').endsWith('> 📌 **핵심 요약**\n> - 첫째입니다.'));
+    const kept = call(ctx, 'summaryBoxesLast')(`## 1. 가\n\n${colon}`, 'basicLearn');
+    assert.ok(kept.endsWith('> 📌 **핵심 요약:**\n> - 첫째입니다.') && plain(call(ctx, 'summaryBoxSpans')(kept.split('\n'))).length === 1, '콜론이 붙은 머리 줄도 상자이고 맨 끝이면 그대로 둔다');
 });
 
 /* ======================= 3. 그리기와 내보내기 ======================= */
@@ -323,6 +354,70 @@ test('그리기: 상자 안 글도 정리를 거친다(스크립트·핸들러 �
     const html = render(ctx, md);
     assert.ok(!/<script/i.test(html) && !/onerror/i.test(html), html);
     assert.ok(/<a href="#lesson-sec-1" class="lesson-check-link">1\. 게임 루프의 구조<\/a>/.test(render(ctx, VIEW_MD)), '다시 보기 링크');
+});
+
+// 문항 탭 모양: 정답·힌트 줄, 접은 정답(<details>), 목록 안 문단, 인용 안 문단
+const QUIZ_MD = [
+    '### 문제 1. 루프 순서', '학습 목표 1 · 밴드 L1 · 객관식', '', '① 입력 ② 갱신', '', '💡 **힌트:** 순서를 보세요.', '', '✅ **정답:** ①', '',
+    '<details>', '<summary>정답 보기</summary>', '', '✅ 정답: B', '', '💡 힌트: 반복문', '', '</details>', '',
+    '- 첫째 항목', '', '  ✅ 목록 안 문단입니다.', '', '> 💡 인용 안 문단입니다.', '', ...BOX
+].join('\n');
+
+test('그리기(회귀): 문제은행 탭·최종 평가·탭을 모르는 글은 상자로 그리지 않는다(lessonCalloutsFor, renderLessonHTML opts.callouts)', () => {
+    const ctx = renderContext();
+    const allow = call(ctx, 'lessonCalloutsFor');
+    assert.deepStrictEqual(['basicLearn', 'basicPrac', 'advLearn', 'advPrac', 'assessment', 'advAssessment', ''].map(tabId => allow({ id: 3 }, tabId)), [true, true, true, true, false, false, false]);
+    assert.deepStrictEqual([allow({ id: 'mainQuest' }, 'basicLearn'), allow(null, 'basicLearn')], [false, true]);
+    const off = call(ctx, 'renderLessonHTML')(call(ctx, 'preprocessMarkdown')(QUIZ_MD), { callouts: false });
+    assert.ok(!/class="lesson-(?:summary|callout)/.test(off), off);
+    assert.strictEqual(off, render(renderContext({ summary: false }), QUIZ_MD), '상자 class만 빠지고 나머지는 같다');
+});
+
+test('그리기(회귀): 맨 위 문단과 인용만 상자로 그린다(목록·접은 정답·인용·표 안의 문단은 그대로)', () => {
+    const ctx = renderContext();
+    const html = render(ctx, QUIZ_MD);
+    assert.ok(html.includes('<p class="lesson-callout lesson-callout-key">💡 <strong>힌트</strong>') && html.includes('<p class="lesson-callout lesson-callout-check">✅ <strong>정답</strong>'), '맨 위 문단');
+    const inside = (open, close) => html.slice(html.indexOf(open), html.indexOf(close, html.indexOf(open)) + close.length);
+    assert.ok(!inside('<details>', '</details>').includes('lesson-callout'), inside('<details>', '</details>'));
+    assert.ok(!inside('<li>', '</li>').includes('lesson-callout'), '목록 안 문단');
+    assert.ok(/<blockquote>\s*<p>💡 인용 안 문단입니다\.<\/p>\s*<\/blockquote>/.test(html), '인용 안 문단');
+    assert.strictEqual((html.match(/<blockquote class="lesson-summary">/g) || []).length, 1, '맨 위 상자');
+    const nested = render(ctx, ['- 항목', '', `  ${BOX.join('\n  ')}`].join('\n'));
+    assert.ok(nested.includes('핵심 요약') && !nested.includes('lesson-summary'), '목록 안의 상자 모양 인용은 상자로 그리지 않는다');
+});
+
+test('그리기(회귀): 차시 화면 기억은 상자를 그리는지까지 가른다. 같은 글도 문제은행 탭·최종 평가 화면은 상자 없이, 미리 보기·작업 기록도 같은 규칙이다', () => {
+    const ctx = renderContext();
+    const screen = (opts) => call(ctx, 'renderLessonScreen')(VIEW_MD, {}, opts);
+    const on = screen({});
+    const off = screen({ callouts: false });
+    assert.ok(on.includes('lesson-summary') && !/class="lesson-(?:summary|callout)/.test(off));
+    assert.strictEqual(screen({}), on, '기억한 결과를 섞지 않는다');
+    const input = opts => call(ctx, 'lessonScreenInput')(VIEW_MD, {}, opts);
+    assert.ok(!call(ctx, 'sameLessonScreenInput')(input({}), input({ callouts: false })) && call(ctx, 'sameLessonScreenInput')(input({}), input()));
+    vm.runInContext("currentLessonTab = 'assessment';", ctx);
+    assert.strictEqual(call(ctx, 'lessonScreenCallouts')({ id: 3 }), false);
+    vm.runInContext("currentLessonTab = 'basicLearn';", ctx);
+    assert.deepStrictEqual([call(ctx, 'lessonScreenCallouts')({ id: 3 }), call(ctx, 'lessonScreenCallouts')({ id: 'mainQuest' })], [true, false]);
+    assert.strictEqual((read('api.js').match(/lessonScreenInput\(renderText, mod\.images, \{ callouts: lessonScreenCallouts\(mod\) \}\)/g) || []).length, 2, '보기 화면과 보기로 돌아올 때');
+    assert.ok(read('md-toolbar.js').includes("renderLessonScreen(shown, mod?.images, { preview: true, callouts })"), '원문 칸 미리 보기');
+    vm.runInContext(sliceSource(read('state.js'), 'function historyRenderOpts('), ctx);
+    const history = call(ctx, 'historyRenderOpts');
+    assert.deepStrictEqual([history({ tabId: 'basicLearn', lessonId: 3 }), history({ tabId: 'assessment', lessonId: 3 }), history({ lessonId: 'mainQuest', tabId: 'basicLearn' }), history({ lessonId: 3, tabContents: {} }), history({ lessonId: 3 })].map(opts => plain(opts ?? null)),
+        [null, { callouts: false }, { callouts: false }, { callouts: false }, null], '작업 기록: 탭 하나는 그 탭 규칙, 여러 탭을 합친 기록은 상자 없이, 옛 단일 본문은 기본학습');
+    assert.strictEqual((read('state.js').match(/, historyRenderOpts\((?:h|item)\)/g) || []).length, 2, '작업 기록 보기·내보내기 두 곳');
+});
+
+test('내보내기(회귀): 문제은행 탭과 최종 평가는 내보낸 문서에서도 상자 class가 없다', async () => {
+    const ctx = renderContext();
+    vm.runInContext('getEditingModule = () => null; currentLessonTab = "basicLearn";', ctx);
+    const tabs = { basicLearn: VIEW_MD, basicPrac: null, advLearn: null, advPrac: null, assessment: QUIZ_MD, advAssessment: QUIZ_MD };
+    const body = await call(ctx, 'lessonExportBody')({ id: 3, title: '차시', images: {}, content: '', tabContents: tabs }, null, {});
+    const parts = body.html.split('<section class="lesson-tab">').slice(1);
+    assert.strictEqual(parts.length, 3);
+    assert.ok(parts[0].includes('lesson-summary') && !/lesson-(?:summary|callout)/.test(parts[1]) && !/lesson-(?:summary|callout)/.test(parts[2]), '기본학습만');
+    const quest = await call(ctx, 'lessonExportBody')({ id: 'mainQuest', title: '최종 평가', images: {}, content: VIEW_MD }, null, {});
+    assert.ok(quest.tabs === 1 && !/lesson-(?:summary|callout)/.test(quest.html), '최종 평가');
 });
 
 test('내보내기: HTML·PDF 문서에도 같은 class가 남고, 문서 서식에 상자·인쇄 규칙이 있다. 화면 CSS와 새 script 태그(?v=125)도 있다', async () => {
@@ -431,6 +526,61 @@ test('탭 생성: 초안 상자를 정리하고, 분량을 채우고 섹션을 �
     assert.ok(!saved.includes('내용 10의 첫째'), '개요의 상자는 뺐다');
     assert.ok(ctx.volumeSent.length > 3 && ctx.volumeSent.every(text => !text.includes('핵심 요약')), '분량 보강에 보낸 섹션에는 상자가 없다');
     assert.strictEqual(call(ctx, 'summaryBoxesLast')(saved, 'basicLearn'), saved, '저장한 글은 이미 정리한 모양이다');
+});
+
+test('최종 평가(회귀): 교안 전체 생성·탭 생성 지시에 상자 규칙을 주지 않고, AI가 써 넣은 상자는 저장 전에 뗀다', async () => {
+    const prompts = promptContext();
+    const rule = call(prompts, 'CONTEXT_CORE').rules.section_summary;
+    const build = (task, args) => call(prompts, 'buildTaskContext')(task, { title: '최종 평가', description: '평가', keyConcepts: [], targetMinutes: 480, ...args }).systemInstruction;
+    assert.deepStrictEqual([build('module', { isMainQuest: true }).includes(rule), build('module_continue', { isMainQuest: true, chunkIndex: 1, previousContent: '앞' }).includes(rule),
+        build('tab_content', { tabId: 'basicLearn', tabLabel: '기본학습', isMainQuest: true }).includes(rule), build('tab_content_continue', { tabId: 'basicLearn', tabLabel: '기본학습', isMainQuest: true, chunkIndex: 1, previousContent: '앞' }).includes(rule)],
+    [false, false, false, false]);
+    assert.ok(build('module', {}).includes(rule) && build('tab_content', { tabId: 'basicLearn', tabLabel: '기본학습' }).includes(rule), '다른 차시는 예전 그대로');
+    assert.strictEqual((read('api.js').match(/isMainQuest: moduleId === 'mainQuest'/g) || []).length, 2, '교안 전체 생성·이어쓰기가 최종 평가를 알린다');
+    assert.ok(read('tabs.js').includes("isMainQuest: mod.id === 'mainQuest'"), '탭 생성도 최종 평가를 알린다');
+    const ctx = genContext();
+    const quest = { id: 'mainQuest', title: '최종 평가', description: '평가', tabContents: {} };
+    ctx.currentMod = quest;
+    ctx.callGemini = async (model, payload) => {
+        const text = payload.contents[0].parts[0].text;
+        if (text.startsWith('tab_content')) return reply(`## 1. 과제 (⏱ 60분)\n\n과제를 만듭니다.\n\n${BOX.join('\n')}\n\n## 2. 제출 (⏱ 30분)\n\n제출합니다.\n<!-- END -->`);
+        return reply('');
+    };
+    const result = plain(await call(ctx, 'generateTabContent')('mainQuest', 'basicLearn', { quiet: true }));
+    assert.strictEqual(result.ok, true, JSON.stringify(result));
+    assert.ok(!quest.tabContents.basicLearn.includes('핵심 요약') && quest.tabContents.basicLearn.includes('과제를 만듭니다.'), quest.tabContents.basicLearn);
+});
+
+test("윈도 줄바꿈(회귀): 줄 끝에 \\r이 남아도 상자를 찾고, '분량 채우기'로 채운 글도 섹션마다 상자가 맨 끝이다", async () => {
+    const sctx = summaryContext();
+    const lines = ['## 1. 가 (⏱ 30분)\r', '\r', '본문입니다.\r', '\r', ...BOX.map(line => `${line}\r`), '\r', '<br>\r'];
+    assert.deepStrictEqual([call(sctx, 'summaryTailStart')(lines), plain(call(sctx, 'summaryBoxSpans')(lines))], [4, [{ start: 4, end: 7 }]]);
+    const FILL = '가나다라마바사아자차. ';
+    const filler = n => FILL.repeat(Math.ceil(n / FILL.length)).slice(0, n).trim();
+    const sections = [1, 2, 3, 4].map(i => `## ${i}. 내용 ${i} (⏱ 120분)\n\n${filler(3000)}\n\n> 📌 **핵심 요약**\n> - 내용 ${i}의 핵심입니다.\n\n<br>`);
+    const start = ['## 학습 목표\n\n- 반복문으로 합계를 구하는 코드를 작성할 수 있습니다.', '## 개요 (⏱ 10분)\n\n- 값을 더하는 상황입니다.', ...sections,
+        '## ✅ 학습 후 체크리스트\n\n- 합계를 구했습니다. (다시 보기: 1. 내용 1)'].join('\n\n').replace(/\n/g, '\r\n');
+    const ctx = genContext();
+    const mod = { id: 1, title: '반복과 합계', description: '합계', tabContents: { basicLearn: start, basicPrac: null, advLearn: null, advPrac: null, assessment: null } };
+    ctx.currentMod = mod;
+    vm.runInContext("currentLessonTab = 'basicLearn'; _lessonPanel = null;", ctx);
+    let k = 0;
+    ctx.callGemini = async (model, payload) => {
+        const [task, , , requestChars] = payload.contents[0].parts[0].text.split('|');
+        if (task !== 'volume_expand') return reply('');
+        k += 1;
+        return reply(`### ■ 보강 ${k}\n\n${filler(Math.round(Number(requestChars) * 0.9))}`);
+    };
+    ctx.onOverlay = overlay => {
+        if (overlay.id === 'lesson-pipeline-bar') return;
+        setImmediate(() => overlay.fire('click', { target: { dataset: { diffAction: 'apply' } } }));
+    };
+    await call(ctx, 'fillLessonVolume')(1, 'basicLearn');
+    const saved = mod.tabContents.basicLearn;
+    assert.ok(k > 3 && saved !== start, `채웠다(${k})`);
+    const rows = boxReport(ctx, saved).filter(row => /내용/.test(row.title));
+    assert.strictEqual(rows.length, 4);
+    rows.forEach(row => assert.deepStrictEqual([row.boxes, row.last], [1, true], row.title));
 });
 
 /* ======================= 5. 섹션 고치기 ======================= */
